@@ -205,6 +205,7 @@ class IterView:
     _tool_start_times: dict[str, float] = field(default_factory=dict)
     _tool_start_inputs: dict[str, str] = field(default_factory=dict)
     pending_tool: str = ""   # currently running tool name
+    pending_tool_args: str = ""  # args of currently running tool
     tools_raw: list[tuple[str, str, str]] = field(default_factory=list)
     _in_reasoning: bool = False
 
@@ -323,6 +324,7 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
         if iv:
             iv._in_reasoning = False
             iv.pending_tool = name
+            iv.pending_tool_args = str(raw_args) if raw_args else ""
             iv._tool_start_times[name] = time.time()
             if raw_args:
                 iv._tool_start_inputs[name] = str(raw_args)
@@ -341,6 +343,7 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
         if iv:
             iv.tools.append((name, success, elapsed, info))
             iv.pending_tool = ""
+            iv.pending_tool_args = ""
             iv._in_reasoning = False
             # Rohdaten für späteren Drill-Down sichern
             raw_result = chunk.get("result", "")
@@ -1038,6 +1041,9 @@ class TaskOverlay:
                 out.append((bg + "fg:#60a5fa", "   ◇ "))
                 out.append((bg + "fg:#fbbf24",
                             f"{_short(iv.pending_tool, 20):<20} ⋯ running...\n"))
+                if iv.pending_tool_args:
+                    out.append((bg + "fg:#9ca3af",
+                                f"     args: {_short(iv.pending_tool_args, 60)}\n"))
 
             if not iv.thoughts and not iv.tools and not iv.pending_tool:
                 out.append((bg + "fg:#6b7280", "   (no data yet)\n"))
@@ -1093,6 +1099,9 @@ class TaskOverlay:
                 iter_lines_flat.append((iter_bg + "fg:#60a5fa", "      ◇ "))
                 iter_lines_flat.append((iter_bg + "fg:#fbbf24",
                                         f"{_short(iv.pending_tool, 16):<16} ⋯ running...\n"))
+                if iv.pending_tool_args:
+                    iter_lines_flat.append((iter_bg + "fg:#9ca3af",
+                                            f"        args: {_short(iv.pending_tool_args, 56)}\n"))
 
         # Zähle Zeilen anhand "\n"-Vorkommen in den Text-Fragmenten
         def _count_lines(fragments: list[tuple[str, str]]) -> int:
@@ -4303,6 +4312,7 @@ F6 during execution       - Move agent to background
     "teach": "/teach <agent> <skill_name> - Teach skill",
     "context": "/context stats - Show context stats",
 
+
     # History Management
     "history": """/history show [n]         - Show last n messages (default 10)
 /history clear            - Clear current session history
@@ -4365,6 +4375,18 @@ F6 during execution       - Move agent to background
 /feature enable <feature>  - Enable a feature
 /feature enable desktop    - Enable Desktop Automation
 /feature enable web <headless> - Enable Desktop Web Automation
+    """,
+
+    # Prompt Enhancer
+    "prompt": """/prompt                    - Show current enhancer config
+/prompt on                 - Enable prompt enhancer
+/prompt off                - Disable prompt enhancer
+/prompt mode <m>           - Set mode: spelling | custom | both
+/prompt set <text>         - Set custom preprompt (or interactive if no text)
+/prompt ask <on|off>       - Ask confirmation before using enhanced prompt
+/prompt history <on|off>   - Include session history as context
+/prompt clear              - Clear custom prompt
+/prompt test [text]        - Test enhancer without sending to agent
     """,
 
     # Audio Settings
@@ -4549,6 +4571,13 @@ class ISAA_Host:
         self._cli_tools = []
         self.auto_paste_text = False
         self.dynamic_interval = [1]
+
+        # ── Prompt Enhancer ──────────────────────────────────────────────────
+        self._prompt_enhancer_enabled = False
+        self._prompt_enhancer_mode = "both"       # "spelling" | "custom" | "both"
+        self._prompt_enhancer_custom = ""          # user-defined preprompt
+        self._prompt_enhancer_ask = False          # ask for confirmation before sending
+        self._prompt_enhancer_history = False      # include session history as context
         from toolboxv2.mods.isaa.extras.isaa_branding import FlowMatrixAnimation, print_isaa_header
 
         self.anim = FlowMatrixAnimation(state='initializing', fps=3)
@@ -4648,6 +4677,7 @@ class ISAA_Host:
 
         # Self Agent initialization flag
         self._self_agent_initialized = False
+        self._pending_resume_checkpoints: dict = {}
 
         self._task_views: dict[str, TaskView] = {}
         self._overlay: TaskOverlay | None = None
@@ -4850,6 +4880,15 @@ class ISAA_Host:
                     self.active_agent_name = state.get("active_agent", "self")
                     self.active_session_id = state.get("active_session", "default")
                     self.audio_device_index = state.get("audio_device_index", 0)
+                    # Prompt Enhancer
+                    pe = state.get("prompt_enhancer", {})
+                    self._prompt_enhancer_enabled = pe.get("enabled", False)
+                    self._prompt_enhancer_mode = pe.get("mode", "both")
+                    self._prompt_enhancer_custom = pe.get("custom", "")
+                    self._prompt_enhancer_ask = pe.get("ask", False)
+                    self._prompt_enhancer_history = pe.get("history", False)
+                    self.max_iteration = state.get("max_iteration", self.max_iteration)
+                    self.verbose_audio = state.get("verbose_audio", False)
                     for name, info in state.get("agent_registry", {}).items():
                         self.agent_registry[name] = AgentInfo(
                             name=name,
@@ -4860,6 +4899,10 @@ class ISAA_Host:
                             cli_tools=info.get("cli_tools", []),
                             bound_agents=info.get("bound_agents", []),
                         )
+
+                    # Stash resumable checkpoints — restored lazily when agent is available
+                    self._pending_resume_checkpoints = state.get("resumable_executions", {})
+
             except Exception as e:
                 print_status(f"Failed to load state: {e}", "warning")
 
@@ -4867,10 +4910,40 @@ class ISAA_Host:
         """Save host state to disk."""
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Collect resumable execution checkpoints
+            resumable_checkpoints = {}
+            try:
+                for agent_name, info in self.agent_registry.items():
+                    instance_key = f"agent-instance-{agent_name}"
+                    if instance_key not in self.isaa_tools.config:
+                        continue
+                    agent = self.isaa_tools.config[instance_key]
+                    if not hasattr(agent, '_get_execution_engine'):
+                        continue
+                    engine = agent._get_execution_engine()
+                    for eid, ctx in engine._active_executions.items():
+                        if ctx.status in ("paused", "max_iterations"):
+                            resumable_checkpoints[eid] = {
+                                "agent_name": agent_name,
+                                "checkpoint": ctx.to_checkpoint(),
+                            }
+            except Exception:
+                pass  # Best-effort — don't block save
+
             state = {
                 "active_agent": self.active_agent_name,
                 "active_session": self.active_session_id,
                 "audio_device_index": self.audio_device_index,
+                "prompt_enhancer": {
+                    "enabled": self._prompt_enhancer_enabled,
+                    "mode": self._prompt_enhancer_mode,
+                    "custom": self._prompt_enhancer_custom,
+                    "ask": self._prompt_enhancer_ask,
+                    "history": self._prompt_enhancer_history,
+                },
+                "max_iteration": self.max_iteration,
+                "verbose_audio": self.verbose_audio,
                 "agent_registry": {
                     name: {
                         "persona": info.persona,
@@ -4882,12 +4955,49 @@ class ISAA_Host:
                     }
                     for name, info in self.agent_registry.items()
                 },
+                "resumable_executions": resumable_checkpoints,
             }
             with open(self.state_file, "w", encoding="utf-8") as f:
                 json.dump(state, f, indent=2)
         except Exception as e:
             print_status(f"Failed to save state: {e}", "error")
 
+    async def _restore_resumable_executions(self):
+        """
+        Restore persisted resumable executions into agent engines.
+        Called once after agent initialization. Best-effort.
+        """
+        pending = getattr(self, "_pending_resume_checkpoints", {})
+        if not pending:
+            return
+
+        from toolboxv2.mods.isaa.base.Agent.execution_engine import ExecutionContext
+
+        restored = 0
+        for eid, entry in pending.items():
+            agent_name = entry.get("agent_name", "self")
+            checkpoint = entry.get("checkpoint", {})
+            if not checkpoint:
+                continue
+            try:
+                agent = await self.isaa_tools.get_agent(agent_name)
+                engine = agent._get_execution_engine()
+
+                # Don't overwrite if already exists
+                if eid in engine._active_executions:
+                    continue
+
+                ctx = ExecutionContext.from_checkpoint(checkpoint)
+                ctx.status = "paused"  # Ensure resumable state
+                engine._active_executions[ctx.run_id] = ctx
+                restored += 1
+            except Exception:
+                continue
+
+        if restored:
+            print_status(f"Restored {restored} resumable execution(s) from last session", "info")
+
+        self._pending_resume_checkpoints = {}
 
     @staticmethod
     def _save_to_vfs_and_insert(buf, content: str, vfs, filename: str):
@@ -5061,7 +5171,7 @@ class ISAA_Host:
 
         @kb.add("f9")
         def _(event):
-            """F9: Abgeschlossene Tasks aus der Ansicht entfernen."""
+            """F9: Abgeschlossene Tasks + persisted resumable executions entfernen."""
             done_ids = [
                 tid for tid, t in self.all_executions.items()
                 if t.status in ("completed", "failed", "error", "cancelled")
@@ -5071,9 +5181,50 @@ class ISAA_Host:
                 self._task_views.pop(tid, None)
                 if self._focused_task_id == tid:
                     self._focused_task_id = None
-            if done_ids:
+
+            # Also remove orphaned sub-TaskViews not in all_executions
+            orphan_ids = [
+                tid for tid, tv in self._task_views.items()
+                if tv.status in ("completed", "failed", "error", "cancelled")
+                   and tid not in self.all_executions
+            ]
+            for tid in orphan_ids:
+                self._task_views.pop(tid, None)
+                if self._focused_task_id == tid:
+                    self._focused_task_id = None
+
+            # Also clear persisted resumable executions from engines
+            cleared_resume = 0
+            try:
+                for agent_name in list(self.agent_registry.keys()):
+                    instance_key = f"agent-instance-{agent_name}"
+                    if instance_key not in self.isaa_tools.config:
+                        continue
+                    agent = self.isaa_tools.config[instance_key]
+                    if not hasattr(agent, '_get_execution_engine'):
+                        continue
+                    engine = agent._get_execution_engine()
+                    stale_ids = [
+                        eid for eid, ctx in engine._active_executions.items()
+                        if ctx.status in ("paused", "max_iterations", "completed", "cancelled")
+                    ]
+                    for eid in stale_ids:
+                        engine._active_executions.pop(eid, None)
+                        cleared_resume += 1
+            except Exception:
+                pass
+
+            # Clear pending checkpoints too
+            if hasattr(self, '_pending_resume_checkpoints'):
+                self._pending_resume_checkpoints = {}
+
+            # Persist the cleanup
+            self._save_state()
+
+            total = len(done_ids) + cleared_resume
+            if total:
                 c_print(HTML(
-                    f"<style fg='{PTColors.ZEN_DIM}'>  ✓ {len(done_ids)} task(s) closed</style>"
+                    f"<style fg='{PTColors.ZEN_DIM}'>  ✓ {len(done_ids)} task(s) + {cleared_resume} resumable execution(s) cleared</style>"
                 ))
 
         @kb.add("f2")
@@ -5287,9 +5438,11 @@ class ISAA_Host:
             is_self_agent=True,
             has_shell_access=True,
         )
-
         self._self_agent_initialized = True
         print_status("Self Agent initialized", "success")
+
+        # Restore persisted resumable executions into engines
+        await self._restore_resumable_executions()
 
     def _apply_rate_limiter_to_builder(self, builder: FlowAgentBuilder):
         """Apply global rate limiter config to a builder."""
@@ -6341,7 +6494,7 @@ class ISAA_Host:
             "/agent": None, "/audio": None, "/coder": None, "/job": None,
             "/mcp": None,"/cli": None, "/session": None, "/skill": None, "/task": None,
             "/tools": None, "/vfs": None, "/feature": None, "/chain": None,
-            "/set_max_iterations": None
+            "/set_max_iterations": None, "/prompt": None,
         }
 
         # Die spezifischen Hilfe-Kategorien
@@ -6506,6 +6659,16 @@ class ISAA_Host:
                 "status": None,
                 "config": None,
             },
+            "/prompt": {
+                "on": None,
+                "off": None,
+                "mode": {"spelling": None, "custom": None, "both": None},
+                "set": None,
+                "ask": {"on": None, "off": None},
+                "history": {"on": None, "off": None},
+                "clear": None,
+                "test": None,
+            },
 
         }, VFSCompleter(session.vfs) if is_vfs else None
 
@@ -6537,6 +6700,12 @@ class ISAA_Host:
             tags = " ".join(f"<style fg='{PTColors.ZEN_DIM}'>{f}</style>" for f in active_feats)
             feat_indicator = f" {tags}"
 
+        # Prompt enhancer indicator
+        pe_indicator = (
+            f" <style fg='ansimagenta'>[PE:{self._prompt_enhancer_mode}]</style>"
+            if self._prompt_enhancer_enabled else ""
+        )
+
         return HTML(
             f"<style fg='ansicyan'>[</style>"
             f"<style fg='ansigreen'>{cwd_name}</style>"
@@ -6544,7 +6713,7 @@ class ISAA_Host:
             f"{agent_indicator}"
             f"{mode_indicator}"
             f"<style fg='grey'>@{self.active_session_id}</style>"
-            f"{bg_indicator}{audio_indicator}{feat_indicator}"
+            f"{bg_indicator}{audio_indicator}{pe_indicator}{feat_indicator}"
             f"\n<style fg='ansiblue'>></style> "
         )
 
@@ -6552,8 +6721,13 @@ class ISAA_Host:
         if self.zen_plus_mode or self._overlay is not None:
             return []
         off_set = 0
-        if self._focused_task_id and self._focused_task_id in self.all_executions:
-            off_set = list(self.all_executions.keys()).index(self._focused_task_id)
+        if self._focused_task_id and self._focused_task_id in self._task_views:
+            # reversed list = neueste zuerst, offset muss in reversed space sein
+            keys_reversed = list(self._task_views.keys())[::-1]
+            try:
+                off_set = keys_reversed.index(self._focused_task_id)
+            except ValueError:
+                off_set = 0
         return render_footer_toolbar(
             task_views=self._task_views,
             focused_id=self._focused_task_id,
@@ -7206,6 +7380,18 @@ class ISAA_Host:
         elif cmd == "/agent":
             await self._cmd_agent(args)
 
+        elif cmd == "/state":
+
+            if self.state_file.exists():
+                try:
+                    with open(self.state_file, encoding="utf-8") as f:
+                        state = json.load(f)
+                    print_code_block(state, language="json")
+                except Exception as e:
+                    print_status(f"Error reading icli state file {self.state_file}", status="error")
+            else:
+                print_status(f"cli state file {self.state_file} not found will be cated on first exit", status="warning")
+
         elif cmd == "/session":
             await self._cmd_session(args)
 
@@ -7281,6 +7467,9 @@ class ISAA_Host:
                 print_code_block(json.dumps(self._rate_limiter_config, indent=2), "json")
             else:
                 print_status("Usage: /rate-limiter status", "warning")
+
+        elif cmd == "/prompt":
+            await self._cmd_prompt(args)
 
         else:
             print_status(f"Unknown command: {cmd}. Type /help for help.", "error")
@@ -11591,12 +11780,199 @@ class ISAA_Host:
 
         return exc
 
+    # ── Prompt Enhancer ────────────────────────────────────────────────────
+    async def _enhance_prompt(self, user_input: str) -> str:
+        """Run user input through a fast LLM call for spelling/intent/custom enhancement."""
+        if not self._prompt_enhancer_enabled:
+            return user_input
+
+        agent = await self.isaa_tools.get_agent(self.active_agent_name)
+
+        # Build system instruction based on mode
+        parts = []
+        if self._prompt_enhancer_mode in ("spelling", "both"):
+            parts.append(
+                "Fix spelling errors, grammar, and punctuation. "
+                "Align intent so the prompt is clear and unambiguous for an AI agent. "
+                "Preserve the original language (German/English mix is fine). "
+                "Do NOT add information the user did not provide."
+            )
+        if self._prompt_enhancer_mode in ("custom", "both") and self._prompt_enhancer_custom:
+            parts.append(self._prompt_enhancer_custom)
+
+        system_msg = (
+            "You are a prompt enhancer. Your ONLY job is to rewrite the user's prompt "
+            "according to these rules:\n" + "\n".join(f"- {p}" for p in parts) + "\n\n"
+            "Return ONLY the improved prompt text. No explanations, no markdown, no quotes."
+        )
+
+        messages = [{"role": "system", "content": system_msg}]
+
+        # Optionally include session history for context
+        if self._prompt_enhancer_history:
+            try:
+                session = agent.session_manager.get(self.active_session_id)
+                if session:
+                    history = session.get_history(last_n=4)
+                    if history:
+                        ctx = "\n".join(
+                            f"{m['role']}: {m.get('content', '')[:200]}" for m in history
+                        )
+                        messages.append({
+                            "role": "user",
+                            "content": f"[Recent conversation context for reference]\n{ctx}"
+                        })
+                        messages.append({
+                            "role": "assistant",
+                            "content": "Understood, I'll use this context to better enhance the next prompt."
+                        })
+            except Exception:
+                pass
+
+        messages.append({"role": "user", "content": user_input})
+
+        try:
+            with Spinner("Enhancing prompt"):
+                enhanced = await agent.a_run_llm_completion(
+                    messages=messages,
+                    model_preference="fast",
+                    with_context=False,
+                    stream=False,
+                    get_response_message=False,
+                    task_id="prompt-enhancer",
+                )
+            enhanced = (enhanced or "").strip()
+            if not enhanced:
+                return user_input
+
+            # Show diff
+            c_print(HTML(
+                f"<style fg='{PTColors.ZEN_DIM}'>── enhanced ──</style>\n"
+                f"<style fg='{PTColors.ZEN_CYAN}'>{esc(enhanced)}</style>"
+            ))
+
+            # Ask for confirmation if enabled
+            if self._prompt_enhancer_ask:
+                with patch_stdout():
+                    choice = await self.prompt_session.prompt_async(
+                        HTML(f"<style fg='{PTColors.ZEN_DIM}'>[Enter]=accept  [e]=edit  [n]=use original ▸ </style>")
+                    )
+                choice = choice.strip().lower()
+                if choice == "n":
+                    return user_input
+                elif choice == "e":
+                    with patch_stdout():
+                        edited = await self.prompt_session.prompt_async(
+                            HTML(f"<style fg='ansiblue'>edit▸ </style>"),
+                            default=enhanced
+                        )
+                    return edited.strip() or user_input
+
+            return enhanced
+
+        except Exception as e:
+            print_status(f"Prompt enhancer failed: {e}", "warning")
+            return user_input
+
+    async def _cmd_prompt(self, args: list[str]):
+        """Handle /prompt commands."""
+        if not args:
+            # Show current status
+            status = "ON" if self._prompt_enhancer_enabled else "OFF"
+            print_box_header("Prompt Enhancer", "✏")
+            print_box_content(f"Status:  {status}", "")
+            print_box_content(f"Mode:    {self._prompt_enhancer_mode}", "")
+            print_box_content(f"Ask:     {'on' if self._prompt_enhancer_ask else 'off'}", "")
+            print_box_content(f"History: {'on' if self._prompt_enhancer_history else 'off'}", "")
+            custom_preview = (self._prompt_enhancer_custom[:60] + "...") if len(self._prompt_enhancer_custom) > 60 else (self._prompt_enhancer_custom or "(empty)")
+            print_box_content(f"Custom:  {custom_preview}", "")
+            print_box_footer()
+            return
+
+        action = args[0].lower()
+
+        if action == "on":
+            self._prompt_enhancer_enabled = True
+            self._save_state()
+            print_status("Prompt enhancer enabled", "success")
+
+        elif action == "off":
+            self._prompt_enhancer_enabled = False
+            self._save_state()
+            print_status("Prompt enhancer disabled", "success")
+
+        elif action == "mode":
+            if len(args) < 2 or args[1] not in ("spelling", "custom", "both"):
+                print_status("Usage: /prompt mode <spelling|custom|both>", "warning")
+                return
+            self._prompt_enhancer_mode = args[1]
+            self._save_state()
+            print_status(f"Mode set to '{args[1]}'", "success")
+
+        elif action == "set":
+            text = " ".join(args[1:]).strip()
+            if not text:
+                # Interactive multi-line input
+                print_status("Enter custom prompt instruction (empty line to finish):", "info")
+                lines = []
+                while True:
+                    with patch_stdout():
+                        line = await self.prompt_session.prompt_async(
+                            HTML("<style fg='grey'>... </style>")
+                        )
+                    if not line.strip():
+                        break
+                    lines.append(line)
+                text = "\n".join(lines)
+            self._prompt_enhancer_custom = text
+            self._save_state()
+            print_status(f"Custom prompt set ({len(text)} chars)", "success")
+
+        elif action == "ask":
+            if len(args) < 2 or args[1] not in ("on", "off"):
+                print_status("Usage: /prompt ask <on|off>", "warning")
+                return
+            self._prompt_enhancer_ask = args[1] == "on"
+            self._save_state()
+            print_status(f"Ask confirmation {'enabled' if self._prompt_enhancer_ask else 'disabled'}", "success")
+
+        elif action == "history":
+            if len(args) < 2 or args[1] not in ("on", "off"):
+                print_status("Usage: /prompt history <on|off>", "warning")
+                return
+            self._prompt_enhancer_history = args[1] == "on"
+            self._save_state()
+            print_status(f"History context {'enabled' if self._prompt_enhancer_history else 'disabled'}", "success")
+
+        elif action == "clear":
+            self._prompt_enhancer_custom = ""
+            self._save_state()
+            print_status("Custom prompt cleared", "success")
+
+        elif action == "test":
+            test_input = " ".join(args[1:]).strip() or "helo wrld ich wil das der agent mir hilft"
+            was_enabled = self._prompt_enhancer_enabled
+            self._prompt_enhancer_enabled = True
+            result = await self._enhance_prompt(test_input)
+            self._prompt_enhancer_enabled = was_enabled
+            c_print(HTML(f"<style fg='{PTColors.ZEN_DIM}'>Original: {esc(test_input)}</style>"))
+            c_print(HTML(f"<style fg='{PTColors.ZEN_GREEN}'>Enhanced: {esc(result)}</style>"))
+
+        else:
+            print_status("Usage: /prompt <on|off|mode|set|ask|history|clear|test>", "warning")
+
     async def _handle_agent_interaction(self, user_input: str):
         if self.active_coder and not user_input.startswith("@"):
             await self._cmd_coder(["task", user_input])
             return
         elif self.active_coder and user_input.startswith("@"):
             user_input = user_input[1:]
+
+        # ── Prompt Enhancer ──────────────────────────────────────────────
+        if self._prompt_enhancer_enabled and not user_input.startswith("!"):
+            user_input = await self._enhance_prompt(user_input)
+            if not user_input.strip():
+                return
 
         try:
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
@@ -12165,8 +12541,9 @@ class ISAA_Host:
                     f"{_esc(tool_summary)}</style>"
                 )
             if last_iv.pending_tool:
+                args_hint = f"  ({_esc(_short(last_iv.pending_tool_args, 50))})" if last_iv.pending_tool_args else ""
                 lines.append(
-                    f"<style fg='#fbbf24'>  ⟳ Läuft:   {_esc(last_iv.pending_tool)}</style>"
+                    f"<style fg='#fbbf24'>  ⟳ Läuft:   {_esc(last_iv.pending_tool)}{args_hint}</style>"
                 )
 
         if tv.narrator_msg:

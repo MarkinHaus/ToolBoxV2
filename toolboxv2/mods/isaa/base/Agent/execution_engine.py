@@ -179,6 +179,114 @@ DISCOVERY_TOOLS = [
     },
 ]
 
+SKILL_DISCOVERY_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_skills",
+            "description": "List all available skills with their triggers, confidence, and status. Use this to discover learned behaviors and workflows you can activate.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": ["string", "null"],
+                        "description": "Optional: filter skills by keyword relevance to this query",
+                    },
+                    "include_inactive": {
+                        "type": "boolean",
+                        "description": "Include skills below activation threshold (default: false)",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "activate_skill",
+            "description": "Activate a skill by name or ID. This injects the skill's instruction into your current context and preloads its recommended tools. Use after list_skills to apply a specific workflow.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_id": {
+                        "type": "string",
+                        "description": "The skill ID or name to activate",
+                    },
+                },
+                "required": ["skill_id"],
+            },
+        },
+    },
+]
+
+CODING_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "write_patch",
+            "description": (
+                "Apply a patch to an existing VFS file. Internally: "
+                "1) Reads the file + collects context you provide, "
+                "2) Uses a complex LLM to generate a precise patch in one shot, "
+                "3) Validates the result (syntax, structure). "
+                "You provide the file path and a clear description of WHAT to change and WHY. "
+                "The tool handles the actual code generation. One file per call."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "VFS path of the file to patch (e.g. /project/src/main.py)",
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "Detailed description of what to change, why, and any constraints. Include relevant context (function signatures, error messages, test expectations).",
+                    },
+                    "context_files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional: additional VFS file paths to read as context for the patch (imports, related modules, tests)",
+                    },
+                },
+                "required": ["file_path", "task"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": (
+                "Create a new file in VFS. Internally: "
+                "1) Collects context from your description + optional reference files, "
+                "2) Uses a complex LLM to generate the complete file in one shot, "
+                "3) Validates syntax. "
+                "You provide the target path, purpose, and detailed spec. One file per call."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "VFS path for the new file (e.g. /project/src/utils.py)",
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "Detailed spec: what the file should contain, its purpose, interfaces, constraints. The more precise, the better the output.",
+                    },
+                    "context_files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional: VFS file paths to read as reference (existing modules, interfaces, types)",
+                    },
+                },
+                "required": ["file_path", "task"],
+            },
+        },
+    },
+]
+
 # VFS Tools - always available for file navigation (part of static)
 VFS_TOOL_NAMES = ["vfs_read", "vfs_write", "vfs_list", "vfs_navigate", "vfs_control"]
 _VFS_PERSONAS = "/global/.memory/dreamer/personas.json"
@@ -1459,6 +1567,58 @@ BEISPIELE:
 
             self.skills_manager.skills["job_management"] = Skill(**JOB_MANAGEMENT_SKILL)
 
+        # Add coding_workflow skill
+        if "coding_workflow" not in self.skills_manager.skills:
+            CODING_WORKFLOW_SKILL = {
+                "id": "coding_workflow",
+                "name": "OODA Coding Workflow",
+                "triggers": [
+                    "code", "coding", "programmieren", "implement", "implementieren",
+                    "fix bug", "bugfix", "refactor", "patch", "write code", "code schreiben",
+                    "function", "funktion", "class", "klasse", "method", "methode",
+                    "file erstellen", "datei erstellen", "code ändern", "modify code",
+                    "feature implementieren", "test schreiben", "write test",
+                ],
+                "instruction": (
+                    "CODING WORKFLOW — OODA LOOP (mandatory for every code task):\n\n"
+                    "O — OBSERVE: Gather raw data.\n"
+                    "  • Use vfs_read / vfs_list / vfs_navigate to read existing code.\n"
+                    "  • If no fitting tool loaded → list_tools + load_tools.\n"
+                    "  • Read errors, stacktraces, test outputs — raw facts only.\n"
+                    "  • NEVER hypothesize without code evidence.\n\n"
+                    "O — ORIENT: Use think() to analyze.\n"
+                    "  • Extract facts that follow directly from the code.\n"
+                    "  • List what is NOT known and cannot be determined without more code.\n"
+                    "  • If multiple root causes possible → list all, pick most likely.\n"
+                    "  • NO fixes in this phase.\n\n"
+                    "D — DECIDE: Pick exactly ONE next action.\n"
+                    "  • For new code/files → use write_file tool.\n"
+                    "  • For patches to existing files → use write_patch tool.\n"
+                    "  • Both tools handle LLM generation + validation internally.\n"
+                    "  • If objective met → final_answer.\n\n"
+                    "A — ACT: Execute the decision.\n"
+                    "  • After state-changing actions → OBSERVE again to verify.\n"
+                    "  • Only exact fixes needed, no refactorings, no bonus features.\n\n"
+                    "RULES:\n"
+                    "  • Concise. 50 lines when 500 would be possible.\n"
+                    "  • No 'probably', 'might be', 'could be' without code evidence.\n"
+                    "  • Python 3.10+, async-first where framework requires it.\n"
+                    "  • unittest exclusively — never pytest.\n"
+                    "  • Error handling: never swallow errors (except: pass).\n"
+                    "  • Deliver ONLY what is requested. No extras."
+                ),
+                "tools_used": [
+                    "vfs_read", "vfs_write", "vfs_list", "vfs_navigate",
+                    "write_patch", "write_file",
+                    "think", "final_answer", "load_tools", "list_tools",
+                ],
+                "tool_groups": ["vfs"],
+                "source": "predefined",
+            }
+
+            from toolboxv2.mods.isaa.base.Agent.skills import Skill as _Skill
+            self.skills_manager.skills["coding_workflow"] = _Skill(**CODING_WORKFLOW_SKILL)
+
         # Auto-group tools if not done yet
         if not self.skills_manager.tool_groups:
             self._auto_setup_tool_groups()
@@ -2101,7 +2261,7 @@ BEISPIELE:
                 messages = list(ctx.working_history)
                 focus_msg = ctx.auto_focus.get_focus_message()
                 if focus_msg:
-                    messages.insert(1, focus_msg)
+                    messages.insert(-1, focus_msg)
 
                 # Get tool definitions
                 tool_definitions = self._get_tool_definitions(ctx)
@@ -2455,6 +2615,14 @@ BEISPIELE:
                     ):
                         f_name = tc.get("function", {}).get("name", "")
                         f_args = tc.get("function", {}).get("arguments", "{}")
+                        # Notify narrator so external systems see tool context
+                        args_preview = ""
+                        try:
+                            _parsed = json.loads(f_args) if isinstance(f_args, str) else f_args
+                            args_preview = str(_parsed.get(list(_parsed.keys())[0], ""))[:80] if _parsed else ""
+                        except Exception:
+                            args_preview = str(f_args)[:80]
+                        self._narrator.on_tool_start(f"{f_name} {args_preview}")
                         yield enrich(
                             {"type": "tool_start", "name": f_name, "args": f_args}
                         )
@@ -2907,6 +3075,14 @@ BEISPIELE:
                             f_args = tc.function.arguments
                         except Exception:
                             f_args = "{}"
+                        # Notify narrator so external systems see tool context
+                        args_preview = ""
+                        try:
+                            _parsed = json.loads(f_args) if isinstance(f_args, str) else f_args
+                            args_preview = str(_parsed.get(list(_parsed.keys())[0], ""))[:80] if _parsed else ""
+                        except Exception:
+                            args_preview = str(f_args)[:80]
+                        self._narrator.on_tool_start(f"{f_name} {args_preview}")
                         yield enrich(
                             {"type": "tool_start", "name": f_name, "args": f_args}
                         )
@@ -3535,6 +3711,18 @@ BEISPIELE:
             is_final = True
             # Don't record final_answer in AutoFocus
 
+        elif f_name == "shift_focus":
+            try:
+                result = await self._tool_shift_focus(
+                    ctx,
+                    f_args.get("summary_of_achievements", ""),
+                    f_args.get("next_objective", ""),
+                )
+            except Exception as e:
+                print(e)
+                import traceback
+                result = traceback.format_exc()
+
         # === DISCOVERY TOOLS ===
         elif f_name == "list_tools":
             result = await self._tool_list_tools(
@@ -3545,12 +3733,35 @@ BEISPIELE:
             tools_input: str | list[str] = f_args.get("tools", [])
             result = await self._tool_load_tools(ctx, tools_input)
 
-        elif f_name == "shift_focus":
-            result = await self._tool_shift_focus(
+        # === CODING TOOLS ===
+        elif f_name == "write_patch":
+            result = await self._tool_write_patch(
                 ctx,
-                f_args.get("summary_of_achievements", ""),
-                f_args.get("next_objective", ""),
+                file_path=f_args.get("file_path", ""),
+                task=f_args.get("task", ""),
+                context_files=f_args.get("context_files", []),
             )
+
+        elif f_name == "write_file":
+            result = await self._tool_write_new_file(
+                ctx,
+                file_path=f_args.get("file_path", ""),
+                task=f_args.get("task", ""),
+                context_files=f_args.get("context_files", []),
+            )
+
+        # === SKILL DISCOVERY TOOLS ===
+        elif f_name == "list_skills":
+            result = await self._tool_list_skills(
+                query=f_args.get("query"),
+                include_inactive=f_args.get("include_inactive", False),
+            )
+
+        elif f_name == "activate_skill":
+            result = await self._tool_activate_skill(
+                ctx, f_args.get("skill_id", "")
+            )
+
 
         # === SUB-AGENT TOOLS ===
         elif f_name == "spawn_sub_agent":
@@ -4255,6 +4466,566 @@ BEISPIELE:
 
         return result
 
+    # =========================================================================
+    # CODING TOOLS: write_patch / write_file
+    # 3-step loop: 1) collect data  2) one-shot LLM generation  3) validate
+    # =========================================================================
+
+    _CODING_MODEL = os.environ.get("CODING_MODEL", None)  # explicit override
+
+    def _get_coding_model_kwargs(self) -> dict:
+        """Get model kwargs for coding LLM calls."""
+        if self._CODING_MODEL:
+            return {"model": self._CODING_MODEL}
+        return {"model_preference": "complex"}
+
+    async def _collect_vfs_context(
+        self, ctx: ExecutionContext, file_paths: list[str]
+    ) -> str:
+        """Read multiple VFS files and return concatenated context string."""
+        if not self._current_session:
+            return ""
+        parts = []
+        for path in file_paths:
+            path = path.strip()
+            if not path:
+                continue
+            try:
+                result = self._current_session.vfs_read(path)
+                if isinstance(result, dict) and result.get("success"):
+                    content = result.get("content", "")
+                    parts.append(f"=== FILE: {path} ===\n{content}\n=== END: {path} ===")
+                elif isinstance(result, str):
+                    parts.append(f"=== FILE: {path} ===\n{result}\n=== END: {path} ===")
+            except Exception as e:
+                parts.append(f"=== FILE: {path} === ERROR: {e} ===")
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _parse_code_from_md(md_text: str) -> list[tuple[str, str]]:
+        """
+        Parse markdown code blocks. Returns list of (file_path, code_content).
+        Supports:
+          ```python:path/to/file.py
+          ```path/to/file.py
+          ```python
+          (no path → returned as ("", content))
+        """
+        import re
+        blocks = []
+        # Match ``` with optional lang:path or just path
+        pattern = re.compile(
+            r'```(?:[a-zA-Z]*:?)?([^\n`]*)\n(.*?)```',
+            re.DOTALL,
+        )
+        for match in pattern.finditer(md_text):
+            path_hint = match.group(1).strip().strip(":").strip()
+            content = match.group(2)
+            # Clean trailing whitespace but preserve internal structure
+            content = content.rstrip() + "\n"
+            blocks.append((path_hint, content))
+
+        # Fallback: if no code blocks found, treat entire text as code
+        if not blocks and md_text.strip():
+            blocks.append(("", md_text.strip() + "\n"))
+
+        return blocks
+
+    @staticmethod
+    def _validate_python_syntax(code: str, file_path: str = "") -> tuple[bool, str]:
+        """Validate Python syntax. Returns (ok, error_message)."""
+        if not file_path.endswith(".py"):
+            return True, ""  # Skip non-Python files
+        try:
+            import ast
+            ast.parse(code, filename=file_path or "<string>")
+            return True, ""
+        except SyntaxError as e:
+            return False, f"SyntaxError at line {e.lineno}: {e.msg}"
+
+    @staticmethod
+    def _validate_patch_applies(original: str, patch_content: str) -> tuple[bool, str]:
+        """
+        Validate that a patch (full file replacement) is structurally sound.
+        Checks: not empty, has content, preserves key structures.
+        """
+        if not patch_content.strip():
+            return False, "Patch is empty"
+        if len(patch_content.strip()) < 10:
+            return False, "Patch suspiciously short"
+
+        # Check that imports from original are roughly preserved
+        import re
+        orig_imports = set(re.findall(r'^(?:from|import)\s+\S+', original, re.MULTILINE))
+        patch_imports = set(re.findall(r'^(?:from|import)\s+\S+', patch_content, re.MULTILINE))
+        missing_imports = orig_imports - patch_imports
+        if missing_imports and len(missing_imports) > len(orig_imports) * 0.5:
+            return False, f"Patch drops >50% of imports: {', '.join(list(missing_imports)[:5])}"
+
+        return True, ""
+
+    async def _tool_write_new_file(
+        self,
+        ctx: ExecutionContext,
+        file_path: str,
+        task: str,
+        context_files: list[str] | None = None,
+    ) -> str:
+        """
+        3-step tool: collect context → one-shot generate → validate + write.
+        """
+        if not file_path or not task:
+            return "Error: file_path and task are required."
+
+        if not self._current_session:
+            return "Error: No active session."
+
+        self.live.status_msg = f"write_file: generating {file_path}"
+        max_retries = 2
+
+        # ── STEP 1: Data Collection ──
+        context_str = ""
+        if context_files:
+            context_str = await self._collect_vfs_context(ctx, context_files)
+
+        for attempt in range(max_retries):
+            self.live.status_msg = f"write_file: generating (attempt {attempt + 1}/{max_retries})"
+
+            # ── STEP 2: One-shot LLM generation ──
+            system_prompt = (
+                "You are a precise code generation engine. Generate a complete file based on the spec.\n"
+                f"Output the file inside a single markdown code block:\n"
+                f"```python:{file_path}\n<complete file content>\n```\n\n"
+                "RULES:\n"
+                "- Generate ONLY what the spec requires. No extras.\n"
+                "- Follow existing patterns from context files if provided.\n"
+                "- Output ONLY the code block, no explanation.\n"
+                "- Python 3.10+, type hints, docstrings for public APIs."
+            )
+
+            user_prompt = f"## New File: {file_path}\n\n## Spec:\n{task}"
+            if context_str:
+                user_prompt += f"\n\n## Reference Files:\n\n{context_str}"
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+
+            try:
+                response = await self.agent.a_run_llm_completion(
+                    messages=messages,
+                    stream=False,
+                    with_context=False,
+                    **self._get_coding_model_kwargs(),
+                )
+
+                if not response or not response:
+                    if attempt < max_retries - 1:
+                        continue
+                    return "Error: LLM returned empty response."
+
+                llm_output = response
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    continue
+                return f"Error: LLM call failed: {e}"
+
+            # ── STEP 3: Parse + Validate ──
+            blocks = self._parse_code_from_md(llm_output)
+            if not blocks:
+                if attempt < max_retries - 1:
+                    continue
+                return "Error: Could not parse code from LLM output."
+
+            _, file_content = blocks[0]
+
+            # Validate syntax
+            syntax_ok, syntax_err = self._validate_python_syntax(file_content, file_path)
+            if not syntax_ok:
+                if attempt < max_retries - 1:
+                    task = f"{task}\n\nPREVIOUS ATTEMPT HAD SYNTAX ERROR: {syntax_err}\nFix this."
+                    continue
+                return f"Error: Syntax error after {max_retries} attempts: {syntax_err}"
+
+            # ── Write to VFS ──
+            try:
+                self._current_session.vfs_write(file_path, file_content)
+            except Exception as e:
+                return f"Error: VFS write failed: {e}"
+
+            lines = len(file_content.splitlines())
+            self.live.status_msg = f"write_file: done ({file_path})"
+
+            return (
+                f"✅ File created: {file_path}\n"
+                f"Lines: {lines}\n"
+                f"Attempt: {attempt + 1}/{max_retries}"
+            )
+
+        return "Error: All generation attempts failed."
+
+    async def _tool_write_patch(
+        self,
+        ctx: ExecutionContext,
+        file_path: str,
+        task: str,
+        context_files: list[str] | None = None,
+    ) -> str:
+        """
+        3-step tool: collect → generate unified diff patch → validate via git apply --check → apply.
+        NEVER writes a full file replacement. Always produces a .patch (unified diff).
+        """
+        if not file_path or not task:
+            return "Error: file_path and task are required."
+
+        if not self._current_session:
+            return "Error: No active session."
+
+        self.live.status_msg = f"write_patch: reading {file_path}"
+        max_retries = 3
+
+        # ── STEP 1: Data Collection (programmatic, no agent loop) ──
+        try:
+            target_result = self._current_session.vfs_read(file_path)
+            if isinstance(target_result, dict):
+                if not target_result.get("success"):
+                    return f"Error: Cannot read {file_path}: {target_result.get('error', 'unknown')}"
+                original_content = target_result.get("content", "")
+            else:
+                original_content = str(target_result)
+        except Exception as e:
+            return f"Error: Cannot read {file_path}: {e}"
+
+        context_str = ""
+        if context_files:
+            context_str = await self._collect_vfs_context(ctx, context_files)
+
+        # Resolve real disk path for git apply (VFS may shadow a real file)
+        disk_path = None
+        try:
+            vfs = self._current_session.vfs
+            f_entry = vfs.files.get(file_path)
+            if f_entry and hasattr(f_entry, "real_path") and f_entry.real_path:
+                disk_path = str(f_entry.real_path)
+        except Exception:
+            pass
+
+        for attempt in range(max_retries):
+            self.live.status_msg = f"write_patch: generating diff (attempt {attempt + 1}/{max_retries})"
+
+            # ── STEP 2: One-shot LLM → unified diff ──
+            system_prompt = (
+                "You are a precise patch generation engine.\n"
+                "You receive a source file and a task. Generate a UNIFIED DIFF PATCH.\n\n"
+                "OUTPUT FORMAT — strictly:\n"
+                "```diff\n"
+                f"--- a/{file_path}\n"
+                f"+++ b/{file_path}\n"
+                "@@ -<start>,<count> +<start>,<count> @@\n"
+                " <context line>\n"
+                "-<removed line>\n"
+                "+<added line>\n"
+                " <context line>\n"
+                "```\n\n"
+                "RULES:\n"
+                "- Output a valid unified diff (as produced by `git diff`), nothing else.\n"
+                "- Include 3 lines of context around each hunk.\n"
+                "- Use multiple hunks if changes are in separate regions.\n"
+                "- Line counts in @@ headers MUST be correct.\n"
+                "- Do NOT output the full file. Only the diff.\n"
+                "- Do NOT add explanations before or after the diff block.\n"
+                "- Preserve exact whitespace and indentation of unchanged lines.\n"
+                "- If the task requires changes in multiple places, use multiple @@ hunks.\n"
+            )
+
+            user_prompt = (
+                f"## Target File: {file_path}\n"
+                f"## Lines: {len(original_content.splitlines())}\n\n"
+                f"```\n{original_content}\n```\n\n"
+            )
+            if context_str:
+                user_prompt += f"## Context Files:\n\n{context_str}\n\n"
+            user_prompt += f"## Task:\n{task}"
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+
+            try:
+                response = await self.agent.a_run_llm_completion(
+                    messages=messages,
+                    stream=False,
+                    with_context=False,
+                    **self._get_coding_model_kwargs(),
+                )
+                if not response:
+                    if attempt < max_retries - 1:
+                        continue
+                    return "Error: LLM returned empty response for patch generation."
+                llm_output = response
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    continue
+                return f"Error: LLM call failed: {e}"
+
+            # ── Parse diff block from markdown ──
+            patch_text = self._extract_diff_from_md(llm_output, file_path)
+            if not patch_text:
+                if attempt < max_retries - 1:
+                    task = f"{task}\n\nPREVIOUS ATTEMPT: output was not a valid unified diff block. Output ONLY a ```diff block."
+                    continue
+                return "Error: Could not extract unified diff from LLM output."
+
+            # ── STEP 3: Validate via git apply --check ──
+            import tempfile
+            import subprocess
+
+            # Write original to temp for validation
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp_file = os.path.join(tmpdir, os.path.basename(file_path))
+                tmp_patch = os.path.join(tmpdir, "change.patch")
+
+                with open(tmp_file, "w", encoding="utf-8") as f:
+                    f.write(original_content)
+
+                # Rewrite patch header to use temp-local basename
+                basename = os.path.basename(file_path)
+                localized_patch = patch_text.replace(
+                    f"--- a/{file_path}", f"--- a/{basename}"
+                ).replace(
+                    f"+++ b/{file_path}", f"+++ b/{basename}"
+                )
+
+                with open(tmp_patch, "w", encoding="utf-8") as f:
+                    f.write(localized_patch)
+
+                # git init + add so git apply works
+                subprocess.run(
+                    ["git", "init"], cwd=tmpdir,
+                    capture_output=True, timeout=5,
+                )
+                subprocess.run(
+                    ["git", "add", basename], cwd=tmpdir,
+                    capture_output=True, timeout=5,
+                )
+
+                # --check: dry-run validation
+                check_result = subprocess.run(
+                    ["git", "apply", "--check", "--verbose", tmp_patch],
+                    cwd=tmpdir, capture_output=True, text=True, timeout=10,
+                )
+
+                if check_result.returncode != 0:
+                    err = (check_result.stderr or check_result.stdout or "unknown error").strip()
+                    if attempt < max_retries - 1:
+                        task = (
+                            f"{task}\n\n"
+                            f"PREVIOUS PATCH FAILED `git apply --check`:\n{err}\n"
+                            f"Fix the hunk headers and context lines."
+                        )
+                        continue
+                    return f"Error: Patch failed git apply --check after {max_retries} attempts:\n{err}"
+
+                # Apply for real (in temp) to get the result
+                apply_result = subprocess.run(
+                    ["git", "apply", tmp_patch],
+                    cwd=tmpdir, capture_output=True, text=True, timeout=10,
+                )
+
+                if apply_result.returncode != 0:
+                    err = (apply_result.stderr or "unknown").strip()
+                    if attempt < max_retries - 1:
+                        task = f"{task}\n\nPATCH APPLY FAILED: {err}"
+                        continue
+                    return f"Error: git apply failed: {err}"
+
+                # Read patched result
+                with open(tmp_file, "r", encoding="utf-8") as f:
+                    patched_content = f.read()
+
+            # ── Syntax check on result ──
+            syntax_ok, syntax_err = self._validate_python_syntax(patched_content, file_path)
+            if not syntax_ok:
+                if attempt < max_retries - 1:
+                    task = f"{task}\n\nPATCH PRODUCES SYNTAX ERROR: {syntax_err}\nFix the patch."
+                    continue
+                return f"Error: Patched file has syntax error: {syntax_err}"
+
+            # ── Write patched content to VFS ──
+            try:
+                self._current_session.vfs_write(file_path, patched_content)
+            except Exception as e:
+                return f"Error: VFS write failed: {e}"
+
+            # ── Also store the .patch file for reference ──
+            patch_vfs_path = file_path + ".patch"
+            try:
+                self._current_session.vfs_write(patch_vfs_path, patch_text)
+            except Exception:
+                pass  # non-critical
+
+            lines_before = len(original_content.splitlines())
+            lines_after = len(patched_content.splitlines())
+            hunks = patch_text.count("@@") // 2
+            self.live.status_msg = f"write_patch: done ({file_path})"
+
+            return (
+                f"✅ Patch applied to {file_path}\n"
+                f"Hunks: {hunks} | Lines: {lines_before} → {lines_after} (Δ{lines_after - lines_before:+d})\n"
+                f"Patch saved: {patch_vfs_path}\n"
+                f"Validated: git apply --check ✓ | syntax ✓\n"
+                f"Attempt: {attempt + 1}/{max_retries}"
+            )
+
+        return "Error: All patch attempts failed."
+
+    @staticmethod
+    def _extract_diff_from_md(md_text: str, file_path: str) -> str | None:
+        """
+        Extract a unified diff from markdown output.
+        Looks for ```diff ... ``` blocks. Falls back to scanning for --- a/ headers.
+        Returns the raw patch text or None.
+        """
+        import re
+
+        # Try ```diff block first
+        match = re.search(r'```diff\n(.*?)```', md_text, re.DOTALL)
+        if match:
+            patch = match.group(1).strip() + "\n"
+            # Sanity: must contain --- and +++
+            if "---" in patch and "+++" in patch and "@@" in patch:
+                return patch
+
+        # Fallback: find raw unified diff (--- a/... +++ b/... @@)
+        match = re.search(
+            r'(---\s+a/.*?\n\+\+\+\s+b/.*?\n(?:@@.*?\n(?:[ +\-].*?\n|.*?\n))*)',
+            md_text, re.DOTALL,
+        )
+        if match:
+            patch = match.group(1).strip() + "\n"
+            if "@@" in patch:
+                return patch
+
+        return None
+
+    async def _tool_list_skills(
+        self,
+        query: Optional[str] = None,
+        include_inactive: bool = False,
+    ) -> str:
+        """List available skills, optionally filtered by query relevance."""
+        skills = self.skills_manager.skills
+        if not skills:
+            return "Keine Skills verfügbar."
+
+        lines = []
+        for sid, skill in skills.items():
+            if not include_inactive and not skill.is_active():
+                continue
+
+            # Query-filter: keyword match
+            if query:
+                query_lower = query.lower()
+                name_match = query_lower in skill.name.lower()
+                trigger_match = any(t.lower() in query_lower or query_lower in t.lower()
+                                    for t in skill.triggers)
+                instr_match = query_lower in skill.instruction.lower()[:200]
+                if not (name_match or trigger_match or instr_match):
+                    continue
+
+            status = "✅" if skill.is_active() else "⚠️"
+            effectiveness = f"{skill.effectiveness:.0%}" if skill.total_uses > 0 else "n/a"
+            triggers_str = ", ".join(skill.triggers[:5])
+            tools_str = ", ".join(skill.tools_used[:5]) if skill.tools_used else "none"
+
+            lines.append(
+                f"{status} [{sid}] {skill.name}\n"
+                f"   Triggers: {triggers_str}\n"
+                f"   Tools: {tools_str}\n"
+                f"   Confidence: {skill.confidence:.2f} | Uses: {skill.total_uses} | Effectiveness: {effectiveness}\n"
+                f"   Source: {skill.source}"
+            )
+
+        if not lines:
+            if query:
+                return f"Keine Skills gefunden für '{query}'. Nutze list_skills ohne query um alle zu sehen."
+            return "Keine aktiven Skills verfügbar. Nutze include_inactive=true um alle zu sehen."
+
+        return f"=== {len(lines)} Skills ===\n\n" + "\n\n".join(lines)
+
+    async def _tool_activate_skill(
+        self, ctx: ExecutionContext, skill_id: str
+    ) -> str:
+        """Activate a skill: inject instruction into context, preload its tools."""
+        skill_id = skill_id.strip()
+        skill = self.skills_manager.skills.get(skill_id)
+
+        # Fallback: search by name
+        if skill is None:
+            for sid, s in self.skills_manager.skills.items():
+                if s.name.lower() == skill_id.lower():
+                    skill = s
+                    skill_id = sid
+                    break
+
+        if skill is None:
+            return f"Skill '{skill_id}' nicht gefunden. Nutze list_skills um verfügbare Skills zu sehen."
+
+        if not skill.is_active():
+            return (
+                f"Skill '{skill.name}' ist inaktiv (confidence: {skill.confidence:.2f}, "
+                f"threshold: {skill.activation_threshold}). Kann nicht aktiviert werden."
+            )
+
+        # Check if already in matched_skills
+        if any(s.id == skill_id for s in ctx.matched_skills):
+            return f"Skill '{skill.name}' ist bereits aktiv in dieser Execution."
+
+        # Add to matched skills
+        ctx.matched_skills.append(skill)
+
+        # Inject skill instruction into working history
+        ctx.working_history.append({
+            "role": "system",
+            "content": (
+                f"=== SKILL ACTIVATED: {skill.name} ===\n"
+                f"{skill.instruction}\n"
+                f"=== END SKILL ==="
+            ),
+        })
+
+        # Preload recommended tools
+        loaded_tools = []
+        if skill.tools_used:
+            all_tool_names = self.agent.tool_manager.list_names()
+            for tool_name in skill.tools_used:
+                if tool_name in all_tool_names and tool_name not in ctx.get_dynamic_tool_names():
+                    relevance = 0.8  # skill-recommended tools get high relevance
+                    ctx.add_tool(tool_name, relevance, "skill")
+                    loaded_tools.append(tool_name)
+
+        # Preload tool groups
+        if skill.tool_groups:
+            for group_name in skill.tool_groups:
+                group = self.skills_manager.tool_groups.get(group_name)
+                if group:
+                    for tool_name in group.tool_names:
+                        if tool_name not in ctx.get_dynamic_tool_names():
+                            all_tool_names = self.agent.tool_manager.list_names()
+                            if tool_name in all_tool_names:
+                                ctx.add_tool(tool_name, 0.75, group_name)
+                                loaded_tools.append(tool_name)
+
+        msg = f"Skill '{skill.name}' aktiviert. Instruction injected."
+        if loaded_tools:
+            msg += f"\nTools geladen: {', '.join(loaded_tools)}"
+        msg += f"\nSlots: {len(ctx.dynamic_tools)}/{ctx.max_dynamic_tools}"
+
+        self.live.log(f"Skill activated: {skill.name} (+{len(loaded_tools)} tools)")
+        return msg
+
     def _get_tool_definitions(self, ctx: ExecutionContext) -> List[dict]:
         """Build tool definitions for LLM (static + VFS + sub-agent + dynamic)"""
         definitions = []
@@ -4264,6 +5035,12 @@ BEISPIELE:
 
         # 2. Discovery tools
         definitions.extend(DISCOVERY_TOOLS)
+
+        # 2b. Skill discovery tools (always available, not counted in limit)
+        definitions.extend(SKILL_DISCOVERY_TOOLS)
+
+        # 2c. Coding tools (always available)
+        definitions.extend(CODING_TOOLS)
 
         # 3. Sub-agent tools (ONLY for main agent, not for sub-agents)
         if not self.is_sub_agent:
@@ -4478,6 +5255,30 @@ BEISPIELE:
             "If a call fails because the tool is not loaded, do NOT retry the same call — load it first, then retry."
         )
 
+        prompt_parts.append("""
+
+  Statisch verfügbar (kein load_tools nötig):
+
+────────────────────────────────────────────────────────────────────────────
+  Tool                  │ Zweck
+  ──────────────────────┼─────────────────────────────
+  `think`               │ Analyse/Planung
+  `final_answer`        │ Ergebnis liefern
+  `shift_focus`         │ Kontext wechseln
+  `list_tools`          │ Verfügbare Tools entdecken
+  `load_tools`          │ Tools aktivieren
+  `list_skills`         │ Skills anzeigen
+  `activate_skill`      │ Skill aktivieren
+  `write_patch`         │ VFS-Datei patchen
+  `write_file`          │ VFS-Datei erstellen
+  `spawn_sub_agent`     │ Sub-Agent starten
+  `wait_for`            │ Sub-Agent abwarten
+  `sub_agents_status`   │ Sub-Agent Status
+  `resume_sub_agent`    │ Sub-Agent fortsetzen
+────────────────────────────────────────────────────────────────────────────
+
+        """)
+
         # parallel tool calling.
         prompt_parts.append(
             "\n## Parallel Tool Calling\n"
@@ -4509,10 +5310,7 @@ BEISPIELE:
         focus_msg = ctx.auto_focus.get_focus_message()
         if focus_msg:
             # Find last user message and insert before it
-            for i in range(len(messages) - 1, -1, -1):
-                if messages[i].get("role") == "user":
-                    messages.insert(i, focus_msg)
-                    break
+            messages.insert(-1, focus_msg)
 
         return messages
 

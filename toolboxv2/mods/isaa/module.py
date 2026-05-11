@@ -1811,19 +1811,23 @@ uncertain_about_X
                 return f"Fehler: Unbekannter item_type '{item_type}'. Erlaubt sind 'entry', 'concept', 'relation'."#
 
         if add_base_tools:
-            builder.add_tool(memory_recall, "memory_recall", "Wissen, Architektur und Kontext abrufen (Suchen).",
+            builder.add_tool(memory_recall, "memory_recall",
                              category=["memory", "read"])
 
-            builder.add_tool(memory_save, "memory_save", "Wichtige Fakten und Architektur-Details dauerhaft speichern.",
+            builder.add_tool(memory_save, "memory_save",
                              category=["memory", "write"])
 
-            builder.add_tool(memory_analyse, "memory_analyse", "Tiefe Analyse von Zusammenhängen im Memory (Verbindet Fakten). Optional in spezifischem Space.", category=["memory", "read", "deep"])
+            builder.add_tool(memory_update, "memory_update",
+                             category=["memory", "update"])
+            builder.add_tool(memory_remove, "memory_remove",
+                             category=["memory", "remove"], flags={"remove_data":True,"dangerous":True})
+
+            builder.add_tool(memory_analyse, "memory_analyse",  category=["memory", "read", "deep"])
 
             builder.add_tool(memory_list_spaces, "memory_list_spaces",
-                             "Listet alle verfügbaren Wissens-Kategorien (Spaces) auf.",
                              category=["memory", "read", "meta"])
             builder.add_tool(
-                self.web_search, "searchWeb", "Search the web for information"
+                self.web_search, "searchWeb",
             )
 
             if with_dangerous_shell:

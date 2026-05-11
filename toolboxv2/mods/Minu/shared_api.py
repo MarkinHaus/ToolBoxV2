@@ -309,9 +309,14 @@ def get_shared_websocket_handlers(app: App):
     In den bestehenden Minu WebSocket Handler integrieren.
 
     Neue Message Types:
-    - shared_subscribe: Section abonnieren
-    - shared_unsubscribe: Abo beenden
-    - shared_update: Daten ändern
+    - shared_subscribe: Section abonnieren + WS channel join
+    - shared_unsubscribe: Abo beenden + WS channel leave
+    - shared_update: Daten ändern (broadcasts via ZMQ to all containers)
+
+    Cross-Container:
+    - subscribe joins the WS channel `shared:{section_id}`
+    - Changes broadcast via ZMQ pub/sub to all containers sharing the broker
+    - Each container's WS worker delivers to its local connections in that channel
     """
 
     # Session -> Subscribed Section IDs
@@ -322,13 +327,22 @@ def get_shared_websocket_handlers(app: App):
         msg_type: str,
         payload: Dict[str, Any],
         request: RequestData,
+        conn_id: str = "",
     ) -> Optional[Dict]:
         """
         Shared-spezifische WebSocket Messages verarbeiten.
+
+        Args:
+            session_id: Minu session ID
+            msg_type: Message type string
+            payload: Message payload
+            request: Request data with user info
+            conn_id: WebSocket connection ID (for channel join/leave)
         """
         from .user import MinuUser
 
         manager = SharedManager.get_(app)
+        ws_conn = conn_id or session_id  # fallback: use session_id as conn_id
 
         if msg_type == "shared_subscribe":
             section_id = payload.get("sectionId")
@@ -342,6 +356,14 @@ def get_shared_websocket_handlers(app: App):
                 _subscriptions[session_id] = set()
             _subscriptions[session_id].add(section_id)
 
+            # Join WS channel for cross-container event delivery
+            channel = f"shared:{section_id}"
+            if hasattr(app, 'ws_join_channel'):
+                try:
+                    await app.ws_join_channel(ws_conn, channel)
+                except Exception as e:
+                    app.logger.warning(f"[Shared] Channel join failed: {e}")
+
             return {
                 "type": "shared_subscribed",
                 "sectionId": section_id,
@@ -353,6 +375,14 @@ def get_shared_websocket_handlers(app: App):
 
             if session_id in _subscriptions:
                 _subscriptions[session_id].discard(section_id)
+
+            # Leave WS channel
+            channel = f"shared:{section_id}"
+            if hasattr(app, 'ws_leave_channel'):
+                try:
+                    await app.ws_leave_channel(ws_conn, channel)
+                except Exception as e:
+                    app.logger.warning(f"[Shared] Channel leave failed: {e}")
 
             await manager.leave(section_id, request)
 
@@ -373,7 +403,7 @@ def get_shared_websocket_handlers(app: App):
             if not section.has_permission(user.uid, SharedPermission.WRITE):
                 return {"type": "error", "message": "Keine Schreibberechtigung"}
 
-            # Operation ausführen
+            # Operation ausführen (broadcasts via ZMQ + local)
             if operation == "set":
                 await section.set(path, value, author_id=user.uid)
             elif operation == "merge":
@@ -389,9 +419,17 @@ def get_shared_websocket_handlers(app: App):
 
         return None
 
-    def cleanup_subscriptions(session_id: str):
-        """Aufräumen wenn Session endet"""
+    async def cleanup_subscriptions(session_id: str, conn_id: str = ""):
+        """Aufräumen wenn Session endet — leave all WS channels"""
+        ws_conn = conn_id or session_id
         if session_id in _subscriptions:
+            for section_id in _subscriptions[session_id]:
+                channel = f"shared:{section_id}"
+                if hasattr(app, 'ws_leave_channel'):
+                    try:
+                        await app.ws_leave_channel(ws_conn, channel)
+                    except Exception:
+                        pass
             del _subscriptions[session_id]
 
     return {

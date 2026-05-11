@@ -54,6 +54,7 @@ async def api_create_container(
     ext_source: str = "", ext_git_url: str = "", ext_git_branch: str = "",
     ext_folder_path: str = "", ext_zip_url: str = "",
     manifest_yaml: str = "",
+    service_overrides: str = "",
 ):
     from toolboxv2 import get_app
     from toolboxv2.mods.ContainerManager import create_container
@@ -71,6 +72,8 @@ async def api_create_container(
             extra["ext_zip_url"] = ext_zip_url
     if manifest_yaml:
         extra["manifest_yaml"] = manifest_yaml
+    if service_overrides:
+        extra["service_overrides"] = service_overrides
 
     result = await create_container(
         app=get_app(), container_type=container_type, user_id=user_id or None,
@@ -192,11 +195,11 @@ async def api_reconcile(container_id: str, admin_key: str = ""):
 
 @container_ui_app.get("/cm/api/topology")
 async def api_topology(admin_key: str = ""):
-    """Return network topology: containers + Docker networks for graph rendering."""
+    """Return network topology: containers + Docker networks + ZMQ broker groups."""
     from toolboxv2.mods.ContainerManager.docker_ops import get_docker_ops
     ops = get_docker_ops()
     if not ops.is_available():
-        return {"networks": [], "containers": [], "docker_available": False}
+        return {"networks": [], "containers": [], "zmq_groups": {}, "docker_available": False}
 
     from toolboxv2.mods.ContainerManager import check_admin_key
     if not check_admin_key(admin_key or ""):
@@ -205,16 +208,29 @@ async def api_topology(admin_key: str = ""):
     all_containers = ops.list_all_containers()
     all_networks = ops.list_networks()
 
+    # Build ZMQ broker groups from container labels
+    zmq_groups = {}  # group_name -> [container_id, ...]
+
     containers = []
     for c in all_containers:
-        containers.append({
+        zmq_broker = c.labels.get("zmq-broker", "")
+        entry = {
             "container_id": c.container_id[:12],
             "container_id_full": c.container_id,
             "name": c.name,
             "status": c.status,
             "is_tb_managed": c.is_tb_managed,
             "networks": c.networks,
-        })
+            "zmq_broker": zmq_broker,
+        }
+        containers.append(entry)
+
+        # Group by ZMQ broker source
+        if zmq_broker and zmq_broker != "none":
+            group_key = zmq_broker  # "host", "docker:broker-name", "external"
+            if group_key not in zmq_groups:
+                zmq_groups[group_key] = []
+            zmq_groups[group_key].append(c.container_id[:12])
 
     networks = []
     for n in all_networks:
@@ -228,8 +244,59 @@ async def api_topology(admin_key: str = ""):
     return {
         "containers": containers,
         "networks": networks,
+        "zmq_groups": zmq_groups,
         "docker_available": True,
     }
+
+
+@container_ui_app.get("/cm/api/services")
+async def api_discover_services(admin_key: str = ""):
+    """Return discovered infrastructure services (redis, minio, openobserve, searxng)."""
+    from toolboxv2 import get_app
+    from toolboxv2.mods.ContainerManager import discover_services
+    result = await discover_services(app=get_app(), admin_key=admin_key or None)
+    if result.is_error():
+        return (400, {"error": str(result.info)})
+    return result.get()
+
+
+@container_ui_app.get("/cm/api/host-manifest")
+async def api_host_manifest(admin_key: str = ""):
+    """Return the current host TBManifest as JSON."""
+    from toolboxv2 import get_app
+    from toolboxv2.mods.ContainerManager import get_host_manifest
+    result = await get_host_manifest(app=get_app(), admin_key=admin_key or None)
+    if result.is_error():
+        return (400, {"error": str(result.info)})
+    return result.get()
+
+
+@container_ui_app.get("/cm/api/config/export")
+async def api_export_config(admin_key: str = "", name: str = "default", description: str = ""):
+    """Export all TB-managed containers as a ContainerSetupConfig JSON."""
+    from toolboxv2 import get_app
+    from toolboxv2.mods.ContainerManager import export_container_config
+    result = await export_container_config(
+        app=get_app(), admin_key=admin_key or None,
+        name=name, description=description,
+    )
+    if result.is_error():
+        return (400, {"error": str(result.info)})
+    return result.get()
+
+
+@container_ui_app.post("/cm/api/config/import")
+async def api_import_config(admin_key: str = "", config_json: str = "", dry_run: str = "false"):
+    """Import a ContainerSetupConfig JSON and create containers."""
+    from toolboxv2 import get_app
+    from toolboxv2.mods.ContainerManager import import_container_config
+    result = await import_container_config(
+        app=get_app(), admin_key=admin_key or None,
+        config_json=config_json, dry_run=(dry_run == "true"),
+    )
+    if result.is_error():
+        return (400, {"error": str(result.info)})
+    return result.get()
 
 
 # ============================================================================
@@ -450,6 +517,12 @@ html,body { height:100%; background:var(--term-bg); color:var(--term-fg); font-f
         <div class="stat-card"><div class="stat-label">EXTERNAL</div><div class="stat-val" id="statExt" style="color:var(--term-fg-dim)">—</div></div>
       </div>
 
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="btn btn-sm" onclick="exportConfig()">export setup</button>
+        <button class="btn btn-sm" onclick="showImportDialog()">import setup</button>
+        <input type="file" id="importFile" accept=".json" style="display:none" onchange="importFromFile(this)">
+      </div>
+
       <div class="tbl" style="--cols: 90px 160px 140px 70px 70px 1fr">
         <div class="tbl-hdr">
           <div class="c">STATUS</div><div class="c">NAME</div><div class="c">IMAGE</div>
@@ -511,22 +584,49 @@ html,body { height:100%; background:var(--term-bg); color:var(--term-fg); font-f
         <div style="margin-top:12px"><button class="btn btn-primary" onclick="createContainer()">deploy</button></div>
       </div>
 
-      <!-- Right: Manifest Editor -->
+      <!-- Right: Manifest & Services -->
       <div class="card">
-        <div class="card-title">MANIFEST
+        <div class="card-title">CONTAINER CONFIG
           <span style="float:right;display:flex;gap:6px">
-            <button class="btn btn-sm" onclick="loadDefaultManifest()">default</button>
-            <button class="btn btn-sm" onclick="validateManifest()">validate</button>
+            <button class="btn btn-sm" onclick="loadHostManifest()">load host</button>
+            <button class="btn btn-sm" onclick="refreshServices()">scan services</button>
           </span>
         </div>
 
-        <!-- Manifest sections as collapsible fieldsets -->
-        <div style="font-size:var(--term-text-xs);color:var(--term-fg-muted);margin-bottom:8px">
-          Configure the tb-manifest for this container. Sections with ● are active.
-        </div>
+        <!-- Service Discovery & Overrides -->
+        <details class="manifest-section" open>
+          <summary class="manifest-summary">● SERVICES</summary>
+          <div class="manifest-body">
+            <div class="mf-hint" style="margin-bottom:6px">
+              Where should this container connect to each service?<br>
+              <b>docker</b> = container name on Docker network &nbsp;
+              <b>host</b> = host.docker.internal &nbsp;
+              <b>none</b> = disable<br>
+              <b>ZMQ_BROKER</b>: set to <b>host</b> for cross-container events (Minu Shared, pub/sub).
+              Containers sharing the same broker can exchange real-time data.
+            </div>
+            <div id="svcList" style="color:var(--term-fg-muted);font-size:var(--term-text-xs)">scanning...</div>
+          </div>
+        </details>
+
+        <!-- Database Mode -->
+        <details class="manifest-section">
+          <summary class="manifest-summary">○ DATABASE</summary>
+          <div class="manifest-body">
+            <div class="field"><label>DB Mode</label>
+              <select id="mfDbMode">
+                <option value="LC">LC — Local Dict (JSON file)</option>
+                <option value="LR">LR — Local Redis</option>
+                <option value="RR">RR — Remote Redis</option>
+                <option value="CB">CB — Cluster Blob (MinIO)</option>
+              </select>
+            </div>
+            <div class="mf-hint">URLs are set automatically from the SERVICES section above.</div>
+          </div>
+        </details>
 
         <!-- Features -->
-        <details class="manifest-section" open>
+        <details class="manifest-section">
           <summary class="manifest-summary">● FEATURES</summary>
           <div class="manifest-body">
             <label class="mf-toggle"><input type="checkbox" id="mfCore" checked disabled> core <span class="mf-hint">(always on)</span></label>
@@ -538,70 +638,48 @@ html,body { height:100%; background:var(--term-bg); color:var(--term-fg); font-f
           </div>
         </details>
 
-        <!-- Database Backend -->
+        <!-- App Config -->
         <details class="manifest-section">
-          <summary class="manifest-summary">○ DATABASE</summary>
+          <summary class="manifest-summary">○ APP</summary>
           <div class="manifest-body">
-            <div class="field"><label>DB Mode</label>
-              <select id="mfDbMode">
-                <option value="local">local — SQLite in container</option>
-                <option value="redis">redis — Remote Redis</option>
-                <option value="postgres">postgres — Remote PostgreSQL</option>
+            <div class="field"><label>Environment</label>
+              <select id="mfAppEnv">
+                <option value="development">development</option>
+                <option value="production">production</option>
+                <option value="staging">staging</option>
               </select>
             </div>
-            <div id="mfDbRemote" style="display:none">
-              <div class="field"><label>Connection URL</label><input id="mfDbUrl" placeholder="redis://host:6379 or postgresql://user:pass@host/db"></div>
-              <div class="mf-hint" style="margin-top:4px">
-                In Docker: use service name (redis, postgres) if running in same compose stack.<br>
-                External: use host IP or domain. Container must reach the DB on tb-internal network.
-              </div>
+            <div class="field"><label>Log Level</label>
+              <select id="mfLogLevel">
+                <option value="DEBUG">DEBUG</option>
+                <option value="INFO" selected>INFO</option>
+                <option value="WARNING">WARNING</option>
+                <option value="ERROR">ERROR</option>
+              </select>
             </div>
+            <label class="mf-toggle"><input type="checkbox" id="mfDebug"> Debug mode</label>
           </div>
         </details>
 
-        <!-- OpenObserve -->
+        <!-- Observability -->
         <details class="manifest-section">
-          <summary class="manifest-summary">○ OPEN OBSERVE</summary>
+          <summary class="manifest-summary">○ OBSERVABILITY</summary>
           <div class="manifest-body">
-            <label class="mf-toggle"><input type="checkbox" id="mfOtelEnabled"> Enable OTEL export</label>
-            <div id="mfOtelFields" style="display:none">
-              <div class="field"><label>Collector Endpoint</label><input id="mfOtelEndpoint" placeholder="http://otel-collector:4318" value="http://otel-collector:4318"></div>
-              <div class="field"><label>Service Name</label><input id="mfOtelService" placeholder="tb-worker"></div>
-              <div class="mf-hint">
-                Default: connects to the OTEL Collector in the compose stack (profile: monitoring).<br>
-                For external OpenObserve: use its OTLP HTTP endpoint directly.
-              </div>
-            </div>
+            <label class="mf-toggle"><input type="checkbox" id="mfObsDashboard"> Enable dashboard (OpenObserve)</label>
+            <label class="mf-toggle"><input type="checkbox" id="mfObsSync"> Enable log sync to MinIO</label>
+            <label class="mf-toggle"><input type="checkbox" id="mfObsCleanup"> Enable automatic log cleanup</label>
+            <div class="mf-hint">Dashboard/MinIO endpoints are set via SERVICES above.</div>
           </div>
         </details>
 
-        <!-- Event Networking -->
-        <details class="manifest-section">
-          <summary class="manifest-summary">○ EVENTS / NETWORKING</summary>
-          <div class="manifest-body">
-            <label class="mf-toggle"><input type="checkbox" id="mfEventsEnabled"> Enable cross-container events</label>
-            <div id="mfEventFields" style="display:none">
-              <div class="field"><label>Event Transport</label>
-                <select id="mfEventTransport">
-                  <option value="http">HTTP — via nginx /api/events</option>
-                  <option value="ws">WebSocket — persistent connection</option>
-                </select>
-              </div>
-              <div class="field"><label>Event Hub URL</label><input id="mfEventHub" placeholder="http://tb-worker:8000/api/events" value="http://tb-worker:8000/api/events"></div>
-              <div class="field"><label>Subscribe Topics (comma-sep)</label><input id="mfEventTopics" placeholder="system.*,module.*"></div>
-              <div class="mf-hint">
-                Containers on tb-internal network can reach each other by service name.<br>
-                Events are routed through the TB worker HTTP endpoint — no ZMQ needed cross-container.
-              </div>
-            </div>
-          </div>
-        </details>
-
-        <!-- Raw YAML -->
+        <!-- Raw YAML Override -->
         <details class="manifest-section">
           <summary class="manifest-summary">○ RAW YAML</summary>
           <div class="manifest-body">
-            <div class="mf-hint" style="margin-bottom:6px">Direct YAML edit — overrides form values above when deploying.</div>
+            <div class="mf-hint" style="margin-bottom:6px">
+              Full TBManifest YAML override. If provided, this replaces the auto-translated host manifest entirely.
+              Leave empty to use the host manifest + service overrides.
+            </div>
             <textarea id="mfYaml" rows="12" style="width:100%;font:inherit;font-size:var(--term-text-xs);color:var(--term-fg);background:var(--term-bg-sunken);border:1px solid var(--term-border);border-radius:0;padding:8px;caret-color:var(--primary);tab-size:2;white-space:pre;resize:vertical" spellcheck="false"></textarea>
           </div>
         </details>
@@ -700,6 +778,7 @@ function switchTab(name, btn) {
   btn.classList.add('active');
   if (name==='topology') loadTopology();
   if (name==='dashboard') fullRefresh();
+  if (name==='create') refreshServices();
 }
 
 // ======================================================================
@@ -880,18 +959,11 @@ function toggleSourceFields() {
   document.getElementById('srcZip').style.display = src==='zip' ? '' : 'none';
 }
 
-// DB mode toggle
+// Service discovery state
+let discoveredServices = [];
+
+// DB mode toggle — no remote URL fields needed (handled by service overrides)
 document.addEventListener('change', e => {
-  if (e.target.id === 'mfDbMode') {
-    document.getElementById('mfDbRemote').style.display = e.target.value === 'local' ? 'none' : '';
-  }
-  if (e.target.id === 'mfOtelEnabled') {
-    document.getElementById('mfOtelFields').style.display = e.target.checked ? '' : 'none';
-  }
-  if (e.target.id === 'mfEventsEnabled') {
-    document.getElementById('mfEventFields').style.display = e.target.checked ? '' : 'none';
-  }
-  // Update section indicators
   updateSectionIndicators();
 });
 
@@ -901,95 +973,151 @@ function updateSectionIndicators() {
     const checks = s.querySelectorAll('input[type=checkbox]:checked:not(:disabled)');
     const selects = s.querySelectorAll('select');
     let active = checks.length > 0;
-    if (!active) selects.forEach(sel => { if (sel.value !== 'local') active = true; });
+    if (!active) selects.forEach(sel => { if (sel.selectedIndex > 0) active = true; });
     sum.textContent = sum.textContent.replace(/^[●○]/, active ? '●' : '○');
   });
+}
+
+// ======================================================================
+// SERVICE DISCOVERY
+// ======================================================================
+const SVC_TYPES = ['redis', 'minio', 'openobserve', 'searxng', 'zmq_broker'];
+
+async function refreshServices() {
+  const d = await api('/cm/api/services?'+Q());
+  if (!d) { renderServiceList([]); return; }
+  discoveredServices = d.services || [];
+  renderServiceList(discoveredServices);
+}
+
+function renderServiceList(services) {
+  const el = document.getElementById('svcList');
+  // Build a map: svc_type -> [{name, internal_url, external_url, container_name}]
+  const byType = {};
+  SVC_TYPES.forEach(t => { byType[t] = []; });
+  services.forEach(s => {
+    if (byType[s.service_type]) byType[s.service_type].push(s);
+  });
+
+  let html = '';
+  SVC_TYPES.forEach(stype => {
+    const found = byType[stype];
+    const statusIcon = found.length ? '<span style="color:var(--success)">●</span>' : '<span style="color:var(--term-fg-muted)">○</span>';
+    const label = stype.toUpperCase();
+
+    html += '<div style="display:grid;grid-template-columns:120px 1fr;gap:4px;padding:4px 0;border-bottom:1px solid var(--term-border)">';
+    html += '<span>'+statusIcon+' '+label+'</span>';
+    html += '<select id="svc_'+stype+'" style="font:inherit;font-size:var(--term-text-xs);background:var(--term-bg-sunken);border:1px solid var(--term-border);color:var(--term-fg);padding:2px 4px">';
+    // zmq_broker defaults to "host" (connects to host ZMQ broker for cross-container events)
+    const isZmq = stype === 'zmq_broker';
+    html += '<option value="none"'+(isZmq?'':'')+'>none — '+(isZmq?'isolated (no cross-container events)':'disabled')+'</option>';
+    html += '<option value="host"'+(isZmq && !found.length?' selected':'')+'>host — host.docker.internal</option>';
+
+    found.forEach(s => {
+      html += '<option value="docker:'+s.container_name+'" selected>docker — '+s.container_name+' ('+s.internal_url+')</option>';
+    });
+    if (!found.length) {
+      // No docker container found, but still offer docker option with manual name
+      html += '<option value="docker:'+stype+'">docker — '+stype+' (manual)</option>';
+    }
+    html += '<option value="external">external — custom URL</option>';
+    html += '</select>';
+    html += '</div>';
+  });
+
+  if (!services.length) {
+    html += '<div style="color:var(--term-fg-muted);padding:4px 0;font-size:var(--term-text-xs)">No infrastructure services found in Docker. Select "host" or "none".</div>';
+  }
+
+  el.innerHTML = html;
+}
+
+function buildServiceOverrides() {
+  const overrides = {};
+  SVC_TYPES.forEach(stype => {
+    const sel = document.getElementById('svc_'+stype);
+    if (!sel) return;
+    const val = sel.value;
+    if (val === 'none') {
+      overrides[stype] = {source: 'none'};
+    } else if (val === 'host') {
+      overrides[stype] = {source: 'host'};
+    } else if (val === 'external') {
+      overrides[stype] = {source: 'external'};
+    } else if (val.startsWith('docker:')) {
+      overrides[stype] = {source: 'docker', container_name: val.split(':')[1]};
+    }
+  });
+  return overrides;
+}
+
+// ======================================================================
+// HOST MANIFEST LOADING
+// ======================================================================
+async function loadHostManifest() {
+  const d = await api('/cm/api/host-manifest?'+Q());
+  if (!d || !d.manifest) { toast('could not load host manifest', 'error'); return; }
+  const m = d.manifest;
+
+  // Populate form from host manifest
+  if (m.database && m.database.mode) {
+    const sel = document.getElementById('mfDbMode');
+    if (sel) sel.value = m.database.mode;
+  }
+  if (m.app) {
+    if (m.app.environment) {
+      const sel = document.getElementById('mfAppEnv');
+      if (sel) sel.value = m.app.environment;
+    }
+    if (m.app.log_level) {
+      const sel = document.getElementById('mfLogLevel');
+      if (sel) sel.value = m.app.log_level;
+    }
+    document.getElementById('mfDebug').checked = !!m.app.debug;
+  }
+  if (m.features) {
+    ['cli','web','desktop','isaa','exotic'].forEach(f => {
+      const cb = document.getElementById('mf'+f.charAt(0).toUpperCase()+f.slice(1));
+      if (cb && m.features[f]) cb.checked = !!m.features[f].enabled;
+    });
+  }
+  if (m.observability) {
+    document.getElementById('mfObsDashboard').checked = !!(m.observability.dashboard && m.observability.dashboard.enabled);
+    document.getElementById('mfObsSync').checked = !!(m.observability.sync && m.observability.sync.enabled);
+    document.getElementById('mfObsCleanup').checked = !!(m.observability.cleanup && m.observability.cleanup.enabled);
+  }
+  updateSectionIndicators();
+  toast('host manifest loaded', 'success');
 }
 
 // ======================================================================
 // MANIFEST EDITOR
 // ======================================================================
 function buildManifestYaml() {
-  const feat = {
-    core: {enabled: true, immutable: true},
-    cli: {enabled: !!document.getElementById('mfCli').checked},
-    web: {enabled: !!document.getElementById('mfWeb').checked},
-    desktop: {enabled: !!document.getElementById('mfDesktop').checked},
-    isaa: {enabled: !!document.getElementById('mfIsaa').checked},
-    exotic: {enabled: !!document.getElementById('mfExotic').checked},
-  };
-
-  let yaml = 'name: toolboxv2\\nversion: "1.0.0"\\n\\nfeatures:\\n';
-  for (const [k,v] of Object.entries(feat)) {
-    yaml += '  ' + k + ':\\n    enabled: ' + v.enabled + '\\n';
-    if (v.immutable) yaml += '    immutable: true\\n';
-  }
-
-  // Database
-  const dbMode = document.getElementById('mfDbMode').value;
-  yaml += '\\ndatabase:\\n  mode: ' + dbMode + '\\n';
-  if (dbMode !== 'local') {
-    const url = document.getElementById('mfDbUrl').value;
-    if (url) yaml += '  url: "' + url + '"\\n';
-  }
-
-  // OpenObserve
-  if (document.getElementById('mfOtelEnabled').checked) {
-    yaml += '\\notel:\\n  enabled: true\\n';
-    const ep = document.getElementById('mfOtelEndpoint').value;
-    const svc = document.getElementById('mfOtelService').value;
-    if (ep) yaml += '  endpoint: "' + ep + '"\\n';
-    if (svc) yaml += '  service_name: "' + svc + '"\\n';
-  }
-
-  // Events
-  if (document.getElementById('mfEventsEnabled').checked) {
-    yaml += '\\nevents:\\n  enabled: true\\n';
-    yaml += '  transport: ' + document.getElementById('mfEventTransport').value + '\\n';
-    const hub = document.getElementById('mfEventHub').value;
-    if (hub) yaml += '  hub_url: "' + hub + '"\\n';
-    const topics = document.getElementById('mfEventTopics').value;
-    if (topics) yaml += '  subscribe: [' + topics.split(',').map(t=>'"'+t.trim()+'"').join(', ') + ']\\n';
-  }
-
-  return yaml;
+  // Returns empty string — backend uses host manifest + service_overrides.
+  // Only used when user explicitly fills the RAW YAML textarea.
+  return '';
 }
 
 function loadDefaultManifest() {
-  const yaml = buildManifestYaml();
-  document.getElementById('mfYaml').value = yaml;
-  toast('manifest generated from form', 'info');
+  loadHostManifest();
 }
 
 function validateManifest() {
   const el = document.getElementById('mfValidation');
   const raw = document.getElementById('mfYaml').value.trim();
-
-  // Basic client-side validation
-  const errors = [];
+  el.style.display = '';
   if (!raw) {
-    // Validate from form instead
-    const yaml = buildManifestYaml();
-    document.getElementById('mfYaml').value = yaml;
-    el.style.display = '';
     el.style.color = 'var(--success)';
-    el.textContent = '✓ manifest generated — looks valid';
+    el.textContent = '✓ no raw YAML — will use host manifest + service overrides';
     return;
   }
-
-  // Check for basic YAML structure
-  if (!raw.includes('name:')) errors.push('missing: name');
-  if (!raw.includes('features:')) errors.push('missing: features section');
+  // Basic YAML checks
+  const errors = [];
+  if (!raw.includes('manifest_version') && !raw.includes('app:')) errors.push('missing TBManifest fields');
   if (raw.includes('\\t')) errors.push('tabs detected — use spaces');
-
-  el.style.display = '';
-  if (errors.length) {
-    el.style.color = 'var(--error)';
-    el.textContent = '✕ ' + errors.join(' | ');
-  } else {
-    el.style.color = 'var(--success)';
-    el.textContent = '✓ structure looks valid';
-  }
+  el.style.color = errors.length ? 'var(--error)' : 'var(--success)';
+  el.textContent = errors.length ? ('✕ ' + errors.join(' | ')) : '✓ structure looks valid';
 }
 
 // ======================================================================
@@ -1022,16 +1150,64 @@ async function createContainer() {
     }
   }
 
-  // Add manifest (use raw YAML if filled, else generate from form)
-  let manifest = document.getElementById('mfYaml').value.trim();
-  if (!manifest) manifest = buildManifestYaml();
-  if (manifest) params.set('manifest_yaml', manifest);
+  // Service overrides — always sent for TB containers
+  const isTB = ['cli_v4','isaa','tb_external','custom'].includes(cType);
+  if (isTB) {
+    params.set('service_overrides', JSON.stringify(buildServiceOverrides()));
+  }
+
+  // Raw manifest YAML — only if user explicitly filled it
+  const rawYaml = document.getElementById('mfYaml').value.trim();
+  if (rawYaml) {
+    params.set('manifest_yaml', rawYaml);
+  }
 
   const d = await api('/cm/api/containers?'+params, {method:'POST'});
   if (d) {
     toast('Container created: '+d.container_id, 'success');
     switchTab('dashboard', document.querySelector('[data-tab="dashboard"]'));
   }
+}
+
+// ======================================================================
+// CONFIG EXPORT / IMPORT
+// ======================================================================
+async function exportConfig() {
+  const name = prompt('Setup name:', 'my-setup') || 'export';
+  const d = await api('/cm/api/config/export?'+Q('name='+encodeURIComponent(name)));
+  if (!d) return;
+  // Download as JSON file
+  const blob = new Blob([JSON.stringify(d, null, 2)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name+'.json'; a.click();
+  URL.revokeObjectURL(url);
+  toast('exported '+d.containers.length+' container(s)', 'success');
+}
+
+function showImportDialog() {
+  document.getElementById('importFile').click();
+}
+
+async function importFromFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const text = await file.text();
+  // Dry run first
+  let params = new URLSearchParams({admin_key: KEY(), config_json: text, dry_run: 'true'});
+  const preview = await api('/cm/api/config/import?'+params, {method:'POST'});
+  if (!preview) return;
+  if (!confirm('Import "'+preview.name+'" with '+preview.container_count+' container(s)?')) {
+    input.value = ''; return;
+  }
+  // Real import
+  params.set('dry_run', 'false');
+  const d = await api('/cm/api/config/import?'+params, {method:'POST'});
+  if (d) {
+    toast(d.succeeded+' created, '+d.failed+' failed', d.failed ? 'warning' : 'success');
+    fullRefresh();
+  }
+  input.value = '';
 }
 
 // ======================================================================
@@ -1054,7 +1230,7 @@ async function loadTopology() {
     drawTopologyEmpty();
     return;
   }
-  drawTopology(d.containers, d.networks);
+  drawTopology(d.containers, d.networks, d.zmq_groups || {});
 }
 
 function drawTopologyEmpty() {
@@ -1074,7 +1250,7 @@ function drawTopologyEmpty() {
   ctx.fillText('Docker offline — no topology data', rect.width/2, rect.height/2);
 }
 
-function drawTopology(containers, networks) {
+function drawTopology(containers, networks, zmqGroups) {
   const canvas = document.getElementById('topo');
   const rect = canvas.parentElement.getBoundingClientRect();
   canvas.width = rect.width * devicePixelRatio;
@@ -1117,11 +1293,50 @@ function drawTopology(containers, networks) {
   const netMap = {};
   networks.forEach(n => { netMap[n.name] = n.containers || []; });
 
+  // Draw ZMQ broker groups as dashed outlines
+  const zmqColors = {'host': '#7F77DD', 'docker': '#1D9E75', 'external': '#D85A30'};
+  Object.entries(zmqGroups).forEach(([groupName, memberIds]) => {
+    const groupNodes = nodes.filter(n => memberIds.includes(n.container_id));
+    if (groupNodes.length < 1) return;
+
+    // Compute bounding box
+    const pad = 32;
+    const minX = Math.min(...groupNodes.map(n => n.x)) - pad;
+    const maxX = Math.max(...groupNodes.map(n => n.x)) + pad;
+    const minY = Math.min(...groupNodes.map(n => n.y)) - pad;
+    const maxY = Math.max(...groupNodes.map(n => n.y)) + pad;
+
+    const color = zmqColors[groupName] || '#888780';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.globalAlpha = 0.5;
+
+    // Rounded rect
+    const rr = 12, gw = maxX-minX, gh = maxY-minY;
+    ctx.beginPath();
+    ctx.moveTo(minX+rr, minY);
+    ctx.lineTo(minX+gw-rr, minY); ctx.arcTo(minX+gw, minY, minX+gw, minY+rr, rr);
+    ctx.lineTo(minX+gw, minY+gh-rr); ctx.arcTo(minX+gw, minY+gh, minX+gw-rr, minY+gh, rr);
+    ctx.lineTo(minX+rr, minY+gh); ctx.arcTo(minX, minY+gh, minX, minY+gh-rr, rr);
+    ctx.lineTo(minX, minY+rr); ctx.arcTo(minX, minY, minX+rr, minY, rr);
+    ctx.closePath();
+    ctx.stroke();
+
+    // Group label
+    ctx.globalAlpha = 0.7;
+    ctx.fillStyle = color;
+    ctx.font = "9px 'IBM Plex Mono', monospace";
+    ctx.textAlign = 'left';
+    ctx.fillText('ZMQ: '+groupName, minX+6, minY-4);
+    ctx.globalAlpha = 1.0;
+    ctx.setLineDash([]);
+  });
+
   // Draw edges: containers in same network get a line
   ctx.lineWidth = 1;
   for (let i = 0; i < nodes.length; i++) {
     for (let j = i+1; j < nodes.length; j++) {
-      // Check if they share a network
       const shared = nodes[i].networks && nodes[j].networks &&
         nodes[i].networks.some(n => nodes[j].networks.includes(n));
       if (shared) {
@@ -1140,6 +1355,13 @@ function drawTopology(containers, networks) {
     ctx.lineWidth = n.is_tb_managed ? 2 : 1;
     ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI*2); ctx.fill(); ctx.stroke();
 
+    // ZMQ indicator dot
+    if (n.zmq_broker && n.zmq_broker !== 'none') {
+      const dotColor = zmqColors[n.zmq_broker] || '#888';
+      ctx.fillStyle = dotColor;
+      ctx.beginPath(); ctx.arc(n.x + n.r - 2, n.y - n.r + 2, 3, 0, Math.PI*2); ctx.fill();
+    }
+
     ctx.fillStyle = n.is_tb_managed ? fg : dim;
     ctx.font = "10px 'IBM Plex Mono', monospace";
     ctx.textAlign = 'center';
@@ -1150,7 +1372,8 @@ function drawTopology(containers, networks) {
   ctx.fillStyle = dim;
   ctx.font = "10px 'IBM Plex Mono', monospace";
   ctx.textAlign = 'left';
-  ctx.fillText('# network topology — '+containers.length+' container(s), '+networks.length+' network(s)', 12, 16);
+  const zmqCount = Object.keys(zmqGroups).length;
+  ctx.fillText('# topology — '+containers.length+' container(s), '+networks.length+' network(s)'+(zmqCount ? ', '+zmqCount+' ZMQ group(s)' : ''), 12, 16);
 }
 
 // ======================================================================

@@ -608,7 +608,7 @@ class FastTBHandler:
                     ftb_handler.handle_request(request), loop
                 )
                 try:
-                    status, headers, body = future.result(timeout=5)
+                    status, headers, body = future.result(timeout=15)
                 except TimeoutError as e:
                     logger.error(f"FastTB standalone error: {e}")
                     status, headers, body = error_response(str(e), 500)

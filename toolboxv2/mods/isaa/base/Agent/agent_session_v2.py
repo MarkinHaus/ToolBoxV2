@@ -392,6 +392,87 @@ class AgentSessionV2:
             command, timeout, sync_before, sync_after
         )
 
+    async def docker_run_tb_command(
+        self,
+        command: str,
+        timeout: int = 300,
+        sync_before: bool = True,
+        sync_after: bool = True,
+    ) -> dict:
+        """
+        Run a command with full ToolBoxV2 context in Docker.
+
+        The container has TB installed and a translated host manifest.
+        Use for: running tests, tb CLI commands, importing toolboxv2 modules.
+
+        Args:
+            command: Shell command (e.g. "python -m unittest discover")
+            timeout: Command timeout in seconds
+            sync_before: Sync VFS to container before execution
+            sync_after: Sync container to VFS after execution
+
+        Returns:
+            Result dict with stdout, stderr, exit_code
+        """
+        if not self._docker_vfs:
+            return {"success": False, "error": "Docker not enabled for this session"}
+
+        self._update_activity()
+        return await self._docker_vfs.run_with_tb_context(
+            command, timeout, sync_before, sync_after
+        )
+
+    async def docker_start_sub_agent(
+        self,
+        agent_name: str,
+        command: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> dict:
+        """
+        Start a sub-agent process inside the Docker container.
+
+        Requires TB context (inject_manifest). The agent process runs
+        in the background; check status with docker_sub_agent_status().
+
+        Args:
+            agent_name: Identifier for the sub-agent
+            command: Custom start command (default: tb -m isaa --agent <name>)
+            env: Extra environment variables
+
+        Returns:
+            Result dict with agent info and PID
+        """
+        if not self._docker_vfs:
+            return {"success": False, "error": "Docker not enabled for this session"}
+
+        self._update_activity()
+        return await self._docker_vfs.start_sub_agent(agent_name, command, env)
+
+    async def docker_sub_agent_status(self, agent_name: str) -> dict:
+        """
+        Check status of a running sub-agent.
+
+        Returns running state and recent log output.
+        """
+        if not self._docker_vfs:
+            return {"success": False, "error": "Docker not enabled for this session"}
+
+        return await self._docker_vfs.get_sub_agent_status(agent_name)
+
+    async def docker_stop_sub_agent(self, agent_name: str) -> dict:
+        """Stop a running sub-agent by name."""
+        if not self._docker_vfs:
+            return {"success": False, "error": "Docker not enabled for this session"}
+
+        return await self._docker_vfs.stop_sub_agent(agent_name)
+
+    async def docker_list_sub_agents(self) -> dict:
+        """List all tracked sub-agents with their status."""
+        if not self._docker_vfs:
+            return {"success": False, "error": "Docker not enabled for this session"}
+
+        return await self._docker_vfs.list_sub_agents()
+
     async def docker_start_web_app(
         self, entrypoint: str, port: int = 8080, env: dict[str, str] | None = None
     ) -> dict:
@@ -419,6 +500,192 @@ class AgentSessionV2:
         if not self._docker_vfs:
             return {"enabled": False}
         return {"enabled": True, **self._docker_vfs.get_status()}
+
+    def docker_set_manifest_injection(self, enabled: bool, service_overrides: dict | None = None):
+        """
+        Toggle manifest injection for the Docker container.
+
+        Must be called BEFORE the container is created (before first docker_run).
+        If the container is already running, destroy and recreate.
+
+        Args:
+            enabled: Whether to inject the host TBManifest
+            service_overrides: Optional service connection overrides
+                {"redis": {"source": "host"}, "minio": {"source": "docker", "container_name": "minio"}}
+        """
+        if not self._docker_vfs:
+            return
+        self._docker_vfs.config.inject_manifest = enabled
+        if service_overrides is not None:
+            self._docker_vfs.config.service_overrides = service_overrides
+
+    # =========================================================================
+    # DOCKER TOOL DEFINITIONS (for FlowAgent tool registration)
+    # =========================================================================
+
+    def get_docker_tools(self) -> tuple[list[dict], dict[str, dict]]:
+        """
+        Return all Docker tool definitions + their health flags.
+
+        Usage in FlowAgent:
+            tools, health_flags = session.get_docker_tools()
+            for tool_def in tools:
+                agent.add_tool(**tool_def)
+            guaranteed_healthy.update(health_flags)
+
+        Returns:
+            (tool_definitions, health_flags_dict)
+        """
+        session = self
+
+        # ── Docker: safe execution ──────────────────────────────────
+        async def docker_run(
+            command: str,
+            timeout: int = 300,
+            sync_before: bool = True,
+            sync_after: bool = True,
+        ) -> dict:
+            """Execute a shell command inside the Docker container.
+            VFS files are synced to /workspace before (sync_before) and
+            container changes are pulled back after (sync_after)."""
+            return await session.docker_run_command(command, timeout, sync_before, sync_after)
+
+        # ── Docker: TB context execution ────────────────────────────
+        async def docker_tb_run(
+            command: str,
+            timeout: int = 300,
+            sync_before: bool = True,
+            sync_after: bool = True,
+        ) -> dict:
+            """Execute a command with full ToolBoxV2 context in Docker.
+            TB is installed, manifest is configured, DB connections are set up.
+            Use for: running tests, tb CLI commands, importing toolboxv2 modules."""
+            return await session.docker_run_tb_command(command, timeout, sync_before, sync_after)
+
+        # ── Docker: web app ─────────────────────────────────────────
+        async def docker_start_app(
+            entrypoint: str, port: int = 8080, env: dict[str, str] | None = None
+        ) -> dict:
+            """Start a web application in the Docker container."""
+            return await session.docker_start_web_app(entrypoint, port, env)
+
+        async def docker_stop_app() -> dict:
+            """Stop the running web application in Docker."""
+            return await session.docker_stop_web_app()
+
+        async def docker_logs(lines: int = 100) -> dict:
+            """Get the last N log lines from the running web application."""
+            return await session.docker_get_logs(lines)
+
+        def docker_status_fn() -> dict:
+            """Get Docker container status (running, ports, manifest, sub-agents)."""
+            return session.docker_status()
+
+        # ── Docker: sub-agent management ────────────────────────────
+        async def docker_sub_agent(
+            action: str,
+            agent_name: str = "worker",
+            command: str | None = None,
+            env: dict[str, str] | None = None,
+        ) -> dict:
+            """Manage sub-agents running inside the Docker container.
+            Actions: start | status | stop | list
+            - start: Launch a sub-agent (needs TB context)
+            - status: Check running state + recent logs
+            - stop: Kill the sub-agent process
+            - list: List all tracked sub-agents"""
+            if action == "start":
+                return await session.docker_start_sub_agent(agent_name, command, env)
+            elif action == "status":
+                return await session.docker_sub_agent_status(agent_name)
+            elif action == "stop":
+                return await session.docker_stop_sub_agent(agent_name)
+            elif action == "list":
+                return await session.docker_list_sub_agents()
+            return {"success": False, "error": f"Unknown action: {action}"}
+
+        # ── Docker: manifest toggle ─────────────────────────────────
+        def docker_set_manifest(
+            enabled: bool = True,
+            service_overrides: dict | None = None,
+        ) -> dict:
+            """Toggle TBManifest injection for the Docker container.
+            Call before first docker_run or docker_tb_run.
+            service_overrides: {"redis": {"source": "host"}, "minio": {"source": "docker", "container_name": "minio"}}"""
+            session.docker_set_manifest_injection(enabled, service_overrides)
+            return {"success": True, "inject_manifest": enabled}
+
+        # ── Tool definitions ────────────────────────────────────────
+        tool_defs = [
+            {
+                "tool_func": docker_run,
+                "name": "docker_run",
+                "category": ["docker", "execute"],
+                "flags": {"requires_docker": True},
+                "is_async": True,
+            },
+            {
+                "tool_func": docker_tb_run,
+                "name": "docker_tb_run",
+                "category": ["docker", "execute", "toolbox"],
+                "flags": {"requires_docker": True, "requires_tb": True},
+                "is_async": True,
+            },
+            {
+                "tool_func": docker_start_app,
+                "name": "docker_start_app",
+                "category": ["docker", "web"],
+                "flags": {"requires_docker": True},
+                "is_async": True,
+            },
+            {
+                "tool_func": docker_stop_app,
+                "name": "docker_stop_app",
+                "category": ["docker", "web"],
+                "flags": {"requires_docker": True},
+                "is_async": True,
+            },
+            {
+                "tool_func": docker_logs,
+                "name": "docker_logs",
+                "category": ["docker", "read"],
+                "flags": {"requires_docker": True},
+                "is_async": True,
+            },
+            {
+                "tool_func": docker_status_fn,
+                "name": "docker_status",
+                "category": ["docker", "read"],
+                "flags": {"requires_docker": True},
+            },
+            {
+                "tool_func": docker_sub_agent,
+                "name": "docker_sub_agent",
+                "category": ["docker", "agent"],
+                "flags": {"requires_docker": True, "requires_tb": True},
+                "is_async": True,
+            },
+            {
+                "tool_func": docker_set_manifest,
+                "name": "docker_set_manifest",
+                "category": ["docker", "config"],
+                "flags": {"requires_docker": True},
+            },
+        ]
+
+        # ── Health flags (guaranteed_healthy) ───────────────────────
+        health_flags = {
+            "docker_run": {"flags": {"guaranteed_healthy": True}},
+            "docker_tb_run": {"flags": {"guaranteed_healthy": True}},
+            "docker_start_app": {"flags": {"guaranteed_healthy": True}},
+            "docker_stop_app": {"flags": {"guaranteed_healthy": True}},
+            "docker_logs": {"flags": {"guaranteed_healthy": True}},
+            "docker_status": {"flags": {"guaranteed_healthy": True}},
+            "docker_sub_agent": {"flags": {"guaranteed_healthy": True}},
+            "docker_set_manifest": {"flags": {"guaranteed_healthy": True}},
+        }
+
+        return tool_defs, health_flags
 
     # =========================================================================
     # RULESET METHODS

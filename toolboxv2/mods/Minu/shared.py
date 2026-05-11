@@ -380,13 +380,27 @@ class SharedSection:
                 self._app.logger.error(f"[Shared] Error persisting section: {e}")
 
     async def _broadcast_change(self, change: SharedChange):
-        """Änderung an alle Teilnehmer senden"""
+        """Änderung an alle Teilnehmer senden — ZMQ or local, never both."""
         message = {
             'type': 'shared_change',
             'sectionId': self.id,
             'change': change.to_dict(),
         }
 
+        # ZMQ ws_broadcast — reaches ALL containers on the same broker,
+        # including our own WS worker. No local push needed.
+        if self._app and hasattr(self._app, 'ws_broadcast'):
+            try:
+                channel = f"shared:{self.id}"
+                await self._app.ws_broadcast(channel, message)
+                return  # done — ZMQ covers local + remote delivery
+            except Exception as e:
+                if self._app:
+                    self._app.logger.warning(
+                        f"[Shared] ZMQ broadcast failed, falling back to local: {e}"
+                    )
+
+        # Fallback: direct session push (dev mode, no workers active)
         for participant in self.participants.values():
             if participant.session and participant.session._send_callback:
                 try:
@@ -394,7 +408,7 @@ class SharedSection:
                 except Exception as e:
                     if self._app:
                         self._app.logger.warning(
-                            f"[Shared] Error broadcasting to {participant.id}: {e}"
+                            f"[Shared] Local send failed for {participant.id}: {e}"
                         )
 
     def _trigger_handlers(self, change: SharedChange):

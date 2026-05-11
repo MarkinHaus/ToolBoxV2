@@ -2452,6 +2452,15 @@ Session: {self.session_id}
 
         f = self.files[path]
 
+        # Auto-load shadow files that haven't been read yet
+        if not f.is_loaded and f.backing_type == FileBackingType.SHADOW:
+            load_result = self._load_shadow_content(path)
+            if not load_result.get("success"):
+                return {
+                    "success": False,
+                    "error": f"Cannot load file content: {load_result.get('error', 'unknown')}",
+                }
+
         if not f.lsp_enabled:
             return {
                 "success": True,
@@ -2469,10 +2478,11 @@ Session: {self.session_id}
         # Get diagnostics from LSP manager
         if force_refresh or not f.diagnostics:
             try:
+                language_id = f.file_type.language_id if f.file_type else "plaintext"
                 diagnostics = await self._lsp_manager.get_diagnostics(
                     path,
                     f.content,
-                    f.file_type.language_id if f.file_type else "plaintext",
+                    language_id,
                 )
                 f.diagnostics = [
                     d.to_dict() if hasattr(d, "to_dict") else d for d in diagnostics

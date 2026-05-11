@@ -441,13 +441,17 @@ class LSPManager:
         if cache_key in self._diagnostic_cache:
             return self._diagnostic_cache[cache_key]
 
-        # Get appropriate server
+        # Auto-ensure LSP server is available for this language
         server_name = self._get_server_for_language(language_id)
-        if not server_name:
-            return []
+        if server_name:
+            await self._ensure_server_available(server_name)
 
-        # Use simple diagnostic approach for common cases
+        # Phase 1: Simple/fast diagnostics (syntax, pyflakes, tsc)
         diagnostics = await self._get_simple_diagnostics(content, language_id, server_name)
+
+        # Phase 2: Static analysis (ruff, radon, vulture, bandit)
+        static_diags = self._static_analysis_diagnostics(content, file_path, language_id)
+        diagnostics.extend(static_diags)
 
         # Cache results
         self._diagnostic_cache[cache_key] = diagnostics
@@ -458,7 +462,7 @@ class LSPManager:
         self,
         content: str,
         language_id: str,
-        server_name: str
+        server_name: str | None
     ) -> list[Diagnostic]:
         """
         Get diagnostics using simple approach (subprocess for specific tools).
@@ -466,11 +470,188 @@ class LSPManager:
         """
         diagnostics = []
 
-        if language_id == "python" and server_name == "pylsp":
+        if language_id == "python":
             diagnostics = await self._python_diagnostics(content)
         elif language_id in ("javascript", "typescript", "typescriptreact", "javascriptreact"):
             diagnostics = await self._js_ts_diagnostics(content, language_id)
-        # Add more language-specific handlers as needed
+        elif language_id == "html":
+            diagnostics = self._html_diagnostics(content)
+
+        return diagnostics
+
+    # ── Static Analysis Integration ────────────────────────────────────
+
+    def _static_analysis_diagnostics(
+        self,
+        content: str,
+        file_path: str,
+        language_id: str,
+    ) -> list[Diagnostic]:
+        """Run tb_analyze_static on content, convert results to Diagnostic objects."""
+        if language_id not in ("python", "javascript"):
+            return []
+
+        try:
+            from toolboxv2.utils.extras.code_analyzer.tb_analyze_static import (
+                analyze_file,
+                AVAILABLE_METRICS,
+            )
+        except ImportError:
+            return []
+
+        # Determine temp suffix + language key
+        suffix_map = {
+            "python": (".py", "python"),
+            "javascript": (".js", "javascript"),
+            "javascriptreact": (".jsx", "javascript"),
+            "typescript": (".ts", "javascript"),
+            "typescriptreact": (".tsx", "javascript"),
+        }
+        suffix, lang_key = suffix_map.get(language_id, (".py", "python"))
+
+        # Write content to temp file (analyze_file reads from disk)
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=suffix, encoding="utf-8", delete=False
+            ) as f:
+                f.write(content)
+                temp_path = f.name
+        except Exception:
+            return []
+
+        diagnostics: list[Diagnostic] = []
+        try:
+            # Pick metrics that apply to this language
+            metrics = [m for m, langs in AVAILABLE_METRICS.items() if lang_key in langs]
+            fm = analyze_file(temp_path, language=lang_key, metrics=metrics)
+
+            # Convert lint issues → Diagnostic
+            for issue in fm.lint_issues:
+                line = max(issue.get("line", 1) - 1, 0)
+                col = max(issue.get("col", 1) - 1, 0)
+                sev = self._map_severity(issue.get("severity", "info"))
+                diagnostics.append(Diagnostic(
+                    range=Range(start=Position(line, col), end=Position(line, col + 1)),
+                    message=f"{issue.get('code', '')}: {issue.get('message', '')}".strip(": "),
+                    severity=sev,
+                    code=issue.get("code"),
+                    source="ruff",
+                ))
+
+            # Convert security issues → Diagnostic
+            for issue in fm.security_issues:
+                line = max(issue.get("line", 1) - 1, 0)
+                sev_str = issue.get("severity", "LOW").upper()
+                sev = (
+                    DiagnosticSeverity.ERROR if sev_str == "HIGH"
+                    else DiagnosticSeverity.WARNING if sev_str == "MEDIUM"
+                    else DiagnosticSeverity.INFORMATION
+                )
+                diagnostics.append(Diagnostic(
+                    range=Range(start=Position(line, 0), end=Position(line, 100)),
+                    message=issue.get("message", "security issue"),
+                    severity=sev,
+                    code=issue.get("test_id"),
+                    source="bandit",
+                ))
+
+            # Convert dead code → Diagnostic (hint severity)
+            for dc in fm.dead_code:
+                line = max(dc.get("line", 1) - 1, 0)
+                diagnostics.append(Diagnostic(
+                    range=Range(start=Position(line, 0), end=Position(line, 100)),
+                    message=f"Unused {dc.get('type', 'code')}: {dc.get('name', '?')} "
+                            f"({dc.get('confidence', 0)}% confidence)",
+                    severity=DiagnosticSeverity.HINT,
+                    source="vulture",
+                ))
+
+            # High complexity → warning
+            for cc in fm.complexity:
+                if cc.get("rank", "A") in ("D", "E", "F"):
+                    line = max(cc.get("line", 1) - 1, 0)
+                    diagnostics.append(Diagnostic(
+                        range=Range(start=Position(line, 0), end=Position(line, 100)),
+                        message=f"High complexity: {cc.get('name', '?')} "
+                                f"(CC={cc.get('complexity', 0)}, rank={cc.get('rank', '?')})",
+                        severity=DiagnosticSeverity.WARNING,
+                        code=f"CC-{cc.get('rank', '?')}",
+                        source="radon",
+                    ))
+
+        except Exception:
+            pass
+        finally:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+        return diagnostics
+
+    @staticmethod
+    def _map_severity(sev: str) -> DiagnosticSeverity:
+        return {
+            "error": DiagnosticSeverity.ERROR,
+            "warning": DiagnosticSeverity.WARNING,
+            "info": DiagnosticSeverity.INFORMATION,
+        }.get(sev, DiagnosticSeverity.INFORMATION)
+
+    # ── HTML Diagnostics ───────────────────────────────────────────────
+
+    def _html_diagnostics(self, content: str) -> list[Diagnostic]:
+        """Basic HTML diagnostics: unclosed tags, missing doctype, common issues."""
+        diagnostics: list[Diagnostic] = []
+        lines = content.split("\n")
+
+        # Check for DOCTYPE
+        if not content.strip().lower().startswith("<!doctype"):
+            diagnostics.append(Diagnostic(
+                range=Range(start=Position(0, 0), end=Position(0, 1)),
+                message="Missing <!DOCTYPE html> declaration",
+                severity=DiagnosticSeverity.WARNING,
+                source="html-check",
+            ))
+
+        # Check for basic tag balance (simplified)
+        import re
+        open_tags: list[tuple[str, int]] = []
+        void_elements = {
+            "area", "base", "br", "col", "embed", "hr", "img", "input",
+            "link", "meta", "param", "source", "track", "wbr",
+        }
+
+        for i, line in enumerate(lines):
+            # Opening tags
+            for m in re.finditer(r"<([a-zA-Z][a-zA-Z0-9]*)", line):
+                tag = m.group(1).lower()
+                if tag not in void_elements:
+                    open_tags.append((tag, i))
+
+            # Closing tags
+            for m in re.finditer(r"</([a-zA-Z][a-zA-Z0-9]*)\s*>", line):
+                tag = m.group(1).lower()
+                if open_tags and open_tags[-1][0] == tag:
+                    open_tags.pop()
+                elif open_tags:
+                    # Mismatch
+                    expected_tag, expected_line = open_tags[-1]
+                    diagnostics.append(Diagnostic(
+                        range=Range(start=Position(i, m.start()), end=Position(i, m.end())),
+                        message=f"Unexpected </{tag}>, expected </{expected_tag}> "
+                                f"(opened at line {expected_line + 1})",
+                        severity=DiagnosticSeverity.ERROR,
+                        source="html-check",
+                    ))
+
+        # Remaining unclosed tags
+        for tag, line_num in open_tags:
+            diagnostics.append(Diagnostic(
+                range=Range(start=Position(line_num, 0), end=Position(line_num, 100)),
+                message=f"Unclosed <{tag}> tag",
+                severity=DiagnosticSeverity.WARNING,
+                source="html-check",
+            ))
 
         return diagnostics
 

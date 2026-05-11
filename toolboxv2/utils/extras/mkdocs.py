@@ -471,6 +471,54 @@ class CodeAnalyzer:
                 if not is_method:
                     yield self._function_element(node, file_path)
 
+    @staticmethod
+    def extract_imports(file_path: Path) -> list[dict]:
+        """Extract import statements and __all__ from a Python file via AST."""
+        try:
+            content = file_path.read_text(encoding="utf-8")
+            tree = ast.parse(content, filename=str(file_path))
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            return []
+
+        imports = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imports.append({
+                        "type": "import",
+                        "module": alias.name,
+                        "name": alias.asname or alias.name.split(".")[-1],
+                        "line": node.lineno,
+                    })
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                for alias in node.names:
+                    imports.append({
+                        "type": "from_import",
+                        "module": module,
+                        "name": alias.name,
+                        "alias": alias.asname,
+                        "line": node.lineno,
+                    })
+
+        # Extract __all__ if present
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "__all__":
+                        if isinstance(node.value, (ast.List, ast.Tuple)):
+                            exports = []
+                            for elt in node.value.elts:
+                                if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                                    exports.append(elt.value)
+                            imports.append({
+                                "type": "__all__",
+                                "exports": exports,
+                                "line": node.lineno,
+                            })
+
+        return imports
+
     def _class_element(self, node: ast.ClassDef, file_path: Path) -> CodeElement:
         """Create CodeElement for class."""
         bases = ", ".join(self._get_name(b) for b in node.bases[:3])
@@ -1124,7 +1172,56 @@ class IndexManager:
 # =============================================================================
 # CONTEXT ENGINE - Fast Search with Inverted Index
 # =============================================================================
-
+_STDLIB_MODULES = frozenset({
+    "abc", "aifc", "argparse", "array", "ast", "asyncio", "atexit",
+    "base64", "binascii", "bisect", "builtins", "bz2",
+    "calendar", "cgi", "cgitb", "chunk", "cmath", "cmd", "code",
+    "codecs", "collections", "colorsys", "compileall", "concurrent",
+    "configparser", "contextlib", "contextvars", "copy", "copyreg",
+    "cProfile", "csv", "ctypes", "curses",
+    "dataclasses", "datetime", "dbm", "decimal", "difflib", "dis",
+    "distutils", "doctest",
+    "email", "encodings", "enum", "errno",
+    "faulthandler", "fcntl", "filecmp", "fileinput", "fnmatch",
+    "fractions", "ftplib", "functools",
+    "gc", "getopt", "getpass", "gettext", "glob", "graphlib", "grp", "gzip",
+    "hashlib", "heapq", "hmac", "html", "http",
+    "idlelib", "imaplib", "imghdr", "importlib", "inspect", "io", "ipaddress",
+    "itertools",
+    "json", "keyword",
+    "lib2to3", "linecache", "locale", "logging", "lzma",
+    "mailbox", "mailcap", "marshal", "math", "mimetypes", "mmap",
+    "multiprocessing",
+    "netrc", "numbers",
+    "operator", "optparse", "os", "ossaudiodev",
+    "pathlib", "pdb", "pickle", "pickletools", "pipes", "pkgutil",
+    "platform", "plistlib", "poplib", "posix", "posixpath", "pprint",
+    "profile", "pstats", "pty", "pwd", "py_compile", "pyclbr",
+    "pydoc",
+    "queue", "quopri",
+    "random", "re", "readline", "reprlib", "resource", "rlcompleter",
+    "runpy",
+    "sched", "secrets", "select", "selectors", "shelve", "shlex",
+    "shutil", "signal", "site", "smtpd", "smtplib", "sndhdr",
+    "socket", "socketserver", "sqlite3", "ssl", "stat", "statistics",
+    "string", "stringprep", "struct", "subprocess", "sunau", "symtable",
+    "sys", "sysconfig", "syslog",
+    "tabnanny", "tarfile", "telnetlib", "tempfile", "termios", "test",
+    "textwrap", "threading", "time", "timeit", "tkinter", "token",
+    "tokenize", "tomllib", "trace", "traceback", "tracemalloc", "tty",
+    "turtle", "turtledemo", "types", "typing",
+    "unicodedata", "unittest", "urllib", "uu", "uuid",
+    "venv",
+    "warnings", "wave", "weakref", "webbrowser", "winreg", "winsound",
+    "wsgiref",
+    "xdrlib", "xml", "xmlrpc",
+    "zipapp", "zipfile", "zipimport", "zlib",
+    # Also common third-party that aren't project deps
+    "setuptools", "pip", "pkg_resources", "numpy", "pandas",
+    "requests", "flask", "django", "fastapi", "pydantic",
+    "pytest", "tqdm", "yaml", "toml", "dotenv",
+    "_thread", "abc",
+})
 
 class ContextEngine:
     """Fast context lookups using inverted index for O(1) keyword search."""
@@ -1512,18 +1609,8 @@ class ContextEngine:
                     for fp in relative_paths
                 },
                 "context_graph": {
-                    "upstream_dependencies": [
-                        {"name": u.name, "file": u.file_path, "type": u.element_type}
-                        for u in upstream[:10]  # Limit for tokens
-                    ],
-                    "downstream_usages": [
-                        {
-                            "name": d["element"].name,
-                            "file": d["element"].file_path,
-                            "context": "caller",
-                        }
-                        for d in downstream[:10]
-                    ],
+                    "upstream_dependencies": upstream[:15],
+                    "downstream_usages": downstream[:15],
                 },
                 "relevant_docs": relevant_docs[:5],
             }
@@ -1533,88 +1620,261 @@ class ContextEngine:
 
     def _resolve_upstream(
         self, focus_elements: List[CodeElement]
-    ) -> List[CodeElement]:
+    ) -> List[dict]:
         """
-        Find dependencies: What do the focus elements call/inherit/use?
-        Strategy: Look for known element names inside the focus file content.
+        Find dependencies via actual import parsing + usage snippets.
+        Returns list of dicts with name, file, type, import_line, usage_snippet.
         """
+        from toolboxv2.utils.extras.mkdocs import CodeAnalyzer
+
         dependencies = []
-        # Get all known names in the index (excluding the focus elements themselves)
-        all_known_names = self._index_mgr.index.inverted.name_to_elements
+        seen_modules = set()
 
-        # We need the content of the focus files to check for usage
-        # This is a simplified check. A full AST traversal for calls is better but expensive.
-        for elem in focus_elements:
-            try:
-                # Read specific lines of the element
-                path = Path(elem.file_path)
-                if not path.exists():
-                    continue
+        # Collect unique focus files
+        focus_files = {Path(e.file_path) for e in focus_elements}
 
-                # Naive: Read full file (cached by OS usually), extract lines
-                # Optimization: In a real persistent system, cache content or AST Analysis result
-                lines = path.read_text(encoding="utf-8").splitlines()
-                code_snippet = "\n".join(lines[elem.line_start - 1 : elem.line_end])
-
-                # Check which known global names appear in this snippet
-                # Tokenization similar to Inverted Index building
-                tokens = set(re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", code_snippet))
-
-                for token in tokens:
-                    if token in all_known_names and token != elem.name:
-                        # Found a dependency! Get the element definition
-                        # Resolve ambiguous names (multiple files might have 'utils')
-                        # Heuristic: Prefer same directory or utils
-                        possible_ids = all_known_names[token]
-                        for eid in possible_ids:
-                            dep_elem = self._index_mgr.index.code_elements.get(eid)
-                            if dep_elem and dep_elem.file_path != elem.file_path:
-                                dependencies.append(dep_elem)
-                                break  # Take first match for now
-            except Exception:
+        for fpath in focus_files:
+            if not fpath.exists() or fpath.suffix != ".py":
                 continue
 
-        # Deduplicate
-        unique_deps = {e.content_hash: e for e in dependencies}
-        return list(unique_deps.values())
+            # Parse actual imports
+            imports = CodeAnalyzer.extract_imports(fpath)
+            if not imports:
+                continue
+
+            try:
+                file_content = fpath.read_text(encoding="utf-8")
+                file_lines = file_content.splitlines()
+            except (OSError, UnicodeDecodeError):
+                continue
+
+            for imp in imports:
+                if imp["type"] == "__all__":
+                    continue
+
+                imp_name = imp.get("alias") or imp["name"]
+                imp_module = imp.get("module", "")
+
+                # Skip stdlib and known third-party
+                root_module = (imp_module.split(".")[0] if imp_module else imp["name"].split(".")[0]).lower()
+                if root_module in _STDLIB_MODULES:
+                    continue
+                # Skip non-project imports (no module path or doesn't match project)
+                if imp["type"] == "import" and not imp_module:
+                    if imp["name"].split(".")[0].lower() in _STDLIB_MODULES:
+                        continue
+
+                # Find the definition in our index
+                candidates = self._index_mgr.index.inverted.name_to_elements.get(
+                    imp_name.lower(), set()
+                )
+                if not candidates and imp["type"] == "from_import":
+                    candidates = self._index_mgr.index.inverted.name_to_elements.get(
+                        imp["name"].lower(), set()
+                    )
+
+                if not candidates:
+                    continue
+
+                # Pick best candidate: prefer matching module path
+                best = None
+                for eid in candidates:
+                    elem = self._index_mgr.index.code_elements.get(eid)
+                    if not elem:
+                        continue
+                    if elem.file_path == str(fpath):
+                        continue  # skip self-references
+                    if imp_module and imp_module.replace(".", "/") in elem.file_path.replace("\\", "/"):
+                        best = elem
+                        break
+                    if best is None:
+                        best = elem
+
+                if not best:
+                    continue
+
+                dep_key = f"{best.file_path}:{best.name}"
+                if dep_key in seen_modules:
+                    continue
+                seen_modules.add(dep_key)
+
+                # Find usage snippet: where is imp_name actually used in the file body?
+                usage_snippet = None
+                for i, line in enumerate(file_lines):
+                    if i == imp["line"] - 1:
+                        continue  # skip the import line itself
+                    if imp_name in line and not line.strip().startswith("#"):
+                        usage_snippet = line.strip()
+                        if len(usage_snippet) > 120:
+                            usage_snippet = usage_snippet[:120] + "..."
+                        break
+
+                import_line = file_lines[imp["line"] - 1].strip() if imp["line"] <= len(file_lines) else ""
+
+                dependencies.append({
+                    "name": best.name,
+                    "file": best.file_path,
+                    "type": best.element_type,
+                    "import_statement": import_line,
+                    "usage_snippet": usage_snippet,
+                    "signature": best.signature,
+                })
+
+            # Rank by relevance
+            def _score_upstream(dep: dict) -> tuple:
+                name = dep.get("name", "")
+                dep_type = dep.get("type", "")
+                file = dep.get("file", "").replace("\\", "/").lower()
+                has_usage = 1 if dep.get("usage_snippet") else 0
+                has_import = 1 if dep.get("import_statement") else 0
+
+                # Type weight: class > function > method
+                type_score = {"class": 3, "function": 2, "method": 1}.get(dep_type, 0)
+
+                # Direct project import scores higher than deep nested
+                depth = file.count("/")
+
+                # Core module scores higher
+                core_score = 0
+                if "/utils/system/" in file or "/utils/extras/" in file:
+                    core_score = 3
+                elif "/utils/" in file:
+                    core_score = 2
+                elif "/mods/" in file:
+                    core_score = 1
+
+                # Penalize test files
+                is_test = -2 if "/test" in file or "_test" in file else 0
+
+                return (has_usage, type_score, core_score, has_import, is_test, -depth)
+
+            dependencies.sort(key=_score_upstream, reverse=True)
+            return dependencies
 
     def _resolve_downstream(
         self, focus_names: Set[str], exclude_paths: Set[str]
     ) -> List[dict]:
         """
-        Find usage: Who calls/uses the focus elements?
-        Strategy: Search inverted index or file contents for focus_names.
+        Find usage: Who imports/calls the focus module's elements?
+        Scans other indexed files for actual import statements + usage in bodies.
         """
+        from toolboxv2.utils.extras.mkdocs import CodeAnalyzer
+
         usages = []
+        seen = set()
 
-        # Use Inverted Index for fast candidate finding
-        # keyword_to_sections tracks Docs, but we need Code usage.
-        # We iterate over other code elements and check their definitions/bodies?
-        # Too slow.
+        # Build set of focus file stems for module-level matching
+        focus_stems = set()
+        for fp in exclude_paths:
+            focus_stems.add(Path(fp).stem)
 
-        # Fast path: Check specific files that likely import these modules
-        # (This implies we need an Import Graph, which we approximate here)
+        # Scan all indexed Python files for imports of focus names
+        indexed_files = set()
+        for elem in self._index_mgr.index.code_elements.values():
+            if elem.language == "python":
+                indexed_files.add(elem.file_path)
 
-        for name in focus_names:
-            # We look for files containing this name textually
-            # This relies on the FileScanner or IndexManager having a "files_containing_token" map
-            # Since we don't have that in v2.1, we iterate code elements names (definitions)
-            # and check if they *contain* our name? No.
+        for fpath_str in indexed_files:
+            fpath = Path(fpath_str)
+            if str(fpath.resolve()) in exclude_paths:
+                continue
+            if not fpath.exists() or fpath.suffix != ".py":
+                continue
 
-            # Fallback: Scan known code elements to see if their *signatures* or *docstrings*
-            # mention the focus name (e.g. type hinting `def foo(bar: FocusClass)`)
+            imports = CodeAnalyzer.extract_imports(fpath)
+            if not imports:
+                continue
 
-            for eid, elem in self._index_mgr.index.code_elements.items():
-                if str(Path(elem.file_path).resolve()) in exclude_paths:
+            # Check if any import references our focus names or modules
+            relevant_imports = []
+            for imp in imports:
+                if imp["type"] == "__all__":
                     continue
+                root_mod = (imp.get("module", "") or imp["name"]).split(".")[0].lower()
+                if root_mod in _STDLIB_MODULES:
+                    continue
+                imp_name = imp.get("alias") or imp["name"]
+                imp_module = imp.get("module", "")
 
-                # Check signature for type usage or docstring for references
-                if (name in elem.signature) or (
-                    elem.docstring and name in elem.docstring
-                ):
-                    usages.append({"element": elem, "match": "signature_or_doc"})
+                # Match by imported name
+                if imp_name in focus_names or imp["name"] in focus_names:
+                    relevant_imports.append(imp)
+                # Match by module path containing focus file stem
+                elif any(stem in imp_module for stem in focus_stems):
+                    relevant_imports.append(imp)
 
-        return usages
+            if not relevant_imports:
+                continue
+
+            # Found a file that imports from our focus module — extract usage
+            try:
+                file_lines = fpath.read_text(encoding="utf-8").splitlines()
+            except (OSError, UnicodeDecodeError):
+                continue
+
+            for imp in relevant_imports:
+                imp_name = imp.get("alias") or imp["name"]
+                import_line = file_lines[imp["line"] - 1].strip() if imp["line"] <= len(file_lines) else ""
+
+                # Find usage snippets in the file body (up to 3)
+                usage_snippets = []
+                for i, line in enumerate(file_lines):
+                    if i == imp["line"] - 1:
+                        continue
+                    stripped = line.strip()
+                    if imp_name in stripped and not stripped.startswith("#") and not stripped.startswith("import"):
+                        snippet = stripped[:120] + "..." if len(stripped) > 120 else stripped
+                        usage_snippets.append(snippet)
+                        if len(usage_snippets) >= 3:
+                            break
+
+                key = f"{fpath_str}:{imp_name}"
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                usages.append({
+                    "file": fpath_str,
+                    "import_statement": import_line,
+                    "imported_name": imp_name,
+                    "usage_snippets": usage_snippets,
+                })
+
+            # Rank by relevance
+            def _score_downstream(usage: dict) -> tuple:
+                file = usage.get("file", "").replace("\\", "/").lower()
+                snippets = usage.get("usage_snippets", [])
+                imp_name = usage.get("imported_name", "")
+
+                # More usage snippets = more relevant
+                usage_count = min(len(snippets), 5)
+
+                # Actual code usage (not just import) is more relevant
+                has_real_usage = 1 if any(
+                    "import" not in s.lower() for s in snippets
+                ) else 0
+
+                # Penalize test files
+                is_test = -2 if "/test" in file or "_test" in file else 0
+
+                # Core consumers rank higher
+                core_score = 0
+                if "/mods/" in file:
+                    core_score = 3
+                elif "/flows/" in file:
+                    core_score = 2
+                elif "/utils/" in file:
+                    core_score = 1
+                elif "/clis/" in file:
+                    core_score = 0
+
+                # Penalize stdlib name collisions (e.g. "json" imported everywhere)
+                name_specificity = min(len(imp_name), 10)  # longer names = more specific
+
+                return (has_real_usage, usage_count, core_score, is_test, name_specificity)
+
+            usages.sort(key=_score_downstream, reverse=True)
+            return usages
 
     def _truncate_content(self, content: str, limit: int) -> str:
         """Helper to keep context bundle small."""

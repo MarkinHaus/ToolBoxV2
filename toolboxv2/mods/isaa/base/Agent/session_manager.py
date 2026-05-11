@@ -273,7 +273,9 @@ class SessionManager:
                 'cpu_limit': self.docker_config.cpu_limit,
                 'port_range_start': self.docker_config.port_range_start,
                 'port_range_end': self.docker_config.port_range_end,
-                'timeout_seconds': self.docker_config.timeout_seconds
+                'timeout_seconds': self.docker_config.timeout_seconds,
+                'inject_manifest': self.docker_config.inject_manifest,
+                'service_overrides': self.docker_config.service_overrides,
             } if self.docker_config else None,
             'sessions': {
                 session_id: session.to_checkpoint()

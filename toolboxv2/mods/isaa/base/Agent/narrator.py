@@ -1448,7 +1448,7 @@ Rules:
 
 _RULESET_SYSTEM_DE = """\
 Du bist ein Regel- & Kontext-Analyzer für einen KI-Agenten. Deine Aufgabe:
-1. Erfasse die aktuelle 'situation' und den 'intent' des Agenten.
+1. Erfasse die aktuelle 'situation' und den 'intent' des Agenten und nutzers.
 2. Wenn der User oder Agent eine klare, WIEDERVERWENDBARE Vorgehensweise (Prozedur) formuliert, speichere sie als Regel.
 
 Antworte AUSSCHLIESSLICH mit kompaktem JSON:
@@ -1468,7 +1468,7 @@ Regeln:
 
 _RULESET_SYSTEM_EN = """\
 You are a Rule & Context Analyzer for an AI agent. Your task:
-1. Track the agent's current 'situation' and 'intent'.
+1. Track the agent's and users current 'situation' and 'intent'.
 2. If the user or agent formulates a clear, REUSABLE procedure, save it as a rule.
 
 Reply ONLY with compact JSON:
@@ -1604,7 +1604,7 @@ def _build_memory_prompt(
 def _compress_skills_to_index(skills_manager: Any) -> str:
     """
     Convert SkillsManager skills to a compact index string for Blitz prompt.
-    Format: "id|name|trigger1,trigger2,trigger3"  (one per line, max 20 skills)
+    Format: "id|name|trigger1,trigger2,trigger3"
     """
     lines = []
     skills = getattr(skills_manager, "skills", {})

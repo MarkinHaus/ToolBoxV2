@@ -1450,6 +1450,53 @@ class FlowAgent:
         ctx = engine.get_execution(execution_id)
         return ctx.to_checkpoint() if ctx else None
 
+    def get_resumable_executions(self) -> list[dict]:
+        """
+        List all paused/max_iterations executions that can be resumed.
+
+        Returns:
+            List of execution summaries with run_id, query, status, iteration
+        """
+        engine = self._get_execution_engine()
+        return engine.list_executions()
+
+    async def resume_last_execution(
+        self,
+        content: str = "",
+        max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30),
+        stream: bool = False,
+        execution_id: str | None = None,
+    ):
+        """
+        Resume last paused/max_iterations execution, or a specific one by ID.
+
+        Args:
+            content: Additional user context/prompt for the resumed execution
+            max_iterations: Max additional iterations
+            stream: If True, return (stream_func, ctx) tuple
+            execution_id: Specific execution to resume (None = most recent resumable)
+
+        Returns:
+            str or tuple[Callable, ExecutionContext] depending on stream
+        """
+        engine = self._get_execution_engine()
+
+        if execution_id is None:
+            # Find most recent resumable
+            resumable = [
+                (eid, ctx) for eid, ctx in engine._active_executions.items()
+                if ctx.status in ("paused", "max_iterations")
+            ]
+            if not resumable:
+                return "Keine resumable Execution gefunden."
+            # Sort by iteration count desc (most progressed = most recent)
+            resumable.sort(key=lambda x: x[1].current_iteration, reverse=True)
+            execution_id = resumable[0][0]
+
+        return await engine.resume(
+            execution_id, max_iterations, content=content, stream=stream
+        )
+
     # =========================================================================
     # CORE: a_stream - Voice-First Intelligent Streaming
     # =========================================================================
@@ -1605,7 +1652,73 @@ class FlowAgent:
                 status = "✅" if chunk.get("success") else "⚠️"
                 yield f"\n{status} Fertig\n"
 
+    # =========================================================================
+    # CODING: write_patch / write_file (delegated to ExecutionEngine)
+    # =========================================================================
 
+    async def write_patch(
+        self,
+        file_path: str,
+        task: str,
+        session_id: str = None,
+        context_files: list[str] | None = None,
+    ) -> str:
+        """
+        Apply a patch to an existing VFS file using the coding LLM.
+
+        Args:
+            file_path: VFS path of the file to patch
+            task: Description of what to change and why
+            session_id: Session for VFS access
+            context_files: Optional additional VFS paths for context
+
+        Returns:
+            Result message
+        """
+        session = await self.session_manager.get_or_create(session_id or self.active_session or "default")
+        self.init_session_tools(session)
+        engine = self._get_execution_engine()
+        engine._current_session = session
+
+        from toolboxv2.mods.isaa.base.Agent.execution_engine import ExecutionContext
+        ctx = ExecutionContext()
+        ctx.session_id = session_id
+
+        return await engine._tool_write_patch(
+            ctx, file_path=file_path, task=task, context_files=context_files or []
+        )
+
+    async def write_file(
+        self,
+        file_path: str,
+        task: str,
+        session_id: str = None,
+        context_files: list[str] | None = None,
+    ) -> str:
+        """
+        Create a new file in VFS using the coding LLM.
+
+        Args:
+            file_path: VFS path for the new file
+            task: Spec of what the file should contain
+            session_id: Session for VFS access
+            context_files: Optional VFS paths for reference
+
+        Returns:
+            Result message
+        """
+        session = await self.session_manager.get_or_create(session_id or self.active_session or "default")
+        self.init_session_tools(session)
+        engine = self._get_execution_engine()
+        engine._current_session = session
+
+        from toolboxv2.mods.isaa.base.Agent.execution_engine import ExecutionContext
+        ctx = ExecutionContext()
+        ctx.session_id = session_id
+
+        return await engine._tool_write_new_file(
+            ctx, file_path=file_path, task=task, context_files=context_files or []
+        )
 
     # =========================================================================
     # Dreaming - Agent-based Meta-Learning
@@ -2291,36 +2404,6 @@ class FlowAgent:
             """Get LSP diagnostics (errors / warnings / hints) for a code file."""
             return await session.vfs_diagnostics(path)
 
-        # ── Docker ────────────────────────────────────────────────────────
-        async def docker_run(
-            command: str,
-            timeout: int = 300,
-            sync_before: bool = True,
-            sync_after: bool = True,
-        ) -> dict:
-            """Execute a shell command inside the Docker container.
-            VFS files are synced to /workspace before (sync_before) and
-            container changes are pulled back after (sync_after)."""
-            return await session.docker_run_command(command, timeout, sync_before, sync_after)
-
-        async def docker_start_app(
-            entrypoint: str, port: int = 8080, env: dict[str, str] | None = None
-        ) -> dict:
-            """Start a web application in the Docker container."""
-            return await session.docker_start_web_app(entrypoint, port, env)
-
-        async def docker_stop_app() -> dict:
-            """Stop the running web application in Docker."""
-            return await session.docker_stop_web_app()
-
-        async def docker_logs(lines: int = 100) -> dict:
-            """Get the last N log lines from the running web application."""
-            return await session.docker_get_logs(lines)
-
-        def docker_status() -> dict:
-            """Get Docker container status (running, ports, etc.)."""
-            return session.docker_status()
-
         # ── History / Situation ────────────────────────────────────────────
         def history(last_n: int = 10) -> list[dict]:
             """Return the last N messages from the conversation history."""
@@ -2641,11 +2724,6 @@ class FlowAgent:
             # Externe Deps → guaranteed_healthy
 
             "vfs_diagnostics": {"flags": {"guaranteed_healthy": True}},
-            "docker_run": {"flags": {"guaranteed_healthy": True}},
-            "docker_start_app": {"flags": {"guaranteed_healthy": True}},
-            "docker_stop_app": {"flags": {"guaranteed_healthy": True}},
-            "docker_logs": {"flags": {"guaranteed_healthy": True}},
-            "docker_status": {"flags": {"guaranteed_healthy": True}},
 
             # ── HISTORY / RULES ───────────────────────────────────────────────────────
 
@@ -2813,41 +2891,6 @@ class FlowAgent:
                 "category": ["vfs", "lsp"],
                 "is_async": True,
             },
-            # ── DOCKER ────────────────────────────────────────────────────
-            {
-                "tool_func": docker_run,
-                "name": "docker_run",
-                "category": ["docker", "execute"],
-                "flags": {"requires_docker": True},
-                "is_async": True,
-            },
-            {
-                "tool_func": docker_start_app,
-                "name": "docker_start_app",
-                "category": ["docker", "web"],
-                "flags": {"requires_docker": True},
-                "is_async": True,
-            },
-            {
-                "tool_func": docker_stop_app,
-                "name": "docker_stop_app",
-                "category": ["docker", "web"],
-                "flags": {"requires_docker": True},
-                "is_async": True,
-            },
-            {
-                "tool_func": docker_logs,
-                "name": "docker_logs",
-                "category": ["docker", "read"],
-                "flags": {"requires_docker": True},
-                "is_async": True,
-            },
-            {
-                "tool_func": docker_status,
-                "name": "docker_status",
-                "category": ["docker", "read"],
-                "flags": {"requires_docker": True},
-            },
             # ── HISTORY / RULES ───────────────────────────────────────────
             {
                 "tool_func": history,
@@ -2878,11 +2921,6 @@ class FlowAgent:
              },
         ]
 
-        for i,elm in enumerate(tools):
-            name = elm.get("name")
-            if name in _TOOL_HEALTH_EXTENSIONS:
-                tools[i].update(_TOOL_HEALTH_EXTENSIONS[name])
-
         # ── Optional: Google Tools ────────────────────────────────────────
         if os.getenv("WITH_GOOGLE_TOOLS", "false") == "true":
             if gmail_toolkit:
@@ -2899,11 +2937,26 @@ class FlowAgent:
             from toolboxv2.mods.isaa.base.Agent.executors import create_local_code_exec_tool
             tools.append(create_local_code_exec_tool(self))
 
+        # ── Docker tools from session (all 8 tools + health flags) ────────
+        docker_tool_count = 0
+        if session._docker_enabled:
+            docker_tool_defs, docker_health_flags = session.get_docker_tools()
+            tools.extend(docker_tool_defs)
+            _TOOL_HEALTH_EXTENSIONS.update(docker_health_flags)
+            docker_tool_count = len(docker_tool_defs)
+
+        # Apply health extensions to all tools (including docker)
+        for i, elm in enumerate(tools):
+            name = elm.get("name")
+            if name in _TOOL_HEALTH_EXTENSIONS:
+                tools[i].update(_TOOL_HEALTH_EXTENSIONS[name])
+
         self.add_tools(tools)
         session.tools_initialized = True
         logger.info(
             f"[{session.session_id}] {len(tools)} tools registered "
-            f"(vfs_shell + vfs_view replace former ~18 individual VFS tools)"
+            f"(vfs_shell + vfs_view replace ~18 VFS tools"
+            f"{f', {docker_tool_count} docker tools' if docker_tool_count else ''})"
         )
         return tools
 
@@ -3263,13 +3316,15 @@ class FlowAgent:
     # LIFECYCLE
     # =========================================================================
 
-    async def close(self):
+    async def close(self, no_save=False):
         """Clean shutdown."""
         self.is_running = False
         engine = self._get_execution_engine()
         if engine:
             await engine.wait_all_pending_finalizes()
-        await self.save()
+
+        if not no_save:
+            await self.save()
 
         if self.amd.enable_docker:
             await self.session_manager.cleanup_docker_containers()

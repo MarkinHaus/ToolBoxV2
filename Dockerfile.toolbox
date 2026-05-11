@@ -160,7 +160,11 @@ WORKDIR /home/toolbox
 ENTRYPOINT ["tini", "--"]
 CMD ["tb", "workers", "start"]
 
-EXPOSE 8000 8001
+EXPOSE 5000
+EXPOSE 5055
+EXPOSE 8000
+EXPOSE 8080
+EXPOSE 8123
 
 VOLUME /data
 

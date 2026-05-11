@@ -38,6 +38,17 @@ class NetworkInfo:
     driver: str
     containers: list = field(default_factory=list)  # list of container_ids
 
+@dataclass(frozen=True)
+class ServiceInfo:
+    """Auto-discovered service from running Docker containers."""
+    name: str
+    service_type: str  # redis, minio, searxng, opentelemetry, openobserve
+    internal_url: str  # Docker network URL (e.g. redis://redis:6379)
+    external_url: str  # Host-reachable URL (e.g. redis://localhost:6379)
+    container_id: str
+    container_name: str
+    is_tb_managed: bool
+
 
 def get_docker_ops() -> "DockerOps":
     """Return the module-level DockerOps singleton.
@@ -370,3 +381,75 @@ class DockerOps:
             "network_rx_bytes": net_rx,
             "network_tx_bytes": net_tx,
         }
+
+    # -- service discovery ---------------------------------------------------
+
+    def discover_services(self) -> list["ServiceInfo"]:
+        """Scan running containers for known service types."""
+        containers = self.list_all_containers(include_stopped=False)
+        services = []
+        for c in containers:
+            svc_type = self.detect_service_type(c)
+            if svc_type:
+                host = self.get_server_ip()
+                ext_port = list(c.ports.values())[0] if c.ports else 0
+                port_key = list(c.ports.keys())[0].split('/')[0] if c.ports else 'unknown'
+                if svc_type == 'redis':
+                    internal = f"redis://{c.name}:6379"
+                    external = f"redis://{host}:{ext_port}"
+                elif svc_type in ('minio', 'openobserve'):
+                    internal = f"http://{c.name}:{port_key}"
+                    external = f"http://{host}:{ext_port}"
+                else:
+                    internal = f"{svc_type}://{c.name}:{port_key}"
+                    external = f"{svc_type}://{host}:{ext_port}"
+                services.append(ServiceInfo(
+                    name=c.name,
+                    service_type=svc_type,
+                    internal_url=internal,
+                    external_url=external,
+                    container_id=c.container_id,
+                    container_name=c.name,
+                    is_tb_managed=c.is_tb_managed,
+                ))
+        return services
+
+    def detect_service_type(self, info) -> "Optional[str]":
+        """Detect service type from image name and ports."""
+        img = (info.image or "").lower()
+        if "redis" in img:
+            return "redis"
+        if "minio" in img:
+            return "minio"
+        if "searxng" in img:
+            return "searxng"
+        if "otel" in img or "opentelemetry" in img:
+            return "opentelemetry"
+        if "openobserve" in img:
+            return "openobserve"
+        port_keys = list(info.ports.keys())
+        for pk in port_keys:
+            port_num = int(pk.split("/")[0])
+            if port_num == 6379:
+                return "redis"
+            if port_num in (9000, 9001):
+                return "minio"
+            if port_num == 8080 and "searxng" in img:
+                return "searxng"
+            if port_num in (4317, 4318):
+                return "opentelemetry"
+            if port_num == 5080:
+                return "openobserve"
+        return None
+
+    def get_container_env(self, container_id: str) -> dict:
+        """Read environment variables of a running container."""
+        client = self._get_client()
+        if client is None:
+            return {}
+        try:
+            c = client.containers.get(container_id)
+            env_list = c.attrs.get("Config", {}).get("Env", [])
+            return {kv.split("=", 1)[0]: kv.split("=", 1)[1] for kv in env_list if "=" in kv}
+        except Exception:
+            return {}

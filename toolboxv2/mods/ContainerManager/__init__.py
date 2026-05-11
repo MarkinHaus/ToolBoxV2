@@ -13,6 +13,7 @@ Admin Key: CONTAINER_ADMIN_KEY Environment Variable
 
 import os
 import secrets
+import yaml
 import time
 from dataclasses import dataclass, field, asdict
 from typing import Optional, List, Dict
@@ -110,6 +111,38 @@ CONTAINER_TYPES = {
         "memory_limit": "512m",
         "cpu_limit": "0.5",
     },
+    "opentelemetry": {
+        "image": "otel/opentelemetry-collector-contrib:latest",
+        "internal_port": 4318,
+        "command": None,
+        "environment": {},
+        "memory_limit": "256m",
+        "cpu_limit": "0.25",
+    },
+    "minio": {
+        "image": "minio/minio:latest",
+        "internal_port": 9000,
+        "command": "server /data --console-address ':9001'",
+        "environment": {"MINIO_ROOT_USER": "minioadmin", "MINIO_ROOT_PASSWORD": "minioadmin"},
+        "memory_limit": "512m",
+        "cpu_limit": "0.5",
+    },
+    "redis": {
+        "image": "redis:7-alpine",
+        "internal_port": 6379,
+        "command": None,
+        "environment": {},
+        "memory_limit": "256m",
+        "cpu_limit": "0.25",
+    },
+    "searxng": {
+        "image": "searxng/searxng:latest",
+        "internal_port": 8080,
+        "command": None,
+        "environment": {},
+        "memory_limit": "256m",
+        "cpu_limit": "0.25",
+    },
 }
 
 # Port-Pool für Container (exklusiv zur Toolbox)
@@ -138,6 +171,201 @@ def check_admin_key(key: str) -> bool:
 def err(msg: str) -> Result:
     """Convenient error return"""
     return Result.default_user_error(info=msg)
+
+
+# ============================================================================
+# MANIFEST TRANSLATION FOR CONTAINERS
+# ============================================================================
+
+# Host-side directory for container manifests (bind-mounted into containers)
+CONTAINER_CONFIG_DIR = Path(".data/container-configs")
+
+
+def translate_manifest_for_container(
+    host_manifest,
+    service_overrides: dict,
+    container_name: str,
+) -> "TBManifest":
+    """
+    Translate a host TBManifest for use inside a Docker container.
+
+    Adjustments:
+    - Service URLs (redis, minio, openobserve) → docker network names or host.docker.internal
+    - nginx disabled (host nginx proxies for the container)
+    - Worker hosts → 0.0.0.0 (container port mapping)
+    - ZMQ endpoints → host broker via host.docker.internal (for cross-container events)
+    - Instance ID unique per container
+
+    service_overrides format:
+    {
+        "redis":       {"source": "docker", "container_name": "my-redis"},
+        "minio":       {"source": "host"},
+        "openobserve": {"source": "external", "endpoint": "http://1.2.3.4:5080"},
+        "zmq_broker":  {"source": "host"},  # connect to host ZMQ broker
+    }
+    source values: "docker" | "host" | "external" | "none"
+    """
+    from toolboxv2.utils.manifest.schema import TBManifest
+
+    data = host_manifest.model_dump()
+
+    # --- Workers: bind to 0.0.0.0 so container port mapping works ---
+    for http_w in data.get("workers", {}).get("http", []):
+        http_w["host"] = "0.0.0.0"
+    for ws_w in data.get("workers", {}).get("websocket", []):
+        ws_w["host"] = "0.0.0.0"
+
+    # --- nginx: disabled in container (host nginx proxies) ---
+    data["nginx"]["enabled"] = False
+
+    # --- Manager web UI: bind 0.0.0.0 ---
+    data["services"]["manager"]["web_ui_host"] = "0.0.0.0"
+
+    # --- ZMQ broker translation ---
+    # For cross-container events (Minu Shared, etc.), containers must connect
+    # to the same ZMQ broker. Default: host broker via host.docker.internal.
+    zmq_ov = service_overrides.get("zmq_broker", {})
+    zmq_src = zmq_ov.get("source", "host")  # default: host broker
+    zmq_data = data.get("services", {}).get("zmq", {})
+
+    if zmq_src == "host":
+        # Replace 127.0.0.1 with host.docker.internal in all ZMQ endpoints
+        broker_host = "host.docker.internal"
+        for key in ("pub_endpoint", "sub_endpoint", "req_endpoint", "http_to_ws_endpoint"):
+            if key in zmq_data:
+                zmq_data[key] = zmq_data[key].replace("127.0.0.1", broker_host)
+    elif zmq_src == "docker":
+        # Connect to a broker running in another container
+        broker_name = zmq_ov.get("container_name", "zmq-broker")
+        for key in ("pub_endpoint", "sub_endpoint", "req_endpoint", "http_to_ws_endpoint"):
+            if key in zmq_data:
+                zmq_data[key] = zmq_data[key].replace("127.0.0.1", broker_name)
+    elif zmq_src == "external":
+        # Custom broker endpoints
+        broker_host = zmq_ov.get("endpoint", "").replace("tcp://", "").split(":")[0]
+        if broker_host:
+            for key in ("pub_endpoint", "sub_endpoint", "req_endpoint", "http_to_ws_endpoint"):
+                if key in zmq_data:
+                    zmq_data[key] = zmq_data[key].replace("127.0.0.1", broker_host)
+    elif zmq_src == "none":
+        # Container runs its own isolated broker — no cross-container events
+        pass  # keep 127.0.0.1
+
+    # --- Redis URL translation ---
+    redis_ov = service_overrides.get("redis", {})
+    redis_src = redis_ov.get("source", "none")
+    if redis_src == "docker":
+        cname = redis_ov.get("container_name", "redis")
+        data["database"]["redis"]["url"] = f"redis://{cname}:6379"
+    elif redis_src == "host":
+        data["database"]["redis"]["url"] = "redis://host.docker.internal:6379"
+    elif redis_src == "external":
+        url = redis_ov.get("url", "")
+        if url:
+            data["database"]["redis"]["url"] = url
+
+    # --- MinIO endpoint translation ---
+    minio_ov = service_overrides.get("minio", {})
+    minio_src = minio_ov.get("source", "none")
+    if minio_src == "docker":
+        cname = minio_ov.get("container_name", "minio")
+        data["database"]["minio"]["endpoint"] = f"{cname}:9000"
+    elif minio_src == "host":
+        data["database"]["minio"]["endpoint"] = "host.docker.internal:9000"
+    elif minio_src == "external":
+        ep = minio_ov.get("endpoint", "")
+        if ep:
+            data["database"]["minio"]["endpoint"] = ep
+
+    # --- OpenObserve / dashboard translation ---
+    obs_ov = service_overrides.get("openobserve", {})
+    obs_src = obs_ov.get("source", "none")
+    if obs_src == "docker":
+        cname = obs_ov.get("container_name", "openobserve")
+        data["observability"]["dashboard"]["endpoint"] = f"http://{cname}:5080"
+        data["observability"]["dashboard"]["enabled"] = True
+    elif obs_src == "host":
+        data["observability"]["dashboard"]["endpoint"] = "http://host.docker.internal:5080"
+        data["observability"]["dashboard"]["enabled"] = True
+    elif obs_src == "external":
+        ep = obs_ov.get("endpoint", "")
+        if ep:
+            data["observability"]["dashboard"]["endpoint"] = ep
+            data["observability"]["dashboard"]["enabled"] = True
+    elif obs_src == "none":
+        data["observability"]["dashboard"]["enabled"] = False
+
+    # --- SearxNG translation (used by ISAA web search) ---
+    searxng_ov = service_overrides.get("searxng", {})
+    searxng_src = searxng_ov.get("source", "none")
+    # SearxNG URL stored in environment, not manifest — handled via container env
+
+    # --- Instance ID: unique per container ---
+    data["app"]["instance_id"] = f"tbv2_{container_name}"
+
+    return TBManifest.model_validate(data)
+
+
+def write_container_manifest(manifest, container_name: str, base_dir: Path = None) -> Path:
+    """
+    Write a translated TBManifest to the host-side config directory.
+
+    Returns the host path to the written tb-manifest.yaml file.
+    This file is bind-mounted into the container at /app/tb-manifest.yaml.
+    """
+    if base_dir is None:
+        from toolboxv2 import tb_root_dir
+        base_dir = tb_root_dir
+
+    config_dir = base_dir / CONTAINER_CONFIG_DIR / container_name
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest_path = config_dir / "tb-manifest.yaml"
+    data = manifest.model_dump(mode="json", exclude_none=True)
+
+    header = (
+        "# AUTO-GENERATED by ContainerManager — DO NOT EDIT\n"
+        f"# Container: {container_name}\n"
+        "# Regenerate by re-creating the container or editing via web UI.\n\n"
+    )
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        f.write(header)
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+    return manifest_path
+
+
+def load_host_manifest():
+    """Load the host's TBManifest. Returns (manifest, error_string)."""
+    from toolboxv2.utils.manifest.loader import ManifestLoader
+    try:
+        from toolboxv2 import tb_root_dir
+        loader = ManifestLoader(tb_root_dir)
+    except Exception:
+        loader = ManifestLoader()
+    if not loader.exists():
+        return None, "No tb-manifest.yaml found on host"
+    try:
+        return loader.load(resolve_env=True), None
+    except Exception as e:
+        return None, f"Failed to load host manifest: {e}"
+
+
+# ============================================================================
+# SERVICE DISCOVERY HELPERS
+# ============================================================================
+
+def _service_info_to_dict(svc) -> dict:
+    """Convert ServiceInfo dataclass to JSON-serializable dict."""
+    return {
+        "name": svc.name,
+        "service_type": svc.service_type,
+        "internal_url": svc.internal_url,
+        "external_url": svc.external_url,
+        "container_id": svc.container_id[:12],
+        "container_name": svc.container_name,
+        "is_tb_managed": svc.is_tb_managed,
+    }
 
 
 # ============================================================================
@@ -356,8 +584,10 @@ async def create_container(
     ext_git_branch: str = "main",
     ext_folder_path: str = None,
     ext_zip_url: str = None,
-    # manifest
+    # manifest — real TBManifest YAML or empty to use translated host manifest
     manifest_yaml: str = None,
+    # service overrides — JSON string: {"redis": {"source": "docker", "container_name": "redis"}, ...}
+    service_overrides: str = None,
 ) -> Result:
     """
     Create a new container for a user.
@@ -368,8 +598,13 @@ async def create_container(
     - "folder": mount a host folder into the container
     - "zip": download and extract a ZIP archive
 
-    manifest_yaml: optional tb-manifest.yaml content to configure the container.
+    manifest_yaml: optional full tb-manifest.yaml YAML to override the translated host manifest.
+    service_overrides: JSON dict mapping service names to connection sources.
+        Keys: "redis", "minio", "openobserve", "searxng"
+        Values: {"source": "docker"|"host"|"external"|"none", "container_name": "...", "url": "..."}
     """
+    import json as _json
+
     # Admin Key Check
     if not check_admin_key(admin_key):
         return err("Invalid admin key")
@@ -403,6 +638,14 @@ async def create_container(
     if not ops.is_available():
         return err("Docker not available")
 
+    # Parse service_overrides
+    svc_overrides = {}
+    if service_overrides:
+        try:
+            svc_overrides = _json.loads(service_overrides) if isinstance(service_overrides, str) else service_overrides
+        except (ValueError, TypeError) as e:
+            return err(f"Invalid service_overrides JSON: {e}")
+
     # Config zusammenstellen
     config = CONTAINER_TYPES[container_type]
     image = image or config["image"]
@@ -423,22 +666,53 @@ async def create_container(
         setup_cmds = []
         if ext_source == "git":
             branch = ext_git_branch or "main"
-            setup_cmds.append(f"git clone --depth 1 -b {branch} {ext_git_url} /app/external")
-            setup_cmds.append("cd /app/external")
+            setup_cmds.append(f"git clone --depth 1 -b {branch} {ext_git_url} /workspace")
+            setup_cmds.append("cd /workspace")
         elif ext_source == "zip":
-            setup_cmds.append(f"mkdir -p /app/external && cd /app/external")
+            setup_cmds.append("mkdir -p /workspace && cd /workspace")
             setup_cmds.append(
-                f"wget -qO /tmp/app.zip '{ext_zip_url}' && unzip -qo /tmp/app.zip -d /app/external && rm /tmp/app.zip")
-        # folder mount is handled via volumes below, no setup command needed
+                f"wget -qO /tmp/app.zip '{ext_zip_url}' && unzip -qo /tmp/app.zip -d /workspace && rm /tmp/app.zip")
+        # folder mount handled via volumes below, no setup command needed
 
         if setup_cmds:
-            # Prepend source setup to user command
             actual_command = f"sh -c '{' && '.join(setup_cmds)} && {command}'"
         env["TB_EXT_SOURCE"] = ext_source
 
-    # Manifest: inject as environment variable (container reads on startup)
-    if manifest_yaml:
-        env["TB_MANIFEST_YAML"] = manifest_yaml
+    # --- Manifest: translate host manifest for container ---
+    # For TB container types (cli_v4, isaa, tb_external), generate a real TBManifest.
+    # Infrastructure containers (minio, redis, searxng, opentelemetry) skip this.
+    is_tb_container = container_type in ("cli_v4", "isaa", "tb_external", "custom")
+    manifest_host_path = None
+
+    name = container_name or f"{user_id}_{container_type}_{secrets.token_hex(4)}"
+
+    if is_tb_container:
+        if manifest_yaml:
+            # User provided explicit manifest YAML — validate as TBManifest
+            try:
+                from toolboxv2.utils.manifest.schema import TBManifest
+                parsed = yaml.safe_load(manifest_yaml)
+                if not isinstance(parsed, dict):
+                    return err("Manifest YAML must be a mapping")
+                container_manifest = TBManifest.model_validate(parsed)
+            except yaml.YAMLError as e:
+                return err(f"Manifest YAML parse error: {e}")
+            except Exception as e:
+                return err(f"Manifest validation error: {e}")
+        else:
+            # Load host manifest and translate for container
+            host_manifest, load_err = load_host_manifest()
+            if host_manifest is None:
+                return err(load_err or "Could not load host manifest")
+            container_manifest = translate_manifest_for_container(
+                host_manifest, svc_overrides, name,
+            )
+
+        # Write manifest to host-side config dir for bind-mount
+        try:
+            manifest_host_path = write_container_manifest(container_manifest, name)
+        except Exception as e:
+            return err(f"Failed to write container manifest: {e}")
 
     # Port allozieren
     port = await db_allocate_port(app)
@@ -462,7 +736,6 @@ async def create_container(
             return err("SSH public key too long")
         env["SSH_PUBLIC_KEY"] = ssh_public_key
 
-    name = container_name or f"{user_id}_{container_type}_{secrets.token_hex(4)}"
     volume_name = f"container_{user_id}_{container_type}_{secrets.token_hex(4)}"
 
     port_bindings = {f"{internal_port}/tcp": port}
@@ -472,12 +745,21 @@ async def create_container(
     # Volumes
     volumes = {volume_name: {"bind": "/data", "mode": "rw"}}
 
-    # tb_external folder mount
+    # Bind-mount translated manifest into container (overrides built-in)
+    if manifest_host_path:
+        volumes[str(manifest_host_path)] = {"bind": "/app/tb-manifest.yaml", "mode": "ro"}
+
+    # tb_external folder mount → /workspace (becomes container PWD)
+    working_dir = None
     if container_type == "tb_external" and ext_source == "folder" and ext_folder_path:
-        volumes[ext_folder_path] = {"bind": "/app/external", "mode": "rw"}
+        volumes[ext_folder_path] = {"bind": "/workspace", "mode": "rw"}
+        working_dir = "/workspace"
+
+    # extra_hosts: allow container to reach host services via host.docker.internal
+    extra_hosts = {"host.docker.internal": "host-gateway"}
 
     try:
-        container_id = ops.create_container(
+        create_kwargs = dict(
             image=image,
             name=name,
             command=actual_command,
@@ -489,6 +771,7 @@ async def create_container(
             restart_policy={"Name": "unless-stopped"},
             tty=True,
             stdin_open=True,
+            extra_hosts=extra_hosts,
             labels={
                 "managed-by": "ContainerManager",
                 "user-id": user_id,
@@ -496,8 +779,13 @@ async def create_container(
                 "port": str(port),
                 **({"ssh-port": str(ssh_port)} if ssh_port else {}),
                 **({"ext-source": ext_source} if ext_source else {}),
-            }
+                "zmq-broker": svc_overrides.get("zmq_broker", {}).get("source", "host") if is_tb_container else "none",
+            },
         )
+        if working_dir:
+            create_kwargs["working_dir"] = working_dir
+
+        container_id = ops.create_container(**create_kwargs)
         container_status = ops.get_container_status(container_id)
 
         spec = ContainerSpec(
@@ -1062,10 +1350,11 @@ async def update_container(
     Update a container to the latest image without losing config.
 
     1. Read spec from DB (ports, volumes, env, image)
-    2. Pull latest image (if pull=True)
-    3. Stop + remove old container (keep volume!)
-    4. Create new container with same spec
-    5. Update DB with new container_id
+    2. Snapshot old container's bind mounts / working_dir / extra_hosts
+    3. Pull latest image (if pull=True)
+    4. Stop + remove old container (keep volume!)
+    5. Create new container with same spec + re-mount manifest + folder
+    6. Update DB with new container_id
     """
     if not check_admin_key(admin_key or ""):
         return err("Invalid admin key")
@@ -1078,11 +1367,24 @@ async def update_container(
     if not ops.is_available():
         return err("Docker not available")
 
+    # --- Snapshot old container config before destroying it ---
+    old_binds = []
+    old_working_dir = None
+    old_extra_hosts = []
+    try:
+        client = ops._get_client()
+        if client:
+            old_c = client.containers.get(container_id)
+            host_cfg = old_c.attrs.get("HostConfig", {})
+            old_binds = host_cfg.get("Binds") or []
+            old_extra_hosts = host_cfg.get("ExtraHosts") or []
+            old_working_dir = old_c.attrs.get("Config", {}).get("WorkingDir") or None
+    except Exception:
+        pass  # best-effort — fall back to defaults below
+
     # Step 1: Pull new image (skip for local-only images)
     if pull:
         if not ops.pull_image(spec.image):
-            # Image might be local-only (built via tb docker-image)
-            # Check if it exists locally before failing
             try:
                 client = ops._get_client()
                 client.images.get(spec.image)
@@ -1096,23 +1398,59 @@ async def update_container(
         if live_status != "not_found":
             return err("Failed to remove old container")
 
-    # Step 3: Recreate with same config
-    port_bindings = {f"{spec.internal_port}/tcp": spec.port}
-    if spec.ssh_port:
-        port_bindings["2222/tcp"] = spec.ssh_port
+    # Step 3: Rebuild volumes from old binds + data volume
+    is_tb = spec.container_type in ("cli_v4", "isaa", "tb_external", "custom")
+    volumes = {spec.volume_name: {"bind": "/data", "mode": "rw"}}
+
+    # Re-mount manifest file if it exists on host
+    if is_tb:
+        try:
+            from toolboxv2 import tb_root_dir
+            manifest_path = tb_root_dir / CONTAINER_CONFIG_DIR / spec.container_name / "tb-manifest.yaml"
+        except Exception:
+            manifest_path = Path(".data/container-configs") / spec.container_name / "tb-manifest.yaml"
+        if manifest_path.exists():
+            volumes[str(manifest_path)] = {"bind": "/app/tb-manifest.yaml", "mode": "ro"}
+
+    # Restore folder mounts from old binds (e.g. /workspace, /app/external)
+    working_dir = None
+    for bind_str in old_binds:
+        parts = bind_str.split(":")
+        if len(parts) >= 2:
+            host_path, container_path = parts[0], parts[1]
+            mode = parts[2] if len(parts) > 2 else "rw"
+            # Skip the data volume and manifest (already handled above)
+            if container_path == "/data":
+                continue
+            if container_path == "/app/tb-manifest.yaml":
+                continue
+            volumes[host_path] = {"bind": container_path, "mode": mode}
+            if container_path == "/workspace":
+                working_dir = "/workspace"
+
+    # If old container had a working_dir we didn't reconstruct, use it
+    if not working_dir and old_working_dir and old_working_dir not in ("/", "/home/toolbox"):
+        working_dir = old_working_dir
+
+    # extra_hosts: always include host.docker.internal
+    extra_hosts = {"host.docker.internal": "host-gateway"}
 
     try:
         config = CONTAINER_TYPES.get(spec.container_type, CONTAINER_TYPES["custom"])
-        new_id = ops.create_container(
+        create_kwargs = dict(
             image=spec.image,
             name=spec.container_name,
             command=config.get("command"),
-            ports=port_bindings,
+            ports={
+                f"{spec.internal_port}/tcp": spec.port,
+                **({"2222/tcp": spec.ssh_port} if spec.ssh_port else {}),
+            },
             environment=spec.env,
-            volumes={spec.volume_name: {"bind": "/data", "mode": "rw"}},
+            volumes=volumes,
             mem_limit=config.get("memory_limit", "512m"),
             cpu_quota=int(float(config.get("cpu_limit", "0.5")) * 100000),
             restart_policy={"Name": "unless-stopped"},
+            extra_hosts=extra_hosts,
             labels={
                 "managed-by": "ContainerManager",
                 "user-id": spec.user_id,
@@ -1121,6 +1459,10 @@ async def update_container(
                 **({"ssh-port": str(spec.ssh_port)} if spec.ssh_port else {}),
             },
         )
+        if working_dir:
+            create_kwargs["working_dir"] = working_dir
+
+        new_id = ops.create_container(**create_kwargs)
     except Exception as e:
         return Result.default_internal_error(info=f"Failed to recreate container: {e}")
 
@@ -1187,6 +1529,210 @@ async def reconcile_status(
         "container_id": container_id[:12],
         "status": new_status,
         "docker_available": ops.is_available(),
+    })
+
+
+# ============================================================================
+# SERVICE DISCOVERY + MANIFEST ENDPOINTS
+# ============================================================================
+
+@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
+async def discover_services(app=None, request=None, admin_key: str = None) -> Result:
+    """
+    Discover running infrastructure services (redis, minio, openobserve, searxng).
+
+    Returns services found in Docker + whether they're TB-managed.
+    Used by the web UI to populate service override options in the manifest editor.
+    """
+    if not check_admin_key(admin_key or ""):
+        return err("Invalid admin key")
+
+    ops = get_docker_ops()
+    if not ops.is_available():
+        return Result.json(data={"services": [], "docker_available": False})
+
+    services = ops.discover_services()
+    return Result.json(data={
+        "services": [_service_info_to_dict(s) for s in services],
+        "docker_available": True,
+    })
+
+
+@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
+async def get_host_manifest(app=None, request=None, admin_key: str = None) -> Result:
+    """
+    Return the current host TBManifest as JSON.
+
+    Used by the web UI to pre-populate the manifest editor with the host's config.
+    """
+    if not check_admin_key(admin_key or ""):
+        return err("Invalid admin key")
+
+    manifest, load_err = load_host_manifest()
+    if manifest is None:
+        return err(load_err or "Could not load host manifest")
+
+    return Result.json(data={
+        "manifest": manifest.model_dump(mode="json", exclude_none=True),
+    })
+
+
+# ============================================================================
+# MULTI-CONTAINER CONFIG EXPORT / IMPORT
+# ============================================================================
+
+@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
+async def export_container_config(
+    app=None,
+    request=None,
+    admin_key: str = None,
+    name: str = "default",
+    description: str = "",
+) -> Result:
+    """
+    Export all TB-managed containers as a ContainerSetupConfig JSON.
+
+    Captures create-parameters, service overrides (reconstructed from env/labels),
+    and manifest YAML (if a host-side config file exists for the container).
+    """
+    if not check_admin_key(admin_key or ""):
+        return err("Invalid admin key")
+
+    from toolboxv2.mods.ContainerManager.config_schema import (
+        ContainerSetupConfig,
+        ContainerCreateSpec,
+        ServiceOverride,
+    )
+
+    # Collect all TB-managed containers from DB
+    result = await app.a_run_any(TBEF.DB.GET, query="CONTAINER::*", get_results=True)
+    specs = []
+    if not result.is_error() and result.get():
+        import json as _json
+        for item in result.get():
+            try:
+                data = _json.loads(item) if isinstance(item, str) else item
+                if isinstance(data, dict) and "container_id" in data:
+                    specs.append(ContainerSpec.from_dict(data))
+            except Exception:
+                continue
+
+    container_create_specs = []
+    for spec in specs:
+        # Reconstruct service overrides from env vars
+        svc_overrides = {}
+        env = spec.env or {}
+
+        # Check redis URL pattern in env
+        redis_url = env.get("DB_CONNECTION_URI", "")
+        if redis_url:
+            if "host.docker.internal" in redis_url:
+                svc_overrides["redis"] = ServiceOverride(source="host")
+            elif "localhost" not in redis_url and "127.0.0.1" not in redis_url:
+                # Likely a docker container name or external
+                svc_overrides["redis"] = ServiceOverride(source="docker", container_name=redis_url.split("://")[-1].split(":")[0])
+
+        # Check minio endpoint pattern
+        minio_ep = env.get("MINIO_ENDPOINT", "")
+        if minio_ep:
+            if "host.docker.internal" in minio_ep:
+                svc_overrides["minio"] = ServiceOverride(source="host")
+            elif "localhost" not in minio_ep and "127.0.0.1" not in minio_ep:
+                svc_overrides["minio"] = ServiceOverride(source="docker", container_name=minio_ep.split(":")[0])
+
+        # Read manifest YAML if file exists
+        manifest_yaml = None
+        try:
+            from toolboxv2 import tb_root_dir
+            mf_path = tb_root_dir / CONTAINER_CONFIG_DIR / spec.container_name / "tb-manifest.yaml"
+            if mf_path.exists():
+                manifest_yaml = mf_path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+
+        create_spec = ContainerCreateSpec(
+            container_type=spec.container_type,
+            user_id=spec.user_id,
+            container_name=spec.container_name,
+            image=spec.image,
+            memory_limit=env.get("MEMORY_LIMIT", "512m"),
+            cpu_limit=env.get("CPU_LIMIT", "0.5"),
+            ext_source=env.get("TB_EXT_SOURCE"),
+            service_overrides=svc_overrides,
+            manifest_yaml=manifest_yaml,
+        )
+        container_create_specs.append(create_spec)
+
+    setup = ContainerSetupConfig(
+        name=name,
+        description=description,
+        containers=container_create_specs,
+    )
+
+    return Result.json(data=setup.model_dump(mode="json", exclude_none=True))
+
+
+@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
+async def import_container_config(
+    app=None,
+    request=None,
+    admin_key: str = None,
+    config_json: str = None,
+    dry_run: bool = False,
+) -> Result:
+    """
+    Import a ContainerSetupConfig JSON and create containers from it.
+
+    Args:
+        config_json: JSON string of ContainerSetupConfig
+        dry_run: If True, validate only, don't create containers
+    """
+    if not check_admin_key(admin_key or ""):
+        return err("Invalid admin key")
+
+    if not config_json:
+        return err("config_json required")
+
+    import json as _json
+    from toolboxv2.mods.ContainerManager.config_schema import ContainerSetupConfig
+
+    try:
+        data = _json.loads(config_json)
+        setup = ContainerSetupConfig.model_validate(data)
+    except Exception as e:
+        return err(f"Invalid config JSON: {e}")
+
+    if dry_run:
+        return Result.json(data={
+            "valid": True,
+            "name": setup.name,
+            "container_count": len(setup.containers),
+            "containers": [
+                {"container_type": c.container_type, "user_id": c.user_id, "image": c.image}
+                for c in setup.containers
+            ],
+        })
+
+    # Create each container
+    results = []
+    for spec in setup.containers:
+        kwargs = spec.to_create_kwargs()
+        kwargs["admin_key"] = admin_key
+        r = await create_container(app=app, **kwargs)
+        if r.is_error():
+            results.append({"container_type": spec.container_type, "error": str(r.info)})
+        else:
+            results.append({"container_type": spec.container_type, **r.get()})
+
+    succeeded = sum(1 for r in results if "error" not in r)
+    failed = len(results) - succeeded
+
+    return Result.json(data={
+        "name": setup.name,
+        "total": len(results),
+        "succeeded": succeeded,
+        "failed": failed,
+        "results": results,
     })
 
 
@@ -1636,4 +2182,3 @@ async def container_ssh_cli(
         print("⚠️  SSH client not found. Please install OpenSSH to connect directly.")
 
     return result
-

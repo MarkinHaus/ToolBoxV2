@@ -16,6 +16,7 @@ Run  : `tb doc_server` or `python -m toolboxv2 -fg doc_server`
 """
 
 import asyncio
+import os
 import re
 import threading
 import time
@@ -105,6 +106,207 @@ class JobTracker:
 
 _jobs = JobTracker()
 
+# ── Context budget management for doc generation ──
+
+# Approximate chars-per-token ratio for code (conservative)
+_CHARS_PER_TOKEN = 3.5
+
+# Model context limits (tokens). Override via LOGCONTEXTMODEL if available.
+_DEFAULT_CONTEXT_TOKENS = 200_000
+_RESERVED_SYSTEM_TOKENS = 6_000    # system prompt + output headroom
+_RESERVED_OUTPUT_TOKENS = 8_000    # space for the generated doc
+_MAX_EXISTING_DOC_CHARS = 5_000
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate from char count."""
+    return int(len(text) / _CHARS_PER_TOKEN)
+
+
+def _get_context_budget() -> int:
+    """Get available tokens for code content in the prompt."""
+    try:
+        from toolboxv2.utils.extras.blobs import LOGCONTEXTMODEL
+        if LOGCONTEXTMODEL is not None:
+            # Use the complex model's context size if available
+            ctx = getattr(LOGCONTEXTMODEL, 'context_length', None)
+            if ctx and isinstance(ctx, int):
+                return ctx - _RESERVED_SYSTEM_TOKENS - _RESERVED_OUTPUT_TOKENS
+    except (ImportError, AttributeError):
+        pass
+    return _DEFAULT_CONTEXT_TOKENS - _RESERVED_SYSTEM_TOKENS - _RESERVED_OUTPUT_TOKENS
+
+
+def _build_code_prompt_sections(elements: list, budget_tokens: int, job_id: str = "") -> list[str]:
+    """
+    Build code sections for the doc-gen prompt, respecting a token budget.
+
+    Strategy (applied only when total exceeds budget):
+    1. FULL MODE: All elements with code blocks (≤2000 chars each) — if fits, done.
+    2. COMPACT MODE: Classes get signature+docstring+method-table, functions get signature+docstring.
+       Code blocks only for small elements (≤500 chars). Large code omitted.
+    3. SUMMARY MODE: Group by class → list methods as table rows. Loose functions grouped.
+       No code blocks at all.
+    4. CHUNKED: If even summary doesn't fit, split into class-groups and return
+       only the first chunk (caller must handle multi-pass).
+    """
+    # First: try full mode
+    full_sections = _format_elements_full(elements)
+    full_tokens = sum(_estimate_tokens(s) for s in full_sections)
+
+    if full_tokens <= budget_tokens:
+        logger.debug(f"Job {job_id}: full mode — {full_tokens} tokens, budget {budget_tokens}")
+        return full_sections
+
+    # Compact mode: reduce code blocks
+    compact_sections = _format_elements_compact(elements)
+    compact_tokens = sum(_estimate_tokens(s) for s in compact_sections)
+
+    if compact_tokens <= budget_tokens:
+        logger.info(f"Job {job_id}: compact mode — {compact_tokens} tokens (full was {full_tokens})")
+        return compact_sections
+
+    # Summary mode: no code blocks
+    summary_sections = _format_elements_summary(elements)
+    summary_tokens = sum(_estimate_tokens(s) for s in summary_sections)
+
+    if summary_tokens <= budget_tokens:
+        logger.info(f"Job {job_id}: summary mode — {summary_tokens} tokens (full was {full_tokens})")
+        return summary_sections
+
+    # Chunked: take what fits from summary
+    logger.warning(f"Job {job_id}: chunked mode — summary {summary_tokens} > budget {budget_tokens}, truncating")
+    result = []
+    running = 0
+    for section in summary_sections:
+        t = _estimate_tokens(section)
+        if running + t > budget_tokens:
+            result.append(f"\n\n> ⚠ **Truncated**: {len(summary_sections) - len(result)} elements omitted (context limit).")
+            break
+        result.append(section)
+        running += t
+    return result
+
+
+def _format_elements_full(elements: list) -> list[str]:
+    """Full detail: signature + metadata + docstring + code (capped at 2000 chars)."""
+    sections = []
+    for elem in elements:
+        entry = f"### `{elem['signature']}`"
+        if elem.get("parent"):
+            entry = f"### `{elem['parent']}.{elem['name']}` — {elem['type']}"
+        entry += f"\n- Type: {elem['type']}"
+        entry += f"\n- Lines: {elem['lines'][0]}-{elem['lines'][1]}"
+        entry += f"\n- Language: {elem.get('language', 'python')}"
+        if elem.get("docstring"):
+            entry += f"\n- Docstring: {elem['docstring']}"
+        if elem.get("code"):
+            code = elem["code"]
+            if len(code) > 2000:
+                code = code[:2000] + "\n# ... (truncated)"
+            entry += f"\n```python\n{code}\n```"
+        sections.append(entry)
+    return sections
+
+
+def _format_elements_compact(elements: list) -> list[str]:
+    """
+    Compact: classes get method tables instead of full code.
+    Small elements (≤500 chars code) keep their code blocks.
+    Large elements get signature+docstring only.
+    """
+    # Group by class
+    classes: dict[str, list] = {}
+    loose: list = []
+    class_elems: dict[str, dict] = {}
+
+    for elem in elements:
+        if elem["type"] == "class":
+            class_elems[elem["name"]] = elem
+            classes.setdefault(elem["name"], [])
+        elif elem.get("parent") and elem["parent"] in classes:
+            classes[elem["parent"]].append(elem)
+        else:
+            loose.append(elem)
+
+    sections = []
+
+    for cls_name, methods in classes.items():
+        cls = class_elems.get(cls_name, {})
+        entry = f"### `{cls.get('signature', cls_name)}`"
+        entry += f"\n- Type: class"
+        if cls.get("docstring"):
+            entry += f"\n- Docstring: {cls['docstring']}"
+
+        # Small class with code → include it
+        code = cls.get("code", "")
+        if code and len(code) <= 500:
+            entry += f"\n```python\n{code}\n```"
+
+        # Methods as table
+        if methods:
+            entry += "\n\n| Method | Signature | Docstring |"
+            entry += "\n|--------|-----------|-----------|"
+            for m in methods:
+                doc = (m.get("docstring") or "—")[:80].replace("|", "\\|").replace("\n", " ")
+                sig = m.get("signature", m["name"]).replace("|", "\\|")
+                entry += f"\n| `{m['name']}` | `{sig}` | {doc} |"
+
+        sections.append(entry)
+
+    for elem in loose:
+        entry = f"### `{elem['signature']}`"
+        entry += f"\n- Type: {elem['type']}"
+        if elem.get("docstring"):
+            entry += f"\n- Docstring: {elem['docstring']}"
+        code = elem.get("code", "")
+        if code and len(code) <= 500:
+            entry += f"\n```python\n{code}\n```"
+        sections.append(entry)
+
+    return sections
+
+
+def _format_elements_summary(elements: list) -> list[str]:
+    """
+    Minimal: no code blocks. Classes with method lists, functions as signatures.
+    """
+    classes: dict[str, list] = {}
+    loose: list = []
+    class_elems: dict[str, dict] = {}
+
+    for elem in elements:
+        if elem["type"] == "class":
+            class_elems[elem["name"]] = elem
+            classes.setdefault(elem["name"], [])
+        elif elem.get("parent") and elem["parent"] in classes:
+            classes[elem["parent"]].append(elem)
+        else:
+            loose.append(elem)
+
+    sections = []
+
+    for cls_name, methods in classes.items():
+        cls = class_elems.get(cls_name, {})
+        entry = f"### `{cls.get('signature', cls_name)}`"
+        if cls.get("docstring"):
+            entry += f"\n{cls['docstring'][:200]}"
+        if methods:
+            entry += f"\n\nMethods ({len(methods)}):"
+            for m in methods:
+                doc_hint = f" — {m['docstring'][:60]}" if m.get("docstring") else ""
+                entry += f"\n- `{m.get('signature', m['name'])}`{doc_hint}"
+        sections.append(entry)
+
+    # Group loose functions
+    if loose:
+        entry = "### Module-level Functions\n"
+        for fn in loose:
+            doc_hint = f" — {fn['docstring'][:60]}" if fn.get("docstring") else ""
+            entry += f"\n- `{fn.get('signature', fn['name'])}`{doc_hint}"
+        sections.append(entry)
+
+    return sections
 
 # ═════════════════════════════════════════════════════════
 # DATA LAYER — reads from DocsSystem index, zero I/O
@@ -183,7 +385,7 @@ def _compute_coverage() -> dict:
 
         info = {
             "name": fp.stem,
-            "rel_path": file_path,
+            "rel_path": str(Path(file_path).relative_to(PROJECT_ROOT)).replace("\\", "/") if file_path.startswith(str(PROJECT_ROOT)) else file_path.replace("\\", "/"),
             "classes": classes,
             "functions": functions,
             "has_docstring": has_docstring,
@@ -676,7 +878,7 @@ def _layout(content: str, title: str = "Docs", active: str = "") -> str:
     <a href="/inventory" class="nav-link {_active('inventory')}">Inventory</a>
     <a href="/relationships" class="nav-link {_active('relationships')}">Map</a>
     <a href="/coverage" class="nav-link {_active('coverage')}">Coverage</a>
-    <a href="/jobs" class="nav-link {_active('jobs')}">Jobs</a>
+    <a href="/jobs" class="nav-link {_active('jobs')}">Jobs<span id="job-badge" style="display:none;margin-left:4px;min-width:18px;height:18px;border-radius:50%;background:var(--error);color:#fff;font-size:10px;font-weight:700;text-align:center;line-height:18px;padding:0 4px"></span></a>
     <a href="/edit" class="nav-link {_active('edit')}">Editor</a>
   </div>
 </nav>
@@ -775,6 +977,23 @@ async function deleteDoc(docPath, btn) {{
     btn.disabled = false;
   }}
 }}
+
+(function pollJobs() {{
+  fetch('/api/jobs').then(r=>r.json()).then(jobs=>{{
+    const active = jobs.filter(j=>j.status==='running'||j.status==='queued').length;
+    const badge = document.getElementById('job-badge');
+    if (badge) {{
+      if (active > 0) {{
+        badge.textContent = active;
+        badge.style.display = 'inline-block';
+      }} else {{
+        badge.style.display = 'none';
+      }}
+    }}
+    if (active > 0) setTimeout(pollJobs, 3000);
+    else setTimeout(pollJobs, 15000);
+  }}).catch(()=>setTimeout(pollJobs, 15000));
+}})();
 </script>
 
 </body>
@@ -990,7 +1209,6 @@ async def dashboard():
 <p class="page-subtitle">
   Overview of ToolBoxV2 documentation health — coverage, freshness, and quality at a glance.
 </p>
-
 <div class="grid grid-4">
   <div class="card">
     <div class="stat">
@@ -1028,8 +1246,21 @@ async def dashboard():
     <p style="color: var(--ink-muted); font-size: var(--text-sm)">
       <strong>{cov["documented"]}</strong> of <strong>{cov["total_modules"]}</strong> modules documented
     </p>
-    <div style="margin-top: var(--space-4)">
+    <div style="margin-top: var(--space-4); display:flex; align-items:center; gap:var(--space-3)">
       <span class="badge {_badge(cov["pct"])}">{cov["pct"]}% Covered</span>
+      {"" if not cov["missing"] else f'<button class="btn btn--sm btn--primary" id="fix-all-btn" onclick="fixAll()">Fix All ({len(cov["missing"])})</button>'}
+    </div>
+    <div id="fix-all-progress" style="display:none; margin-top:var(--space-4)">
+      <div style="display:flex; justify-content:space-between; font-family:var(--font-display); font-size:var(--text-xs); margin-bottom:var(--space-2)">
+        <span id="fp-status">Queuing...</span>
+        <span id="fp-time"></span>
+      </div>
+      <div class="progress">
+        <div class="progress-fill" id="fp-bar" style="width:0%; background:var(--primary); transition:width 300ms ease"></div>
+      </div>
+      <div style="margin-top:var(--space-2); font-size:var(--text-xs); color:var(--ink-muted)">
+        <span id="fp-counts">0 / 0</span> &mdash; <span id="fp-eta"></span>
+      </div>
     </div>
   </div>
 
@@ -1058,6 +1289,112 @@ async def dashboard():
   <a href="/health">Review health -></a>
 </div>
 '''}
+<script>
+async function fixAll() {{
+  const btn = document.getElementById('fix-all-btn');
+  const prog = document.getElementById('fix-all-progress');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="job-spinner"></span> Queuing...';
+  prog.style.display = 'block';
+
+  try {{
+    // Get all missing file paths from API
+    const covResp = await fetch('/api/coverage');
+    const covData = await covResp.json();
+    const paths = (covData.missing || []).map(m => m.path);
+
+    if (!paths.length) {{
+      btn.innerHTML = 'Nothing to fix';
+      return;
+    }}
+
+    // Batch generate
+    const resp = await fetch('/api/batch-generate', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{file_paths: paths}})
+    }});
+    const data = await resp.json();
+
+    if (!data.ok) {{
+      document.getElementById('fp-status').textContent = 'Error: ' + (data.error || 'Failed');
+      btn.innerHTML = 'Fix All'; btn.disabled = false;
+      return;
+    }}
+
+    btn.innerHTML = '\\u2713 ' + data.count + ' Queued';
+    const totalJobs = data.count;
+    const startTime = Date.now();
+
+    // Poll progress
+    function poll() {{
+      fetch('/api/jobs').then(r => r.json()).then(jobs => {{
+        const batchJobs = jobs.slice(0, totalJobs);
+        const done = batchJobs.filter(j => j.status === 'done').length;
+        const errors = batchJobs.filter(j => j.status === 'error').length;
+        const running = batchJobs.filter(j => j.status === 'running').length;
+        const completed = done + errors;
+        const pct = Math.round(completed / totalJobs * 100);
+
+        document.getElementById('fp-bar').style.width = pct + '%';
+        document.getElementById('fp-counts').textContent = completed + ' / ' + totalJobs;
+
+        if (errors > 0) {{
+          document.getElementById('fp-status').textContent = done + ' done, ' + errors + ' errors, ' + running + ' running';
+        }} else {{
+          document.getElementById('fp-status').textContent = done + ' done, ' + running + ' running';
+        }}
+
+        // ETA calculation
+        const elapsed = (Date.now() - startTime) / 1000;
+        if (completed > 0 && completed < totalJobs) {{
+          const perJob = elapsed / completed;
+          const remaining = (totalJobs - completed) * perJob;
+          const mins = Math.floor(remaining / 60);
+          const secs = Math.round(remaining % 60);
+          document.getElementById('fp-eta').textContent = '~' + (mins > 0 ? mins + 'm ' : '') + secs + 's remaining';
+        }} else if (completed >= totalJobs) {{
+          const mins = Math.floor(elapsed / 60);
+          const secs = Math.round(elapsed % 60);
+          document.getElementById('fp-eta').textContent = 'Done in ' + (mins > 0 ? mins + 'm ' : '') + secs + 's';
+          document.getElementById('fp-bar').style.background = 'var(--success)';
+          document.getElementById('fp-status').textContent = done + ' done' + (errors > 0 ? ', ' + errors + ' errors' : '') + ' \\u2014 complete!';
+          btn.innerHTML = '\\u2713 Complete';
+          return;
+        }}
+
+        // Elapsed time display
+        const eMins = Math.floor(elapsed / 60);
+        const eSecs = Math.round(elapsed % 60);
+        document.getElementById('fp-time').textContent = (eMins > 0 ? eMins + 'm ' : '') + eSecs + 's elapsed';
+
+        setTimeout(poll, 2000);
+      }}).catch(() => setTimeout(poll, 5000));
+    }}
+    setTimeout(poll, 1500);
+
+  }} catch(e) {{
+    document.getElementById('fp-status').textContent = 'Network error';
+    btn.innerHTML = 'Fix All'; btn.disabled = false;
+  }}
+}}
+</script>
+
+<div style="margin-top:var(--space-6); padding-top:var(--space-6); border-top:2px solid var(--ink-faint); display:flex; justify-content:flex-end">
+  <button class="btn btn--sm btn--danger" onclick="stopServer()">Stop Server</button>
+</div>
+
+<script>
+function stopServer() {{
+  if (!confirm('Stop the doc server? This page will close.')) return;
+  fetch('/api/shutdown', {{method:'POST'}}).then(()=>{{
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:monospace;font-size:24px;color:#555">Server stopped.</div>';
+    setTimeout(()=>window.close(), 1500);
+  }}).catch(()=>{{
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:monospace;font-size:24px;color:#555">Server stopped.</div>';
+  }});
+}}
+</script>
 """
     return _render(content, "Dashboard", "dashboard")
 
@@ -1144,32 +1481,50 @@ async def view_page(p: str = ""):
 
     logger.info(f"view_page: requested path={path}")
 
-    full = DOCS_DIR / path
+    # Sanitize: resolve and ensure path stays within DOCS_DIR
+    try:
+        full = (DOCS_DIR / path).resolve()
+    except (OSError, ValueError):
+        full = None
+
+    if full is None or not str(full).startswith(str(DOCS_DIR.resolve())):
+        logger.warning(f"view_page: path escapes DOCS_DIR — {path}")
+        return (403, _render(f"""
+    <h1 class="page-title">Access Denied</h1>
+    <div class="callout callout--error">
+      Path <code>{path}</code> is outside the docs directory.
+    </div>
+    <a href="/browse" class="btn btn--ghost">← Back to Browse</a>
+    """, "Forbidden", "browse"))
+
     if not full.exists():
-        # Fallback: try as project-root-relative path (mkdocs indexes files outside docs/)
-        alt = PROJECT_ROOT / path
-        if alt.exists():
-            full = alt
-            logger.debug(f"view_page: found via PROJECT_ROOT fallback: {full}")
-        else:
-            logger.warning(f"view_page: not found — DOCS_DIR={DOCS_DIR}, PROJECT_ROOT={PROJECT_ROOT}, path={path}")
-            return (404, _render(f"""
-<h1 class="page-title">Page Not Found</h1>
-<div class="callout callout--error">
-  Could not find <code>{path}</code><br>
-  Searched: <code>{DOCS_DIR}</code> and <code>{PROJECT_ROOT}</code>
-</div>
-<a href="/browse" class="btn btn--ghost">← Back to Browse</a>
-""", "Not Found", "browse"))
+        logger.warning(f"view_page: not found — {full}")
+        return (404, _render(f"""
+    <h1 class="page-title">Page Not Found</h1>
+    <div class="callout callout--error">
+      Could not find <code>{path}</code> in <code>{DOCS_DIR}</code>
+    </div>
+    <a href="/browse" class="btn btn--ghost">← Back to Browse</a>
+    """, "Not Found", "browse"))
 
     raw = full.read_text(encoding="utf-8", errors="ignore")
     rendered = _render_md(raw)
     # Rewrite relative .md links to /view?p= links so doc-to-doc navigation works
-    rendered = re.sub(
-        r'href="([^"]*\.md(?:#[^"]*)?)"',
-        lambda m: f'href="/view?p={m.group(1)}"',
-        rendered,
-    )
+    def _rewrite_md_link(m):
+        link_path = m.group(1)
+        # Resolve relative links against the current doc's directory
+        try:
+            resolved = (full.parent / link_path.split("#")[0]).resolve()
+            if str(resolved).startswith(str(DOCS_DIR.resolve())):
+                rel = str(resolved.relative_to(DOCS_DIR.resolve()))
+                fragment = "#" + link_path.split("#")[1] if "#" in link_path else ""
+                return f'href="/view?p={rel}{fragment}"'
+        except (OSError, ValueError):
+            pass
+        # Link outside DOCS_DIR or broken — keep as dead link with warning
+        return f'href="#" title="Link outside docs directory"'
+
+    rendered = re.sub(r'href="([^"]*\.md(?:#[^"]*)?)"', _rewrite_md_link, rendered)
 
     breadcrumbs = " / ".join(
         f"<span>{p}</span>" for p in Path(path).parts
@@ -1206,8 +1561,10 @@ async def search_page(q: str = "", type: str = "all"):
     docs_sys = _get_docs()
 
     results_html = ""
+    context_html = ""
     doc_count = 0
     code_count = 0
+    context_files = set()
 
     if q:
         if type in ("all", "docs"):
@@ -1217,7 +1574,6 @@ async def search_page(q: str = "", type: str = "all"):
             if sections:
                 results_html += '<div class="card-eyebrow" style="margin-top: var(--space-5)">Documentation Results</div>'
                 for s in sections:
-                    # Make file path clickable
                     try:
                         rel = str(Path(s["file"]).relative_to(DOCS_DIR))
                     except (ValueError, KeyError):
@@ -1237,6 +1593,17 @@ async def search_page(q: str = "", type: str = "all"):
             elements = code_result.get("results", [])
             code_count = len(elements)
             if elements:
+                # Collect files from top-ranked results only (exact/near matches)
+                q_lower = q.lower()
+                for elem in elements[:5]:
+                    # Only include files where the element name closely matches the query
+                    if q_lower in elem["name"].lower() or elem["name"].lower() in q_lower:
+                        context_files.add(elem["file"])
+                # Fallback: if no close match, take top 2 result files
+                if not context_files:
+                    for elem in elements[:2]:
+                        context_files.add(elem["file"])
+
                 results_html += '<div class="card-eyebrow" style="margin-top: var(--space-5)">Code Results</div>'
                 for elem in elements:
                     type_badge = "badge--success" if elem["type"] == "class" else "badge--ghost"
@@ -1253,7 +1620,113 @@ async def search_page(q: str = "", type: str = "all"):
                       <div style="margin-top: var(--space-2)">{doc_info}</div>
                     </div>"""
 
-    if q and not results_html:
+        # Build context overview from found files
+        if context_files:
+            try:
+                ctx = await docs_sys.get_task_context(
+                    files=list(context_files)[:10],
+                    intent=q,
+                )
+                graph = ctx.get("result", {}).get("context_graph", {})
+                upstream = graph.get("upstream_dependencies", [])
+                downstream = graph.get("downstream_usages", [])
+                relevant_docs = ctx.get("result", {}).get("relevant_docs", [])
+
+                ctx_parts = []
+
+                if upstream:
+                    ctx_parts.append('<div style="margin-bottom:var(--space-4)">')
+                    ctx_parts.append('<div style="font-family:var(--font-display); font-size:var(--text-xs); text-transform:uppercase; letter-spacing:1px; color:var(--ink-muted); margin-bottom:var(--space-2)">Depends On</div>')
+                    for u in upstream[:8]:
+                        name = u.get("name", "?")
+                        sig = u.get("signature", "")
+                        imp = u.get("import_statement", "")
+                        usage = u.get("usage_snippet", "")
+                        ufile = u.get("file", "")
+                        ctx_parts.append(f'<div style="padding:var(--space-2) 0; border-bottom:1px solid var(--paper-sunken)">')
+                        ufile = u.get("file", "")
+                        try:
+                            ufile_rel = str(Path(ufile).relative_to(PROJECT_ROOT)).replace("\\", "/")
+                        except (ValueError, TypeError):
+                            ufile_rel = ufile
+                        ctx_parts.append(
+                            f'<code style="font-weight:600">{name}</code> <span style="color:var(--ink-muted); font-size:var(--text-xs)">({u.get("type", "?")}) in <code>{ufile_rel}</code></span>')
+                        if sig:
+                            ctx_parts.append(f'<div style="font-size:var(--text-xs); color:var(--ink-muted)"><code>{sig}</code></div>')
+                        if imp:
+                            ctx_parts.append(f'<div style="font-size:var(--text-xs); color:var(--ink-faint)"><code>{imp}</code></div>')
+                        if usage:
+                            ctx_parts.append(f'<div style="font-size:var(--text-xs); color:var(--ink-faint)">Usage: <code>{usage}</code></div>')
+                        ctx_parts.append('</div>')
+                    ctx_parts.append('</div>')
+
+                if downstream:
+                    ctx_parts.append('<div style="margin-bottom:var(--space-4)">')
+                    ctx_parts.append('<div style="font-family:var(--font-display); font-size:var(--text-xs); text-transform:uppercase; letter-spacing:1px; color:var(--ink-muted); margin-bottom:var(--space-2)">Used By</div>')
+                    for d in downstream[:8]:
+                        imp_name = d.get("imported_name", "?")
+                        dfile = d.get("file", "")
+                        imp_stmt = d.get("import_statement", "")
+                        snippets = d.get("usage_snippets", [])
+                        ctx_parts.append(f'<div style="padding:var(--space-2) 0; border-bottom:1px solid var(--paper-sunken)">')
+                        try:
+                            dfile_rel = str(Path(dfile).relative_to(PROJECT_ROOT)).replace("\\", "/")
+                        except (ValueError, TypeError):
+                            dfile_rel = dfile
+                        ctx_parts.append(
+                            f'<code style="font-weight:600">{imp_name}</code> <span style="color:var(--ink-muted); font-size:var(--text-xs)">in <code>{dfile_rel}</code></span>')
+                        if imp_stmt:
+                            ctx_parts.append(f'<div style="font-size:var(--text-xs); color:var(--ink-faint)"><code>{imp_stmt}</code></div>')
+                        for sn in snippets[:2]:
+                            ctx_parts.append(f'<div style="font-size:var(--text-xs); color:var(--ink-faint)">→ <code>{sn}</code></div>')
+                        ctx_parts.append('</div>')
+                    ctx_parts.append('</div>')
+
+                if relevant_docs:
+                    ctx_parts.append('<div>')
+                    ctx_parts.append('<div style="font-family:var(--font-display); font-size:var(--text-xs); text-transform:uppercase; letter-spacing:1px; color:var(--ink-muted); margin-bottom:var(--space-2)">Related Docs</div>')
+                    for rd in relevant_docs[:3]:
+                        title = rd.get("title", "")
+                        rfile = rd.get("file", "")
+                        try:
+                            rd_rel = str(Path(rfile).relative_to(DOCS_DIR)).replace("\\", "/")
+                        except (ValueError, TypeError):
+                            try:
+                                rd_rel = str(Path(rfile).relative_to(PROJECT_ROOT)).replace("\\", "/")
+                            except (ValueError, TypeError):
+                                rd_rel = rfile
+                        # Only link if within DOCS_DIR
+                        docs_resolved = DOCS_DIR.resolve()
+                        try:
+                            is_in_docs = str(Path(rfile).resolve()).startswith(str(docs_resolved))
+                        except (OSError, ValueError):
+                            is_in_docs = False
+                        if is_in_docs:
+                            ctx_parts.append(
+                                f'<div style="font-size:var(--text-sm)"><a href="/view?p={rd_rel}">{title}</a></div>')
+                        else:
+                            ctx_parts.append(
+                                f'<div style="font-size:var(--text-sm)">{title} <span style="color:var(--ink-faint); font-size:var(--text-xs)">({rd_rel})</span></div>')
+                    ctx_parts.append('</div>')
+
+                if ctx_parts:
+                    files_list = ", ".join(f"<code>{Path(f).stem}</code>" for f in list(context_files)[:5])
+                    if len(context_files) > 5:
+                        files_list += f" +{len(context_files) - 5} more"
+                    context_html = f"""
+                    <div class="card" style="margin-bottom:var(--space-5); border-left:6px solid var(--primary)">
+                      <div class="card-eyebrow">Context Overview</div>
+                      <div class="card-title" style="font-size:var(--text-base)">How these modules connect</div>
+                      <div style="font-size:var(--text-xs); color:var(--ink-muted); margin-bottom:var(--space-3)">
+                        Based on: {files_list}
+                      </div>
+                      {"".join(ctx_parts)}
+                    </div>"""
+
+            except Exception as e:
+                logger.warning(f"search: context generation failed — {e}")
+
+    if q and not results_html and not context_html:
         results_html = f'<div class="callout">No results found for "<strong>{q}</strong>".</div>'
 
     content = f"""
@@ -1280,10 +1753,11 @@ async def search_page(q: str = "", type: str = "all"):
 </div>
 '''}
 
+{context_html}
+
 {results_html}
 """
     return _render(content, "Search", "search")
-
 
 # ═════════════════════════════════════════════════════════
 # ROUTES — HEALTH (per-directory breakdown + orphans)
@@ -1562,39 +2036,76 @@ async def relationships_page(focus: str = "", classes: str = "", nodes: str = "4
 async def coverage_page():
     cov = _compute_coverage()
 
-    by_dir: dict[str, list] = {}
+    # Build nested tree: dir -> subdir -> ... -> files
+    tree: dict = {}
     for m in cov["missing"]:
         parts = Path(m["rel_path"]).parts
-        dir_name = parts[0] if parts else "root"
-        by_dir.setdefault(dir_name, []).append(m)
+        node = tree
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = {"__file__": m}
 
-    missing_html = ""
-    for dir_name, modules in sorted(by_dir.items()):
-        missing_html += f"""
-        <tr><td colspan="6" style="background: var(--paper-sunken); font-family: var(--font-display);
-            font-weight: 600; text-transform: uppercase; letter-spacing: 1px; font-size: var(--text-xs)">
-          {dir_name}/ — {len(modules)} undocumented
-        </td></tr>"""
-        for m in modules:
-            priority = "badge--error" if m["classes"] > 0 or m["functions"] > 5 else "badge--warning"
-            escaped_path = m["rel_path"].replace("\\", "\\\\").replace("'", "\\'")
-            missing_html += f"""<tr>
-              <td>{m["name"]}</td>
-              <td class="path-cell" title="{m["rel_path"]}">{m["rel_path"]}</td>
-              <td>{m["elements"]}</td>
-              <td>{m["classes"]}C {m["functions"]}F</td>
-              <td><span class="badge {priority}">{"High" if "error" in priority else "Med"}</span></td>
-              <td><button class="btn btn--sm" onclick="generateDoc('{escaped_path}', this)">Generate</button></td>
-            </tr>"""
+    def _count_files(n: dict) -> int:
+        c = 0
+        for v in n.values():
+            if isinstance(v, dict):
+                if "__file__" in v:
+                    c += 1
+                else:
+                    c += _count_files(v)
+        return c
 
-    if not missing_html:
-        missing_html = '<tr><td colspan="6" style="text-align:center; padding: var(--space-5)">All modules documented!</td></tr>'
+    def _render_tree(node: dict, path_prefix: str = "", depth: int = 0) -> str:
+        html = ""
+        dirs = {k: v for k, v in sorted(node.items()) if isinstance(v, dict) and "__file__" not in v}
+        files = {k: v["__file__"] for k, v in sorted(node.items()) if isinstance(v, dict) and "__file__" in v}
+
+        for dir_name, children in dirs.items():
+            dir_path = f"{path_prefix}/{dir_name}" if path_prefix else dir_name
+            count = _count_files(children)
+            html += f'''
+            <details class="tree-dir" {"open" if depth < 1 else ""}>
+              <summary style="cursor:pointer; display:flex; align-items:center; gap:var(--space-2);
+                padding:var(--space-2) var(--space-3); font-family:var(--font-display);
+                font-size:var(--text-sm); font-weight:500; list-style:none;
+                border-bottom:1px solid var(--ink-faint)">
+                <input type="checkbox" class="dir-check" data-dir="{dir_path}"
+                  onchange="toggleDir(this)" style="margin:0">
+                <span style="color:var(--ink-muted)">&#128193;</span>
+                <code>{dir_name}/</code>
+                <span class="badge badge--ghost" style="margin-left:auto">{count}</span>
+              </summary>
+              <div style="padding-left:var(--space-5)">
+                {_render_tree(children, dir_path, depth + 1)}
+              </div>
+            </details>'''
+
+        for fname, m in files.items():
+            escaped = m["rel_path"].replace("\\", "/").replace("'", "\\'")
+            prio_cls = "badge--error" if m["classes"] > 0 or m["functions"] > 5 else "badge--warning"
+            prio_lbl = "High" if m["classes"] > 0 or m["functions"] > 5 else "Med"
+            html += f'''
+            <div class="tree-file" style="display:flex; align-items:center; gap:var(--space-2);
+              padding:var(--space-2) var(--space-3); border-bottom:1px solid var(--paper-sunken)">
+              <input type="checkbox" class="file-check" value="{escaped}" style="margin:0">
+              <code style="flex:1; font-size:var(--text-sm)">{m["name"]}</code>
+              <span style="font-size:var(--text-xs); color:var(--ink-muted)">{m["elements"]}el</span>
+              <span style="font-size:var(--text-xs); color:var(--ink-muted)">{m["classes"]}C {m["functions"]}F</span>
+              <span class="badge {prio_cls}" style="font-size:10px">{prio_lbl}</span>
+              <button class="btn btn--sm" style="padding:2px 8px; font-size:10px"
+                onclick="generateDoc('{escaped}', this)">Gen</button>
+            </div>'''
+
+        return html
+
+    tree_html = _render_tree(tree)
+    if not tree_html:
+        tree_html = '<div class="callout callout--ok">All modules documented!</div>'
 
     content = f"""
 <h1 class="page-title">Coverage Report</h1>
 <p class="page-subtitle">
-  Every source module cross-referenced against existing documentation.
-  High priority = classes or 5+ functions without any matching doc page.
+  Undocumented modules as tree. Check files or directories, then batch-generate (3 concurrent).
 </p>
 
 <div class="grid grid-3" style="margin-bottom: var(--space-6)">
@@ -1613,22 +2124,73 @@ async def coverage_page():
   <div class="card">
     <div class="stat">
       <div class="stat-value">{cov["total_modules"]}</div>
-      <div class="stat-label">Total Modules</div>
+      <div class="stat-label">Total</div>
     </div>
   </div>
 </div>
 
 <div class="card card--flat">
-  <div class="card-eyebrow">Undocumented Modules</div>
-  <div class="table-wrap">
-    <table>
-      <thead><tr>
-        <th>Module</th><th>Path</th><th>Size</th><th>Entities</th><th>Priority</th><th>Action</th>
-      </tr></thead>
-      <tbody>{missing_html}</tbody>
-    </table>
+  <div style="display:flex; align-items:center; gap:var(--space-3); padding:var(--space-3);
+    border-bottom:2px solid var(--ink); background:var(--paper-sunken)">
+    <input type="checkbox" id="select-all" onchange="toggleAll(this)" style="margin:0">
+    <label for="select-all" style="margin:0; text-transform:none; letter-spacing:0; font-size:var(--text-sm)">Select All</label>
+    <div style="margin-left:auto; display:flex; gap:var(--space-3); align-items:center">
+      <span id="sel-count" style="font-family:var(--font-display); font-size:var(--text-sm); color:var(--ink-muted)">0 selected</span>
+      <button class="btn btn--sm btn--primary" id="batch-btn" onclick="batchGenerate()" disabled>
+        Batch Generate
+      </button>
+    </div>
   </div>
+  <div id="tree-root">{tree_html}</div>
 </div>
+
+<div id="batch-result" style="margin-top:var(--space-4)"></div>
+
+<script>
+function updateCount() {{
+  const n = document.querySelectorAll('.file-check:checked').length;
+  document.getElementById('sel-count').textContent = n + ' selected';
+  document.getElementById('batch-btn').disabled = n === 0;
+}}
+function toggleDir(cb) {{
+  const det = cb.closest('details');
+  det.querySelectorAll('.file-check').forEach(c => c.checked = cb.checked);
+  det.querySelectorAll('.dir-check').forEach(c => {{ if (c !== cb) c.checked = cb.checked; }});
+  updateCount();
+}}
+function toggleAll(cb) {{
+  document.querySelectorAll('.file-check, .dir-check').forEach(c => c.checked = cb.checked);
+  updateCount();
+}}
+document.addEventListener('change', function(e) {{
+  if (e.target.classList.contains('file-check')) updateCount();
+}});
+async function batchGenerate() {{
+  const paths = Array.from(document.querySelectorAll('.file-check:checked')).map(c => c.value);
+  if (!paths.length) return;
+  const btn = document.getElementById('batch-btn');
+  const res = document.getElementById('batch-result');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="job-spinner"></span> ' + paths.length + '...';
+  try {{
+    const r = await fetch('/api/batch-generate', {{
+      method: 'POST', headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{file_paths: paths}})
+    }});
+    const d = await r.json();
+    if (d.ok) {{
+      res.innerHTML = '<div class="callout callout--ok"><strong>' + d.count + ' jobs queued</strong> (3 concurrent). Progress in nav badge.</div>';
+      btn.innerHTML = '&#10003; ' + d.count + ' Queued';
+    }} else {{
+      res.innerHTML = '<div class="callout callout--error">' + (d.error||'Failed') + '</div>';
+      btn.innerHTML = 'Batch Generate'; btn.disabled = false;
+    }}
+  }} catch(e) {{
+    res.innerHTML = '<div class="callout callout--error">Network error</div>';
+    btn.innerHTML = 'Batch Generate'; btn.disabled = false;
+  }}
+}}
+</script>
 """
     return _render(content, "Coverage", "coverage")
 
@@ -1998,9 +2560,15 @@ Before writing, reason through these steps internally:
 5. Map the dependency graph: what does this module need, who uses it.
 6. Only THEN write the documentation.
 
-## OUTPUT FORMAT
+## OUTPUT FORMAT — CRITICAL
 
-Your response must be ONLY the final markdown document. No preamble, no "Here is the documentation", no ```markdown fences, no explanation after.
+Your response must be ONLY the final markdown document — the COMPLETE documentation.
+- NO preamble ("Here is the documentation...")
+- NO ```markdown fences wrapping the output
+- NO explanation or commentary after the document
+- NO writing to files
+- Your text output IS the final deliverable. It will be saved directly as the .md file.
+- If you feel the document is too long: it is not. Include EVERYTHING. Completeness is mandatory.
 
 ## DOCUMENT STRUCTURE
 
@@ -2034,6 +2602,28 @@ Use this exact heading hierarchy — the DocsSystem indexes by # levels:
 ```python | and or bash | and or in terminal
 # Derived from the most common/simple function signatures
 ```
+
+## Live Usage Examples
+
+<Practical, runnable examples that show this module in real use.
+ Each example should be a complete, copy-pasteable snippet.
+ Where possible, show this module working TOGETHER with other ToolBoxV2 modules
+ it depends on (from the upstream graph) or that depend on it (downstream graph).
+ This section bridges the gap between API reference and real integration.
+
+ Structure per example:
+ 1. One sentence: what this demonstrates
+ 2. Complete code block (imports included, runnable as-is)
+ 3. Expected output or behavior (as a comment)
+
+ Include 1-3 examples depending on module complexity:
+ - Simple module (1-2 public functions): 1 example showing basic + integration
+ - Medium module (1 class, few methods): 2 examples — standalone + with another module
+ - Complex module (multiple classes): 3 examples — basic, integration, advanced combo
+
+ ONLY use modules and functions that exist in the provided code data or upstream/downstream graph.
+ If no integration partners exist in the graph, show standalone usage only.
+ A mini-demo that shows realistic data flow is worth more than isolated API calls.>
 
 ### Advanced Usage
 
@@ -2122,43 +2712,34 @@ When updating an existing document:
 5. Never mark anything as deprecated unless the code explicitly says so.
 """
 
-
-_doc_agent = None
-_doc_agent_lock = threading.Lock()
-
+init_buld = [False]
 
 async def _get_or_build_doc_agent_sync():
     """Get or build the doc agent singleton (sync, runs in bg thread)."""
-    global _doc_agent
-    if _doc_agent is not None:
-        return _doc_agent
 
-    with _doc_agent_lock:
-        if _doc_agent is not None:
-            return _doc_agent
+    logger.info("Building doc_agent ISAA agent (reason mode)...")
+    app = _tb_app or get_app("doc_server agent init")
 
-        logger.info("Building doc_agent ISAA agent (reason mode)...")
-        app = _tb_app or get_app("doc_server agent init")
+    isaa = app.get_mod("isaa")
+    if isaa is None:
+        logger.error("ISAA module not loaded")
+        raise RuntimeError("ISAA module not loaded — start with: tb -m isaa -f doc_server")
+    if init_buld[0]:
+        return await isaa.get_agent("doc_agent")
+    await isaa.init_isaa(name="doc_agent")
 
-        isaa = app.get_mod("isaa")
-        if isaa is None:
-            logger.error("ISAA module not loaded")
-            raise RuntimeError("ISAA module not loaded — start with: tb -m isaa -f doc_server")
+    builder = isaa.get_agent_builder(
+        "doc_agent",
+        add_base_tools=False,
+        with_dangerous_shell=False,
+    )
+    builder.config.system_message = DOC_AGENT_PROMPT
 
-        await isaa.init_isaa(name="doc_agent")
-
-        builder = isaa.get_agent_builder(
-            "doc_agent",
-            add_base_tools=False,
-            with_dangerous_shell=False,
-        )
-        builder.config.system_message = DOC_AGENT_PROMPT
-
-        await isaa.register_agent(builder)
-        _doc_agent = await isaa.get_agent("doc_agent")
-        logger.info("doc_agent ready")
-
-        return _doc_agent
+    await isaa.register_agent(builder)
+    init_buld[0] = True
+    _doc_agent = await isaa.get_agent("doc_agent")
+    logger.info("doc_agent ready")
+    return _doc_agent
 
 async def _run_doc_job(job_id: str, file_path: str, update_existing: str = None):
     """
@@ -2212,26 +2793,48 @@ async def _run_doc_job(job_id: str, file_path: str, update_existing: str = None)
                 if existing_path.exists():
                     existing_content = existing_path.read_text(encoding="utf-8", errors="ignore")
 
-            # 4. Build prompt
-            code_section = []
-            for elem in elements:
-                entry = f"### `{elem['signature']}`"
-                if elem.get("parent"):
-                    entry = f"### `{elem['parent']}.{elem['name']}` — {elem['type']}"
-                entry += f"\n- Type: {elem['type']}"
-                entry += f"\n- Lines: {elem['lines'][0]}-{elem['lines'][1]}"
-                entry += f"\n- Language: {elem.get('language', 'python')}"
-                if elem.get("docstring"):
-                    entry += f"\n- Docstring: {elem['docstring']}"
-                if elem.get("code"):
-                    code = elem["code"]
-                    if len(code) > 2000:
-                        code = code[:2000] + "\n# ... (truncated)"
-                    entry += f"\n```python\n{code}\n```"
-                code_section.append(entry)
-
+            # 4. Build prompt with context-budget awareness
+            budget = _get_context_budget()
             upstream = context_graph.get("upstream_dependencies", [])
             downstream = context_graph.get("downstream_usages", [])
+
+            # Reserve tokens for non-code parts of the prompt
+            graph_text = ""
+            graph_text += "### Upstream (what this module imports and uses)\n"
+            if upstream:
+                for u in upstream:
+                    graph_text += f"\n- **`{u.get('name', '?')}`** ({u.get('type', '?')}) from `{u.get('file', '?')}`"
+                    if u.get("import_statement"):
+                        graph_text += f"\n  Import: `{u['import_statement']}`"
+                    if u.get("usage_snippet"):
+                        graph_text += f"\n  Usage: `{u['usage_snippet']}`"
+                    if u.get("signature"):
+                        graph_text += f"\n  Signature: `{u['signature']}`"
+            else:
+                graph_text += "No indexed upstream dependencies."
+            graph_text += "\n\n### Downstream (who imports and uses this module)\n"
+            if downstream:
+                for d in downstream:
+                    graph_text += f"\n- **`{d.get('imported_name', '?')}`** used in `{d.get('file', '?')}`"
+                    if d.get("import_statement"):
+                        graph_text += f"\n  Import: `{d['import_statement']}`"
+                    for snippet in d.get("usage_snippets", []):
+                        graph_text += f"\n  Usage: `{snippet}`"
+            else:
+                graph_text += "No indexed downstream usages."
+
+            existing_text = ""
+            if existing_content:
+                existing_text = f"\n## Existing Documentation (to update)\n\n```markdown\n{existing_content[:_MAX_EXISTING_DOC_CHARS]}\n```\n\nUpdate this documentation to match the current code above.\n"
+            else:
+                existing_text = "\nCreate a new documentation page for this module following the structure in your system prompt.\nYour COMPLETE response must be the final markdown document — nothing else.\n"
+
+            # Calculate remaining budget for code sections
+            overhead_tokens = _estimate_tokens(graph_text) + _estimate_tokens(
+                existing_text) + 200  # 200 for framing
+            code_budget = budget - overhead_tokens
+
+            code_section = _build_code_prompt_sections(elements, code_budget, job_id=job_id)
 
             user_prompt = f"""Document this file: `{file_path}`
 
@@ -2241,37 +2844,56 @@ async def _run_doc_job(job_id: str, file_path: str, update_existing: str = None)
 
 ## Dependency Graph (from index)
 
-### Upstream (what this module uses)
-{chr(10).join(f"- `{u.get('name', '?')}` ({u.get('type', '?')}) in `{u.get('file', '?')}`" for u in upstream) if upstream else "No indexed upstream dependencies."}
+{graph_text}
+{existing_text}"""
 
-### Downstream (what uses this module)
-{chr(10).join(f"- `{d.get('name', '?')}` in `{d.get('file', '?')}`" for d in downstream) if downstream else "No indexed downstream usages."}
-"""
-
-            if existing_content:
-                user_prompt += f"""
-## Existing Documentation (to update)
-
-```markdown
-{existing_content[:5000]}
-```
-
-Update this documentation to match the current code above.
-"""
-            else:
-                user_prompt += """
-Create a new documentation page for this module following the structure in your system prompt.
-Your COMPLETE response must be the final markdown document — nothing else.
-"""
+                    # Select model based on prompt size
+            prompt_tokens = _estimate_tokens(user_prompt)
+            model_hint = None
+            log_model = os.getenv("LOGCONTEXTMODEL", "")
+            if log_model:
+                if prompt_tokens > 50_000:
+                    model_hint = log_model  # Use the large-context model for big prompts
+                    logger.info(
+                        f"Job {job_id}: large prompt ({prompt_tokens} tokens) — using LOGCONTEXTMODEL={log_model}")
+                else:
+                    logger.info(f"Job {job_id}: normal prompt ({prompt_tokens} tokens) — using default model")
 
             # 5. Call ISAA agent
-            logger.info(f"Job {job_id}: calling ISAA agent (prompt {len(user_prompt)} chars)")
-            agent = await _get_or_build_doc_agent_sync()
+            logger.info(
+                f"Job {job_id}: calling ISAA agent (prompt {len(user_prompt)} chars, ~{prompt_tokens} tokens)")
 
-            result = await agent.a_run(query=user_prompt, session_id="doc_agent_session", human_online=False)
+            # Build agent in THIS event loop (each bg thread has its own)
+            app = _tb_app or get_app("doc_server agent")
+            isaa = app.get_mod("isaa")
+            if isaa is None:
+                raise RuntimeError("ISAA module not loaded — start with: tb -m isaa -f doc_server")
+
+            agent_name = f"doc_agent"
+            from toolboxv2.mods.isaa.base.Agent.builder import FlowAgentBuilder
+            agent = await (
+                FlowAgentBuilder()
+                .with_name(agent_name)
+                .with_models(os.getenv("LOGCONTEXTMODEL", os.getenv("LIGHNIGMODEL", os.getenv("BLITZMODEL", "gemini/gemini-2.5-flash"))))
+                .with_system_message(DOC_AGENT_PROMPT)
+                .with_temperature(0.3)
+                .build()
+            )
+
+            run_kwargs = dict(query=user_prompt, session_id=f"doc_session_{job_id}", human_online=False)
+            if model_hint:
+                run_kwargs["model"] = model_hint
+
+            result = await agent.a_run(**run_kwargs)
 
             if not result or not isinstance(result, str):
                 logger.error(f"Job {job_id}: agent returned empty/invalid result: {type(result)}")
+                _jobs.update(job_id, status="error", finished=time.time(),
+                             error="Agent returned empty result")
+                return
+
+            if len(result) < 50 or result.startswith("Es ist ein Fehler aufgetreten:") :
+                logger.error(f"Job {job_id}: agent returned invalid result: {result}")
                 _jobs.update(job_id, status="error", finished=time.time(),
                              error="Agent returned empty result")
                 return
@@ -2365,11 +2987,47 @@ async def api_generate_doc(request: ParsedRequest):
     # await _run_doc_job(job_id, file_path, update_existing)
     return {"ok": True, "job_id": job_id, "status": "queued"}
 
+@web_app.post("/api/batch-generate")
+async def api_batch_generate(request: ParsedRequest):
+    data = request.json_data
+    if not data:
+        return (400, {"ok": False, "error": "Invalid JSON body"})
+
+    file_paths = data.get("file_paths", [])
+    if not file_paths:
+        return (400, {"ok": False, "error": "file_paths required (list)"})
+
+    if len(file_paths) > 60000:
+        return (400, {"ok": False, "error": "Max 60000 files per batch"})
+
+    app = _tb_app or get_app("doc_server batch dispatch")
+    job_ids = []
+
+    for fp in file_paths:
+        job_id = _jobs.create(fp)
+        job_ids.append(job_id)
+        app.run_bg_task_advanced(_run_doc_job, job_id, fp)
+
+    return {"ok": True, "job_ids": job_ids, "count": len(job_ids)}
 
 # ═════════════════════════════════════════════════════════
 # FLOW ENTRY
 # ═════════════════════════════════════════════════════════
-
+@web_app.post("/api/shutdown")
+async def api_shutdown():
+    logger.info("Shutdown requested via dashboard")
+    import _thread
+    # Respond first, then kill
+    def _delayed_exit():
+        time.sleep(0.5)
+        logger.info("Server stopping...")
+        _thread.interrupt_main()  # Raises KeyboardInterrupt in main thread
+        from toolboxv2 import get_app
+        get_app().exit()
+        import sys
+        sys.exit(0)
+    threading.Thread(target=_delayed_exit, daemon=True).start()
+    return {"ok": True, "message": "Shutting down..."}
 
 async def run(app, args):
     """Flow entry — initializes DocsSystem, starts WSGI server via FastTBHandler."""
@@ -2440,10 +3098,17 @@ async def run(app, args):
     handler = FastTBHandler(web_app)
     wsgi_app = handler.as_wsgi_app()
 
-    logger.info(f"Doc Server -> http://{host if host != '0.0.0.0' else '127.0.0.1'}:{port}")
+    pp = f"Doc Server -> http://{host if host != '0.0.0.0' else '127.0.0.1'}:{port}"
+    print(pp)
+    logger.info(pp)
 
     # Register WS handlers if any
     ws_handlers = web_app.get_websocket_handlers()
-
-    from waitress import serve
-    serve(wsgi_app, host=host, port=port)
+    from waitress.server import create_server
+    server = create_server(wsgi_app, host=host, port=port)
+    logger.info("Press Ctrl+C to stop")
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        logger.info("Shutting down doc server...")
+        server.close()
