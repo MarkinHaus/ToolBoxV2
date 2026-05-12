@@ -21,7 +21,7 @@
     
     
       
-        <title>Bg - ToolBoxV2 Docs</title>
+        <title>bg - ToolBoxV2 Docs</title>
       
     
     
@@ -74,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#verified-code-el" class="md-skip">
+        <a href="#bg" class="md-skip">
           Skip to content
         </a>
       
@@ -108,7 +108,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Bg
+              bg
             
           </span>
         </div>
@@ -375,7 +375,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../registry/" class="md-tabs__link">
+        <a href="../../../registry/index.md" class="md-tabs__link">
           
   
   
@@ -765,7 +765,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../registry/" class="md-nav__link">
+      <a href="../../../registry/index.md" class="md-nav__link">
         
   
   
@@ -3724,14 +3724,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../registry/" class="md-nav__link">
+      <a href="../../../registry/index.md" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Infrastructure
+    TB Registry
   
 
     
@@ -4110,6 +4110,8 @@
   
   
   
+    
+  
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
@@ -4118,10 +4120,138 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#verified-code-el" class="md-nav__link">
+  <a href="#why-this-matters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Verified Code El...*
+        Why This Matters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick Start
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#live-usage-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Live Usage Examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Live Usage Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#starting-with-api-server-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Starting with API server (default)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#daemon-only-mode-no-api-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Daemon-only mode (no API server)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How It Works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="API Reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Functions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#runapp-apitrue-async" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        run(app, api=True) (async)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dependencies
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#used-by" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Used By
       
     </span>
   </a>
@@ -4151,19 +4281,53 @@
   
 
 
-  <h1>Bg</h1>
+<h1 id="bg">bg<a class="headerlink" href="#bg" title="Permanent link">&para;</a></h1>
+<p>Background runner that initializes a ToolBoxV2 application in daemon mode, optionally starting the API server before connecting.</p>
+<h2 id="why-this-matters">Why This Matters<a class="headerlink" href="#why-this-matters" title="Permanent link">&para;</a></h2>
+<p>When you need to run a ToolBoxV2 app as a long-lived background service, this is the entry point. It handles the startup sequence — printing status, starting the API server (in debug or production mode), and connecting the daemon — in a single async call.</p>
+<h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.flows.bg</span><span class="w"> </span><span class="kn">import</span> <span class="n">run</span>
 
-<p>Ich konnte die Aufgabe leider nicht vollständig abschließen.</p>
-<p>📋 SEMANTIC LEDGER [Run 4048a857]:</p>
-<p>🔧 Total: 0 tool calls, 0 unique tools</p>
-<p><strong>Warum?</strong>
-Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife gelandet.</p>
-<p><strong>Mögliche nächste Schritte:</strong>
-1. Die Aufgabe in kleinere Teile aufteilen
-2. Mir mehr Kontext oder Details geben
-3. Eine spezifischere Frage stellen</p>
-<p>*Ursprüngliche Anfrage: Document this file: <code>C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\flows\bg.py</code></p>
-<h2 id="verified-code-el">Verified Code El...*<a class="headerlink" href="#verified-code-el" title="Permanent link">&para;</a></h2>
+<span class="c1"># Start the app with API server enabled (default)</span>
+<span class="k">await</span> <span class="n">run</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="live-usage-examples">Live Usage Examples<a class="headerlink" href="#live-usage-examples" title="Permanent link">&para;</a></h2>
+<h3 id="starting-with-api-server-default">Starting with API server (default)<a class="headerlink" href="#starting-with-api-server-default" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.flows.bg</span><span class="w"> </span><span class="kn">import</span> <span class="n">run</span>
+
+<span class="c1"># Launches API server (debug or production based on app.debug)</span>
+<span class="c1"># then connects the daemon</span>
+<span class="k">await</span> <span class="n">run</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="daemon-only-mode-no-api-server">Daemon-only mode (no API server)<a class="headerlink" href="#daemon-only-mode-no-api-server" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.flows.bg</span><span class="w"> </span><span class="kn">import</span> <span class="n">run</span>
+
+<span class="c1"># Skips API server startup, connects daemon directly</span>
+<span class="k">await</span> <span class="n">run</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">api</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="how-it-works">How It Works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
+<p>The function executes a three-step startup sequence:</p>
+<ol>
+<li>Prints a status message via <code>app.print("Running...")</code>.</li>
+<li>If <code>api</code> is <code>True</code>, checks <code>app.debug</code>: starts the debug handler when debug mode is on, otherwise starts the production API server via <code>manage_server("start")</code>. Both utilities are lazily imported from <code>toolboxv2.utils.clis.api</code>.</li>
+<li>Connects the daemon application via <code>await app.daemon_app.connect(app)</code>.</li>
+</ol>
+<p>The conditional import keeps the module lightweight when API functionality isn't needed.</p>
+<h2 id="api-reference">API Reference<a class="headerlink" href="#api-reference" title="Permanent link">&para;</a></h2>
+<h3 id="functions">Functions<a class="headerlink" href="#functions" title="Permanent link">&para;</a></h3>
+<h4 id="runapp-apitrue-async"><code>run(app, api=True)</code> (async)<a class="headerlink" href="#runapp-apitrue-async" title="Permanent link">&para;</a></h4>
+<p>Starts the background runner for a ToolBoxV2 application, optionally launching the API server before connecting the daemon.</p>
+<p><strong>Parameters:</strong>
+- <code>app</code> — ToolBoxV2 application instance (must have <code>.print()</code>, <code>.debug</code>, and <code>.daemon_app</code> attributes)
+- <code>api</code> — Whether to start the API server before daemon connection. Defaults to <code>True</code>. When <code>False</code>, skips server startup entirely.</p>
+<p><strong>Returns:</strong> <code>None</code> (async — awaits <code>app.daemon_app.connect(app)</code>)</p>
+<h2 id="dependencies">Dependencies<a class="headerlink" href="#dependencies" title="Permanent link">&para;</a></h2>
+<p>No indexed upstream dependencies.</p>
+<h2 id="used-by">Used By<a class="headerlink" href="#used-by" title="Permanent link">&para;</a></h2>
+<p>No indexed downstream usages.</p>
 
 
 
