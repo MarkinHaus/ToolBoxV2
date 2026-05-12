@@ -927,16 +927,14 @@ class FlowAgent:
                     action="llm.call.success",
                     resource=f"/llm/{model}",
                     status="SUCCESS",
-                    details={
-                        "model": model,
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                        "cost": cost,
-                        "duration": round(execution_time, 2),
-                        "prompt_hash": prompt_hash,
-                        "continuation_count": continuation_count,
-                        "session_id": session_id or "none",
-                    }
+                    model=model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cost=cost,
+                    duration=round(execution_time, 2),
+                    prompt_hash=prompt_hash,
+                    continuation_count=continuation_count,
+                    session_id=session_id or "none",
                 )
             except Exception:
                 pass  # Audit-Errors dürfen nicht crashen
@@ -1000,15 +998,13 @@ class FlowAgent:
                     action="llm.call.error",
                     resource=f"/llm/{model}",
                     status="FAILURE",
-                    details={
-                        "model": model,
-                        "error_type": type(e).__name__,
-                        "error_message": error_msg_truncated,
-                        "error_length": len(error_msg),
-                        "duration": round(execution_time, 2),
-                        "prompt_hash": prompt_hash,
-                        "session_id": session_id or "none",
-                    }
+                    model=model,
+                    error_type=type(e).__name__,
+                    error_message=error_msg_truncated,
+                    error_length=len(error_msg),
+                    duration=round(execution_time, 2),
+                    prompt_hash=prompt_hash,
+                    session_id=session_id or "none",
                 )
             except Exception:
                 pass  # Audit-Errors dürfen nicht crashen
@@ -2188,12 +2184,9 @@ class FlowAgent:
                 action="agent.tool_added",
                 resource=f"/agent/agents/{self.amd.name}/tools",
                 status="SUCCESS",
-                details={
-                    "agent_name": self.amd.name,
-                    "tool_name": tool_name,
-                    "category": category if isinstance(category, list) else [category] if category else [],
-                    "flags": flags or {},
-                }
+                agent_name=self.amd.name,
+                tool_name=tool_name,
+                category=category if isinstance(category, list) else [category] if category else [],
             )
         except Exception:
             pass

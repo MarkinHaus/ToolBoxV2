@@ -369,6 +369,7 @@ class AuditLogger:
         resource: str,
         status: str = "SUCCESS",
         details: Optional[Dict[str, Any]] = None,
+        **kwargs
     ):
         """Log a structured audit event."""
         audit_data = {
@@ -377,6 +378,7 @@ class AuditLogger:
             "resource": resource,
             "status": status,
             "details": details or {},
+            **kwargs
         }
         self.logger.info(
             f"AUDIT: {action} on {resource} by {user_id}",

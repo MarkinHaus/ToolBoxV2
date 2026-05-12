@@ -42,16 +42,34 @@ logger = get_logger()
 def _ensure_lock(lock: Optional[asyncio.Lock]) -> asyncio.Lock:
     """Get or create an asyncio.Lock compatible with the CURRENT event loop.
 
-    Python <=3.10: Locks carry a _loop attr set at creation.
-    Python 3.12+:  Locks are loop-agnostic; no private API needed.
-    Avoids the deprecated lock._get_loop() entirely.
+    Checks three cases:
+      1. lock is None           → create new
+      2. lock._loop is closed   → create new
+      3. lock._loop ≠ current   → create new  (THIS WAS MISSING)
     """
     if lock is None:
         return asyncio.Lock()
-    # _loop present only in Python <=3.10 style locks.
-    loop_attr = getattr(lock, '_loop', None)
-    if loop_attr is not None and loop_attr.is_closed():
+
+    # Get the loop the lock is bound to (set after first await)
+    lock_loop = getattr(lock, '_loop', None)
+
+    if lock_loop is None:
+        # Never been awaited yet — safe to reuse, will bind on first use
+        return lock
+
+    # Loop was closed → stale lock
+    if lock_loop.is_closed():
         return asyncio.Lock()
+
+    # Loop is different from current → MUST recreate
+    try:
+        current_loop = asyncio.get_running_loop()
+        if lock_loop is not current_loop:
+            return asyncio.Lock()
+    except RuntimeError:
+        # No running loop (sync context) → create fresh
+        return asyncio.Lock()
+
     return lock
 
 
@@ -688,12 +706,7 @@ class IntelligentRateLimiter:
 
     @property
     def _global_lock(self) -> asyncio.Lock:
-        if self.__global_lock is None:
-            self.__global_lock = asyncio.Lock()
-        try:
-            self.__global_lock._get_loop()
-        except RuntimeError:
-            self.__global_lock = asyncio.Lock()
+        self.__global_lock = _ensure_lock(self.__global_lock)
         return self.__global_lock
 
     def _init_known_limits(self):

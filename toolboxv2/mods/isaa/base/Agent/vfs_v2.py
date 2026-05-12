@@ -2452,6 +2452,9 @@ Session: {self.session_id}
 
         f = self.files[path]
 
+        if f.file_type is None:
+            f.__post_init__()
+
         # Auto-load shadow files that haven't been read yet
         if not f.is_loaded and f.backing_type == FileBackingType.SHADOW:
             load_result = self._load_shadow_content(path)

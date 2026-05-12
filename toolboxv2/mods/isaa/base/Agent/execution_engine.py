@@ -4617,6 +4617,7 @@ BEISPIELE:
                     messages=messages,
                     stream=False,
                     with_context=False,
+                    max_tokens=None,
                     **self._get_coding_model_kwargs(),
                 )
 
