@@ -803,7 +803,7 @@ You are Isaa (via simplecore.app), a self-correcting, autonomous software. You v
     persona: PersonaConfig | None = None
     use_fast_response: bool = True
     handler_path_or_dict: str | dict[str, Any] | None = None
-    vfs_max_window_lines: int = 250
+    vfs_max_window_lines: int = 3000
     enable_lsp: bool = True
     enable_docker: bool = True
     docker_config: DockerConfig | None = None

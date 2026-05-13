@@ -52,7 +52,7 @@ class AgentLiveState:
     iteration: int = 0
     max_iterations: int = 0
     is_sub: bool = False
-    tool: ToolExecution = field(default_factory=ToolExecution)
+    tools: dict[str, ToolExecution] = field(default_factory=dict)
     stream: TokenStream = field(default_factory=TokenStream)
     error: str = ""
     t_start: float = 0.0
@@ -69,7 +69,7 @@ class AgentLiveState:
         self.phase = AgentPhase.IDLE
         self.iteration = 0
         self.stream = TokenStream()
-        self.tool = ToolExecution()
+        self.tools.clear()
         self.error = ""
         self.thought = ""
         self.status_msg = ""

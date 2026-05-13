@@ -427,6 +427,13 @@ class DockerVFS:
                 for path, vfs_file in self.vfs.files.items():
                     if vfs_file.readonly:
                         continue
+                    # Skip unloaded shadow files (content not in memory)
+                    if hasattr(vfs_file, 'is_loaded') and not vfs_file.is_loaded:
+                        continue
+                    # Skip clean shadow files from mounts — they exist on disk, not needed in container
+                    if hasattr(vfs_file, 'backing_type') and hasattr(vfs_file, 'is_dirty'):
+                        if not vfs_file.is_dirty and vfs_file.backing_type.value == 2:
+                            continue
                     rel_path = path.lstrip('/')
                     if not rel_path:
                         continue

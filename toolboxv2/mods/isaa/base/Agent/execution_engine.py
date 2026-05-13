@@ -1411,6 +1411,107 @@ def _escape_raw_controls_in_json_strings(s: str) -> str:
         out.append(ch)
     return "".join(out)
 
+def _is_code_truncated(text: str) -> bool:
+    if not text:
+        return False
+    if text.count("```") % 2 != 0:
+        return True
+    if text.count("{") - text.count("}") > 2:
+        return True
+    if text.count("[") - text.count("]") > 2:
+        return True
+    if text.count("(") - text.count(")") > 2:
+        return True
+    for tag in ["<script>", "<style>", "<html>", "<body>"]:
+        close = tag.replace("<", "</")
+        if text.count(tag) > text.count(close):
+            return True
+    return False
+
+
+import re
+import json
+import ast
+
+# ── Shared core ───────────────────────────────────────────────────
+_JUNK_RE = re.compile(r"<[^>]*>")  # XML-tag artifacts like </arg_value>
+
+
+def _clean_tool_name(raw_name: str, existing_args: dict) -> tuple[str, dict]:
+    """Return (clean_name, merged_args). Mutates nothing."""
+    # 1. strip XML junk
+    name = _JUNK_RE.sub("", raw_name).strip()
+
+    # 2. split off call-parens:  load_tools(tools=["vfs"]) → name, argstr
+    paren = name.find("(")
+    if paren != -1:
+        argstr = name[paren + 1:].rstrip(")").strip()
+        name = name[:paren].strip()
+        if argstr:
+            existing_args = _merge_inline_args(argstr, existing_args)
+
+    # 3. remove any remaining non-identifier chars
+    name = re.sub(r"[^a-zA-Z0-9_]", "", name)
+
+    return name, existing_args
+
+
+def _merge_inline_args(argstr: str, existing: dict) -> dict:
+    """Parse Python-style kwargs from the paren content, merge into existing."""
+    merged = dict(existing)
+    # try wrapping in dict() so ast can parse it
+    try:
+        parsed = ast.literal_eval(f"dict({argstr})")
+        for k, v in parsed.items():
+            if k not in merged:
+                merged[k] = v
+        return merged
+    except Exception:
+        pass
+    # fallback: naive key=value split
+    for part in argstr.split(","):
+        if "=" in part:
+            k, v = part.split("=", 1)
+            k = k.strip()
+            if k and k not in merged:
+                try:
+                    merged[k] = ast.literal_eval(v.strip())
+                except Exception:
+                    merged[k] = v.strip()
+    return merged
+
+
+# ── Wrapper 1: OpenAI-compatible object ──────────────────────────
+def clean_tc_object(tc):
+    """In-place clean on a LiteLLM/OpenAI tool_call object."""
+    raw = tc.function.name or ""
+    try:
+        existing = json.loads(tc.function.arguments or "{}")
+    except (json.JSONDecodeError, TypeError):
+        existing = {}
+
+    name, args = _clean_tool_name(raw, existing)
+    tc.function.name = name
+    tc.function.arguments = json.dumps(args, ensure_ascii=False)
+    return tc
+
+
+# ── Wrapper 2: dict equivalent ───────────────────────────────────
+def clean_tc_dict(tc: dict):
+    """In-place clean on a tool_call dict."""
+    func = tc.get("function", {})
+    raw = func.get("name", "")
+    existing = func.get("arguments", {})
+    if isinstance(existing, str):
+        try:
+            existing = json.loads(existing)
+        except (json.JSONDecodeError, TypeError):
+            existing = {}
+
+    name, args = _clean_tool_name(raw, existing)
+    func["name"] = name
+    func["arguments"] = json.dumps(args, ensure_ascii=False)
+    return tc
 
 class ExecutionEngine(SubAgentResumeExtension):
     """
@@ -1474,6 +1575,7 @@ class ExecutionEngine(SubAgentResumeExtension):
 
         # Active executions for pause/resume
         self._active_executions: Dict[str, ExecutionContext] = {}
+        self._session_last_run: dict[str, str] = {}  # session_id → run_id
         self._current_session: "AgentSessionV2" = None
 
         # Finalization locks (for background commit after final_answer)
@@ -1808,6 +1910,7 @@ BEISPIELE:
 
         # Track active execution
         self._active_executions[ctx.run_id] = ctx
+        self._session_last_run[session_id] = ctx.run_id
         ctx.session_id = session_id
         ctx.query = query
         ctx.max_iterations = max_iterations
@@ -1919,6 +2022,7 @@ BEISPIELE:
                 response = await self.agent.a_run_llm_completion(
                     messages=messages,
                     tools=current_tools,
+                    max_tokens=16384,
                     **llm_kwargs,
                 )
             except Exception as e:
@@ -1943,6 +2047,7 @@ BEISPIELE:
                 normal_tcs = []
                 SOLO_TOOLS = {"final_answer", "shift_focus"}
                 for tc in response.tool_calls:
+                    tc = clean_tc_object(tc)
                     f_name = tc.function.name
                     if f_name in SOLO_TOOLS:
                         final_tc = tc
@@ -2055,7 +2160,7 @@ BEISPIELE:
         else:
             task = asyncio.create_task(finalize_coro)
             self._pending_finalize_tasks[ctx.run_id] = task
-
+        ctx.status = "paused"
         if get_ctx:
             return final_response, ctx
         return final_response
@@ -2082,6 +2187,7 @@ BEISPIELE:
             ctx = ExecutionContext()
 
         self._active_executions[ctx.run_id] = ctx
+        self._session_last_run[session_id] = ctx.run_id
         ctx.session_id = session_id
         ctx.query = query
         ctx.max_iterations = max_iterations
@@ -2272,6 +2378,7 @@ BEISPIELE:
 
                 # --- AUTO-RESUME SCHLEIFE FÜR STREAMING ---
                 continuation_count = 0
+                _last_progress = 0
 
                 current_messages = messages.copy()
                 current_tools = tool_definitions if tool_definitions else None
@@ -2307,6 +2414,7 @@ BEISPIELE:
                         stream_response = await self.agent.a_run_llm_completion(
                             messages=current_messages,
                             tools=current_tools,
+                            max_tokens=16384,
                             **stream_kwargs,
                         )
 
@@ -2497,11 +2605,40 @@ BEISPIELE:
                         # Skip continuation-resume logic and go straight to next iteration
                         continue  # continues the outer `while ctx.current_iteration < ctx.max_iterations` loop
 
-                    # --- Ende des Chunks. Prüfen auf Token Limit ---
-                    if finish_reason not in ["length", "max_tokens"]:
-                        break  # Generierung natürlich beendet
+                    # --- Ende des Chunks. Prüfen auf Fortsetzung ---
+                    hit_token_limit = finish_reason in ["length", "max_tokens"]
+
+                    # Tool-JSON-Validation IMMER prüfen, nicht nur bei length
+                    has_truncated_tool = False
+                    if tool_calls_buffer:
+                        last_idx = max(tool_calls_buffer.keys())
+                        last_tc = tool_calls_buffer[last_idx]
+                        try:
+                            json.loads(last_tc["function"]["arguments"])
+                        except json.JSONDecodeError:
+                            has_truncated_tool = True
+
+                    has_truncated_text = _is_code_truncated(collected_content)
+
+                    needs_resume = hit_token_limit or has_truncated_text or has_truncated_tool
+
+                    if not needs_resume:
+                        break
+
+                    # Delta guard
+                    new_progress = len(collected_content) + sum(
+                        len(tc["function"]["arguments"])
+                        for tc in tool_calls_buffer.values()
+                    )
+                    if continuation_count > 0 and new_progress <= _last_progress:
+                        self.live.log("Resume produced no progress, stopping.", logging.WARNING)
+                        break
+                    _last_progress = new_progress
 
                     continuation_count += 1
+                    if continuation_count >= MAX_CONTINUATIONS:
+                        self.live.log(f"Hit MAX_CONTINUATIONS ({MAX_CONTINUATIONS})", logging.WARNING)
+                        break
                     self.live.status_msg = (
                         f"Auto-Resume ({continuation_count}/{MAX_CONTINUATIONS})"
                     )
@@ -2527,6 +2664,7 @@ BEISPIELE:
                         # Ein Tool Call wurde mitten im JSON abgeschnitten
                         continuing_tool_idx = active_cut_off_tool_idx
                         last_tc = tool_calls_buffer[continuing_tool_idx]
+                        print(last_tc)
                         t_name = last_tc["function"]["name"]
                         t_args = last_tc["function"]["arguments"]
 
@@ -2548,14 +2686,32 @@ BEISPIELE:
                             {"role": "user", "content": resume_msg},
                         ]
                     else:
-                        # Normaler Text wurde abgeschnitten
+                        # Normaler Text wurde abgeschnitten — structural hints geben
                         continuing_tool_idx = None
-                        last_words = collected_content[-100:]
+                        last_words = collected_content[-200:]
+
+                        missing_hints = []
+                        if collected_content.count("```") % 2 != 0:
+                            missing_hints.append("unclosed code fence (```)")
+                        open_braces = collected_content.count("{") - collected_content.count("}")
+                        if open_braces > 2:
+                            missing_hints.append(f"{open_braces} unclosed curly braces")
+                        for tag in ["<script>", "<style>", "<html>", "<body>", "<div>"]:
+                            close = tag.replace("<", "</")
+                            if collected_content.count(tag) > collected_content.count(close):
+                                missing_hints.append(f"unclosed {tag}")
+
+                        structural_hint = ""
+                        if missing_hints:
+                            structural_hint = (
+                                f"\n\nStructural issues detected: {', '.join(missing_hints)}. "
+                                f"You MUST complete these before stopping."
+                            )
+
                         resume_msg = (
-                            f"Du hast das maximale Output-Token-Limit deines Modells erreicht. "
-                            f"Bitte fahre exakt an dem Punkt fort, an dem du aufgehört hast. "
-                            f"Hier sind deine letzten Worte zur Orientierung:\n'...{last_words}'\n\n"
-                            f"Setze den Text/Code lückenlos fort. Bitte benutze keine Floskeln."
+                            f"Your output was cut off. Continue EXACTLY where you stopped. "
+                            f"Last 200 chars for orientation:\n'...{last_words}'\n\n"
+                            f"Continue seamlessly, no preamble, no repetition.{structural_hint}"
                         )
                         current_tools = tool_definitions if tool_definitions else None
                         current_messages = messages.copy() + [
@@ -2590,6 +2746,7 @@ BEISPIELE:
                     }  # dürfen nie parallel laufen
 
                     for tc in tool_calls:
+                        tc = clean_tc_dict(tc)
                         f_name = tc.get("function", {}).get("name", "")
                         if f_name in SOLO_TOOLS:
                             final_tc = (
@@ -2615,6 +2772,7 @@ BEISPIELE:
                     ):
                         f_name = tc.get("function", {}).get("name", "")
                         f_args = tc.get("function", {}).get("arguments", "{}")
+                        f_id = tc.get("id", tc.get("function", {}).get("id", f_name))
                         # Notify narrator so external systems see tool context
                         args_preview = ""
                         try:
@@ -2624,7 +2782,7 @@ BEISPIELE:
                             args_preview = str(f_args)[:80]
                         self._narrator.on_tool_start(f"{f_name} {args_preview}")
                         yield enrich(
-                            {"type": "tool_start", "name": f_name, "args": f_args}
+                            {"type": "tool_start", "name": f_name, "args": f_args, "id": f_id}
                         )
 
                     if final_tc:
@@ -2661,12 +2819,14 @@ BEISPIELE:
 
                     for tc, result, is_final in normal_results:
                         f_name = tc.get("function", {}).get("name", "")
+                        f_id = tc.get("id", tc.get("function", {}).get("id", f_name))
                         yield enrich(
                             {
                                 "type": "tool_result",
                                 "name": f_name,
                                 "is_final": is_final,
                                 "result": str(result),
+                                "id": f_id
                             }
                         )
 
@@ -3034,6 +3194,7 @@ BEISPIELE:
                 msg_dict = {"role": "assistant", "content": content}
                 if hasattr(response, "tool_calls") and response.tool_calls:
                     msg_dict["tool_calls"] = response.tool_calls
+
                 ctx.working_history.append(msg_dict)
 
                 self._narrator._set_thought(content[:250], moc=False)
@@ -3049,6 +3210,7 @@ BEISPIELE:
                     SOLO_TOOLS = {"final_answer", "shift_focus"}
 
                     for tc in response.tool_calls:
+                        tc = clean_tc_object(tc)
                         f_name = tc.function.name
                         if f_name in SOLO_TOOLS:
                             final_tc = tc
@@ -3219,7 +3381,7 @@ BEISPIELE:
             else:
                 task = asyncio.create_task(finalize_coro)
                 self._pending_finalize_tasks[ctx.run_id] = task
-
+            ctx.status = "paused"
             yield enrich(
                 {"type": "done", "success": success, "final_answer": final_response}
             )
@@ -3362,7 +3524,7 @@ BEISPIELE:
             }
             return
 
-        self.live.tool = ToolExecution(
+        self.live.tools[f_id] = ToolExecution(
             name=f_name, args_summary=str(f_args)[:120], t_start=time.time()
         )
         self.live.enter(AgentPhase.TOOL_EXEC)
@@ -3530,7 +3692,7 @@ BEISPIELE:
                 r"Inside string values, write long text / code / markdown naturally — "
                 r"only \" and \\ and control chars (\n, \t) need escaping. "
                 r"Do NOT escape single quotes (\'). Do NOT wrap the JSON in ``` fences. "
-                f"Raw args received (first 500 chars): {args_str[:500]}"
+                f"Raw args received (first 500 chars): {str(tool_call.function.arguments)[:500]}"
             ), False
 
         self._narrator.on_tool_start(
@@ -3550,7 +3712,7 @@ BEISPIELE:
 
         result = ""
         is_final = False
-        self.live.tool = ToolExecution(
+        self.live.tools[f_id] = ToolExecution(
             name=f_name, args_summary=str(f_args)[:120], t_start=time.time()
         )
         self.live.enter(AgentPhase.TOOL_EXEC)
@@ -3945,6 +4107,7 @@ BEISPIELE:
             get_app().debug_rains(e)
             get_app().print(e)
 
+        self.live.tools.pop(f_id, None)
         return result, is_final
 
     # =========================================================================
@@ -4617,7 +4780,7 @@ BEISPIELE:
                     messages=messages,
                     stream=False,
                     with_context=False,
-                    max_tokens=None,
+                    max_tokens=16384,
                     **self._get_coding_model_kwargs(),
                 )
 
@@ -4759,6 +4922,7 @@ BEISPIELE:
                     messages=messages,
                     stream=False,
                     with_context=False,
+                    max_tokens=16384,
                     **self._get_coding_model_kwargs(),
                 )
                 if not response:
@@ -5606,6 +5770,9 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
             return False
 
         ctx.status = "cancelled"
+        if ctx.session_id in self._session_last_run:
+            if self._session_last_run[ctx.session_id] == execution_id:
+                del self._session_last_run[ctx.session_id]
         self.live.enter(AgentPhase.ERROR, f"Cancelled [{execution_id}]")
 
         # Clean up sub-agents if any
@@ -5681,6 +5848,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
             return f"Error: Execution {execution_id} is not paused (status: {ctx.status})"
 
         ctx.status = "running"
+        ctx.max_iterations = ctx.current_iteration + max_iterations
         if content:
             ctx.working_history.append(
                 {

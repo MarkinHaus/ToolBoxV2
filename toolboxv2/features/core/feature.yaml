@@ -2,25 +2,30 @@ name: core
 version: "0.1.25"
 enabled: true
 immutable: true
-description: "Core ToolBox functionality — required for all operations"
+description: "Core ToolBox — App runtime, types, logging, CloudM, DB, core flows"
 files:
-  # ── Kern-Utils ─────────────────────────────────────────────
+  # ── App Kernel ─────────────────────────────────────────────
   - "utils/toolbox.py"
   - "utils/singelton_class.py"
   - "utils/__init__.py"
+  - "__genv__.py"
+  - "feature_loader.py"
+  - "feature_loader_registry.py"
+  - "setup_helper.py"
   # ── System ─────────────────────────────────────────────────
   - "utils/system/*"
   - "utils/manifest/*"
-  - "utils/daemon/*"
   - "utils/security/*"
-  - "utils/proxy/*"
-  - "utils/brodcast/*"
   - "utils/tbx/*"
+  - "utils/brodcast/*"
   # ── Extras (core-subset) ────────────────────────────────────
   - "utils/extras/Style.py"
   - "utils/extras/blobs.py"
-  - "utils/extras/mkdocs.py"
+  - "utils/extras/__init__.py"
   - "utils/extras/db/*"
+  - "utils/extras/code_analyzer/*"
+  - "utils/extras/depsy/*"
+  - "utils/extras/install/*"
   - "utils/extras/notification.py"
   - "utils/extras/keword_matcher.py"
   - "utils/extras/registry_client.py"
@@ -29,10 +34,17 @@ files:
   - "utils/extras/dev_runner.py"
   - "utils/extras/gateway_live_client.py"
   - "utils/extras/helper_test_functions.py"
-  - "utils/extras/__init__.py"
-  # ── Flows (gehören zu core, kein eigenes Feature nötig) ─────
-  - "flows/*"
-  # ── Core-Mods (immer geladen) ───────────────────────────────
+  - "utils/extras/mkdocs.py"
+  # ── Core Flows ─────────────────────────────────────────────
+  - "flows/__init__.py"
+  - "flows/bg.py"
+  - "flows/core0.py"
+  - "flows/pyshell.py"
+  - "flows/minicli.py"
+  - "flows/adaptive_prompt_system.py"
+  - "flows/auto_git_commit.py"
+  - "flows/toolbox_admin.py"
+  # ── Core Mods ──────────────────────────────────────────────
   - "mods/CloudM/*"
   - "mods/DB/*"
   - "mods/__init__.py"

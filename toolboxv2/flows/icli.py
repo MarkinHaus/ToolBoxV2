@@ -196,6 +196,20 @@ def _tool_result_info(name: str, result_raw: str) -> tuple[bool, str]:
 
     # ── Data model ────────────────────────────────────────────────────────────────
 
+def _display_tool_name(name: str, raw_args) -> str:
+    """vfs_shell → vfs_{ls:grep:…}"""
+    if name != "vfs_shell":
+        return name
+    try:
+        args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+        cmd = args.get("command", "") if isinstance(args, dict) else ""
+        if not cmd:
+            return name
+        cmds = [p.strip().split()[0] for p in cmd.split("|") if p.strip()]
+        return "vfs_{" + ":".join(cmds) + "}" if cmds else name
+    except Exception:
+        return name
+
 @dataclass
 class IterView:
     n: int
@@ -204,8 +218,7 @@ class IterView:
     tools: list[tuple[str, bool, float, str]] = field(default_factory=list)
     _tool_start_times: dict[str, float] = field(default_factory=dict)
     _tool_start_inputs: dict[str, str] = field(default_factory=dict)
-    pending_tool: str = ""   # currently running tool name
-    pending_tool_args: str = ""  # args of currently running tool
+    pending_tools: dict[str, str] = field(default_factory=dict)  # name → args
     tools_raw: list[tuple[str, str, str]] = field(default_factory=list)
     _in_reasoning: bool = False
 
@@ -315,35 +328,40 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
 
     elif t == "tool_start":
         name = chunk.get("name", "?")
+        f_id = chunk.get("id", name)
         raw_args = chunk.get("args", chunk.get("input", chunk.get("arguments", "")))
         if isinstance(raw_args, dict):
             import json as _j
             raw_args = _j.dumps(raw_args, indent=2)
+        name = _display_tool_name(name, raw_args)
         tv.last_tool = name
         tv.phase = "tool"
         if iv:
             iv._in_reasoning = False
-            iv.pending_tool = name
-            iv.pending_tool_args = str(raw_args) if raw_args else ""
-            iv._tool_start_times[name] = time.time()
+            iv.pending_tools[f_id] = str(raw_args) if raw_args else ""
+            iv._tool_start_times[f_id] = time.time()
             if raw_args:
                 iv._tool_start_inputs[name] = str(raw_args)
 
     elif t == "tool_result":
         name = chunk.get("name", tv.last_tool)
+        f_id = chunk.get("id", name)
+        raw_input_for_rename = chunk.get("args", chunk.get("input", chunk.get("arguments", "")))
+        if not raw_input_for_rename and iv:
+            raw_input_for_rename = iv._tool_start_inputs.get(name, "")
+        name = _display_tool_name(name, raw_input_for_rename)
         result_raw = chunk.get("result", "")
         success, info = _tool_result_info(name, result_raw)
         elapsed = 0.0
-        if iv and name in iv._tool_start_times:
-            elapsed = time.time() - iv._tool_start_times.pop(name)
+        if iv and f_id in iv._tool_start_times:
+            elapsed = time.time() - iv._tool_start_times.pop(f_id)
         tv.last_tool = name
         tv.last_tool_ok = success
         tv.last_tool_info = info
         tv.phase = "tool_done"
         if iv:
             iv.tools.append((name, success, elapsed, info))
-            iv.pending_tool = ""
-            iv.pending_tool_args = ""
+            iv.pending_tools.pop(name, None)
             iv._in_reasoning = False
             # Rohdaten für späteren Drill-Down sichern
             raw_result = chunk.get("result", "")
@@ -1037,15 +1055,15 @@ class TaskOverlay:
                         out.append((row_bg + "fg:#9ca3af", _short(info, 36)))
                     out.append((row_bg, "\n"))
 
-            if iv.pending_tool:
+            for p_name, p_args in iv.pending_tools.items():
                 out.append((bg + "fg:#60a5fa", "   ◇ "))
                 out.append((bg + "fg:#fbbf24",
-                            f"{_short(iv.pending_tool, 20):<20} ⋯ running...\n"))
-                if iv.pending_tool_args:
+                            f"{_short(p_name, 20):<20} ⋯ running...\n"))
+                if p_args:
                     out.append((bg + "fg:#9ca3af",
-                                f"     args: {_short(iv.pending_tool_args, 60)}\n"))
+                                f"     args: {_short(p_args, 60)}\n"))
 
-            if not iv.thoughts and not iv.tools and not iv.pending_tool:
+            if not iv.thoughts and not iv.tools and not iv.pending_tools:
                 out.append((bg + "fg:#6b7280", "   (no data yet)\n"))
 
             if tv.final_answer and iv.n == max(
@@ -1095,14 +1113,13 @@ class TaskOverlay:
                     iter_lines_flat.append((iter_bg + "fg:#9ca3af", _short(info, 36)))
                 iter_lines_flat.append((iter_bg, "\n"))
 
-            if iv.pending_tool:
+            for p_name, p_args in iv.pending_tools.items():
                 iter_lines_flat.append((iter_bg + "fg:#60a5fa", "      ◇ "))
                 iter_lines_flat.append((iter_bg + "fg:#fbbf24",
-                                        f"{_short(iv.pending_tool, 16):<16} ⋯ running...\n"))
-                if iv.pending_tool_args:
+                                        f"{_short(p_name, 16):<16} ⋯ running...\n"))
+                if p_args:
                     iter_lines_flat.append((iter_bg + "fg:#9ca3af",
-                                            f"        args: {_short(iv.pending_tool_args, 56)}\n"))
-
+                                            f"        args: {_short(p_args, 56)}\n"))
         # Zähle Zeilen anhand "\n"-Vorkommen in den Text-Fragmenten
         def _count_lines(fragments: list[tuple[str, str]]) -> int:
             return sum(frag[1].count("\n") for frag in fragments)
@@ -4545,6 +4562,22 @@ def _infer_emotion(text: str) -> TTSEmotion:
         return TTSEmotion.URGENT
     return TTSEmotion.NEUTRAL
 
+async def _resume_as_stream(engine, run_id, max_iterations, content):
+    """Wraps engine.resume() into an async generator matching a_stream interface."""
+    result = await engine.resume(
+        run_id,
+        max_iterations=max_iterations,
+        content=content,
+        stream=True,
+    )
+    if isinstance(result, tuple):
+        gen_func, ctx = result
+        async for chunk in gen_func(ctx):
+            yield chunk
+    else:
+        # Non-stream fallback
+        yield {"type": "final_answer", "answer": str(result)}
+        yield {"type": "done", "success": True, "final_answer": str(result)}
 
 # =============================================================================
 # ISAA HOST - MAIN CLASS
@@ -6864,8 +6897,8 @@ class ISAA_Host:
                     phase_str = live.phase.value[:10]
 
                     # Show thought or tool (whichever is most recent)
-                    if live.tool.name:
-                        focus_str = f"◇ {live.tool.name[:18]}"
+                    if live.tool.values():
+                        focus_str = f"◇ {live.tool.values()[:18]}"
                     elif live.thought:
                         focus_str = f"◎ {live.thought[:18]}"
                     elif live.status_msg:
@@ -8049,25 +8082,37 @@ class ISAA_Host:
                 print_status(f"Error accessing session: {e}", "error")
                 return
             session.clear_history()
-            # If the session has a persistence layer, ensure it saves
+            # ── NEU: Engine-ctx für diese Session aufräumen ───────
+            try:
+                engine = agent._get_execution_engine()
+                run_id = engine._session_last_run.pop(self.active_session_id, None)
+                if run_id:
+                    engine._active_executions.pop(run_id, None)
+            except Exception:
+                pass
+
             self._save_state()
-            print_status(f"History cleared for session '{self.active_session_id}'.", "success")
+            print_status(f"History + context cleared for '{self.active_session_id}'.", "success")
         elif action == "working":
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
-            run_id = None
-            if self._focused_task_id and self._focused_task_id is self.all_executions:
-                run_id = self.all_executions[self._focused_task_id].run_id
-
-            elif self.all_executions:
-                run_id = list(self.all_executions.values())[-1].run_id
-            else:
-                print_status("No run id found | run agent first", "error")
+            engine = agent._execution_engine_cache
+            if not engine:
+                print_status("No execution engine found", "warning")
                 return
 
-            engine = agent._execution_engine_cache
-            ctx = None
-            if not engine:
-                print_status("No execution found", "warning")
+            run_id = None
+            # 1. Focused task
+            if self._focused_task_id and self._focused_task_id in self.all_executions:
+                run_id = self.all_executions[self._focused_task_id].run_id
+            # 2. Last task in SSOT
+            if not run_id and self.all_executions:
+                run_id = list(self.all_executions.values())[-1].run_id
+            # 3. Engine's last run for active session (works even after tasks are cleaned)
+            if not run_id:
+                run_id = engine._session_last_run.get(self.active_session_id)
+
+            if not run_id:
+                print_status("No run id found for active session", "error")
                 return
 
             ctx = engine.get_execution(run_id)
@@ -8081,6 +8126,7 @@ class ISAA_Host:
 
             if not hasattr(ctx, "working_history"):
                 print_status("No working context found", "info")
+                return
 
             history = ctx.working_history
             show_history(history)
@@ -8142,6 +8188,12 @@ class ISAA_Host:
         print_box_content(f"Agent: {esc(tv.agent_name)} | Persona: {esc(tv.persona)}", "info")
         print_separator()
 
+        # Agent Input (bei -d anzeigen)
+        if show_raw and tv.query:
+            c_print(HTML(f"<style fg='{PTColors.ZEN_AMBER}'>◇ Agent Input:</style>"))
+            print_code_block(tv.query, "md", show_line_numbers=False)
+            c_print()
+
         for iv in tv.iterations:
             # Iterations-Header
             c_print(HTML(f"<style fg='{PTColors.ZEN_CYAN}' font-weight='bold'>── Iteration {iv.n} ──</style>"))
@@ -8150,7 +8202,7 @@ class ISAA_Host:
             if iv.thoughts:
                 c_print(HTML(f"<style fg='{PTColors.ZEN_DIM}'>◎ Thoughts:</style>"))
                 for thought in iv.thoughts:
-                    c_print(HTML(f"  <style fg='{PTColors.WHITE}'>{thought.strip()}</style>"))
+                    c_print(HTML(f"  <style fg='{PTColors.WHITE}'>{esc(thought.strip())}</style>"))
 
             # Tool History
             if iv.tools:
@@ -8166,24 +8218,21 @@ class ISAA_Host:
                     if show_raw and idx < len(iv.tools_raw):
                         tname, raw_res, raw_in = iv.tools_raw[idx]
 
-                        # Versuchen zu parsen für schönes Markdown
+                        # Input
+                        c_print(HTML(f"    <style fg='{PTColors.ZEN_DIM}'>    ↳ Input:</style>"))
                         try:
-                            raw_in = json.loads(raw_in) if raw_in.startswith('{') else raw_in
-                        except:
-                            pass
-                        try:
-                            raw_res = json.loads(raw_res) if raw_res.startswith('{') else raw_res
-                        except:
-                            pass
-                        io_data = {
-                            "Tool": tname,
-                            "Input": raw_in,
-                            "Result": raw_res
-                        }
+                            in_str = json.dumps(json.loads(raw_in), indent=2) if isinstance(raw_in, str) and raw_in.strip().startswith('{') else str(raw_in)
+                        except Exception:
+                            in_str = str(raw_in)
+                        print_code_block(in_str, "json" if in_str.strip().startswith('{') else "text", show_line_numbers=True)
 
-                        c_print(HTML(f"    <style fg='{PTColors.ZEN_DIM}'>    ↳ Raw I/O:</style>"))
-                        # Hier nutzen wir deine json_to_md + print_code_block Logik
-                        print_code_block(json_to_md(io_data), "md", show_line_numbers=True)
+                        # Output
+                        c_print(HTML(f"    <style fg='{PTColors.ZEN_DIM}'>    ↳ Output:</style>"))
+                        try:
+                            res_str = json.dumps(json.loads(raw_res), indent=2) if isinstance(raw_res, str) and raw_res.strip().startswith('{') else str(raw_res)
+                        except Exception:
+                            res_str = str(raw_res)
+                        print_code_block(res_str, "json" if res_str.strip().startswith('{') else "text", show_line_numbers=True)
 
             c_print()  # Abstand zwischen Iterationen
 
@@ -8309,11 +8358,12 @@ class ISAA_Host:
                 print_box_content(f"Phase: {live.phase.value}", "info")
             if live.thought:
                 print_box_content(f"Thought: {live.thought}", "")
-            if live.tool.name:
-                print_box_content(f"Tool: {live.tool.name}", "")
+            if live.tool.values():
+                print_box_content(f"Tool: {live.tool.values()}", "")
                 print_code_block(json_to_md(json.loads(live.tool.args_summary)))
-        except Exception:
-            print_box_content("(live state unavailable)", "warning")
+        except Exception as e:
+            import traceback
+            print_box_content(f"(live state unavailable) {e} {traceback.format_exc()}", "warning")
 
         if t.status == "completed":
             if t.result_text:
@@ -11653,13 +11703,30 @@ class ISAA_Host:
 
 {query}"""
 
-        # Original agent stream
-        original_stream = agent.a_stream(
-            query=WEB_TALK_PROMPT,
-            session_id=self.active_session_id,
-            max_iterations=self.max_iteration,
-            user_lightning_model=True
-        )
+        # ── Stream: resume or new (same logic as _handle_agent_interaction) ──
+        wants_new = query.strip().endswith("#new-ctx")
+        effective_query = query.rsplit("#new-ctx", 1)[0].strip() if wants_new else query
+
+        engine = agent._get_execution_engine()
+        resumable_ctx = None
+        run_id = engine._session_last_run.get(self.active_session_id)
+        if run_id:
+            resumable_ctx = engine.get_execution(run_id)
+            if resumable_ctx and resumable_ctx.status != "paused":
+                resumable_ctx = None
+
+        if not wants_new and resumable_ctx:
+            original_stream = _resume_as_stream(
+                engine, run_id, self.max_iteration, effective_query
+            )
+        else:
+            # Build the full web prompt only for fresh sessions
+            original_stream = agent.a_stream(
+                query=WEB_TALK_PROMPT.replace(query, effective_query) if wants_new else WEB_TALK_PROMPT,
+                session_id=self.active_session_id,
+                max_iterations=self.max_iteration,
+                user_lightning_model=True
+            )
 
         # Tee: both _drain_agent_stream AND our caller see every chunk.
         import asyncio
@@ -11835,7 +11902,7 @@ class ISAA_Host:
             with Spinner("Enhancing prompt"):
                 enhanced = await agent.a_run_llm_completion(
                     messages=messages,
-                    model_preference="fast",
+                    model=os.getenv("LIGHNIGMODEL", agent.amd.fast_llm_model),
                     with_context=False,
                     stream=False,
                     get_response_message=False,
@@ -11980,6 +12047,7 @@ class ISAA_Host:
 
             # Audio setup
             wants_audio = user_input.strip().endswith("#audio")
+            wants_new = user_input.strip().endswith("#new-ctx")
             if wants_audio:
                 user_input = user_input.rsplit("#audio", 1)[0].strip()
             should_speak = wants_audio or getattr(self, "verbose_audio", False)
@@ -12001,11 +12069,28 @@ class ISAA_Host:
             agent_name = self.active_agent_name
 
             # Stream starten
-            stream = agent.a_stream(
-                query=user_input,
-                session_id=self.active_session_id,
-                max_iterations=self.max_iteration
-            )
+            resumable_ctx = None
+            run_id = engine._session_last_run.get(self.active_session_id)
+            if run_id:
+                resumable_ctx = engine.get_execution(run_id)
+                if resumable_ctx and resumable_ctx.status != "paused":
+                    resumable_ctx = None
+
+            # ── Stream: resume or new ─────────────────────────────
+            if not wants_new and resumable_ctx:
+                stream = _resume_as_stream(
+                    engine, run_id, self.max_iteration, user_input
+                )
+                c_print(HTML(
+                    f"<style fg='{PTColors.ZEN_DIM}'>"
+                    f"  ↻ Resume ctx [{run_id[:8]}] iter {resumable_ctx.current_iteration}</style>"
+                ))
+            else:
+                stream = agent.a_stream(
+                    query=user_input,
+                    session_id=self.active_session_id,
+                    max_iterations=self.max_iteration,
+                )
 
             # Consumer-Task (task_id assigned by _create_execution below)
 
@@ -12528,22 +12613,50 @@ class ISAA_Host:
                 f"{info_part}"
             )
 
-        # ── Letzte Iteration: Tools-Liste ─────────────────────────────────
+        # ── Letzte Iteration: Tools mit Args + Result ─────────────────────
         if tv.iterations:
             last_iv = tv.iterations[-1]
             if last_iv.tools:
-                tool_summary = "  ".join(
-                    f"{'✓' if ok else '✗'}{name[:14]}"
-                    for name, ok, _, _ in last_iv.tools[-4:]  # max 4 zeigen
-                )
                 lines.append(
-                    f"<style fg='{PTColors.ZEN_DIM}'>  ◈ Tools[iter {last_iv.n}]: "
-                    f"{_esc(tool_summary)}</style>"
+                    f"<style fg='{PTColors.ZEN_DIM}'>  ◈ Tools[iter {last_iv.n}]:</style>"
                 )
-            if last_iv.pending_tool:
-                args_hint = f"  ({_esc(_short(last_iv.pending_tool_args, 50))})" if last_iv.pending_tool_args else ""
+                # Letzte 4 Tools mit Details
+                start = max(0, len(last_iv.tools) - 4)
+                for idx in range(start, len(last_iv.tools)):
+                    name, ok, elapsed, info = last_iv.tools[idx]
+                    ok_sym = "✓" if ok else "✗"
+                    ok_col = PTColors.ZEN_GREEN if ok else PTColors.ZEN_RED
+                    elapsed_s = f"{elapsed:.2f}s" if elapsed > 0 else "—"
+
+                    lines.append(
+                        f"<style fg='#60a5fa'>    ◇ {_esc(name)}</style> "
+                        f"<style fg='{ok_col}'>{ok_sym}</style> "
+                        f"<style fg='{PTColors.ZEN_DIM}'>{elapsed_s}</style>"
+                    )
+
+                    # Args + Result aus tools_raw
+                    if idx < len(last_iv.tools_raw):
+                        _, raw_result, raw_input = last_iv.tools_raw[idx]
+                        if raw_input:
+                            inp = raw_input.replace("\n", " ").strip()
+                            lines.append(
+                                f"<style fg='{PTColors.ZEN_DIM}'>      → </style>"
+                                f"<style fg='#a78bfa'>{_esc(inp[:120])}"
+                                f"{'…' if len(inp) > 120 else ''}</style>"
+                            )
+                        if raw_result:
+                            res = raw_result.replace("\n", " ").strip()
+                            lines.append(
+                                f"<style fg='{PTColors.ZEN_DIM}'>      ← </style>"
+                                f"<style fg='#4ade80'>{_esc(res[:120])}"
+                                f"{'…' if len(res) > 120 else ''}</style>"
+                            )
+
+            # Pending tools (plural)
+            for p_name, p_args in last_iv.pending_tools.items():
+                args_hint = f"  ({_esc(_short(p_args, 80))})" if p_args else ""
                 lines.append(
-                    f"<style fg='#fbbf24'>  ⟳ Läuft:   {_esc(last_iv.pending_tool)}{args_hint}</style>"
+                    f"<style fg='#fbbf24'>  ⟳ Läuft:   {_esc(p_name)}{args_hint}</style>"
                 )
 
         if tv.narrator_msg:

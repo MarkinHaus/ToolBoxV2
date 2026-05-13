@@ -603,7 +603,7 @@ class VirtualFileSystemV2:
         self,
         session_id: str,
         agent_name: str,
-        max_window_lines: int = 250,
+        max_window_lines: int = 3000,
         summarizer: Callable[[str], str] | None = None,
         lsp_manager: "LSPManager | None" = None,
     ):

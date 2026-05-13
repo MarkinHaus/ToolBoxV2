@@ -80,7 +80,7 @@ class AgentSessionV2:
         agent_name: str,
         memory_instance: Any,
         max_history: int = 100,
-        vfs_max_window_lines: int = 250,
+        vfs_max_window_lines: int = 3000,
         rule_config_path: str | None = None,
         summarizer: Callable | None = None,
         # V2 additions

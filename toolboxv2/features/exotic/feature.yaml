@@ -2,13 +2,17 @@ name: exotic
 version: "0.1.25"
 enabled: false
 immutable: false
-description: "Scientific computing extras (scipy, matplotlib)"
-files: []
+description: "Exotic utilities — daemon, proxy, scientific computing"
+files:
+  # ── Daemon ─────────────────────────────────────────────────
+  - "utils/daemon/*"
+  # ── Proxy ──────────────────────────────────────────────────
+  - "utils/proxy/*"
 imports: []
 dependencies:
   - "scipy>=1.15.0"
   - "matplotlib>=3.10.0"
-  - "pandas"
+  - "pandas>=2.2.0"
 requires:
   - "core"
 commands: []

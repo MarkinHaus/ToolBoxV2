@@ -31,7 +31,7 @@ class SessionManager:
         self,
         agent_name: str,
         default_max_history: int = 100,
-        vfs_max_window_lines: int = 250,
+        vfs_max_window_lines: int = 3000,
         rule_config_path: str | None = None,
         summarizer: Callable | None = None,
         auto_cleanup_hours: float | None = None,

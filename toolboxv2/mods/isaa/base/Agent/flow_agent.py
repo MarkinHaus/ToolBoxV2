@@ -329,6 +329,20 @@ def _inject_media_notice(messages: list[dict], removed: list[dict]) -> list[dict
             break
     return result
 
+def _is_code_truncated(text: str) -> bool:
+    """Heuristic: unclosed code fences or unbalanced braces/tags."""
+    # Unclosed markdown code blocks
+    if text.count("```") % 2 != 0:
+        return True
+    # Unbalanced braces (JS/Python)
+    if text.count("{") - text.count("}") > 2:
+        return True
+    # Unclosed HTML tags (simple heuristic)
+    for tag in ["<script>", "<style>", "<html>", "<body>"]:
+        close = tag.replace("<", "</")
+        if tag in text and close not in text:
+            return True
+    return False
 
 class FlowAgent:
     """Production-ready autonomous agent with session isolation."""
@@ -603,12 +617,14 @@ class FlowAgent:
                 )
 
         true_stream = kwargs.pop("true_stream", False)
+        # max_tokens = kwargs.pop("max_tokens", 2000)
 
         llm_kwargs = {
             "model": model,
             "messages": processed_messages,
             "stream": use_stream,
-            "request_timeout": 300,
+            # "max_tokens": max_tokens,
+            # "request_timeout": 300,
             **kwargs,
         }
 
@@ -718,6 +734,7 @@ class FlowAgent:
             final_text_content = ""
             final_tool_calls_raw = []
             accumulated_usage = None
+            len_final_text_content = 0
 
             active_cut_off_tool = None
             # Edge Case für True-Streaming (wird vom UI-Streaming direkt an Nutzer geleitet)
@@ -725,12 +742,28 @@ class FlowAgent:
                 llm_kwargs["stream_options"] = {"include_usage": True}
                 return await self.llm_handler.completion_with_rate_limiting(litellm, **llm_kwargs)
 
-            # --- AUTO-RESUME SCHLEIFE (bis zu 100x Output Limit!) ---
+            # --- AUTO-RESUME SCHLEIFE (bis zu MAX_CONTINUATIONS x Output Limit!) ---
             while continuation_count < MAX_CONTINUATIONS:
+
+                current_progress = len(final_text_content) + sum(
+                    len(tc.get("args", "")) for tc in final_tool_calls_raw
+                )
+                if active_cut_off_tool:
+                    current_progress += len(active_cut_off_tool.get("args", ""))
+
+                if self.verbose:
+                    print("MX ITTER COPLETION :", continuation_count, "delta",
+                          current_progress - len_final_text_content)
+                len_final_text_content = current_progress
 
                 if use_stream:
                     llm_kwargs["stream_options"] = {"include_usage": True}
 
+                if self.verbose:
+                    print(f"[DEBUG] max_tokens={llm_kwargs.get('max_tokens')}, "
+                          f"input_msg_count={len(llm_kwargs['messages'])}, "
+                          f"tools_count={len(llm_kwargs.get('tools') or [])}, "
+                          f"estimated_input_tokens={len(str(llm_kwargs['messages']))//3.5}")
                 response = await self.llm_handler.completion_with_rate_limiting(
                     litellm, **llm_kwargs
                 )
@@ -741,7 +774,7 @@ class FlowAgent:
                 current_usage = None
                 # Datenextrahierung abhängig davon, ob es ein Stream ist oder nicht
                 if use_stream:
-                    result_obj, current_usage, finish_reason = await self._process_streaming_response( # add custom strem collector so not evey one needs to implmt ther onw streming collection fuction as callback generator or narmal callback..
+                    result_obj, current_usage, finish_reason = await self._process_streaming_response(
                         response, task_id, model, get_response_message=True
                     )
                     chunk_text = result_obj.content or ""
@@ -752,7 +785,9 @@ class FlowAgent:
                     chunk_tool_calls = msg_obj.tool_calls or []
                     finish_reason = response.choices[0].finish_reason
                     current_usage = response.usage
-
+                if self.verbose:
+                    print(f"[DEBUG] finish_reason={finish_reason}, chunk_len={len(chunk_text)}, "
+                          f"accumulated_len={len(final_text_content)}")
                 # --- 1. USAGE MERGEN ---
                 if current_usage:
                     if accumulated_usage is None:
@@ -763,77 +798,123 @@ class FlowAgent:
                             accumulated_usage.completion_tokens += current_usage.completion_tokens
                             accumulated_usage.total_tokens += current_usage.total_tokens
 
-                # --- 2. CONTENT & TOOL CALLS MERGEN ---
+                # --- 2. CONTENT & TOOL CALLS MERGEN (unified) ---
+
+                # A) Text-Content routen
                 if active_cut_off_tool is not None:
-                    # Das LLM versucht gerade, einen Tool-Call (als reinen Text-Output) fortzusetzen.
+                    # Wir haben tools=None gesetzt → Text IST die Tool-Arg-Fortsetzung
                     active_cut_off_tool["args"] += chunk_text
-
-                    # Manchmal schieben Modelle es trotzdem in den nativen tool_calls Parameter. Das fangen wir ab:
-                    for tc in chunk_tool_calls:
-                        if tc.function and tc.function.arguments:
-                            active_cut_off_tool["args"] += tc.function.arguments
-
-                    # Prüfen ob der fortgesetzte JSON-String nun valide ist
-                    try:
-                        json.loads(active_cut_off_tool["args"])
-                        # Success! Er ist nun vollständig generiert.
-                        final_tool_calls_raw.append(active_cut_off_tool)
-                        active_cut_off_tool = None
-                    except json.JSONDecodeError:
-                        pass  # Er ist weiterhin unvollständig, wir brauchen noch eine Iteration.
                 else:
                     final_text_content += chunk_text
 
-                    for idx, tc in enumerate(chunk_tool_calls):
+                # B) Tool-Calls IMMER verarbeiten, unabhängig von active_cut_off_tool
+                for idx, tc in enumerate(chunk_tool_calls):
+                    if active_cut_off_tool is not None and tc.function and tc.function.arguments:
+                        # Model hat es doch nativ als tool_call geschickt statt als Text
+                        active_cut_off_tool["args"] += tc.function.arguments
+                    else:
                         tc_dict = {
                             "id": getattr(tc, "id", f"call_{uuid.uuid4().hex[:8]}"),
                             "name": tc.function.name,
-                            "args": tc.function.arguments
+                            "args": tc.function.arguments,
                         }
-                        # Wenn wir am Token-Limit sind und dies der LETZTE Tool-Call im Chunk ist
-                        if finish_reason in ["length", "max_tokens"] and idx == len(chunk_tool_calls) - 1:
+                        is_last_tc = idx == len(chunk_tool_calls) - 1
+                        # Validate JSON for EVERY last tool call, not just on length/max_tokens
+                        if is_last_tc:
                             try:
                                 json.loads(tc_dict["args"])
-                                final_tool_calls_raw.append(tc_dict)  # War zum Glück vollständig
+                                final_tool_calls_raw.append(tc_dict)
                             except json.JSONDecodeError:
-                                active_cut_off_tool = tc_dict  # Ist abgerissen! Speichern für die nächste Iteration.
+                                active_cut_off_tool = tc_dict
                         else:
                             final_tool_calls_raw.append(tc_dict)
 
-                # --- 3. STOPP ODER FORTSETZUNG? ---
-                if finish_reason not in ["length", "max_tokens"]:
-                    break  # Generierung freiwillig beendet (stop, tool_calls, etc.)
+                # C) Cut-off tool validieren (nach jedem Durchlauf)
+                if active_cut_off_tool is not None:
+                    try:
+                        json.loads(active_cut_off_tool["args"])
+                        final_tool_calls_raw.append(active_cut_off_tool)
+                        active_cut_off_tool = None
+                    except json.JSONDecodeError:
+                        pass  # noch unvollständig
 
-                # Token Limit erreicht - wir zwingen das LLM zur exakten Fortsetzung!
+                # --- 3. STOPP ODER FORTSETZUNG? ---
+                hit_token_limit = finish_reason in ["length", "max_tokens"]
+                has_truncated_text = _is_code_truncated(final_text_content)
+                has_truncated_tool = active_cut_off_tool is not None
+
+                needs_resume = hit_token_limit or has_truncated_text or has_truncated_tool
+
+                if not needs_resume:
+                    break
+
+                # Delta guard: if last iteration produced nothing, stop looping
+                new_progress = len(final_text_content) + sum(
+                    len(tc.get("args", "")) for tc in final_tool_calls_raw
+                )
+                if active_cut_off_tool:
+                    new_progress += len(active_cut_off_tool.get("args", ""))
+
+                if continuation_count > 0 and new_progress <= len_final_text_content:
+                    logger.warning("Resume produced no progress, stopping.")
+                    break
+
                 continuation_count += 1
+                if continuation_count >= MAX_CONTINUATIONS:
+                    logger.warning(f"Hit MAX_CONTINUATIONS ({MAX_CONTINUATIONS})")
+                    break
+
+                if not hit_token_limit:
+                    logger.info(f"Premature stop detected, forcing resume ({continuation_count})")
+
                 if AGENT_VERBOSE:
                     logger.info(
-                        f"LLM Max Output Token Limit erreicht. Auto-Resume ({continuation_count}/{MAX_CONTINUATIONS})...")
+                        f"Auto-Resume ({continuation_count}/{MAX_CONTINUATIONS}) "
+                        f"[reason={finish_reason}, trunc_text={has_truncated_text}, trunc_tool={has_truncated_tool}]"
+                    )
 
+                # --- 4. RESUME MESSAGES BAUEN ---
                 if active_cut_off_tool is not None:
-                    # Ein Tool-Call ist abgerissen. Wir zwingen das LLM, nur noch die fehlenden JSON-Teile (als normalen Text) auszugeben.
+                    # Ein Tool-Call ist abgerissen → LLM soll fehlende JSON-Teile als Text ausgeben
                     resume_msg = (
                         f"Du hast das Output-Token-Limit erreicht, während du das Tool '{active_cut_off_tool['name']}' ausgeführt hast. "
                         f"Hier ist der JSON-Argument-String, den du bisher geschrieben hast:\n`{active_cut_off_tool['args']}`\n\n"
                         f"Bitte antworte AUSSCHLIESSLICH mit den fehlenden Zeichen, um das JSON zu vervollständigen. "
                         f"Gib keine Erklärungen und keinen Code-Block ab. Mache genau da weiter, wo der String abgerissen ist."
                     )
-                    llm_kwargs["tools"] = None  # Verhindert, dass das LLM es erneut in native tools kapselt
+                    llm_kwargs["tools"] = None  # Verhindert native tool-call Kapselung
 
-                    # Alte Tool-Calls aus der History löschen (API würde meckern wegen "Incomplete Tool Call")
                     llm_kwargs["messages"] = original_messages + [
                         {"role": "assistant",
                          "content": final_text_content + f"\n[Starte Tool: {active_cut_off_tool['name']}]"},
                         {"role": "user", "content": resume_msg}
                     ]
                 else:
-                    # Reiner Text-Output ist abgerissen. Wir versuchen den letzten Satz/Zeilenanfang als Kontext zu geben.
-                    last_words = final_text_content[-100:]
+                    # Text-Output ist abgerissen → strukturelle Hinweise geben
+                    last_words = final_text_content[-200:]
+
+                    missing_hints = []
+                    if final_text_content.count("```") % 2 != 0:
+                        missing_hints.append("unclosed code fence (```)")
+                    open_braces = final_text_content.count("{") - final_text_content.count("}")
+                    if open_braces > 2:
+                        missing_hints.append(f"{open_braces} unclosed braces")
+                    for tag in ["<script>", "<style>", "<html>", "<body>", "<div>"]:
+                        close = tag.replace("<", "</")
+                        if final_text_content.count(tag) > final_text_content.count(close):
+                            missing_hints.append(f"unclosed {tag}")
+
+                    structural_hint = ""
+                    if missing_hints:
+                        structural_hint = (
+                            f"\n\nStructural issues detected: {', '.join(missing_hints)}. "
+                            f"You MUST complete these before stopping."
+                        )
+
                     resume_msg = (
-                        f"Du hast das maximale Output-Token-Limit deines Modells erreicht. "
-                        f"Bitte fahre exakt an dem Punkt fort, an dem du aufgehört hast. "
-                        f"Hier sind deine letzten Worte zur Orientierung:\n'...{last_words}'\n\n"
-                        f"Setze den Text/Code lückenlos fort. Bitte benutze keine Floskeln wie 'Hier geht es weiter'."
+                        f"Your output was cut off. Continue EXACTLY where you stopped. "
+                        f"Last 200 chars for orientation:\n'...{last_words}'\n\n"
+                        f"Continue seamlessly, no preamble, no repetition.{structural_hint}"
                     )
                     llm_kwargs["tools"] = original_tools
                     llm_kwargs["messages"] = original_messages + [
@@ -1051,7 +1132,7 @@ class FlowAgent:
         return cost or (input_tokens / 1000) * 0.002 + (output_tokens / 1000) * 0.01
 
 
-    async def _process_streaming_response(self, response, task_id, model, get_response_message):
+    async def _process_streaming_response(self, response, task_id, model, get_response_message, call_callback=None):
         from litellm.types.utils import ChatCompletionMessageToolCall, Function, Message
 
         result = ""
@@ -1067,7 +1148,6 @@ class FlowAgent:
                 res = self.stream_callback(content)
                 if res and asyncio.iscoroutine(res):
                     await res
-
 
             if getattr(delta, "tool_calls", None):
                 for tc in delta.tool_calls:

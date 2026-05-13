@@ -2,17 +2,37 @@ name: cli
 version: "0.1.25"
 enabled: true
 immutable: false
-description: "Command line interface and IPython integration"
+description: "Command line interface — REPL, IPython, CLI tools"
 files:
+  # ── Entry Point ────────────────────────────────────────────
   - "__main__.py"
-  - "utils/clis/*"
+  # ── CLI Utils ──────────────────────────────────────────────
+  - "utils/clis/__init__.py"
+  - "utils/clis/cli_jsx_server.py"
+  - "utils/clis/cli_mkdocs.py"
+  - "utils/clis/cli_printing.py"
+  - "utils/clis/cli_registry.py"
+  - "utils/clis/cli_worker_manager.py"
+  - "utils/clis/config_wizard.py"
+  - "utils/clis/db_cli_manager.py"
+  - "utils/clis/docker_image_cli.py"
+  - "utils/clis/first_run.py"
+  - "utils/clis/k.py"
+  - "utils/clis/llm_gateway_cli.py"
+  - "utils/clis/manifest_cli.py"
+  - "utils/clis/observability_helper.py"
+  - "utils/clis/service_manager.py"
+  - "utils/clis/user_dashboard.py"
+  - "utils/clis/user_manager.py"
+  - "utils/clis/venv_runner.py"
+  # ── CLI Extras ─────────────────────────────────────────────
   - "utils/extras/live_debugger.py"
 imports:
   - "toolboxv2.__main__"
 dependencies:
-  - "prompt_toolkit>=3.0.52"
-  - "rich"
-  - "readchar"
+  - "prompt-toolkit>=3.0.52"
+  - "rich>=14.1.0"
+  - "readchar>=4.2.1"
   - "ipython>=8.5.0"
   - "python-dotenv>=1.0.0"
 requires:
