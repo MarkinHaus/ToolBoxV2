@@ -1,7 +1,6 @@
 import os
 import shelve
-
-from cachetools import TTLCache
+import time
 
 
 class FileCache:
@@ -36,12 +35,25 @@ class FileCache:
             os.rmdir(self.folder)
 
 
+
 class MemoryCache:
     def __init__(self, maxsize=100, ttl=300):
-        self.cache = TTLCache(maxsize=maxsize, ttl=ttl)
+        self._data = {}
+        self._maxsize = maxsize
+        self._ttl = ttl
 
     def get(self, key):
-        return self.cache.get(key)
+        entry = self._data.get(key)
+        if entry is None:
+            return None
+        if time.monotonic() - entry[1] > self._ttl:
+            del self._data[key]
+            return None
+        return entry[0]
 
     def set(self, key, value):
-        self.cache[key] = value
+        if len(self._data) >= self._maxsize:
+            # Ältesten raus
+            oldest = min(self._data, key=lambda k: self._data[k][1])
+            del self._data[oldest]
+        self._data[key] = (value, time.monotonic())

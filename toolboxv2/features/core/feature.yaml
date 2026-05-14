@@ -53,6 +53,17 @@ imports:
   - "toolboxv2.flows"
   - "toolboxv2.mods.CloudM"
   - "toolboxv2.mods.DB"
-dependencies: []
+dependencies:
+    - "radon"
+    - "qrcode"
+    - "watchfiles"
+    - "gitpython"
+    - "redis"
+    - "xmltodict"
+    - "minio"
+    - "prompt-toolkit"
+    - "opentelemetry-api"
+    - "opentelemetry-sdk"
+    - "docker"
 requires: []
 commands: []

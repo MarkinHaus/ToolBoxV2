@@ -14,13 +14,9 @@ files:
   - "mods/Minu/*"
 imports: []
 dependencies:
-  - "starlette>=0.47.3"
-  - "uvicorn>=0.34.0"
-  - "httpx>=0.28.1"
-  - "aiohttp>=3.12.15"
-  - "aiohttp-cors>=0.8.1"
-  - "websockets>=15.0.1"
-  - "waitress>=3.0.2"
+    - "websockets"
+    - "webauthn"
+    - "waitress"
 requires:
   - "core"
 commands:

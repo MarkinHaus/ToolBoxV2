@@ -21,16 +21,11 @@ def get_version_from_pyproject(pyproject_path='../pyproject.toml'):
     if not os.path.exists(pyproject_path) and pyproject_path=='../pyproject.toml':
         pyproject_path = 'pyproject.toml'
     if not os.path.exists(pyproject_path) and pyproject_path=='pyproject.toml':
-        return "0.1.21"
+        return "x.x.x"
 
     try:
-        import toml
-        # Load the pyproject.toml file
-        with open(pyproject_path) as file:
-            pyproject_data = toml.load(file)
-
-        # Extract the version from the 'project' section
-        version = pyproject_data.get('project', {}).get('version')
+        from ..system.ci.ci_version import read_version
+        version = read_version()
 
         if version is None:
             raise ValueError(f"Version not found in {pyproject_path}")
@@ -38,7 +33,7 @@ def get_version_from_pyproject(pyproject_path='../pyproject.toml'):
         return version
     except Exception as e:
         print(f"Error reading version: {e}")
-        return "0.0.0"
+        return "x.x.x"
 
 
 class MainTool:
@@ -64,7 +59,7 @@ class MainTool:
             self.on_exit =self.app.tb(
                 mod_name=self.name,
                 name=kwargs.get("on_exit").__name__,
-                version=self.version if hasattr(self, 'version') else "0.0.0",
+                version=self.version if hasattr(self, 'version') else "x.x.x",
             )(kwargs.get("on_exit"))
         self.async_initialized = False
         if self.todo:
@@ -83,7 +78,7 @@ class MainTool:
             get_logger().info(f"{self.name} no load require")
 
     async def __ainit__(self, *args, **kwargs):
-        self.version = kwargs.get("v", kwargs.get("version", "0.0.0"))
+        self.version = kwargs.get("v", kwargs.get("version", "x.x.x"))
         self.tools = kwargs.get("tool", {})
         self.name = kwargs["name"]
         self.logger = kwargs.get("logs", get_logger())

@@ -2,9 +2,10 @@ import contextlib
 import json
 import pickle
 
-import redis
 
 try:
+
+    import redis
     from redis.commands.search.field import TextField, VectorField
     from redis.commands.search.indexDefinition import IndexDefinition
     from redis.commands.search.query import Query

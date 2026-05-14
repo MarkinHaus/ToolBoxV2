@@ -14,7 +14,15 @@ files:
   - "utils/extras/qr.py"
   - "utils/extras/pt_spinner_patch.py"
 imports: []
-dependencies: []
+dependencies:
+    - "pygetwindow"
+    - "pyautogui"
+    - "google-auth-oauthlib"
+    - "google-api-python-client"
+    - "dateparser"
+    - "pyperclip"
+    - "webrtcvad"
+    - "customtkinter"
 requires:
   - "core"
 commands:

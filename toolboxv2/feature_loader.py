@@ -22,11 +22,11 @@ from typing import Dict, List, Optional, Set
 
 # Mapping: pip extra name → feature names
 EXTRA_TO_FEATURES: Dict[str, List[str]] = {
-    "cli": ["cli"],
-    "web": ["web"],
-    "desktop": ["desktop"],
-    "exotic": ["exotic"],
-    "isaa": ["isaa"],
+    "cli": ["core","cli"],
+    "web": ["core","web"],
+    "desktop": ["core","desktop"],
+    "exotic": ["core","exotic"],
+    "isaa": ["core","isaa"],
     "all": ["core", "cli", "web", "desktop", "exotic", "isaa"],
     "production": ["core", "cli", "web"],
     "dev": ["core", "cli", "web", "desktop", "exotic", "isaa"],
@@ -35,11 +35,66 @@ EXTRA_TO_FEATURES: Dict[str, List[str]] = {
 # Feature detection via importable packages
 # Wenn eines dieser Packages installiert ist, wird das Feature benötigt
 FEATURE_DETECTION: Dict[str, List[str]] = {
-    "cli": ["prompt_toolkit", "rich", "readchar"],
-    "web": ["starlette", "uvicorn", "httpx"],
-    "desktop": ["PyQt6"],
-    "exotic": ["scipy", "matplotlib", "pandas"],
-    "isaa": ["litellm", "langchain_core", "groq"],
+    "core":[
+        "radon",
+        "qrcode",
+        "watchfiles",
+        "gitpython",
+        "redis",
+        "xmltodict",
+        "minio",
+        "prompt-toolkit",
+        "opentelemetry-api",
+        "opentelemetry-sdk",
+        "docker",
+    ],
+    "cli": [
+        "prompt-toolkit",
+        "ipython",
+        "rich",
+        "google-auth-oauthlib",
+        "google-api-python-client",
+        "pyperclip",
+        "dateparser",
+    ],
+    "web": [
+        "websockets",
+        "webauthn",
+        "waitress",
+    ],
+    "desktop": [
+        "pygetwindow",
+        "pyautogui",
+        "google-auth-oauthlib",
+        "google-api-python-client",
+        "dateparser",
+        "pyperclip",
+        "webrtcvad",
+        "customtkinter",
+    ],
+    "exotic": [
+        "langchain-community",
+        "spacy",
+        "matplotlib",
+        "hnswlib",
+        "python-a2a",
+    ],
+    "isaa": [
+        "networkx",
+        "numpy",
+        "litellm",
+        "dill",
+        "groq",
+        "pypdf2",
+        "nest-asyncio",
+        "pyvis",
+        "mcp",
+        "tenacity",
+        "html2text",
+        "chardet",
+        "faiss-cpu",
+        "playwright",
+    ],
 }
 
 # Core ist immer dabei

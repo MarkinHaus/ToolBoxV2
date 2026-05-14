@@ -58,7 +58,7 @@ if _feature_enabled("web"):
         _WEB_AVAILABLE = True
     except ImportError as _e:
         import sys
-        print(f"[web] Import failed (starlette/uvicorn missing?): {_e}", file=sys.stderr)
+        print(f"[web] Import failed: {_e}", file=sys.stderr)
 
 # ── ISAA-Feature: MCP server ──────────────────────────────────────────────────
 cli_mcp_server = None

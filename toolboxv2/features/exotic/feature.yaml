@@ -10,9 +10,11 @@ files:
   - "utils/proxy/*"
 imports: []
 dependencies:
-  - "scipy>=1.15.0"
-  - "matplotlib>=3.10.0"
-  - "pandas>=2.2.0"
+    - "langchain-community"
+    - "spacy"
+    - "matplotlib"
+    - "hnswlib"
+    - "python-a2a"
 requires:
   - "core"
 commands: []

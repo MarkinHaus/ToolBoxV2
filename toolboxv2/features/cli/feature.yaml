@@ -30,11 +30,13 @@ files:
 imports:
   - "toolboxv2.__main__"
 dependencies:
-  - "prompt-toolkit>=3.0.52"
-  - "rich>=14.1.0"
-  - "readchar>=4.2.1"
-  - "ipython>=8.5.0"
-  - "python-dotenv>=1.0.0"
+    - "prompt-toolkit"
+    - "ipython"
+    - "rich"
+    - "google-auth-oauthlib"
+    - "google-api-python-client"
+    - "pyperclip"
+    - "dateparser"
 requires:
   - "core"
 commands:
