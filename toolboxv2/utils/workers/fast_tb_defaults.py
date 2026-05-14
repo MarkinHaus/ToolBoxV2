@@ -432,7 +432,7 @@ def docs_page(app) -> str:
             result_box = f'<div class="result-box" id="result-{i}"></div>'
 
         handler_short = handler.split(".")[-1] if "." in handler else handler
-
+        route_h_info = (' \u00b7 ' + html.escape(name)) if name and name != handler_short else ''
         route_cards.append(f"""
 <div class="ftb-card" data-path="{html.escape(path)}" data-method="{html.escape(method)}">
   <div class="route-row">
@@ -440,7 +440,7 @@ def docs_page(app) -> str:
     <span class="route-path">{html.escape(path)}</span>
     {try_btn}
   </div>
-  <div class="route-handler">{html.escape(handler_short)}{(' \u00b7 ' + html.escape(name)) if name and name != handler_short else ''}</div>
+  <div class="route-handler">{html.escape(handler_short)}{route_h_info}</div>
   {result_box}
 </div>""")
 
@@ -456,7 +456,8 @@ def docs_page(app) -> str:
     for m in sorted(count_by_method.keys()):
         filters_html += f'<button class="filter-btn" onclick="filterRoutes(\'{m}\')">{m}</button>\n    '
 
-    return f"""{_head(title + " \u2014 Docs", _DOCS_CSS)}
+    x_1 = _head(title + " \u2014 Docs", _DOCS_CSS)
+    return f"""{x_1}
 <body>
 <div class="ftb-wrap">
 
@@ -536,7 +537,7 @@ function sendWS(input, i) {{
   var ws = window['_ws_' + i];
   if (ws && ws.readyState === 1) {{
     var box = document.getElementById('result-' + i);
-    box.textContent += '\\u2192 ' + input.value + '\\n';
+    box.textContent += '\u2192 ' + input.value + '\\n';
     ws.send(input.value);
     input.value = '';
   }}
