@@ -3784,7 +3784,7 @@ BEISPIELE:
 
                 threading.Thread(target=_).start()
             except Exception as e:
-                print(e)
+                get_logger().warning(f"Narr error on execute tool call : {e}")
 
             thought_acc = ""
 

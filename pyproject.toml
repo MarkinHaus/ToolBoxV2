@@ -321,7 +321,7 @@ ignore = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = "--cov=toolboxv2 --cov-report=term-missing --cov-report=html"
+# addopts = "--cov=toolboxv2 --cov-report=term-missing --cov-report=html"
 
 [dependency-groups]
 dev = [

@@ -1391,10 +1391,88 @@ class App(AppType, metaclass=Singleton):
         return mods_list
 
     def remove_all_modules(self, delete=False):
-        """Remove all loaded modules synchronously."""
-        for mod in list(self.functions.keys()):
-            self.logger.info(f"closing: {mod}")
-            self.remove_mod(mod, delete=delete)
+        """Remove all loaded modules synchronously.
+
+        For modules with async on_exit hooks, spawns them via
+        run_bg_task_advanced so they run concurrently, then joins
+        all exit threads with a shared timeout budget.
+        """
+        exit_threads: list = []
+
+        for mod_name in list(self.functions.keys()):
+            self.logger.info(f"closing: {mod_name}")
+
+            on_exit = self.functions[mod_name].get("on_exit")
+
+            # Check for async on_exit hooks — run them in background threads
+            has_async_exit = False
+            if on_exit is not None:
+                for f in on_exit:
+                    spec = 'app'  # default spec
+                    f_, e, f_name = self._get_exit_function(mod_name, f, spec, 0)
+                    if e == 0 and asyncio.iscoroutinefunction(f_):
+                        has_async_exit = True
+                        t = self.run_bg_task_advanced(f_)
+                        if t is not None:
+                            exit_threads.append((mod_name, f_name, t))
+
+            if has_async_exit:
+                # Sync on_exit hooks + cleanup still handled by remove_mod
+                # but skip the async ones (already dispatched above)
+                self._remove_mod_sync_only(mod_name, delete=delete)
+            else:
+                # Pure sync module — normal path
+                self.remove_mod(mod_name, delete=delete)
+
+        # Join all async exit threads with shared 5s budget
+        if exit_threads:
+            deadline = time.time() + 5.0
+            for mod_name, f_name, thread in exit_threads:
+                remaining = max(deadline - time.time(), 0.05)
+                self.logger.info(f"Waiting for async exit {mod_name}.{f_name} ({remaining:.1f}s remaining)")
+                thread.join(timeout=remaining)
+                if thread.is_alive():
+                    self.logger.warning(f"Async exit {mod_name}.{f_name} did not complete in time")
+
+    def _remove_mod_sync_only(self, mod_name, spec='app', delete=True):
+        """Remove a module, running only its SYNC on_exit hooks.
+
+        Async hooks are assumed to be already dispatched via run_bg_task_advanced.
+        """
+        if mod_name not in self.functions:
+            return
+
+        on_exit = self.functions[mod_name].get("on_exit")
+
+        # Handle BC instances (sync only)
+        if on_exit is None and self.functions[mod_name].get(f"{spec}_instance_type", "").endswith("/BC"):
+            instance = self.functions[mod_name].get(f"{spec}_instance")
+            if instance is not None and hasattr(instance, 'on_exit'):
+                if not asyncio.iscoroutinefunction(instance.on_exit):
+                    try:
+                        instance.on_exit()
+                    except Exception as e:
+                        self.logger.debug(f"BC on_exit error for {mod_name}: {e}")
+
+        # Run only sync exit handlers
+        if on_exit is not None:
+            for i, f in enumerate(on_exit, 1):
+                try:
+                    f_, e, f_name = self._get_exit_function(mod_name, f, spec, i - 1)
+                    if e == 0 and not asyncio.iscoroutinefunction(f_):
+                        self.logger.info(Style.GREY(f"Running sync on_exit {f_name} {i}/{len(on_exit)}"))
+                        o = f_()
+                        if isinstance(o, Result):
+                            o.log()
+                        elif o is not None:
+                            self.print(f"Function On Exit result: {o}")
+                except Exception as e:
+                    self.logger.debug(f"on_exit error {mod_name}.{f}: {e}")
+                    self.debug_rains(e)
+
+        self._cleanup_module_instances(mod_name, spec)
+        if delete:
+            self._delete_module(mod_name)
 
     async def a_remove_all_modules(self, delete=False):
         """Remove all loaded modules asynchronously."""
@@ -1535,25 +1613,47 @@ class App(AppType, metaclass=Singleton):
         if delete:
             self._delete_module(mod_name)
 
-    def _cleanup_threads(self):
-        """Clean up daemon threads on exit."""
-        if not hasattr(self, 'daemon_app'):
+    def _cleanup_threads(self, timeout: float = 5.0):
+        """Clean up background threads on exit.
+
+        Default: only joins threads tracked in self.bg_tasks.
+        If args_sto.full_thread_cleanup is set, also joins ALL non-main threads
+        via threading.enumerate() (expensive, use for debugging).
+
+        Args:
+            timeout: Total wall-clock budget for all threads combined (default 5s).
+        """
+        import threading
+
+        use_enumerate = getattr(self.args_sto, 'full_thread_cleanup', False)
+
+        if use_enumerate:
+            targets = [
+                t for t in threading.enumerate()
+                if t is not threading.current_thread() and t.name != "MainThread"
+            ]
+        else:
+            # Only our own tracked tasks
+            targets = [t for t in self.bg_tasks if t.is_alive()]
+
+        if not targets:
             return
 
-        import threading
-        for thread in threading.enumerate()[::-1]:
-            if thread.name == "MainThread":
-                continue
-            try:
-                timeout = 0.751 if not self.debug else 0.6
-                with Spinner(f"closing Thread {thread.name:^50}|", symbols="s",
-                             count_down=True, time_in_s=timeout):
-                    thread.join(timeout=timeout)
-            except TimeoutError as e:
-                self.logger.error(f"Timeout error on exit {thread.name} {str(e)}")
-            except KeyboardInterrupt:
-                print("Unsafe Exit")
+        deadline = time.time() + timeout
+        for thread in targets:
+            remaining = max(deadline - time.time(), 0.05)
+            if remaining <= 0.05:
+                self.logger.warning(f"Thread cleanup budget exhausted, {thread.name} still alive")
                 break
+            try:
+                thread.join(timeout=remaining)
+                if thread.is_alive():
+                    self.logger.warning(f"Thread {thread.name} did not exit within budget")
+            except Exception as e:
+                self.logger.debug(f"Thread join error {thread.name}: {e}")
+
+        # Clear tracked tasks
+        self.bg_tasks = [t for t in self.bg_tasks if t.is_alive()]
 
     def _cleanup_event_loop(self):
         """Clean up the event loop on exit."""

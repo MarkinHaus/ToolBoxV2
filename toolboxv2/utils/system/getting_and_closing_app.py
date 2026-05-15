@@ -73,7 +73,6 @@ def save_closing_app():
         return
 
     if registered_apps[0] is not None:
-        print("CLOSING APP")
         registered_apps[0].exit()
 
 async def a_save_closing_app():

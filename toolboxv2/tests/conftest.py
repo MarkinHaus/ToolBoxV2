@@ -1,18 +1,15 @@
 """
 conftest.py for toolboxv2/tests/
 
-Provides automatic App singleton isolation between tests.
-
-Tests that manage their own App lifecycle (e.g. via setUpClass) are
-exempted via PERSISTENT_APP_TEST_FILES.
+Provides:
+- Automatic App singleton isolation between tests
+- Serial execution marker for xdist (tests that share state)
 """
 import contextlib
-
 import pytest
-
 import sys
 
-# These files create one real App for ALL their tests in setUpClass.
+# Files that create one real App for ALL their tests in setUpClass.
 # The reset fixture must not interfere with them.
 PERSISTENT_APP_TEST_FILES = {
     "test_toolbox.py",
@@ -39,3 +36,46 @@ def reset_app_state_before_test(request):
     yield
     reset_app_singleton(force_exit=True)
 
+
+def pytest_configure(config):
+    """Register the 'serial' marker for xdist compatibility."""
+    config.addinivalue_line(
+        "markers",
+        "serial: mark test class to run in a single xdist worker (no distribution)",
+    )
+
+
+def pytest_xdist_make_scheduler(config, log):
+    """
+    Hook into xdist scheduling: tests marked @pytest.mark.serial
+    are grouped onto a single worker instead of being distributed.
+
+    Falls back to default scheduling if xdist is not active.
+    """
+    try:
+        from xdist.scheduler import LoadScheduling
+
+        class SerialAwareScheduling(LoadScheduling):
+            def _assign_work_unit(self, node):
+                # Default behavior — xdist handles grouping via
+                # pytest_collection_modifyitems below
+                return super()._assign_work_unit(node)
+
+        return SerialAwareScheduling(config, log)
+    except ImportError:
+        return None
+
+
+def pytest_collection_modifyitems(items):
+    """
+    Group all @serial-marked tests under one xdist group
+    so they land on the same worker.
+    """
+    for item in items:
+        if item.get_closest_marker("serial"):
+            # xdist groups by this attribute — same string = same worker
+            item._nodeid = item.nodeid  # preserve original
+            if not hasattr(item, "fixturenames"):
+                continue
+            # Force same xdist group
+            item.add_marker(pytest.mark.xdist_group("serial_tests"))

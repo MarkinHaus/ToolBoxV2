@@ -19,9 +19,8 @@ except ImportError:
 def get_version_from_pyproject(pyproject_path='../pyproject.toml'):
     """Reads the version from the pyproject.toml file."""
     if not os.path.exists(pyproject_path) and pyproject_path=='../pyproject.toml':
-        pyproject_path = 'pyproject.toml'
-    if not os.path.exists(pyproject_path) and pyproject_path=='pyproject.toml':
-        return "x.x.x"
+        from toolboxv2 import tb_root_dir
+        pyproject_path = str(tb_root_dir.parent / "pyproject.toml")
 
     try:
         from ..system.ci.ci_version import read_version

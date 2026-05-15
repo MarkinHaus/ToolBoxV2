@@ -423,7 +423,7 @@ def test_arxiv_search():
 @default_test
 @async_test
 async def test_web_interactions():
-    from toolboxv2.tests.test_web import run_in_valid_session_tests
+    from tests.test_web.test_web import run_in_valid_session_tests
 
     def base_test(_): return [
         {'type': 'goto', 'url': 'localhost:5000/TruthSeeker'},

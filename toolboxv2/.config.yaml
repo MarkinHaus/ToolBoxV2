@@ -131,3 +131,4 @@ observability:
     keep_audit: true
 app:
   profile: developer
+  log_level: INFO
