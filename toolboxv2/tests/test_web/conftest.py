@@ -14,7 +14,7 @@ from typing import AsyncGenerator
 import pytest
 
 try:
-    from tests.web_util import AsyncWebTestFramework
+    from tests.test_web.web_util import AsyncWebTestFramework
 except ImportError:
     AsyncWebTestFramework = None
 

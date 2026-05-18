@@ -75,10 +75,10 @@ class TestShareToken(unittest.TestCase):
 class TestEnvConfig(unittest.TestCase):
     def test_load_from_env(self):
         from toolboxv2.mods.CloudM.LiveSync.config import load_env_config
-        MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT")
-        MINIO_ROOT_USER = os.getenv("MINIO_ROOT_USER")
-        MINIO_ROOT_PASSWORD = os.getenv("MINIO_ROOT_PASSWORD")
-        LIVESYNC_WS_PORT = os.getenv("LIVESYNC_WS_PORT")
+
+        saved = {k: os.environ.get(k) for k in [
+            "MINIO_ENDPOINT", "MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD", "LIVESYNC_WS_PORT"
+        ]}
 
         os.environ["MINIO_ENDPOINT"] = "test-host:9000"
         os.environ["MINIO_ROOT_USER"] = "testadmin"
@@ -91,10 +91,11 @@ class TestEnvConfig(unittest.TestCase):
         self.assertEqual(cfg["secret_key"], "testsecret")
         self.assertEqual(cfg["ws_port"], 9999)
 
-        os.environ["MINIO_ENDPOINT"] = MINIO_ENDPOINT
-        os.environ["MINIO_ROOT_USER"] = MINIO_ROOT_USER
-        os.environ["MINIO_ROOT_PASSWORD"] = MINIO_ROOT_PASSWORD
-        os.environ["LIVESYNC_WS_PORT"] = LIVESYNC_WS_PORT
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
     def test_defaults_when_env_missing(self):
         from toolboxv2.mods.CloudM.LiveSync.config import load_env_config

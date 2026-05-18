@@ -192,9 +192,9 @@ class SubAgentManager:
         # Normalize output_dir
         if not output_dir.startswith("/"):
             output_dir = f"/{output_dir}"
-        if not output_dir.startswith("/sub/"):
-            # Force sub-agent outputs under /sub/
-            output_dir = f"/sub{output_dir}"
+        if not output_dir.startswith("/global/sub/"):
+            # Force sub-agent outputs under /global/sub/ (disk-backed via global mount)
+            output_dir = f"/global/sub{output_dir}"
 
         # Create config
         config = SubAgentConfig(
@@ -202,6 +202,7 @@ class SubAgentManager:
             timeout_seconds=timeout,
             model_preference=getattr(self.parent_engine, 'model_preference', 'fast')
         )
+
 
         # Create state
         state = SubAgentState(
@@ -532,12 +533,17 @@ class SubAgentManager:
 
             result = final_answer_acc
 
-            # Write result to output_dir/result.md if not already done
+            # Write result to output_dir/result.md if not already done by sub-agent
+            # If sub-agent wrote real content → preserve it, use _result.md instead
             result_path = f"{state.output_dir}/result.md"
             try:
                 existing = self.parent_session.vfs.read(result_path)
-                if not existing.get("success"):
-                    # Write result summary
+                if existing.get("success") and existing.get("content", "").strip():
+                    # Sub-agent already wrote real content — don't overwrite
+                    result_path = f"{state.output_dir}/_result.md"
+                existing2 = self.parent_session.vfs.read(result_path)
+                if not existing2.get("success"):
+                    # Write framework result summary (only if no file exists at result_path)
                     self.parent_session.vfs.write(
                         result_path,
                         f"# Sub-Agent Result\n\n"

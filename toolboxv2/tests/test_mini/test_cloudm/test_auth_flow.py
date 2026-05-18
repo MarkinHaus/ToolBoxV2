@@ -144,7 +144,7 @@ class TestConfig(unittest.TestCase):
 # =================== JWT Token Tests ===================
 
 
-class TestJWTTokens(unittest.TestCase):
+class TestJWTTokens(unittest.IsolatedAsyncioTestCase):
     """Test JWT generation and validation."""
 
     @patch.dict(os.environ, {"TB_JWT_SECRET": "test_jwt_secret_for_testing_1234567890"})
@@ -181,7 +181,7 @@ class TestJWTTokens(unittest.TestCase):
         self.assertEqual(tokens["token_type"], "Bearer")
 
     @patch.dict(os.environ, {"TB_JWT_SECRET": "test_jwt_secret_for_testing_1234567890"})
-    def test_validate_jwt_valid(self):
+    async def test_validate_jwt_valid(self):
         import asyncio
         from toolboxv2.mods.CloudM.auth.jwt_tokens import _generate_access_token, _validate_jwt
         token = _generate_access_token("usr_x", "x", 1)
@@ -190,35 +190,32 @@ class TestJWTTokens(unittest.TestCase):
         mock_result = MagicMock()
         mock_result.is_error.return_value = True  # key doesn't exist = not blacklisted
         mock_app.a_run_any = AsyncMock(return_value=mock_result)
-        valid, payload = asyncio.get_event_loop().run_until_complete(
-            _validate_jwt(mock_app, token, "access")
-        )
+        valid, payload = await _validate_jwt(mock_app, token, "access")
+
         self.assertTrue(valid)
         self.assertEqual(payload["sub"], "usr_x")
 
     @patch.dict(os.environ, {"TB_JWT_SECRET": "test_jwt_secret_for_testing_1234567890"})
-    def test_validate_jwt_wrong_type(self):
+    async def test_validate_jwt_wrong_type(self):
         import asyncio
         from toolboxv2.mods.CloudM.auth.jwt_tokens import _generate_access_token, _validate_jwt
         token = _generate_access_token("usr_x", "x", 1)
         mock_app = MagicMock()
-        valid, payload = asyncio.get_event_loop().run_until_complete(
-            _validate_jwt(mock_app, token, "refresh")  # Wrong type
-        )
+        valid, payload = await _validate_jwt(mock_app, token, "refresh")  # Wrong type
+
         self.assertFalse(valid)
         self.assertIn("Expected refresh token", payload["error"])
 
-    def test_validate_jwt_no_token(self):
+    async def test_validate_jwt_no_token(self):
         import asyncio
         from toolboxv2.mods.CloudM.auth.jwt_tokens import _validate_jwt
         mock_app = MagicMock()
-        valid, payload = asyncio.get_event_loop().run_until_complete(
-            _validate_jwt(mock_app, "", "access")
-        )
+        valid, payload = await _validate_jwt(mock_app, "", "access")
+
         self.assertFalse(valid)
 
     @patch.dict(os.environ, {"TB_JWT_SECRET": "test_jwt_secret_for_testing_1234567890"})
-    def test_validate_jwt_expired(self):
+    async def test_validate_jwt_expired(self):
         import asyncio
         import jwt as pyjwt
         from toolboxv2.mods.CloudM.auth.jwt_tokens import _validate_jwt
@@ -229,14 +226,12 @@ class TestJWTTokens(unittest.TestCase):
             algorithm="HS256",
         )
         mock_app = MagicMock()
-        valid, payload = asyncio.get_event_loop().run_until_complete(
-            _validate_jwt(mock_app, token, "access")
-        )
+        valid, payload = await _validate_jwt(mock_app, token, "access")
         self.assertFalse(valid)
         self.assertIn("expired", payload["error"].lower())
 
     @patch.dict(os.environ, {"TB_JWT_SECRET": "test_jwt_secret_for_testing_1234567890"})
-    def test_validate_jwt_blacklisted(self):
+    async def test_validate_jwt_blacklisted(self):
         import asyncio
         from toolboxv2.mods.CloudM.auth.jwt_tokens import _generate_access_token, _validate_jwt
         token = _generate_access_token("usr_x", "x", 1)
@@ -248,9 +243,8 @@ class TestJWTTokens(unittest.TestCase):
         mock_result.get.return_value = 1
         mock_app.a_run_any = AsyncMock(return_value=mock_result)
 
-        valid, payload = asyncio.get_event_loop().run_until_complete(
-            _validate_jwt(mock_app, token, "access")
-        )
+        valid, payload = await _validate_jwt(mock_app, token, "access")
+
         self.assertFalse(valid)
         self.assertIn("revoked", payload["error"].lower())
 
@@ -297,10 +291,10 @@ class TestDBHelpers(unittest.TestCase):
 # =================== State Management Tests ===================
 
 
-class TestStateManagement(unittest.TestCase):
+class TestStateManagement(unittest.IsolatedAsyncioTestCase):
     """Test OAuth state, challenges, blacklist (all DB-backed)."""
 
-    def test_store_oauth_state(self):
+    async def test_store_oauth_state(self):
         import asyncio
         from toolboxv2.mods.CloudM.auth.state import _store_oauth_state
         mock_app = MagicMock()
@@ -308,15 +302,14 @@ class TestStateManagement(unittest.TestCase):
         mock_result.is_error.return_value = False
         mock_app.a_run_any = AsyncMock(return_value=mock_result)
 
-        state = asyncio.get_event_loop().run_until_complete(
-            _store_oauth_state(mock_app, "discord", {"redirect_after": "http://localhost"})
-        )
+        state = await _store_oauth_state(mock_app, "discord", {"redirect_after": "http://localhost"})
+
         self.assertIsInstance(state, str)
         self.assertGreater(len(state), 10)
         # Verify DB.SET was called
         mock_app.a_run_any.assert_called()
 
-    def test_validate_and_consume_state(self):
+    async def test_validate_and_consume_state(self):
         import asyncio
         from toolboxv2.mods.CloudM.auth.state import _validate_and_consume_state
         mock_app = MagicMock()
@@ -333,13 +326,12 @@ class TestStateManagement(unittest.TestCase):
         mock_delete.is_error.return_value = False
         mock_app.a_run_any = AsyncMock(side_effect=[mock_result, mock_delete])
 
-        valid, extra = asyncio.get_event_loop().run_until_complete(
-            _validate_and_consume_state(mock_app, "test_state", "discord")
-        )
+        valid, extra = await _validate_and_consume_state(mock_app, "test_state", "discord")
+
         self.assertTrue(valid)
         self.assertEqual(extra.get("redirect_after"), "http://tauri.localhost")
 
-    def test_validate_state_wrong_provider(self):
+    async def test_validate_state_wrong_provider(self):
         import asyncio
         from toolboxv2.mods.CloudM.auth.state import _validate_and_consume_state
         mock_app = MagicMock()
@@ -354,12 +346,11 @@ class TestStateManagement(unittest.TestCase):
         mock_delete.is_error.return_value = False
         mock_app.a_run_any = AsyncMock(side_effect=[mock_result, mock_delete])
 
-        valid, _ = asyncio.get_event_loop().run_until_complete(
-            _validate_and_consume_state(mock_app, "test_state", "discord")  # Validate as discord
-        )
+        valid, _ = await _validate_and_consume_state(mock_app, "test_state", "discord")  # Validate as discord
+
         self.assertFalse(valid)
 
-    def test_validate_state_expired(self):
+    async def test_validate_state_expired(self):
         import asyncio
         from toolboxv2.mods.CloudM.auth.state import _validate_and_consume_state
         mock_app = MagicMock()
@@ -374,9 +365,8 @@ class TestStateManagement(unittest.TestCase):
         mock_delete.is_error.return_value = False
         mock_app.a_run_any = AsyncMock(side_effect=[mock_result, mock_delete])
 
-        valid, _ = asyncio.get_event_loop().run_until_complete(
-            _validate_and_consume_state(mock_app, "test_state", "discord")
-        )
+        valid, _ = await _validate_and_consume_state(mock_app, "test_state", "discord")
+
         self.assertFalse(valid)
 
 
@@ -497,10 +487,10 @@ class TestBase64urlEncoding(unittest.TestCase):
 # =================== User Store Tests ===================
 
 
-class TestUserStore(unittest.TestCase):
+class TestUserStore(unittest.IsolatedAsyncioTestCase):
     """Test user storage CRUD with mocked DB."""
 
-    def test_save_user_stores_indexes(self):
+    async def test_save_user_stores_indexes(self):
         import asyncio
         from toolboxv2.mods.CloudM.auth.user_store import _save_user
         from toolboxv2.mods.CloudM.auth.models import UserData
@@ -517,7 +507,7 @@ class TestUserStore(unittest.TestCase):
             oauth_providers={"discord": {"provider_id": "disc_123"}},
         )
 
-        asyncio.get_event_loop().run_until_complete(_save_user(mock_app, user))
+        await _save_user(mock_app, user)
 
         # Should have been called for: user profile, email index, provider index
         calls = mock_app.a_run_any.call_args_list
@@ -527,7 +517,7 @@ class TestUserStore(unittest.TestCase):
         self.assertIn("AUTH_USER_EMAIL::test@example.com", call_str)
         self.assertIn("AUTH_USER_PROVIDER::discord::disc_123", call_str)
 
-    def test_load_user(self):
+    async def test_load_user(self):
         import asyncio
         from toolboxv2.mods.CloudM.auth.user_store import _load_user
 
@@ -548,12 +538,12 @@ class TestUserStore(unittest.TestCase):
         })
         mock_app.a_run_any = AsyncMock(return_value=mock_result)
 
-        user = asyncio.get_event_loop().run_until_complete(_load_user(mock_app, "usr_test"))
+        user = await _load_user(mock_app, "usr_test")
         self.assertIsNotNone(user)
         self.assertEqual(user.user_id, "usr_test")
         self.assertEqual(user.level, 2)
 
-    def test_load_user_not_found(self):
+    async def test_load_user_not_found(self):
         import asyncio
         from toolboxv2.mods.CloudM.auth.user_store import _load_user
 
@@ -562,10 +552,10 @@ class TestUserStore(unittest.TestCase):
         mock_result.is_error.return_value = True
         mock_app.a_run_any = AsyncMock(return_value=mock_result)
 
-        user = asyncio.get_event_loop().run_until_complete(_load_user(mock_app, "nonexistent"))
+        user = await _load_user(mock_app, "nonexistent")
         self.assertIsNone(user)
 
-    def test_create_or_update_user_new(self):
+    async def test_create_or_update_user_new(self):
         import asyncio
         from toolboxv2.mods.CloudM.auth.user_store import _create_or_update_user
 
@@ -579,14 +569,13 @@ class TestUserStore(unittest.TestCase):
         save_ok.is_error.return_value = False
         mock_app.a_run_any = AsyncMock(side_effect=[not_found, not_found, save_ok, save_ok, save_ok])
 
-        user, is_new = asyncio.get_event_loop().run_until_complete(
-            _create_or_update_user(
+        user, is_new = await _create_or_update_user(
                 mock_app,
                 "discord",
                 {"provider_id": "disc_999", "username": "newuser", "email": "new@test.com"},
                 {"access_token": "at", "refresh_token": "rt", "expires_in": 3600},
             )
-        )
+
         self.assertTrue(is_new)
         self.assertEqual(user.username, "newuser")
         self.assertIn("discord", user.oauth_providers)

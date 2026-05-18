@@ -16,7 +16,9 @@ files:
   - "utils/system/cache.py"
   - "utils/extras/Style.py"
 imports:
-  - "toolboxv2.utils.toolboxv2"
-dependencies: []
+  - "toolboxv2.utils.toolbox"
+dependencies:
+   -  "psutil"
+   -  "prompt-toolkit>=3.0.52"
 requires: []
 commands: []

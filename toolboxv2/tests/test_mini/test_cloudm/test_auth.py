@@ -19,7 +19,7 @@ import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
 from dataclasses import asdict
 
-from toolboxv2.tests.a_util import IsolatedTestCase
+from toolboxv2.tests.a_util import IsolatedTestCase, _is_mock
 import os
 os.environ["TB_JWT_SECRET"] = "test_jwt_secret_for_testing_1234567890"
 os.environ["TB_COOKIE_SECRET"] = "test_cookie_secret_for_testing_12"
@@ -30,24 +30,18 @@ os.environ["TB_COOKIE_SECRET"] = "test_cookie_secret_for_testing_12"
 
 
 def _import_auth():
-    """
-    Import Auth module – strictly ensures a clean reload to avoid mock pollution.
-
-    CRITICAL FIX: If other tests (honks) mocked 'toolboxv2.mods.CloudM.Auth' globally
-    and didn't clean up, sys.modules will hold a MagicMock instead of the real module.
-    This function detects that state and forces a fresh import from disk.
-    """
     mod_name = "toolboxv2.mods.CloudM.Auth"
 
-    # 1. Purge existing module from cache to remove any stale Mocks
+    existing = sys.modules.get(mod_name)
+    if existing is not None and not _is_mock(existing):
+        return existing  # reuse clean module, no reload
+
+    # Only reload if missing or mock-contaminated
     if mod_name in sys.modules:
         del sys.modules[mod_name]
 
-    # 2. Import fresh from disk
     import toolboxv2.mods.CloudM.Auth as auth_mod
-
-    # 3. Ensure it is actually reloaded (double-safety for nested dependencies)
-    return importlib.reload(auth_mod)
+    return auth_mod  # no importlib.reload — Import selbst ist bereits frisch
 
 
 class TestJWTTokenGeneration(IsolatedTestCase):
@@ -272,13 +266,13 @@ class TestValidateSessionEndpoint(IsolatedTestCase, unittest.IsolatedAsyncioTest
         mock_app = MagicMock()
 
         # Mock _validate_jwt to return success
-        with patch.object(auth, '_validate_jwt', new_callable=AsyncMock) as mock_validate:
+        with patch(f'toolboxv2.mods.CloudM.auth.api_session._validate_jwt', new_callable=AsyncMock) as mock_validate:
             mock_validate.return_value = (True, {
                 "sub": "u_123", "user_name": "alice", "level": 1,
                 "provider": "discord", "jti": "test-jti"
             })
             # Mock _load_user
-            with patch.object(auth, '_load_user', new_callable=AsyncMock) as mock_load:
+            with patch(f'toolboxv2.mods.CloudM.auth.api_session._load_user', new_callable=AsyncMock) as mock_load:
                 mock_user = auth.UserData(
                     user_id="u_123", username="alice",
                     email="alice@test.com", level=1
@@ -306,7 +300,7 @@ class TestLogout(IsolatedTestCase, unittest.IsolatedAsyncioTestCase):
     async def test_logout_blacklists_token(self):
         auth = _import_auth()
         mock_app = MagicMock()
-        with patch.object(auth, '_blacklist_token', new_callable=AsyncMock) as mock_bl:
+        with patch(f'toolboxv2.mods.CloudM.auth.api_session._blacklist_token', new_callable=AsyncMock) as mock_bl:
             mock_bl.return_value = None
             result = await auth.logout(app=mock_app, token="some.jwt.token")
             mock_bl.assert_called_once_with(mock_app, "some.jwt.token")
@@ -370,14 +364,14 @@ class TestRefreshToken(IsolatedTestCase, unittest.IsolatedAsyncioTestCase):
         # Generate a real refresh token
         rt = auth._generate_refresh_token("u_123")
 
-        with patch.object(auth, '_validate_jwt', new_callable=AsyncMock) as mock_val:
+        with patch(f'toolboxv2.mods.CloudM.auth.api_session._validate_jwt', new_callable=AsyncMock) as mock_val:
             mock_val.return_value = (True, {"sub": "u_123", "type": "refresh", "jti": "j1"})
-            with patch.object(auth, '_load_user', new_callable=AsyncMock) as mock_load:
+            with patch(f'toolboxv2.mods.CloudM.auth.api_session._load_user', new_callable=AsyncMock) as mock_load:
                 mock_load.return_value = auth.UserData(
                     user_id="u_123", username="alice",
                     email="a@e.com", level=1
                 )
-                with patch.object(auth, '_blacklist_token', new_callable=AsyncMock):
+                with patch(f'toolboxv2.mods.CloudM.auth.api_session._blacklist_token', new_callable=AsyncMock):
                     result = await auth.refresh_token(
                         app=mock_app, refresh_token=rt
                     )

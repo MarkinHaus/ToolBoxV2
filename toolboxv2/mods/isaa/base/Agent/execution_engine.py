@@ -5305,7 +5305,7 @@ BEISPIELE:
                         f"- Token budget: {self.sub_agent_budget}",
                         "",
                         "TASK: Execute the given task in a focused manner.",
-                        "Write your result to result.md in your output directory.",
+"Write your result to result.md in your output directory. If result.md already exists, write to _result.md instead.",
                         "",
                         "STATUS:",
                         dynamic_slots_prompt,
@@ -5879,7 +5879,7 @@ if __name__ == "__main__":
     print("ExecutionEngine loaded")
     ctx = ExecutionContext()
     print(ctx.run_id)
-    from toolboxv2.tests.test_mods.test_isaa.test_base.test_agent.test_execution_engine import (
+    from toolboxv2.tests.test_isaa.test_base.test_agent.test_execution_engine import (
         MockAgent,
     )
 

@@ -43,6 +43,7 @@ FEATURE_DETECTION: Dict[str, List[str]] = {
         "redis",
         "xmltodict",
         "minio",
+        "prompt_toolkit",
         "prompt-toolkit",
         "opentelemetry-api",
         "opentelemetry-sdk",

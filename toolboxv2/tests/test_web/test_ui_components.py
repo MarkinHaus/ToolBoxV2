@@ -16,7 +16,7 @@ Run:
 import pytest
 from typing import List, Dict, Any
 
-from tests.web_util import AsyncWebTestFramework
+from tests.test_web.web_util import AsyncWebTestFramework
 
 # Web URL for page tests (nginx on port 80)
 import os

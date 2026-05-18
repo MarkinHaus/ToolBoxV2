@@ -19,8 +19,7 @@ from typing import Optional, Tuple, List
 
 from toolboxv2 import get_app
 from toolboxv2.tests.a_util import async_test
-from tests.web_util import AsyncWebTestFramework, WebTestFramework
-
+from tests.test_web.web_util import AsyncWebTestFramework
 
 # =================== Configuration ===================
 

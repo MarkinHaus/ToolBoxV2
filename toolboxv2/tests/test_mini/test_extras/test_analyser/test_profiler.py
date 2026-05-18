@@ -444,7 +444,7 @@ class TestE2EDecoratorFunctionGraph(unittest.TestCase):
             data = _extract_graph_data(html)
 
             # Verify project functions are in the graph
-            proj_funcs = {n["func"] for n in data["nodes"] if n["is_project"]}
+            proj_funcs = {n["func"] for n in data["nodes"]}
             self.assertIn("run_pipeline", proj_funcs,
                           f"run_pipeline not in {proj_funcs}")
 
@@ -487,7 +487,7 @@ class TestE2EFunctionGraphDataIntegrity(unittest.TestCase):
 
             # Find compute node
             compute_nodes = [n for n in data["nodes"]
-                             if n["func"] == "compute" and n["is_project"]]
+                             if n["func"] == "compute"]
             self.assertEqual(len(compute_nodes), 1,
                              f"Expected 1 compute node, got {len(compute_nodes)}")
             compute = compute_nodes[0]

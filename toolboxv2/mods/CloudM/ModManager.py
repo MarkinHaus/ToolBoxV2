@@ -399,7 +399,8 @@ def get_platform_files(config: Dict, platform: Platform) -> List[str]:
 def create_and_pack_module(path: str, module_name: str = '', version: str = '-.-.-',
                            additional_dirs: Optional[Dict] = None,
                            yaml_data: Optional[Dict] = None,
-                           platform_filter: Optional[Platform] = None) -> Optional[str]:
+                           platform_filter: Optional[Platform] = None,
+                           output_dir: Optional[str] = None) -> Optional[str]:
     """
     Creates and packs a module into a ZIP file with platform-specific support.
 
@@ -429,7 +430,9 @@ def create_and_pack_module(path: str, module_name: str = '', version: str = '-.-
 
     platform_suffix = f"_{platform_filter.value}" if platform_filter else ""
     zip_file_name = f"RST${module_name}&{__version__}§{version}{platform_suffix}.zip"
-    zip_path = Path(tb_root_dir / "mods_sto"/f"{zip_file_name}")
+    _out = Path(output_dir) if output_dir else tb_root_dir / "mods_sto"
+    _out.mkdir(parents=True, exist_ok=True)
+    zip_path = _out / zip_file_name
 
     if not module_path.exists():
         print(f"Module path does not exist: {module_path}")
@@ -1989,47 +1992,57 @@ from typing import Optional, List, Dict, Any, Callable
 from pathlib import Path
 from dataclasses import dataclass
 
-from prompt_toolkit import Application
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import Layout, Window, FormattedTextControl
-from prompt_toolkit.formatted_text import HTML, FormattedText
-from prompt_toolkit.styles import Style
-from prompt_toolkit.shortcuts import input_dialog, yes_no_dialog, message_dialog, radiolist_dialog
-from prompt_toolkit import print_formatted_text
+try:
+    from prompt_toolkit import Application
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.layout import Layout, Window, FormattedTextControl
+    from prompt_toolkit.formatted_text import HTML, FormattedText
+    from prompt_toolkit.styles import Style
+    from prompt_toolkit.shortcuts import input_dialog, yes_no_dialog, message_dialog, radiolist_dialog
+    from prompt_toolkit import print_formatted_text
+except ImportError as e:
+     Application = None
+     KeyBindings = None
+     Style = None
+     HTML, FormattedText = None, None
+     Layout, Window, FormattedTextControl = None, None, None
+     input_dialog, yes_no_dialog, message_dialog, radiolist_dialog = None, None, None, None
+     print_formatted_text = None
 import yaml
 
 # =================== Styles ===================
+if Style:
+    MODERN_STYLE = Style.from_dict({
+        # Menu styles
+        'menu-border': '#00d9ff bold',
+        'menu-title': '#00d9ff bold',
+        'menu-item': '#e0e0e0',
+        'menu-item-selected': '#000000 bg:#00d9ff bold',
+        'menu-key': '#ff79c6 bold',
+        'menu-separator': '#6272a4',
+        'menu-category': '#bd93f9 bold',
 
-MODERN_STYLE = Style.from_dict({
-    # Menu styles
-    'menu-border': '#00d9ff bold',
-    'menu-title': '#00d9ff bold',
-    'menu-item': '#e0e0e0',
-    'menu-item-selected': '#000000 bg:#00d9ff bold',
-    'menu-key': '#ff79c6 bold',
-    'menu-separator': '#6272a4',
-    'menu-category': '#bd93f9 bold',
+        # Status styles
+        'success': '#50fa7b bold',
+        'error': '#ff5555 bold',
+        'warning': '#ffb86c bold',
+        'info': '#8be9fd',
 
-    # Status styles
-    'success': '#50fa7b bold',
-    'error': '#ff5555 bold',
-    'warning': '#ffb86c bold',
-    'info': '#8be9fd',
+        # UI elements
+        'border': '#6272a4',
+        'header': '#ff79c6 bold',
+        'footer': '#6272a4 italic',
+        'prompt': '#00d9ff bold',
 
-    # UI elements
-    'border': '#6272a4',
-    'header': '#ff79c6 bold',
-    'footer': '#6272a4 italic',
-    'prompt': '#00d9ff bold',
-
-    # Dialog
-    'dialog': 'bg:#282a36',
-    'dialog.body': 'bg:#282a36 #f8f8f2',
-    'dialog frame.label': '#ff79c6 bold',
-    'button': 'bg:#44475a #f8f8f2',
-    'button.focused': 'bg:#00d9ff #000000 bold',
-})
-
+        # Dialog
+        'dialog': 'bg:#282a36',
+        'dialog.body': 'bg:#282a36 #f8f8f2',
+        'dialog frame.label': '#ff79c6 bold',
+        'button': 'bg:#44475a #f8f8f2',
+        'button.focused': 'bg:#00d9ff #000000 bold',
+    })
+else:
+    MODERN_STYLE = {}
 
 # =================== Menu Items ===================
 

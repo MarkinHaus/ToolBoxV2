@@ -74,11 +74,12 @@ async def _blacklist_token(app: App, token_str: str):
         payload = pyjwt.decode(token_str, options={"verify_signature": False})
         jti = payload.get("jti")
         if jti:
-            await _db_set(app, f"AUTH_BLACKLIST::{jti}", {
+            res = await _db_set(app, f"AUTH_BLACKLIST::{jti}", {
                 "blacklisted_at": time.time(),
                 "expires": payload.get("exp", 0),
             })
-    except Exception:
+    except Exception as e:
+        raise e
         pass
 
 

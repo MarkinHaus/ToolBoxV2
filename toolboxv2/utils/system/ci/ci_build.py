@@ -25,13 +25,12 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import unittest
 import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-
-# ── Pfade ────────────────────────────────────────────────────────────────────
 
 from toolboxv2 import tb_root_dir
 
@@ -42,9 +41,7 @@ PACKED_DIR = TOOLBOXV2_DIR / "features_packed"
 DIST_DIR = ROOT / "dist"
 REPORT_DIR = ROOT / "build_reports"
 
-ALWAYS_SOURCE = {"core", "mini"}  # nie geZIPt — immer im Source-Tree
-
-# ── Rich / Fallback ─────────────────────────────────────────────────────────
+ALWAYS_SOURCE = {"core", "mini"}
 
 try:
     from rich.console import Console
@@ -59,7 +56,6 @@ try:
 except ImportError:
     HAS_RICH = False
 
-
     class _Fallback:
         def print(self, *a, **kw):
             kw.pop("style", None)
@@ -69,13 +65,11 @@ except ImportError:
         def rule(self, title="", **kw):
             print(f"\n{'─' * 20} {title} {'─' * 20}")
 
-
     console = _Fallback()
 
 
 def _p(msg: str, style: str = ""):
     console.print(msg, style=style)
-
 
 # ── YAML Mini-Parser (keine externe Dep) ────────────────────────────────────
 
@@ -89,11 +83,9 @@ def _load_yaml(path: Path) -> dict:
     except ImportError:
         pass
 
-    # Fallback: regex-basiert für die einfachen feature.yaml Felder
     text = path.read_text(encoding="utf-8")
     data: dict[str, Any] = {}
 
-    # Einfache key: value
     for m in re.finditer(r'^(\w+):\s*"?([^"\n]+)"?', text, re.MULTILINE):
         key, val = m.group(1), m.group(2).strip().strip('"')
         if val.lower() == "true":
@@ -103,7 +95,6 @@ def _load_yaml(path: Path) -> dict:
         else:
             data[key] = val
 
-    # Listen (- "item")
     for section in ("files", "dependencies", "requires", "commands", "imports"):
         items = []
         pattern = rf'^{section}:\s*\n((?:\s+-\s+.+\n?)+)'
@@ -152,16 +143,13 @@ def pack_feature(name: str, config: dict) -> Path | None:
 
     file_count = 0
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        # feature.yaml
         src_yaml = FEATURES_DIR / name / "feature.yaml"
         if src_yaml.exists():
             zf.write(src_yaml, "feature.yaml")
 
-        # requirements.txt
         if dependencies:
             zf.writestr("requirements.txt", "\n".join(dependencies))
 
-        # Source files
         for pattern in files_patterns:
             if pattern.endswith("/*"):
                 src_dir = TOOLBOXV2_DIR / pattern[:-2]
@@ -177,7 +165,6 @@ def pack_feature(name: str, config: dict) -> Path | None:
                     zf.write(src_file, f"files/{pattern}")
                     file_count += 1
 
-        # Metadata
         zf.writestr(
             "_metadata.yaml",
             f"feature: {name}\nversion: {version}\n"
@@ -198,7 +185,6 @@ def create_manifest_in():
     )
     (ROOT / "MANIFEST.in").write_text(content, encoding="utf-8")
 
-
 def cmd_build() -> list[dict]:
     """Pack features + create wheel/sdist."""
     console.rule("BUILD")
@@ -217,7 +203,14 @@ def cmd_build() -> list[dict]:
             results.append({"feature": name, "action": "source", "size": 0})
             continue
 
-        zip_path = pack_feature(name, config)
+        # Fix #10: per-feature error catching
+        try:
+            zip_path = pack_feature(name, config)
+        except Exception as e:
+            _p(f"  ✗ {name:12} PACK ERROR: {e}", style="red")
+            results.append({"feature": name, "action": "failed", "size": 0, "pack_error": str(e)})
+            continue
+
         if zip_path and zip_path.exists():
             size_kb = zip_path.stat().st_size // 1024
             _p(f"  ✓ {name:12} → {zip_path.name} ({size_kb} KB)")
@@ -226,11 +219,9 @@ def cmd_build() -> list[dict]:
             _p(f"  ✗ {name:12} FAILED", style="red")
             results.append({"feature": name, "action": "failed", "size": 0})
 
-    # MANIFEST.in
     create_manifest_in()
     _p("  ✓ MANIFEST.in")
 
-    # Build wheel + sdist
     _p("\n  Building wheel + sdist ...")
     try:
         subprocess.run(
@@ -247,7 +238,9 @@ def cmd_build() -> list[dict]:
         for t in tars:
             _p(f"  ✓ {t.name} ({t.stat().st_size // 1024} KB)")
     except subprocess.CalledProcessError as e:
-        _p(f"  ✗ Build failed: {e.stderr[-500:]}", style="red")
+        # Fix #6: capture start of stderr, not last 500
+        stderr_output = e.stderr or ""
+        _p(f"  ✗ Build failed:\n{stderr_output[:3000]}", style="red")
     except FileNotFoundError:
         _p("  ✗ 'build' module nicht installiert → pip install build", style="red")
 
@@ -266,27 +259,24 @@ def _find_wheel() -> Path | None:
     wheels = sorted(DIST_DIR.glob("*.whl"), key=lambda p: p.stat().st_mtime)
     return wheels[-1] if wheels else None
 
-
 def _run_feature_test(
     feature_name: str,
     extras: list[str],
     wheel: Path,
-    timeout: int = 500,
+    timeout: int = 120,
 ) -> dict:
-    """
-    Teste ein Feature in isoliertem venv.
-
-    Returns dict mit: feature, passed, duration, output, errors
-    """
+    """Teste ein Feature in isoliertem venv."""
     result = {
         "feature": feature_name,
         "extras": extras,
         "passed": False,
+        "status": "UNKNOWN",
         "tests_run": 0,
         "failures": 0,
         "errors": 0,
         "duration": 0.0,
         "output": "",
+        "error_traceback": "",
         "install_ok": False,
     }
 
@@ -295,7 +285,6 @@ def _run_feature_test(
         venv_dir = Path(tempfile.mkdtemp(prefix=f"tb_test_{feature_name}_"))
         venv_path = venv_dir / "venv"
 
-        # 1. venv erstellen
         subprocess.run(
             [sys.executable, "-m", "venv", str(venv_path)],
             check=True,
@@ -303,13 +292,11 @@ def _run_feature_test(
             timeout=60,
         )
 
-        # Python im venv
         if sys.platform == "win32":
             venv_python = venv_path / "Scripts" / "python.exe"
         else:
             venv_python = venv_path / "bin" / "python"
 
-        # 2. Wheel installieren mit extras
         extra_str = ",".join(extras) if extras else ""
         install_target = f"{wheel}[{extra_str}]" if extra_str else str(wheel)
 
@@ -321,15 +308,15 @@ def _run_feature_test(
         )
         if proc.returncode != 0:
             result["output"] = f"INSTALL FAILED:\n{proc.stderr[-1000:]}"
+            result["status"] = "INSTALL_FAIL"
             return result
 
-        # 2.5 pytest + plugins installieren
         proc = subprocess.run(
             [
                 str(venv_python), "-m", "pip", "install",
                 "pytest>=9.0.2",
                 "pytest-asyncio>=0.23.0",
-                "pytest-xdist>=3.5.0",  # Parallel execution
+                "pytest-xdist>=3.5.0",
                 "--quiet",
             ],
             capture_output=True,
@@ -338,15 +325,14 @@ def _run_feature_test(
         )
         if proc.returncode != 0:
             result["output"] = f"PYTEST INSTALL FAILED:\n{proc.stderr[-1000:]}"
+            result["status"] = "PYTEST_INSTALL_FAIL"
             return result
 
         result["install_ok"] = True
 
-        # 3. Tests ausführen
         test_dir = ROOT / "toolboxv2" / "tests"
         feature_test_dir = test_dir / feature_name
 
-        # Suche nach Tests: tests/<feature>/ oder tests/test_<feature>.py
         test_targets = []
         if feature_test_dir.exists():
             test_targets.append(str(feature_test_dir))
@@ -355,12 +341,12 @@ def _run_feature_test(
             test_targets.append(str(test_file))
 
         if not test_targets and test_dir.exists():
-            # Fallback: alle Tests aber mit installiertem Feature
             test_targets.append(str(test_dir))
 
         if not test_targets:
             result["output"] = "No tests found"
-            result["passed"] = True  # Kein Test = kein Failure
+            result["passed"] = True
+            result["status"] = "PASS"
             return result
         print(test_targets[0])
         t0 = time.monotonic()
@@ -370,8 +356,8 @@ def _run_feature_test(
                 test_targets[0],
                 "-v",
                 "--tb=short",
-                "-n", "auto",  # Parallel execution
-                "--asyncio-mode=auto",  # Auto async support
+                "-n", "auto",
+                "--asyncio-mode=auto",
             ],
             capture_output=True,
             text=True,
@@ -381,10 +367,8 @@ def _run_feature_test(
         result["duration"] = round(time.monotonic() - t0, 2)
         result["output"] = proc.stdout + proc.stderr
 
-        # Parse pytest output
         combined = proc.stdout + proc.stderr
 
-        # Tests run: "X passed" or "X failed, Y passed"
         m_passed = re.search(r"(\d+) passed", combined)
         m_failed = re.search(r"(\d+) failed", combined)
         m_error = re.search(r"(\d+) error", combined)
@@ -399,26 +383,41 @@ def _run_feature_test(
             result["errors"] = int(m_error.group(1))
             tests_run += result["errors"]
 
+        # Fix #5: pytest parse fallback
+        if tests_run == 0 and result["failures"] == 0 and result["errors"] == 0:
+            combined_lower = combined.lower()
+            if "error" in combined_lower or "failed" in combined_lower:
+                result["errors"] = 1
+                result["parse_warning"] = "pytest output could not be parsed"
+
         result["tests_run"] = tests_run
         result["passed"] = proc.returncode == 0
+        result["status"] = "PASS" if proc.returncode == 0 else "TEST_FAIL"
 
     except subprocess.TimeoutExpired:
+        # Fix #3: timeout sets error counters
         result["output"] = f"TIMEOUT after {timeout}s"
+        result["errors"] = 1
+        result["failures"] = 0
+        result["status"] = "TIMEOUT"
     except Exception as e:
+        # Fix #2: separate traceback field + error counters
         result["output"] = f"ERROR: {e}"
+        result["error_traceback"] = traceback.format_exc()
+        result["errors"] = 1
+        result["failures"] = 0
+        result["status"] = "ERROR"
     finally:
         print(venv_dir)
-        #if venv_dir and venv_dir.exists():
-        #    shutil.rmtree(venv_dir, ignore_errors=True)
+        if venv_dir and venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
 
     return result
-
 
 def cmd_test() -> list[dict]:
     """Teste jedes Feature isoliert."""
     console.rule("TEST")
 
-    # Erst bauen falls nötig
     wheel = _find_wheel()
     if not wheel:
         _p("  Kein wheel gefunden — baue zuerst ...")
@@ -432,7 +431,6 @@ def cmd_test() -> list[dict]:
 
     features = discover_features()
 
-    # Test-Matrix: base install + jedes extra einzeln
     test_matrix = [
         {"name": "mini", "extras": []},
     ]
@@ -442,35 +440,52 @@ def cmd_test() -> list[dict]:
         test_matrix.append({"name": name, "extras": [name]})
 
     def _test_runner(entry, res, i):
-        name = entry["name"]
-        extras = entry["extras"]
-        label = f"[{','.join(extras)}]" if extras else "(base)"
+        # Fix #4: thread crash protection
+        try:
+            name = entry["name"]
+            extras = entry["extras"]
+            label = f"[{','.join(extras)}]" if extras else "(base)"
 
-        _p(f"  ⏳ Testing {name:12} {label} ...")
-        r = _run_feature_test(name, extras, wheel)
+            _p(f"  ⏳ Testing {name:12} {label} ...")
+            r = _run_feature_test(name, extras, wheel)
 
-        if r["passed"]:
-            _p(
-                f"\r  ✓ {name:12} {label:16} "
-                f"{r['tests_run']} tests  {r['duration']}s"
-            )
-        elif not r["install_ok"]:
-            _p(f"\r  ✗ {name:12} {label:16} INSTALL FAILED", style="red")
-        else:
-            _p(
-                f"\r  ✗ {name:12} {label:16} "
-                f"{r['failures']}F {r['errors']}E  {r['duration']}s",
-                style="red",
-            )
-        if not 'feature' in r:
-            r["feature"] = name
-        res[i] = r
+            if r["passed"]:
+                _p(
+                    f"\r  ✓ {name:12} {label:16} "
+                    f"{r['tests_run']} tests  {r['duration']}s"
+                )
+            elif not r["install_ok"]:
+                _p(f"\r  ✗ {name:12} {label:16} INSTALL FAILED", style="red")
+            else:
+                _p(
+                    f"\r  ✗ {name:12} {label:16} "
+                    f"{r['failures']}F {r['errors']}E  {r['duration']}s",
+                    style="red",
+                )
+            if 'feature' not in r:
+                r["feature"] = name
+            res[i] = r
+        except Exception as e:
+            res[i] = {
+                "feature": entry["name"],
+                "passed": False,
+                "status": "CRASH",
+                "errors": 1,
+                "failures": 0,
+                "tests_run": 0,
+                "output": f"THREAD CRASH: {e}",
+                "error_traceback": traceback.format_exc(),
+                "install_ok": False,
+                "duration": 0,
+            }
+
     import threading
 
-    results = [{}] * len(test_matrix)
+    # Fix #9: independent dicts instead of shared references
+    results = [{} for _ in range(len(test_matrix))]
     ts = []
     for i, _entry in enumerate(test_matrix):
-        t = threading.Thread(target=_test_runner, args=(_entry,results, i))
+        t = threading.Thread(target=_test_runner, args=(_entry, results, i))
         t.start()
         ts.append(t)
 
@@ -482,6 +497,24 @@ def cmd_test() -> list[dict]:
 # ═════════════════════════════════════════════════════════════════════════════
 #  REPORT
 # ═════════════════════════════════════════════════════════════════════════════
+
+
+def _classify_failure(r: dict) -> tuple[str, str]:
+    """Klassifiziere Fehler-Typ. Returns (label, color)."""
+    status = r.get("status", "")
+    if status in ("INSTALL_FAIL", "PYTEST_INSTALL_FAIL"):
+        return "INSTALL FAIL", "#f97316"
+    if status == "TIMEOUT":
+        return "TIMEOUT", "#a855f7"
+    if status == "CRASH":
+        return "THREAD CRASH", "#dc2626"
+    if status == "ERROR":
+        return "ERROR", "#ef4444"
+    if r.get("error_traceback"):
+        return "EXCEPTION", "#ef4444"
+    if r.get("parse_warning"):
+        return "PARSE WARN", "#eab308"
+    return "TEST FAIL", "#ef4444"
 
 
 def cmd_report(
@@ -502,11 +535,12 @@ def cmd_report(
     except Exception:
         pass
 
-    # ── HTML generieren ──────────────────────────────────────────────────
-
-    def _status_badge(ok: bool) -> str:
-        color = "#22c55e" if ok else "#ef4444"
-        label = "PASS" if ok else "FAIL"
+    def _status_badge(ok: bool, r: dict | None = None) -> str:
+        if ok:
+            color = "#22c55e"
+            label = "PASS"
+        else:
+            label, color = _classify_failure(r or {})
         return f'<span style="background:{color};color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">{label}</span>'
 
     build_rows = ""
@@ -514,10 +548,13 @@ def cmd_report(
         action = r.get("action", "?")
         size = f'{r.get("size", 0)} KB' if r.get("size") else "—"
         color = "#22c55e" if action != "failed" else "#ef4444"
+        error_detail = ""
+        if r.get("pack_error"):
+            error_detail = f' <span style="color:#f97316;font-size:11px">({html.escape(r["pack_error"])})</span>'
         build_rows += f"""
         <tr>
             <td>{html.escape(r['feature'])}</td>
-            <td style="color:{color}">{action}</td>
+            <td style="color:{color}">{action}{error_detail}</td>
             <td>{size}</td>
         </tr>"""
 
@@ -532,12 +569,22 @@ def cmd_report(
             total_fail += 1
 
         extras = ",".join(r.get("extras", [])) or "mini"
-        output_escaped = html.escape(r.get("output", "")[:2000])
+        # Fix #7: no truncation — CSS handles overflow
+        output_escaped = html.escape(r.get("output", ""))
+        # Fix #8: error type classification
+        status_detail = ""
+        if not passed:
+            fail_label, _ = _classify_failure(r)
+            status_detail = f' <span style="opacity:.6;font-size:11px">[{fail_label}]</span>'
+            if r.get("error_traceback"):
+                output_escaped += f"\n\n--- TRACEBACK ---\n{html.escape(r['error_traceback'])}"
+            if r.get("parse_warning"):
+                output_escaped += f"\n\n--- PARSE WARNING ---\n{html.escape(r['parse_warning'])}"
         test_rows += f"""
         <tr>
-            <td>{html.escape(r['feature'])}</td>
+            <td>{html.escape(r.get('feature', '?'))}</td>
             <td>[{html.escape(extras)}]</td>
-            <td>{_status_badge(passed)}</td>
+            <td>{_status_badge(passed, r)}{status_detail}</td>
             <td>{r.get('tests_run', 0)}</td>
             <td>{r.get('failures', 0)}</td>
             <td>{r.get('errors', 0)}</td>
@@ -547,7 +594,6 @@ def cmd_report(
 
     all_pass = total_fail == 0 and total_pass > 0
     overall_badge = _status_badge(all_pass)
-
     report_html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -578,14 +624,12 @@ def cmd_report(
   <h1>ToolBoxV2 Build Report</h1>
   <div class="meta">v{html.escape(version)} · {datetime.now().strftime('%Y-%m-%d %H:%M')} · {overall_badge}</div>
 </div>
-
 <div class="summary">
   <div class="stat"><div class="n">{len(build_results)}</div><div class="label">Features</div></div>
   <div class="stat"><div class="n" style="color:#22c55e">{total_pass}</div><div class="label">Passed</div></div>
   <div class="stat"><div class="n" style="color:#ef4444">{total_fail}</div><div class="label">Failed</div></div>
   <div class="stat"><div class="n">{sum(r.get('tests_run', 0) for r in test_results)}</div><div class="label">Tests</div></div>
 </div>
-
 <div class="card">
   <h2>Build</h2>
   <table>
@@ -593,7 +637,6 @@ def cmd_report(
     {build_rows}
   </table>
 </div>
-
 <div class="card">
   <h2>Tests</h2>
   <table>
@@ -607,7 +650,6 @@ def cmd_report(
     report_path.write_text(report_html, encoding="utf-8")
     _p(f"  ✓ {report_path}")
 
-    # JSON auch ablegen
     json_path = REPORT_DIR / f"build_report_{timestamp}.json"
     json_path.write_text(
         json.dumps(
@@ -674,7 +716,6 @@ def _parse_pyproject_deps() -> dict[str, list[str]]:
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     groups: dict[str, list[str]] = {}
 
-    # Base dependencies
     m = re.search(
         r'^\[project\].*?^dependencies\s*=\s*\[(.*?)\]',
         text,
@@ -683,7 +724,6 @@ def _parse_pyproject_deps() -> dict[str, list[str]]:
     if m:
         groups["mini"] = _extract_dep_list(m.group(1))
 
-    # Optional dependencies
     for m in re.finditer(
         r'^(\w+)\s*=\s*\[(.*?)\]',
         _get_section(text, "[project.optional-dependencies]"),
@@ -700,7 +740,6 @@ def _get_section(text: str, header: str) -> str:
     start = text.find(header)
     if start < 0:
         return ""
-    # Finde nächste [section]
     rest = text[start + len(header):]
     end = re.search(r'^\[', rest, re.MULTILINE)
     return rest[:end.start()] if end else rest
@@ -713,9 +752,7 @@ def _extract_dep_list(block: str) -> list[str]:
         line = line.strip().strip(",")
         if line.startswith("#"):
             continue
-        # Entferne Kommentare am Ende
         line = re.sub(r'#.*$', '', line).strip().strip(",")
-        # Entferne Anführungszeichen
         dep = line.strip('"').strip("'").strip()
         if dep and not dep.startswith("toolboxv2"):
             deps.append(dep)
@@ -723,41 +760,33 @@ def _extract_dep_list(block: str) -> list[str]:
 
 
 def _dep_name(dep_str: str) -> str:
-    """Extrahiere Package-Name aus dep string (z.B. 'pydantic>=2.0' → 'pydantic')."""
+    """Extrahiere Package-Name aus dep string."""
     return re.split(r'[><=~!\[;]', dep_str)[0].strip().lower()
 
 
 def cmd_deps_analyze():
-    """Zeige Dependency-Map: welches Package in welcher Gruppe."""
+    """Zeige Dependency-Map."""
     console.rule("DEPENDENCY ANALYSIS")
-
     groups = _parse_pyproject_deps()
     features = discover_features()
-
-    # Sammle alle feature.yaml deps
     feature_deps: dict[str, list[str]] = {}
     for name, config in features.items():
         deps = config.get("dependencies", [])
         if deps:
             feature_deps[name] = deps
-
-    # Analyse: base deps die in Features dupliziert sind
     base_names = {_dep_name(d) for d in groups.get("mini", [])}
     extra_names: dict[str, set[str]] = {}
     for group, deps in groups.items():
         if group == "mini":
             continue
         extra_names[group] = {_dep_name(d) for d in deps}
-
     _p("\n  ── Base Dependencies ──\n")
     for dep in sorted(groups.get("mini", [])):
         name = _dep_name(dep)
         also_in = [g for g, names in extra_names.items() if name in names]
         suffix = f"  (auch in: {', '.join(also_in)})" if also_in else ""
         _p(f"    {dep}{suffix}")
-
     _p(f"\n  Base hat {len(groups.get('base', []))} deps\n")
-
     _p("  ── Feature Dependencies (aus feature.yaml) ──\n")
     for fname, deps in sorted(feature_deps.items()):
         _p(f"    {fname}: {len(deps)} deps")
@@ -765,8 +794,6 @@ def cmd_deps_analyze():
             in_base = "⚠ IN BASE" if _dep_name(d) in base_names else ""
             _p(f"      {d}  {in_base}")
         _p("")
-
-    # Mini-Feature deps = was wirklich in base sein sollte
     _p("  ── Empfehlung: base deps = mini feature ──\n")
     mini_deps = feature_deps.get("mini", [])
     if mini_deps:
@@ -775,7 +802,6 @@ def cmd_deps_analyze():
             _p(f"      {d}")
     else:
         _p("    (mini feature.yaml hat keine dependencies definiert)")
-
     bloat = len(groups.get("mini", [])) - len(mini_deps)
     if bloat > 0:
         _p(f"\n    → {bloat} deps könnten aus base entfernt werden")
@@ -784,15 +810,12 @@ def cmd_deps_analyze():
 def cmd_deps_update():
     """Prüfe auf neuere Versionen aller deps."""
     console.rule("DEPENDENCY UPDATE CHECK")
-
     groups = _parse_pyproject_deps()
     all_deps = set()
     for deps in groups.values():
         for d in deps:
             all_deps.add(_dep_name(d))
-
     _p(f"  Prüfe {len(all_deps)} packages ...\n")
-
     for dep_name in sorted(all_deps):
         try:
             proc = subprocess.run(
@@ -812,43 +835,26 @@ def cmd_deps_update():
 def cmd_deps_minimize():
     """Schreibe pyproject.toml base deps auf mini-only um."""
     console.rule("MINIMIZE BASE DEPS")
-
     features = discover_features()
     mini_config = features.get("mini", {})
     mini_deps = mini_config.get("dependencies", [])
-
     if not mini_deps:
         _p("  ✗ mini feature.yaml hat keine dependencies", style="red")
         return
-
     pyproject_path = ROOT / "pyproject.toml"
     text = pyproject_path.read_text(encoding="utf-8")
-
-    # Ersetze dependencies = [...] im [project] Block
     new_deps_str = "dependencies = [\n"
     for d in mini_deps:
         new_deps_str += f'    "{d}",\n'
     new_deps_str += "]"
-
-    # Finde und ersetze den dependencies Block
     pattern = r'(^\[project\].*?^)dependencies\s*=\s*\[.*?\]'
-    updated = re.sub(
-        pattern,
-        rf'\g<1>{new_deps_str}',
-        text,
-        count=1,
-        flags=re.MULTILINE | re.DOTALL,
-    )
-
+    updated = re.sub(pattern, rf'\g<1>{new_deps_str}', text, count=1, flags=re.MULTILINE | re.DOTALL)
     if updated == text:
         _p("  ✗ Konnte dependencies Block nicht finden", style="red")
         return
-
-    # Backup
     backup = pyproject_path.with_suffix(".toml.bak")
     shutil.copy2(pyproject_path, backup)
     _p(f"  ✓ Backup: {backup.name}")
-
     pyproject_path.write_text(updated, encoding="utf-8")
     _p(f"  ✓ pyproject.toml base deps auf mini reduziert ({len(mini_deps)} deps)")
     _p(f"\n  Neue base deps:")
@@ -898,8 +904,11 @@ def main():
         cmd_build()
 
     elif args.command == "test":
+        # Fix #1: exit with code 1 on failures
         results = cmd_test()
         cmd_report([], results)
+        if any(not r.get("passed", False) for r in results if r):
+            sys.exit(1)
 
     elif args.command == "upload":
         if args.prod:
@@ -925,11 +934,16 @@ def main():
         if not args.skip_tests:
             test_results = cmd_test()
         report_path = cmd_report(build_results, test_results)
+        # Fix #1: exit with code 1 on failures
+        has_test_fail = any(not r.get("passed", False) for r in test_results if r)
+        has_build_fail = any(r.get("action") == "failed" for r in build_results)
         if args.prod:
             cmd_upload(production=True)
         elif args.test:
             cmd_upload(production=False)
         _p(f"\n  Report: {report_path}")
+        if has_test_fail or has_build_fail:
+            sys.exit(1)
 
     console.rule("Done")
 

@@ -6,8 +6,6 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from urllib.parse import quote  # For URL encoding parameters
 
-from jinja2 import BaseLoader, Environment
-
 # Assuming Code is available from your toolboxv2 installation
 try:
     from toolboxv2.utils.security.cryp import Code
@@ -117,8 +115,6 @@ BASE_HTML_TEMPLATE = """
 """
 
 # Jinja2 Environment for inline templates
-jinja_env = Environment(loader=BaseLoader())
-base_template_jinja = jinja_env.from_string(BASE_HTML_TEMPLATE)
 
 
 class EmailSender:
@@ -134,6 +130,14 @@ class EmailSender:
 
     def _render_html(self, subject, content_html, preview_text, recipient_email_for_unsubscribe=None,
                      show_unsubscribe_link=False):
+        # TODO use minimalHTML
+        try:
+            from jinja2 import BaseLoader, Environment
+        except ImportError:
+            BaseLoader, Environment = lambda: None, lambda _: None
+
+        jinja_env = Environment(loader=BaseLoader())
+        base_template_jinja = jinja_env.from_string(BASE_HTML_TEMPLATE)
         return base_template_jinja.render(
             subject=subject,
             content=content_html,

@@ -7,9 +7,20 @@ from datetime import date, datetime, time, timedelta
 from enum import Enum
 from typing import Any
 
-import pytz
-from dateutil.parser import isoparse
-from dateutil.relativedelta import relativedelta  # For more accurate month/year additions
+try:
+    import pytz
+except ImportError:
+    pytz =  lambda :None
+    pytz.utc = 0
+    pytz.BaseTzInfo = None
+    pytz.all_timezones_set = []
+try:
+    from dateutil.parser import isoparse
+    from dateutil.relativedelta import relativedelta  # For more accurate month/year additions
+except ImportError:
+    isoparse = lambda x:None
+    relativedelta = lambda x:None
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from toolboxv2 import App, RequestData, Result, get_app

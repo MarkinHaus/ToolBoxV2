@@ -279,48 +279,43 @@ def _parse_search(raw: str, manager_name: str) -> list[dict[str, str]]:
     lines = raw.strip().splitlines()
 
     if manager_name == "winget":
-        # winget outputs fixed-width columns with a header + dashes separator
-        # strip BOM / progress chars that winget may emit
         cleaned = []
         for line in lines:
-            line = line.lstrip("\ufeff\x00")  # BOM
-            line = line.replace("\r", "")
+            line = line.lstrip("\ufeff\x00").replace("\r", "")
             if line.strip():
                 cleaned.append(line)
         lines = cleaned
 
         header_idx = -1
-        dash_line = ""
         for i, line in enumerate(lines):
-            stripped = line.strip()
-            # match a line that is predominantly dashes (may have spaces between column groups)
-            if len(stripped) > 10 and stripped.replace("-", "").replace(" ", "") == "":
+            s = line.strip()
+            if len(s) > 10 and re.fullmatch(r"[-\s]+", s):
                 header_idx = i
-                dash_line = line
                 break
         if header_idx < 1:
-            pass
-        else:
-            # find where each dash-group starts
-            col_starts = [m.start() for m in re.finditer(r"-+", dash_line)]
-            data_lines = lines[header_idx + 1:]
-            for line in data_lines:
-                if not line.strip():
-                    continue
-                # extract fields by column positions
-                fields = []
-                for j, start in enumerate(col_starts):
-                    end = col_starts[j + 1] if j + 1 < len(col_starts) else len(line)
-                    if start < len(line):
-                        fields.append(line[start:end].strip())
-                    else:
-                        fields.append("")
-                if len(fields) >= 2 and fields[0]:
-                    results.append({
-                        "name": fields[0],
-                        "id": fields[1],
-                        "version": fields[2] if len(fields) > 2 else "",
-                    })
+            return results
+
+        header_line = lines[header_idx - 1]
+        # find column start positions from header word boundaries
+        col_starts = [m.start() for m in re.finditer(r"\S+(?:\s+\S+)*", header_line)]
+        # simpler: split header into words, find start of each
+        col_starts = []
+        for m in re.finditer(r"\S+", header_line):
+            col_starts.append(m.start())
+
+        for line in lines[header_idx + 1:]:
+            if not line.strip():
+                continue
+            fields = []
+            for j, start in enumerate(col_starts):
+                end = col_starts[j + 1] if j + 1 < len(col_starts) else len(line)
+                fields.append(line[start:end].strip() if start < len(line) else "")
+            if len(fields) >= 2 and fields[0]:
+                results.append({
+                    "name": fields[0],
+                    "id": fields[1],
+                    "version": fields[2] if len(fields) > 2 else "",
+                })
     elif manager_name == "brew":
         for line in lines:
             line = line.strip()

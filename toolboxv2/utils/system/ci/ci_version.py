@@ -8,12 +8,12 @@ Aktualisiert die Version in allen relevanten Dateien:
   - __init__.py (__version__)
 
 Usage:
-    python ci_version.py show              # Zeige aktuelle Version
-    python ci_version.py patch             # 0.1.25 → 0.1.26
-    python ci_version.py minor             # 0.1.25 → 0.2.0
-    python ci_version.py major             # 0.1.25 → 1.0.0
-    python ci_version.py set 0.2.0         # Explizite Version
-    python ci_version.py patch --tag       # Bump + git tag
+    tb version show              # Zeige aktuelle Version
+    tb version patch             # 0.1.25 → 0.1.26
+    tb version minor             # 0.1.25 → 0.2.0
+    tb version major             # 0.1.25 → 1.0.0
+    tb version set 0.2.0         # Explizite Version
+    tb version patch --tag       # Bump + git tag
 """
 import re
 import subprocess
@@ -165,7 +165,7 @@ def main():
     # Neue Version bestimmen
     if cmd == "set":
         if len(sys.argv) < 3:
-            print("ERROR: python ci_version.py set <VERSION>", file=sys.stderr)
+            print("ERROR: tb version set <VERSION>", file=sys.stderr)
             sys.exit(1)
         new_version = sys.argv[2].lstrip("v")
     elif cmd in ("patch", "minor", "major"):

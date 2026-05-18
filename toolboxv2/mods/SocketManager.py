@@ -156,8 +156,8 @@ class Tools(MainTool, FileHandler):
     async def on_start(self):
         self.logger.info("Starting SocketManager")
         self.print(f"{Name} is Starting")
-        threading.Thread(target=async_test(self.set_print_public_ip), daemon=True).start()
-        threading.Thread(target=async_test(self.set_print_local_ip), daemon=True).start()
+        # threading.Thread(target=async_test(self.set_print_public_ip), daemon=True).start()
+        # threading.Thread(target=async_test(self.set_print_local_ip), daemon=True).start()
         # ~ self.load_file_handler()
 
     async def on_exit(self):

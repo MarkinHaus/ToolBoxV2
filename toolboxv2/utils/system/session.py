@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import socket
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -138,7 +139,7 @@ class Session(metaclass=Singleton):
                 "user_id": user_id or self.user_id or "",
                 "username": self.username or "",
                 "base_url": self.base,  # Persist the URL used for this token
-                "updated_at": str(asyncio.get_event_loop().time())
+                "updated_at": str(time.time())
             }
             key = self._get_encryption_key()
             blob_name = self._get_blob_name()
@@ -315,7 +316,7 @@ class Session(metaclass=Singleton):
                         result.get("info", {}).get("help_text", "Unknown error")
                     )
 
-                return Result.ok("Magic link sent", data=result.get("result", {}))
+                return Result.ok(data_info="Magic link sent", data=result.get("result", {}))
 
         except Exception as e:
             get_logger().error(f"Magic link request error: {e}")
@@ -348,7 +349,7 @@ class Session(metaclass=Singleton):
                 )
                 self.username = data.get("username", "")
                 self.valid = True
-                return Result.ok("Login successful", data=data)
+                return Result.ok(data_info="Login successful", data=data)
 
         except Exception as e:
             get_logger().error(f"Magic link verify error: {e}")
@@ -381,7 +382,7 @@ class Session(metaclass=Singleton):
                 )
                 self.username = data.get("username", "")
                 self.valid = True
-                return Result.ok("Login successful", data=data)
+                return Result.ok(data_info="Login successful", data=data)
 
         except Exception as e:
             get_logger().error(f"Invite code login error: {e}")

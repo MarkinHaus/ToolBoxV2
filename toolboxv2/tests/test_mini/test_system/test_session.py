@@ -64,9 +64,13 @@ class TestSessionStorage(unittest.TestCase):
         # Arrange
         mock_code.DK.return_value.return_value = "fake-device-key"
         mock_blob_instance = mock_blob_file.return_value.__enter__.return_value
-
         # Act
-        result = self.sess._save_session_token("access_123", "refresh_456", "user_789")
+        import traceback
+        try:
+            result = self.sess._save_session_token("access_123", "refresh_456", "user_789")
+        except Exception as e:
+            print(traceback.format_exc())
+            result = False
 
         # Assert
         self.assertTrue(result)
@@ -137,7 +141,9 @@ class TestSessionAuth(unittest.IsolatedAsyncioTestCase):
         self.sess._ensure_session()
 
         # Intercept aiohttp requests
-        self.mock_request = AsyncMock()
+        self.mock_request = MagicMock()
+        self.mock_request.return_value.__aenter__ = AsyncMock()
+        self.mock_request.return_value.__aexit__ = AsyncMock(return_value=False)
         self.sess._session.request = self.mock_request
 
     async def asyncTearDown(self):
@@ -285,9 +291,12 @@ class TestSessionNetwork(unittest.IsolatedAsyncioTestCase):
         mock_resp.status = 200
         mock_resp.content.read = AsyncMock(side_effect=[b"chunk1", b"chunk2", b""])
 
-        mock_get = AsyncMock()
-        mock_get.return_value.__aenter__.return_value = mock_resp
-        self.sess._session.get = mock_get
+        mock_context = AsyncMock()
+        mock_context.__aenter__.return_value = mock_resp
+        mock_context.__aexit__.return_value = False
+
+        self.sess._session = MagicMock()
+        self.sess._session.get = MagicMock(return_value=mock_context)
 
         # Act
         success = await self.sess.download_file("http://test.local/file.zip", "test_out")
@@ -296,10 +305,9 @@ class TestSessionNetwork(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(success)
         mock_makedirs.assert_called_with("test_out", exist_ok=True)
 
-        # Verify writing logic
+        expected_path = os.path.join("test_out", "file.zip")
+        mock_file.assert_any_call(expected_path, 'wb')
+
         handle = mock_file()
         handle.write.assert_any_call(b"chunk1")
         handle.write.assert_any_call(b"chunk2")
-
-        expected_path = os.path.join("test_out", "file.zip")
-        mock_file.assert_called_with(expected_path, 'wb')

@@ -141,7 +141,8 @@ class TestModManager(unittest.TestCase):
         zip_path_str = create_and_pack_module(
             path=str(source_path),
             module_name=module_name,
-            version=module_version
+            version=module_version,
+            output_dir=os.path.join(self.test_dir , "mods_sto"),
         )
         zip_path = Path(zip_path_str)
         zip_name = zip_path.name

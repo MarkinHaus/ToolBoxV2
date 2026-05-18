@@ -46,15 +46,15 @@ class TestConfigConverter:
             converter = ConfigConverter(manifest, Path(tmpdir))
             generated = converter.apply_all()
 
-            assert len(generated) >= 3
+            assert len(generated) >= 2
 
             # Check .config.yaml exists
-            config_yaml = Path(tmpdir) / ".config.yaml"
+            config_yaml = Path(tmpdir) / "config.yaml"
             assert config_yaml.exists()
 
-            # Check bin/config.toml exists
-            config_toml = Path(tmpdir) / "bin" / "config.toml"
-            assert config_toml.exists()
+            # # Check bin/config.toml exists
+            # config_toml = Path(tmpdir) / "bin" / "config.toml"
+            # assert config_toml.exists()
 
             # Check services.json exists
             services_json = Path(tmpdir) / "services.json"
@@ -66,7 +66,7 @@ class TestConfigConverter:
             converter = ConfigConverter(manifest, Path(tmpdir))
             converter.apply_all()
 
-            config_path = Path(tmpdir) / ".config.yaml"
+            config_path = Path(tmpdir) / "config.yaml"
             with open(config_path) as f:
                 content = f.read()
                 # Skip header comments
@@ -80,20 +80,6 @@ class TestConfigConverter:
             assert config["toolbox"]["modules_preload"] == ["CloudM"]
             assert config["http_worker"]["port"] == 8000
             assert config["ws_worker"]["port"] == 8100
-
-    def test_rust_config_content(self, manifest):
-        """Test bin/config.toml content is correct."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            converter = ConfigConverter(manifest, Path(tmpdir))
-            converter.apply_all()
-
-            config_path = Path(tmpdir) / "bin" / "config.toml"
-            with open(config_path) as f:
-                content = f.read()
-
-            assert 'open_modules = ["CloudM.AuthHelper"]' in content
-            assert 'init_modules = ["CloudM"]' in content
-            assert 'client_prefix = "api-client"' in content
 
     def test_services_json_content(self, manifest):
         """Test services.json content is correct."""

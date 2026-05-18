@@ -396,6 +396,7 @@ def setup_service_linux():
 # =================== Constants ===================
 
 RUNNER_KEYS = [
+    "version",
     "venv",
     "db",
     "gui",
@@ -424,6 +425,7 @@ RUNNER_KEYS = [
     "manifest",
     "llm-gateway",
     "mkdocs",
+    "fbuild",
     "analyze",
     "docksh",
     "docker-image",
@@ -790,6 +792,7 @@ def show_interactive_guide():
     │    db            Database management                                       │
     │    docksh        Interactive Docker shell                                  │
     │    docker-image  Docker image management                                   │
+    │    fbuild        Build TB Feature for pip                                  │
     │    fl            Feature loader                                            │
     │    flow          Execute flows from file / directory                       │
     │    gui           Desktop GUI (feature: desktop)                            │
@@ -811,6 +814,7 @@ def show_interactive_guide():
     │    session       Session management                                        │
     │    status        System health check                                       │
     │    user          User management                                           │
+    │    version       TB Version Manager                                        │
     │    venv          Virtual environment management                            │
     │    workers       Worker system management (feature: web)                   │
     │    ws_worker     Single WebSocket worker (feature: web)                    │
@@ -2088,6 +2092,12 @@ def runner_setup():
         "llm-gateway": lambda: __import__(
             "toolboxv2.utils.clis.llm_gateway_cli", fromlist=["cli_llm_gateway"]
         ).cli_llm_gateway(),
+        "fbuild": lambda: __import__(
+            "toolboxv2.utils.system.ci.ci_build", fromlist=["main"]
+        ).main(),
+        "version": lambda: __import__(
+            "toolboxv2.utils.system.ci.ci_version", fromlist=["main"]
+        ).main(),
         "docksh": _run_docksh,
         "docker-image": lambda: __import__(
             "toolboxv2.utils.clis.docker_image_cli", fromlist=["main"]

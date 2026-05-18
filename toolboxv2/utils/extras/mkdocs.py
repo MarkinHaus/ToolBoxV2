@@ -1609,8 +1609,8 @@ class ContextEngine:
                     for fp in relative_paths
                 },
                 "context_graph": {
-                    "upstream_dependencies": upstream[:15],
-                    "downstream_usages": downstream[:15],
+                    "upstream_dependencies": upstream[:15] if upstream else [],
+                    "downstream_usages": downstream[:15] if downstream else [],
                 },
                 "relevant_docs": relevant_docs[:5],
             }
@@ -1749,7 +1749,7 @@ class ContextEngine:
                 return (has_usage, type_score, core_score, has_import, is_test, -depth)
 
             dependencies.sort(key=_score_upstream, reverse=True)
-            return dependencies
+        return dependencies
 
     def _resolve_downstream(
         self, focus_names: Set[str], exclude_paths: Set[str]
@@ -1874,7 +1874,7 @@ class ContextEngine:
                 return (has_real_usage, usage_count, core_score, is_test, name_specificity)
 
             usages.sort(key=_score_downstream, reverse=True)
-            return usages
+        return usages
 
     def _truncate_content(self, content: str, limit: int) -> str:
         """Helper to keep context bundle small."""

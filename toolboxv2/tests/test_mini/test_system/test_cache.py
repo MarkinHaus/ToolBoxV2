@@ -77,11 +77,11 @@ class TestMemoryCache(unittest.TestCase):
         self.assertIsNone(value)
 
     def test_ttl_timer(self):
-        cache = MemoryCache(maxsize=100, ttl=1)  # TTL set to 1 second
+        cache = MemoryCache(maxsize=100, ttl=0.01)  # TTL set to 1 second
         # Set a key-value pair
         cache.set('key', 'value')
-        # Wait for 2 seconds
-        time.sleep(2)
+        # Wait for 2 milli seconds
+        time.sleep(0.1)
         # Attempt to get the value for the key after TTL expiry
         value = cache.get('key')
         # Verify that the value is None since the TTL has expired

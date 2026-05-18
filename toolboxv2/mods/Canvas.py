@@ -13,7 +13,6 @@ except ImportError:
     UTC = timezone.utc
 from typing import Any
 
-import markdown2
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
 
@@ -214,6 +213,8 @@ async def markdown_to_svg(self, request: RequestData, markdown_text: str = "", w
         return Result.default_user_error("markdown_text cannot be empty.")
 
     try:
+
+        import markdown2
         # Convert Markdown to HTML
         html_content = markdown2.markdown(markdown_text, extras=["fenced-code-blocks", "tables", "strike"])
 

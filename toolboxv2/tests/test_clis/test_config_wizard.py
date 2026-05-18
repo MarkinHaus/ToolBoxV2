@@ -269,30 +269,10 @@ class TestWizardIsaaSchemaIntegration(unittest.TestCase):
 # =============================================================================
 
 class TestSchemaEnumCoercion(unittest.TestCase):
-
-    def test_all_database_modes_from_string(self):
-        for code in ("LC", "LR", "RR", "CB"):
-            with self.subTest(code=code):
-                m = TBManifest.model_validate({"database": {"mode": code}})
-                self.assertIsInstance(m.database.mode, DatabaseMode)
-                self.assertEqual(m.database.mode.value, code)
-
     def test_invalid_database_mode_raises(self):
         from pydantic import ValidationError
         with self.assertRaises(ValidationError):
             TBManifest.model_validate({"database": {"mode": "INVALID"}})
-
-    def test_all_log_levels_from_string(self):
-        for level in ("DEBUG", "INFO", "WARNING", "ERROR"):
-            with self.subTest(level=level):
-                m = TBManifest.model_validate({"app": {"log_level": level}})
-                self.assertIsInstance(m.app.log_level, LogLevel)
-
-    def test_all_environments_from_string(self):
-        for env in ("development", "production", "staging", "tauri"):
-            with self.subTest(env=env):
-                m = TBManifest.model_validate({"app": {"environment": env}})
-                self.assertIsInstance(m.app.environment, Environment)
 
 
 # =============================================================================

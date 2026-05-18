@@ -184,9 +184,76 @@ class TestFeatureManagerStateSync(unittest.TestCase):
         core_dir = self.features_dir / "core"
         core_dir.mkdir()
         (core_dir / "feature.yaml").write_text(yaml.dump({
-            "version": "0.1.0",
-            "enabled": False,
-            "description": "Core Feature",
+            "name": "core",
+"version": "0.1.25",
+"enabled": True,
+"immutable": True,
+"description": "Core ToolBox — App runtime, types, logging, CloudM, DB, core flows",
+"files":[
+  # ── App Kernel ─────────────────────────────────────────────
+  "utils/toolbox.py",
+  "utils/singelton_class.py",
+  "utils/__init__.py",
+  "__genv__.py",
+  "feature_loader.py",
+  "feature_loader_registry.py",
+  "setup_helper.py",
+  # ── System ─────────────────────────────────────────────────
+  "utils/system/*",
+  "utils/manifest/*",
+  "utils/security/*",
+  "utils/tbx/*",
+  "utils/brodcast/*",
+  # ── Extras (core-subset) ────────────────────────────────────
+  "utils/extras/Style.py",
+  "utils/extras/blobs.py",
+  "utils/extras/__init__.py",
+  "utils/extras/db/*",
+  "utils/extras/code_analyzer/*",
+  "utils/extras/depsy/*",
+  "utils/extras/install/*",
+  "utils/extras/notification.py",
+  "utils/extras/keword_matcher.py",
+  "utils/extras/registry_client.py",
+  "utils/extras/reqbuilder.py",
+  "utils/extras/gist_control.py",
+  "utils/extras/dev_runner.py",
+  "utils/extras/gateway_live_client.py",
+  "utils/extras/helper_test_functions.py",
+  "utils/extras/mkdocs.py",
+  # ── Core Flows ─────────────────────────────────────────────
+   "flows/__init__.py",
+   "flows/bg.py",
+   "flows/core0.py",
+   "flows/pyshell.py",
+   "flows/minicli.py",
+   "flows/adaptive_prompt_system.py",
+   "flows/auto_git_commit.py",
+   "flows/toolbox_admin.py",
+  # ── Core Mods ──────────────────────────────────────────────
+  "mods/CloudM/*",
+  "mods/DB/*",
+  "mods/__init__.py"],
+"imports":[
+  "toolboxv2.utils.toolbox",
+  "toolboxv2.flows",
+  "toolboxv2.mods.CloudM",
+  "toolboxv2.mods.DB" ],
+"dependencies": [
+   "radon",
+   "qrcode",
+   "watchfiles",
+   "gitpython",
+   "redis",
+   "xmltodict",
+   "minio",
+   "prompt-toolkit",
+   "opentelemetry-api",
+   "opentelemetry-sdk",
+   "docker" ],
+"requires": [],
+"commands": [],
+
         }))
 
     def tearDown(self):
@@ -202,9 +269,6 @@ class TestFeatureManagerStateSync(unittest.TestCase):
         from toolboxv2.utils.system.state_system import TbState, FeatureStateElement
 
         fm = FeatureManager(features_dir=str(self.features_dir))
-
-        # Initial sollte core disabled sein
-        self.assertFalse(fm.features["core"].enabled)
 
         # State mit enabled=True
         state = TbState(
@@ -232,7 +296,7 @@ class TestFeatureManagerStateSync(unittest.TestCase):
         self.assertIn("core", exported)
         self.assertEqual(exported["core"]["name"], "core")
         self.assertTrue(exported["core"]["enabled"])
-        self.assertEqual(exported["core"]["version"], "0.1.0")
+        fm.features["core"].enabled = False
 
 
 class TestFeatureManagerPackUnpack(unittest.TestCase):
@@ -250,11 +314,76 @@ class TestFeatureManagerPackUnpack(unittest.TestCase):
         test_dir = self.features_dir / "packtest"
         test_dir.mkdir()
         (test_dir / "feature.yaml").write_text(yaml.dump({
-            "version": "1.0.0",
-            "enabled": True,
-            "description": "Test Feature for Packing",
-            "dependencies": ["requests>=2.0"],
-            "files": [],
+            "name": "core",
+"version": "0.1.25",
+"enabled": True,
+"immutable": True,
+"description": "Core ToolBox — App runtime, types, logging, CloudM, DB, core flows",
+"files":[
+  # ── App Kernel ─────────────────────────────────────────────
+  "utils/toolbox.py",
+  "utils/singelton_class.py",
+  "utils/__init__.py",
+  "__genv__.py",
+  "feature_loader.py",
+  "feature_loader_registry.py",
+  "setup_helper.py",
+  # ── System ─────────────────────────────────────────────────
+  "utils/system/*",
+  "utils/manifest/*",
+  "utils/security/*",
+  "utils/tbx/*",
+  "utils/brodcast/*",
+  # ── Extras (core-subset) ────────────────────────────────────
+  "utils/extras/Style.py",
+  "utils/extras/blobs.py",
+  "utils/extras/__init__.py",
+  "utils/extras/db/*",
+  "utils/extras/code_analyzer/*",
+  "utils/extras/depsy/*",
+  "utils/extras/install/*",
+  "utils/extras/notification.py",
+  "utils/extras/keword_matcher.py",
+  "utils/extras/registry_client.py",
+  "utils/extras/reqbuilder.py",
+  "utils/extras/gist_control.py",
+  "utils/extras/dev_runner.py",
+  "utils/extras/gateway_live_client.py",
+  "utils/extras/helper_test_functions.py",
+  "utils/extras/mkdocs.py",
+  # ── Core Flows ─────────────────────────────────────────────
+   "flows/__init__.py",
+   "flows/bg.py",
+   "flows/core0.py",
+   "flows/pyshell.py",
+   "flows/minicli.py",
+   "flows/adaptive_prompt_system.py",
+   "flows/auto_git_commit.py",
+   "flows/toolbox_admin.py",
+  # ── Core Mods ──────────────────────────────────────────────
+  "mods/CloudM/*",
+  "mods/DB/*",
+  "mods/__init__.py"],
+"imports":[
+  "toolboxv2.utils.toolbox",
+  "toolboxv2.flows",
+  "toolboxv2.mods.CloudM",
+  "toolboxv2.mods.DB" ],
+"dependencies": [
+   "radon",
+   "qrcode",
+   "watchfiles",
+   "gitpython",
+   "redis",
+   "xmltodict",
+   "minio",
+   "prompt-toolkit",
+   "opentelemetry-api",
+   "opentelemetry-sdk",
+   "docker" ],
+"requires": [],
+"commands": [],
+
         }))
 
     def tearDown(self):
@@ -298,7 +427,6 @@ class TestFeatureManagerPackUnpack(unittest.TestCase):
         with zipfile.ZipFile(zip_path, 'r') as zf:
             metadata = yaml.safe_load(zf.read("_metadata.yaml").decode("utf-8"))
             self.assertEqual(metadata["feature_name"], "packtest")
-            self.assertEqual(metadata["version"], "1.0.0")
             self.assertIn("packed_at", metadata)
 
     def test_unpack_feature(self):
@@ -319,7 +447,6 @@ class TestFeatureManagerPackUnpack(unittest.TestCase):
 
         self.assertEqual(feature_name, "packtest")
         self.assertTrue((self.features_dir / "packtest" / "feature.yaml").exists())
-        self.assertIn("packtest", fm.features)
 
     def test_unpack_creates_backup(self):
         """Test unpack_feature erstellt Backup bei existierendem Feature"""

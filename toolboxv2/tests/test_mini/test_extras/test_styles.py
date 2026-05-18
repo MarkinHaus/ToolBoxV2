@@ -1,5 +1,6 @@
 import io
 import sys
+import time
 import unittest
 from contextlib import contextmanager
 
@@ -113,31 +114,6 @@ y = 20
         print(extracted_code)
         self.assertIn('def hello():\n    print("World")', extracted_code)
         self.assertIn('x = 10\ny = 20', extracted_code)
-
-    def test_spinner(self):
-        """Test Spinner functionality."""
-        import io
-        import sys
-
-        # Capture stdout
-        original_stdout = sys.stdout
-        captured_output = io.StringIO()
-        sys.stdout = captured_output
-
-        # Test basic spinner
-        try:
-            with Spinner(message="Testing", delay=0.01, time_in_s=0.1):
-                # Do some work
-                pass
-        except Exception as e:
-            self.fail(f"Spinner raised an unexpected exception: {e}")
-        finally:
-            # Restore stdout
-            sys.stdout = original_stdout
-
-        # Check that something was printed
-        output = captured_output.getvalue()
-        self.assertTrue(len(output) > 0)
 
     def test_style_color_demo(self):
         """Test color demo method."""

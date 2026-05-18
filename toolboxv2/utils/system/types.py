@@ -18,7 +18,10 @@ from inspect import signature
 from types import ModuleType
 from typing import Any, TypeVar, Dict, Coroutine
 
-import psutil
+try:
+    import psutil
+except ImportError:
+    psutil = None
 import requests
 from pydantic import BaseModel
 
@@ -1844,7 +1847,8 @@ class AppType:
         self.args_sto = args
         self.prefix = prefix
         self._footprint_start_time = time.time()
-        self._process = psutil.Process(os.getpid())
+        if psutil:
+            self._process = psutil.Process(os.getpid())
 
         # Tracking-Daten für Min/Max/Avg
         self._footprint_metrics = {
@@ -2745,7 +2749,6 @@ class AppType:
         """
 
     async def execute_all_functions_(self, m_query='', f_query='', test_class=None):
-
         from ..extras import generate_test_cases
         all_data = {
             "modular_run": 0,
@@ -2756,8 +2759,8 @@ class AppType:
             "total_coverage": {},
         }
         items = list(self.functions.items()).copy()
-
         print("Executing all functions", len(items))
+
         for module_name, functions in items:
             infos = {
                 "functions_run": 0,
@@ -2767,6 +2770,7 @@ class AppType:
                 'calls': {},
                 'callse': {},
                 "coverage": [0, 0],
+                "timeouts": [],  # neu
             }
             all_data['modular_run'] += 1
             if not module_name.startswith(m_query):
@@ -2775,59 +2779,90 @@ class AppType:
 
             with Spinner(message=f"In {module_name}|"):
                 f_items = list(functions.items()).copy()
+
+                # ── 1. Tasks sammeln ──────────────────────────────────────────
+                tasks_meta = []  # (function_name, test_kwargs, task)
                 for function_name, function_data in f_items:
                     if not isinstance(function_data, dict):
                         continue
                     if not function_name.startswith(f_query):
                         continue
-                    test: list = function_data.get('do_test')
-                    # print(test, module_name, function_name, function_data)
+
                     infos["coverage"][0] += 1
-                    if test is False:
+                    if function_data.get('do_test') is False:
+                        continue
+                    infos["coverage"][1] += 1
+
+                    params = function_data.get('params')
+                    sig = function_data.get('signature')
+                    state = function_data.get('state')
+                    samples = function_data.get('samples')
+
+                    test_kwargs_list = [{}]
+                    if params is not None:
+                        test_kwargs_list = samples if samples is not None else generate_test_cases(sig=sig)
+
+                    for test_kwargs in test_kwargs_list:
+                        coro = self.a_run_function(
+                            (module_name, function_name),
+                            tb_run_function_with_state=state,
+                            **test_kwargs,
+                        )
+                        # asyncio.Task → kann einzeln gecancelt / inspiziert werden
+                        task = asyncio.ensure_future(coro)
+                        tasks_meta.append((function_name, test_kwargs, task))
+
+                # ── 2. Alle parallel mit globalem 15 s Timeout warten ────────
+                all_tasks = [t for _, _, t in tasks_meta]
+                # return_exceptions=True → kein Task bricht die anderen ab
+                if all_tasks:
+                    await asyncio.wait(all_tasks, timeout=15)
+                else:
+                    pass  # Modul hat keine testbaren Funktionen → direkt zu Schritt 3
+                # ── 3. Ergebnisse auswerten ───────────────────────────────────
+                for function_name, test_kwargs, task in tasks_meta:
+                    infos['functions_run'] += 1
+                    ctx = f"{module_name}.{function_name}"
+
+                    if not task.done():
+                        # Nach 15 s noch nicht fertig → Timeout
+                        task.cancel()
+                        infos['functions_fatal_error'] += 1
+                        infos['timeouts'].append(function_name)
+                        infos['callse'][function_name] = [test_kwargs, "TIMEOUT (>15s)"]
+                        if test_class is not None:
+                            with test_class.subTest(ctx):
+                                test_class.fail(f"TIMEOUT: {ctx}")
                         continue
 
-                    with  (test_class.subTest(f"{module_name}.{function_name}") if test_class is not None else Spinner(message=f"\t\t\t\t\t\tfuction {function_name}...")):
-                        params: list = function_data.get('params')
-                        sig: signature = function_data.get('signature')
-                        state: bool = function_data.get('state')
-                        samples: bool = function_data.get('samples')
+                    exc = task.exception()
+                    if exc is not None:
+                        infos['functions_fatal_error'] += 1
+                        infos['callse'][function_name] = [test_kwargs, str(exc)]
+                        if test_class is not None:
+                            with test_class.subTest(ctx):
+                                test_class.fail(str(exc))
+                        continue
 
-                        test_kwargs_list = [{}]
+                    result = task.result()
+                    if not isinstance(result, Result):
+                        result = Result.ok(result)
 
-                        if params is not None:
-                            test_kwargs_list = samples if samples is not None else generate_test_cases(sig=sig)
-                            # print(test_kwargs)
-                            # print(test_kwargs[0])
-                            # test_kwargs = test_kwargs_list[0]
-                        # print(module_name, function_name, test_kwargs_list)
-                        infos["coverage"][1] += 1
-                        for test_kwargs in test_kwargs_list:
-                            result = None
-                            try:
-                                # print(f"test Running {state=} |{module_name}.{function_name}")
-                                result = await self.a_run_function((module_name, function_name),
-                                                                   tb_run_function_with_state=state,
-                                                                   **test_kwargs)
-                                if not isinstance(result, Result):
-                                    result = Result.ok(result)
-                                if test_class is not None:
-                                    test_class.assertTrue(not result.is_error(), result.print(show=False, full_data=True))
-                                if result.info.exec_code == 0:
-                                    infos['calls'][function_name] = [test_kwargs, str(result)]
-                                    infos['functions_sug'] += 1
-                                else:
-                                    infos['functions_sug'] += 1
-                                    infos['error'] += 1
-                                    infos['callse'][function_name] = [test_kwargs, str(result)]
-                            except Exception as e:
-                                infos['functions_fatal_error'] += 1
-                                infos['callse'][function_name] = [test_kwargs, str(e)]
-                                if test_class is not None:
-                                    import traceback
-                                    test_class.fail(str(result)+traceback.format_exc())
-                            finally:
-                                infos['functions_run'] += 1
+                    if test_class is not None:
+                        with test_class.subTest(ctx):
+                            test_class.assertTrue(
+                                not result.is_error(),
+                                result.print(show=False, full_data=True),
+                            )
 
+                    infos['functions_sug'] += 1
+                    if result.info.exec_code == 0:
+                        infos['calls'][function_name] = [test_kwargs, str(result)]
+                    else:
+                        infos['error'] += 1
+                        infos['callse'][function_name] = [test_kwargs, str(result)]
+
+                # ── 4. Modul-Aggregation ──────────────────────────────────────
                 if infos['functions_run'] == infos['functions_sug']:
                     all_data['modular_sug'] += 1
                 else:
@@ -2836,14 +2871,30 @@ class AppType:
                     all_data['errors'] += infos['error']
 
                 all_data[module_name] = infos
-                if infos['coverage'][0] == 0:
-                    c = 0
-                else:
-                    c = infos['coverage'][1] / infos['coverage'][0]
+                c = infos['coverage'][1] / infos['coverage'][0] if infos['coverage'][0] else 0
                 all_data["coverage"].append(f"{module_name}:{c:.2f}\n")
-        total_coverage = sum([float(t.split(":")[-1]) for t in all_data["coverage"]]) / len(all_data["coverage"])
+
+        # ── 5. Finaler Bericht ────────────────────────────────────────────────
+        total_coverage = (
+            sum(float(t.split(":")[-1]) for t in all_data["coverage"]) / len(all_data["coverage"])
+            if all_data["coverage"] else 0.0
+        )
+
+        # Timeouts über alle Module sammeln
+        all_timeouts = {
+            mod: data["timeouts"]
+            for mod, data in all_data.items()
+            if isinstance(data, dict) and data.get("timeouts")
+        }
+
         print(
-            f"\n{all_data['modular_run']=}\n{all_data['modular_sug']=}\n{all_data['modular_fatal_error']=}\n{total_coverage=}")
+            f"\n{all_data['modular_run']=}"
+            f"\n{all_data['modular_sug']=}"
+            f"\n{all_data['modular_fatal_error']=}"
+            f"\n{total_coverage=:.2f}"
+            f"\nTimeouts: {all_timeouts or 'keine'}"
+        )
+
         d = analyze_data(all_data)
         return Result.ok(data=all_data, data_info=d)
 

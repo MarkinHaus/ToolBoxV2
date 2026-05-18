@@ -20,6 +20,8 @@ dependencies = [
     "pydantic>=2.11.7",
     "pyzmq>=27.1.0",
     "aiosqlite>=0.22.1",
+    "psutil",
+    "prompt-toolkit>=3.0.52",
 ]
 
 [build-system]
