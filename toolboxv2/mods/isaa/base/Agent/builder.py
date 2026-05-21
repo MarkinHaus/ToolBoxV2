@@ -39,6 +39,7 @@ from toolboxv2.mods.isaa.base.Agent.types import (
     PersonaConfig,
     ResponseFormat,
     TextLength,
+    ObservabilityConfig
 )
 
 logger = get_logger()
@@ -114,7 +115,6 @@ class ContextBudgetConfig(BaseModel):
     safety_margin_tokens: int = 500       # Reserve
     heavy_hitter_min_tokens: int = 1000    # Min Größe für Offload-Kandidaten
 
-
 class AgentConfig(BaseModel):
     """Complete agent configuration for loading/saving"""
 
@@ -162,6 +162,7 @@ class AgentConfig(BaseModel):
     rule_config_path: Optional[str] = None
 
     context_config: ContextBudgetConfig = Field(default_factory=ContextBudgetConfig)
+    obs: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
 
 
 # =============================================================================
@@ -893,6 +894,18 @@ class FlowAgentBuilder:
         })
         return self
 
+    def with_observability(
+        self,
+        enabled: bool = True,
+        max_runs: int = 3,
+        snapshot_interval: int = 5,
+        enable_audit: bool = True,
+    ) -> "FlowAgentBuilder":
+        self.config.obs.enabled = enabled
+        self.config.obs.max_runs = max_runs
+        self.config.obs.snapshot_interval = snapshot_interval
+        self.config.obs.enable_audit = enable_audit
+        return self
     # =========================================================================
     # RULE CONFIG
     # =========================================================================
@@ -1043,6 +1056,7 @@ class FlowAgentBuilder:
                     persona=active_persona,
                     use_fast_response=self.config.use_fast_response,
                     handler_path_or_dict=handler_config,
+                    obs_config=self.config.obs,
                 )
 
                 # Step 4: Create FlowAgent
@@ -1136,6 +1150,8 @@ class FlowAgentBuilder:
                     res = await agent.checkpoint_manager.auto_restore()
 
                 agent._config_chash = self.config
+
+                await agent.post_init()
 
                 # Final summary
                 iprint("✓ FlowAgent built successfully!")

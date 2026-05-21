@@ -4,7 +4,6 @@ ExecutionEngine V3 - Intelligent Agent Orchestration
 Features:
 - Dynamic Tool Loading with keyword-based relevance scoring
 - Working/Permanent History separation with rule-based compression
-- AutoFocusTracker for context continuity
 - LoopDetector for autonomous safety
 - Skills integration for learned behaviors
 - Graceful max iterations handling with honest communication
@@ -34,6 +33,7 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional, Set, Tuple, U
 
 from litellm import max_tokens
 
+from base.Agent.ctx_cleaner import clean_messages
 from toolboxv2 import get_app, get_logger
 
 # Import Live State Management
@@ -302,101 +302,6 @@ class ToolValidationError(Exception):
     must be handled at the agent loop level, not retried mid-stream."""
 
     pass
-
-
-@dataclass
-class AutoFocusTracker:
-    """
-    Tracks recent actions for context continuity.
-    Injected as system message BEFORE user query in working_history.
-
-    This prevents "I forgot what I just did" errors in small models.
-    """
-
-    max_actions: int = 5
-    max_chars: int = 500
-    actions: List[str] = field(default_factory=list)
-
-    def record(self, tool_name: str, args: dict, result: str):
-        """Compress and store action"""
-        summary = self._compress(tool_name, args, result)
-        self.actions.append(summary)
-
-        if len(self.actions) > self.max_actions:
-            self.actions.pop(0)
-
-    def _compress(self, tool_name: str, args: dict, result: str) -> str:
-        """Intelligent compression based on tool type"""
-        tool_lower = tool_name.lower()
-        result_lower = result.lower() if result else ""
-
-        # File operations
-        if "write" in tool_lower or "create" in tool_lower:
-            path = args.get("path", args.get("filename", args.get("name", "?")))
-            lines = len(result.split("\n")) if result else 0
-            return f"✏️ Wrote {path} ({lines} lines)"
-
-        elif "read" in tool_lower:
-            path = args.get("path", "?")
-            chars = len(result) if result else 0
-            return f"📖 Read {path} ({chars} chars)"
-
-        elif "list" in tool_lower or "navigate" in tool_lower:
-            count = result.count("\n") + 1 if result else 0
-            return f"📋 Listed {count} items"
-
-        # Execution
-        elif "execute" in tool_lower or "run" in tool_lower or "shell" in tool_lower:
-            status = "✅" if "error" not in result_lower else "❌"
-            return f"{status} Executed command"
-
-        # Search/Query
-        elif "search" in tool_lower or "query" in tool_lower:
-            count = result.count("\n") + 1 if result else 0
-            return f"🔍 Searched, found {count} results"
-
-        # Memory
-        elif "memory" in tool_lower or "inject" in tool_lower:
-            return f"💾 Memory operation: {tool_name}"
-
-        # Think
-        elif tool_name == "think":
-            thought_preview = args.get("thought", "")[:40]
-            return f"💭 Thought: {thought_preview}..."
-
-        # Discovery
-        elif tool_name == "list_tools":
-            category = args.get("category", "all")
-            return f"📋 Listed tools (category: {category})"
-
-        elif tool_name == "load_tools":
-            tools = args.get("tools", [])
-            if isinstance(tools, str):
-                tools = [tools]
-            return f"📦 Loaded: {', '.join(tools[:3])}"
-
-        # Default
-        else:
-            return f"🔧 {tool_name}"
-
-    def get_focus_message(self) -> Optional[dict]:
-        """Get system message for injection into working_history"""
-        if not self.actions:
-            return None
-
-        content = "LETZTE AKTIONEN (zur Erinnerung):\n" + "\n".join(
-            f"- {a}" for a in self.actions
-        )
-
-        if len(content) > self.max_chars:
-            content = content[: self.max_chars] + "..."
-
-        return {"role": "system", "content": content}
-
-    def clear(self):
-        """Clear all tracked actions"""
-        self.actions.clear()
-
 
 @dataclass
 class LoopDetector:
@@ -835,8 +740,7 @@ class ExecutionContext:
     # History Management
     working_history: List[dict] = field(default_factory=list)
 
-    # Trackers
-    auto_focus: AutoFocusTracker = field(default_factory=AutoFocusTracker)
+    # Tracker
     loop_detector: LoopDetector = field(default_factory=LoopDetector)
 
     # Run State
@@ -940,8 +844,11 @@ class ExecutionContext:
             "tools_used": self.tools_used,
             "current_iteration": self.current_iteration,
             "loop_warning_given": self.loop_warning_given,
-            "auto_focus_actions": self.auto_focus.actions,
             "loop_detector_history": self.loop_detector.history,
+            "max_iterations": self.max_iterations,
+
+        "matched_skill_ids": [s.id for s in self.matched_skills] if self.matched_skills else [],
+        "active_persona_name": self.active_persona.name if self.active_persona else "default",
         }
 
     @classmethod
@@ -968,8 +875,11 @@ class ExecutionContext:
         ctx.tools_used = data.get("tools_used", [])
         ctx.current_iteration = data.get("current_iteration", 0)
         ctx.loop_warning_given = data.get("loop_warning_given", False)
-        ctx.auto_focus.actions = data.get("auto_focus_actions", [])
         ctx.loop_detector.history = data.get("loop_detector_history", [])
+        ctx.max_iterations = data.get("max_iterations", os.getenv("DEFAULT_MAX_ITERATIONS", 30))
+
+        ctx._cold_skill_ids = data.get("matched_skill_ids", [])
+        ctx._cold_persona_name = data.get("active_persona_name", "default")
         return ctx
 
     @property
@@ -1584,6 +1494,10 @@ class ExecutionEngine(SubAgentResumeExtension):
         self._persona_stats_lock = asyncio.Lock()  # global (persona shared file)
         self._pending_finalize_tasks: Dict[str, asyncio.Task] = {}  # run_id → task
 
+
+        _obs = getattr(agent, 'obs', None)
+        self.max_resumable: int = _obs.max_runs if _obs else 3
+
         # Get or create SkillsManager
         if (
             hasattr(agent.session_manager, "skills_manager")
@@ -1793,10 +1707,11 @@ BEISPIELE:
         wait for completion.
         """
         session_id = ctx.session_id or "default"
+        _fin_start = time.time()
         session_lock = self._get_finalize_lock(session_id)
 
         async with session_lock:
-            # 1. Commit run (log + LLM summary + session.add_message)
+
             try:
                 await self._commit_run_slow(ctx, session, query, final_response, success)
             except Exception as e:
@@ -1844,10 +1759,27 @@ BEISPIELE:
                     self.live.log(
                         f"[Finalize] learning schedule failed: {e}", logging.ERROR
                     )
+            # 1. Commit run (log + LLM summary + session.add_message)
+            try:
+                _obs = getattr(self.agent, 'obs', None)
+                if _obs:
+                    snapshot = ctx.to_checkpoint() if (
+                            ctx.current_iteration % self.agent.obs.snapshot_interval == 0) else None
+                    _obs.end_step(ctx_checkpoint=snapshot)
+                    _obs.end_run(success=success, final_answer=final_response or "")
+            except Exception as e:
+                self.live.log(f"[Finalize] OBS end_step failed: {e}", logging.ERROR)
 
+        _obs = getattr(self.agent, 'obs', None)
+        if _obs:
+            _obs._audit("FINALIZE", ctx.run_id, details={
+                "duration_s": round(time.time() - _fin_start, 3),
+                "session_id": ctx.session_id,
+            })
         # Outside lock: cleanup
         self._active_executions.pop(ctx.run_id, None)
         self._pending_finalize_tasks.pop(ctx.run_id, None)
+        ctx.status = "paused"
 
     # =========================================================================
     # MAIN EXECUTION LOOP
@@ -1895,272 +1827,151 @@ BEISPIELE:
                 else str(report)
             )
             return (result, None) if get_ctx else result
-        session = await self.agent.session_manager.get_or_create(session_id)
-        # Use existing context or create new one
-        is_resume = ctx is not None
-        if ctx is None:
-            ctx = ExecutionContext()
 
-        if (
-            not is_resume
-            and hasattr(self.agent, "amd")
-            and hasattr(self.agent.amd, "context_config")
-        ):
-            ctx.context_config = self.agent.amd.context_config
+        ctx, session, is_resume = await self._setup_context(query, session_id, max_iterations, ctx)
 
-        # Track active execution
-        self._active_executions[ctx.run_id] = ctx
-        self._session_last_run[session_id] = ctx.run_id
-        ctx.session_id = session_id
-        ctx.query = query
-        ctx.max_iterations = max_iterations
-
-        await self._wait_for_pending_finalize(session_id)
-        # Initialize SubAgentManager (only if NOT a sub-agent)
-        if not self.is_sub_agent and not is_resume:
-            self._sub_agent_manager = SubAgentManager(
-                parent_engine=self, parent_session=session, is_sub_agent=False
-            )
-        else:
-            # Sub-agent: Apply VFS write restriction
-            if self.sub_agent_output_dir:
-                session.vfs = RestrictedVFSWrapper(session.vfs, self.sub_agent_output_dir)
-
-        # Store session reference for sub-agent spawning
-        self._current_session = session
-
-        # Only initialize if not resuming
-        trigger_kw, trigger_skill = None, None
-        if not is_resume:
-            max_iterations, trigger_kw, trigger_skill = await self._parallel_init(
-                ctx, session, query, max_iterations
-            )
-
-            # 4. Build initial messages
-            system_prompt = self._build_system_prompt(ctx, session)
-
-            # Get compressed permanent history (last N turns)
-            # Sub-agents get minimal history (isolated context)
-            history_depth = 2 if self.is_sub_agent else 6
-            permanent_history = session.get_history_for_llm(last_n=history_depth)
-
-            # Initial working history
-            ctx.working_history = [
-                {"role": "system", "content": system_prompt},
-                *permanent_history,
-                {"role": "user", "content": query},
-            ]
-
-        agent_type = "SUB-AGENT" if self.is_sub_agent else "MAIN"
-        action = "Resuming" if is_resume else "Start"
-        self.live.run_id = ctx.run_id
-        self.live.max_iterations = max_iterations
-        self.live.t_start = time.time()
-        self.live.skills = (
-            [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
+        max_iterations, trigger_kw, trigger_skill = await self._setup_init(
+            ctx, session, query, max_iterations, is_resume
         )
-        self.live.tools_loaded = ctx.get_dynamic_tool_names() if ctx.dynamic_tools else []
-        self.live.persona = ctx.active_persona.name
-        self.live.enter(
-            AgentPhase.INIT, f"{action} [{agent_type}] {ctx.run_id}: {query[:80]}"
-        )
-        log = get_logger()
-        self._narrator.reset(query)
-        self._narrator.on_init(query)
-        self._narrator.schedule_skills_update(
-            query, ctx.working_history, self.skills_manager, ctx=ctx
-        )
-        self._narrator.schedule_ruleset_update(ctx.working_history, session, ctx)
+
         final_response = None
         success = True
-
+        log = get_logger()
         # 5. Main loop
-        while ctx.current_iteration < ctx.max_iterations:
-            self.live.max_iterations = ctx.max_iterations
-            ctx.current_iteration += 1
+        try:
+            while ctx.current_iteration < ctx.max_iterations:
+                if ctx.status in ("paused", "cancelled"):
+                    final_response = self._handle_max_iterations(ctx, query)
+                    success = False
+                    break
+                warning = self._loop_preamble(ctx)
+                # Build current tool list
+                current_tools = self._get_tool_definitions(ctx)
 
-            self._narrator.on_llm_pre_call(ctx.working_history)
-            self.live.iteration = ctx.current_iteration
-            self.live.enter(
-                AgentPhase.LLM_CALL, f"iter {ctx.current_iteration}/{max_iterations}"
-            )
+                messages = self._sanitize_history_for_api(ctx.working_history.copy())
 
-            # Check for loop and inject warning if needed
-            if self._should_warn_loop(ctx):
-                ctx.working_history.append(
-                    {
-                        "role": "system",
-                        "content": ctx.loop_detector.get_intervention_message()
-                        + "\nThis is the last iteration! must finalize task immediately and return an final answer with the current status!"
-                        if ctx.current_iteration >= max_iterations - 1
-                        else "",
+                log.info(f"messages AutoFocus {len(messages)} done")
+
+                # LLM Call
+                try:
+                    llm_kwargs = {
+                        "model_preference": ctx.active_persona.model_preference,
+                        "stream": False,
+                        "get_response_message": True,
+                        "with_context": False,
                     }
-                )
-                ctx.loop_warning_given = True
+                    if ctx.active_persona.temperature is not None:
+                        llm_kwargs["temperature"] = ctx.active_persona.temperature
 
-            # Build current tool list
-            current_tools = self._get_tool_definitions(ctx)
-
-            # Inject AutoFocus before LLM call
-            messages = self._inject_auto_focus(ctx)
-            messages = self._sanitize_history_for_api(messages)
-
-
-            log.info(f"messages AutoFocus {len(messages)} done")
-
-            # LLM Call
-            try:
-                llm_kwargs = {
-                    "model_preference": ctx.active_persona.model_preference,
-                    "stream": False,
-                    "get_response_message": True,
-                    "with_context": False,
-                }
-                if ctx.active_persona.temperature is not None:
-                    llm_kwargs["temperature"] = ctx.active_persona.temperature
-
-                response = await self.agent.a_run_llm_completion(
-                    messages=messages,
-                    tools=current_tools,
-                    max_tokens=16384,
-                    **llm_kwargs,
-                )
-            except Exception as e:
-                self.live.error = str(e)
-                self.live.enter(AgentPhase.ERROR, f"LLM Error: {e}")
-                final_response = f"Es ist ein Fehler aufgetreten: {str(e)}\n\nIch konnte die Aufgabe leider nicht abschließen."
-                success = False
-                break
-
-            # Add assistant message to working history
-            if response:
-                msg_dict = {"role": "assistant", "content": response.content}
-                if hasattr(response, "tool_calls") and response.tool_calls:
-                    msg_dict["tool_calls"] = response.tool_calls
-                ctx.working_history.append(msg_dict)
-
-            # Process tool calls
-            if hasattr(response, "tool_calls") and response.tool_calls:
-                # ── Loop 1: Classify ──────────────────────────────────────────
-                final_tc = None
-                sub_agent_tcs = []
-                normal_tcs = []
-                SOLO_TOOLS = {"final_answer", "shift_focus"}
-                for tc in response.tool_calls:
-                    tc = clean_tc_object(tc)
-                    f_name = tc.function.name
-                    if f_name in SOLO_TOOLS:
-                        final_tc = tc
-                        break
-                    elif (
-                        f_name in ("spawn_sub_agent", "wait_for", "resume_sub_agent")
-                        and self._sub_agent_manager
-                    ):
-                        sub_agent_tcs.append(tc)
-                    else:
-                        normal_tcs.append(tc)
-
-                if final_tc and len(response.tool_calls) > 1:
-                    ctx.working_history.append(
-                        {
-                            "role": "system",
-                            "content": "Action pattern not valid !!! NO tools called. use final_answer ALONE !",
-                        }
+                    response = await self.agent.a_run_llm_completion(
+                        messages=messages,
+                        tools=current_tools,
+                        max_tokens=16384,
+                        **llm_kwargs,
                     )
-                    continue
-                if final_tc:
-                    try:
-                        args = json.loads(final_tc.function.arguments)
-                        final_response = args.get("answer", "")
-                        success = args.get("success", True)
-                    except Exception:
-                        final_response = ""
-                        success = True
-                    self._narrator.on_summarise()
+                except Exception as e:
+                    self.live.error = str(e)
+                    self.live.enter(AgentPhase.ERROR, f"LLM Error: {e}")
+                    final_response = f"Es ist ein Fehler aufgetreten: {str(e)}\n\nIch konnte die Aufgabe leider nicht abschließen."
+                    success = False
                     break
 
-                # ── Loop 2: Execute in parallel ───────────────────────────────
-                all_tcs = normal_tcs + sub_agent_tcs
-                results = await asyncio.gather(
-                    *[self._execute_tool_call(ctx, tc) for tc in all_tcs]
-                )
+                # Add assistant message to working history
+                if response:
+                    msg_dict = {"role": "assistant", "content": response.content}
+                    if hasattr(response, "tool_calls") and response.tool_calls:
+                        msg_dict["tool_calls"] = response.tool_calls
+                    ctx.working_history.append(msg_dict)
 
-                for tc, (result, is_final) in zip(all_tcs, results):
-                    if is_final:
+                # Process tool calls
+                if hasattr(response, "tool_calls") and response.tool_calls:
+                    # ── Loop 1: Classify ──────────────────────────────────────────
+                    final_tc = None
+                    final_tc, normal_tcs, sub_agent_tcs, think_tcs = self._classify_tool_calls(response.tool_calls, dict_mode=False)
+                    normal_tcs.extend(think_tcs)
+                    if final_tc and len(response.tool_calls) > 1:
+                        ctx.working_history.append(
+                            {
+                                "role": "system",
+                                "content": "Action pattern not valid !!! NO tools called. use final_answer ALONE !",
+                            }
+                        )
+                        continue
+                    if final_tc:
                         try:
-                            args = json.loads(tc.function.arguments)
-                            final_response = args.get("answer", result)
+                            args = json.loads(final_tc.function.arguments)
+                            final_response = args.get("answer", "")
                             success = args.get("success", True)
                         except Exception:
-                            final_response = result
+                            final_response = ""
                             success = True
+                        self._narrator.on_summarise()
                         break
 
-                if final_response is not None:
-                    self._narrator.on_summarise()
-                    break
-            else:
-                if response and response.content:
-                    final_response = response.content
-                    break
+                    for tc in normal_tcs + sub_agent_tcs:
+                        tc_clean = clean_tc_object(tc)
+                        args_preview = ""
+                        try:
+                            _parsed = json.loads(tc_clean.function.arguments)
+                            args_preview = str(_parsed.get(list(_parsed.keys())[0], ""))[:80] if _parsed else ""
+                        except Exception:
+                            args_preview = str(tc_clean.function.arguments)[:80]
+                        self._narrator.on_tool_start(f"{tc_clean.function.name} {args_preview}")
 
-        # 6. Handle max iterations reached
-        if final_response is None:
-            if self.is_sub_agent:
-                # Sub-agent: Special handling mit Resume-Option
-                (
-                    final_response,
-                    should_mark_resumable,
-                ) = await self._handle_sub_agent_max_iterations(
-                    ctx, query, max_iterations
-                )
-                success = False
+                    # ── Loop 2: Execute in parallel ───────────────────────────────
+                    all_tcs = normal_tcs + sub_agent_tcs
+                    results = await asyncio.gather(
+                        *[self._execute_tool_call(ctx, tc) for tc in all_tcs]
+                    )
 
-                # Mark as resumable if progress was made
-                if should_mark_resumable:
-                    ctx.status = "max_iterations"  # Instead of "completed"
-            else:
-                # Main agent: Existing handling
-                final_response = self._handle_max_iterations(ctx, query)
-                success = False
-        if not hasattr(ctx.active_persona, "stats"):
-            ctx.active_persona.stats = PersonaStats()
+                    for tc, (result, is_final) in zip(all_tcs, results):
+                        if is_final:
+                            try:
+                                args = json.loads(tc.function.arguments)
+                                final_response = args.get("answer", result)
+                                success = args.get("success", True)
+                            except Exception:
+                                final_response = result
+                                success = True
+                            break
 
-        ctx.active_persona.stats.record_use(
-            source=ctx.active_persona.source,
-            query=query,
-            success=success,
-            iterations_used=ctx.current_iteration,
-            iterations_budget=max_iterations,
-            trigger_keyword=trigger_kw,
-            trigger_skill=trigger_skill,
-        )
+                    if final_response is not None:
+                        self._narrator.on_summarise()
+                        break
+                else:
+                    if response and response.content:
+                        final_response = response.content
+                        break
 
-        self.live.status_msg = f"done (ok={success}, iters={ctx.current_iteration})"
-        self.live.enter(
-            AgentPhase.DONE,
-            f"Execution [{ctx.run_id}] complete "
-            f"(success={success}, iters={ctx.current_iteration})",
-        )
+            # 6. Handle max iterations reached
+            if final_response is None:
+                if self.is_sub_agent:
+                    # Sub-agent: Special handling mit Resume-Option
+                    (
+                        final_response,
+                        should_mark_resumable,
+                    ) = await self._handle_sub_agent_max_iterations(
+                        ctx, query, max_iterations
+                    )
+                    success = False
 
-        # Finalize: commit + skills-stats + persona-persist + learning.
-        # Default: background (user bekommt return SOFORT).
-        # persist_blocking=True: await für crash-safety.
-        finalize_coro = self._finalize_run(
-            ctx,
-            session,
-            query,
-            final_response,
-            success,
-            trigger_kw,
-            trigger_skill,
-        )
-        if persist_blocking:
-            await finalize_coro
-        else:
-            task = asyncio.create_task(finalize_coro)
-            self._pending_finalize_tasks[ctx.run_id] = task
-        ctx.status = "paused"
+                    # Mark as resumable if progress was made
+                    if should_mark_resumable:
+                        ctx.status = "max_iterations"  # Instead of "completed"
+                else:
+                    # Main agent: Existing handling
+                    final_response = self._handle_max_iterations(ctx, query)
+                    success = False
+            await self._record_and_finalize(ctx, session, query, final_response, success, trigger_kw, trigger_skill, persist_blocking)
+        except Exception as e:
+            self.live.log(f"[CRASH] {e}", logging.ERROR)
+            success = False
+            final_response = final_response or f"Agent crashed: {e}"
+        finally:
+            # OBS: IMMER end_run, auch bei crash
+            _obs = getattr(self.agent, 'obs', None)
+            if _obs and _obs._current_run:
+                _obs.end_run(success=success, final_answer=final_response or "CRASH")
         if get_ctx:
             return final_response, ctx
         return final_response
@@ -2180,32 +1991,8 @@ BEISPIELE:
         Returns:
             tuple[stream_generator_func, ExecutionContext]
         """
-        session = await self.agent.session_manager.get_or_create(session_id)
-
-        is_resume = ctx is not None
-        if ctx is None:
-            ctx = ExecutionContext()
-
-        self._active_executions[ctx.run_id] = ctx
-        self._session_last_run[session_id] = ctx.run_id
-        ctx.session_id = session_id
-        ctx.query = query
-        ctx.max_iterations = max_iterations
-
-        await self._wait_for_pending_finalize(session_id)
-        # Initialize SubAgentManager
-        if not self.is_sub_agent and not is_resume:
-            self._sub_agent_manager = SubAgentManager(
-                parent_engine=self, parent_session=session, is_sub_agent=False
-            )
-        else:
-            if self.sub_agent_output_dir:
-                session.vfs = RestrictedVFSWrapper(session.vfs, self.sub_agent_output_dir)
-
-        self._current_session = session
 
         if query == "__dream__":
-
             async def _dream_stream_wrapper(ctx):
                 async for chunk in self.agent.a_dream_stream():
                     yield chunk
@@ -2216,12 +2003,8 @@ BEISPIELE:
                 }
 
             return _dream_stream_wrapper, ctx
-        # Init-State wird innerhalb des Generators ausgeführt für sofortiges TTFU
-        _init_state = {
-            "trigger_kw": None,
-            "trigger_skill": None,
-            "max_iterations": max_iterations,
-        }
+
+        ctx, session, is_resume = await self._setup_context(query, session_id, max_iterations, ctx)
 
         async def stream_generator(ctx: ExecutionContext):
             """Generator that yields chunks during execution"""
@@ -2240,10 +2023,6 @@ BEISPIELE:
             # Determine depth/type (simple heuristic or passed param)
             is_sub = self.is_sub_agent
 
-            # === DEFERRED INIT: yields status während teurer Ops ===
-            trigger_kw = _init_state["trigger_kw"]
-            trigger_skill = _init_state["trigger_skill"]
-
             if not is_resume:
                 # Status sofort raus (vor gather)
                 self.live.status_msg = "Initializing (skills + tools + personas)"
@@ -2253,43 +2032,11 @@ BEISPIELE:
                     "agent": agent_name,
                     "iter": 0,
                 }
-                max_iterations, trigger_kw, trigger_skill = await self._parallel_init(
-                    ctx, session, query, max_iterations
-                )
 
-                # 4. Build prompt
-                system_prompt = self._build_system_prompt(ctx, session)
-                history_depth = 2 if self.is_sub_agent else 6
-                permanent_history = session.get_history_for_llm(last_n=history_depth)
 
-                ctx.working_history = [
-                    {"role": "system", "content": system_prompt},
-                    *permanent_history,
-                    {"role": "user", "content": query},
-                ]
-
-            # Live state
-            self.live.run_id = ctx.run_id
-            self.live.max_iterations = max_iterations
-            self.live.t_start = time.time()
-            self.live.skills = (
-                [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
+            max_iterations, trigger_kw, trigger_skill = await self._setup_init(
+                ctx, session, query, max_iterations, is_resume
             )
-            self.live.tools_loaded = (
-                ctx.get_dynamic_tool_names() if ctx.dynamic_tools else []
-            )
-            self.live.persona = ctx.active_persona.name
-            self.live.enter(
-                AgentPhase.INIT,
-                f"{'Resume' if is_resume else 'Start'} stream [{ctx.run_id}]",
-            )
-            self._narrator.reset(query)
-            self._narrator.on_init(query)
-            self._narrator.schedule_skills_update(
-                query, ctx.working_history, self.skills_manager, ctx=ctx
-            )
-            self._narrator.schedule_ruleset_update(ctx.working_history, session, ctx)
-
             # Helper to enrich chunks
             def enrich(chunk):
                 chunk.setdefault("agent", agent_name)
@@ -2322,541 +2069,303 @@ BEISPIELE:
                 )
                 return chunk
 
-            while ctx.current_iteration < ctx.max_iterations:
-                ctx.current_iteration += 1
-                self.live.max_iterations = ctx.max_iterations
-                self.live.iteration = ctx.current_iteration
+            try:
+                while ctx.current_iteration < ctx.max_iterations:
 
-                self._narrator.on_llm_pre_call(ctx.working_history)
-                self.live.status_msg = (
-                    f"Thinking (iter {ctx.current_iteration}/{max_iterations})"
-                )
-                self.live.enter(
-                    AgentPhase.LLM_CALL,
-                    f"iter {ctx.current_iteration}/{max_iterations}",
-                )
-                # Sofortiges Iteration-Start-Signal (vor LLM-Latenz)
-                yield enrich(
-                    {
-                        "type": "iteration_start",
-                        "iteration": ctx.current_iteration,
-                    }
-                )
+                    # Check pause
+                    if ctx.status == "paused":
+                        yield enrich({"type": "paused", "run_id": ctx.run_id})
+                        return
 
-                # Check pause
-                if ctx.status == "paused":
-                    yield enrich({"type": "paused", "run_id": ctx.run_id})
-                    return
+                    # Check cancellation
+                    if ctx.status == "cancelled":
+                        yield enrich({"type": "cancelled", "run_id": ctx.run_id})
+                        return
 
-                # Check cancellation
-                if ctx.status == "cancelled":
-                    yield enrich({"type": "cancelled", "run_id": ctx.run_id})
-                    return
-
-                if self._should_warn_loop(ctx):
-                    warning_msg = ctx.loop_detector.get_intervention_message()
-                    # Inject into history so LLM sees it
-                    ctx.working_history.append({"role": "system", "content": warning_msg})
-                    ctx.loop_warning_given = True
-                    # Optional: Inform UI about the warning
+                    warning = self._loop_preamble(ctx)
+                    # Sofortiges Iteration-Start-Signal (vor LLM-Latenz)
                     yield enrich(
-                        {"type": "warning", "message": warning_msg.splitlines()[0]}
+                        {
+                            "type": "iteration_start",
+                            "iteration": ctx.current_iteration,
+                        }
                     )
+                    if warning is not None:
+                        yield enrich(
+                            {"type": "warning", "message": warning.splitlines()[0]}
+                        )
 
-                # Build messages
-                messages = list(ctx.working_history)
-                focus_msg = ctx.auto_focus.get_focus_message()
-                if focus_msg:
-                    messages.insert(-1, focus_msg)
+                    # Build messages
+                    messages = self._sanitize_history_for_api(ctx.working_history.copy())
 
-                # Get tool definitions
-                tool_definitions = self._get_tool_definitions(ctx)
+                    # Get tool definitions
+                    tool_definitions = self._get_tool_definitions(ctx)
 
-                # Stream LLM response state
-                collected_content = ""
-                tool_calls_buffer = {}
+                    _last_progress = 0
+                    current_tools = tool_definitions if tool_definitions else None
+                    # ── LLM Call via a_run_llm_completion stream ──
+                    collected_content = ""
+                    result_message = None
 
-                # --- AUTO-RESUME SCHLEIFE FÜR STREAMING ---
-                continuation_count = 0
-                _last_progress = 0
+                    multiplex_queue = asyncio.Queue()
 
-                current_messages = messages.copy()
-                current_tools = tool_definitions if tool_definitions else None
+                    def narrator_stream_cb(msg):
+                        try:
+                            multiplex_queue.put_nowait({"_type": "narrator", "msg": msg})
+                        except Exception:
+                            pass
 
-                continuing_tool_idx = (
-                    None  # Verfolgt, welches Tool gerade durch Text fortgesetzt wird
-                )
+                    self._narrator.on_live_update_callback = narrator_stream_cb
 
-                multiplex_queue = asyncio.Queue()
-
-                def narrator_stream_cb(msg):
-                    try:
-                        # Narrator pusht SOFORT in die Queue
-                        multiplex_queue.put_nowait({"_type": "narrator", "msg": msg})
-                    except Exception:
-                        pass
-
-                self._narrator.on_live_update_callback = narrator_stream_cb
-
-                while continuation_count < MAX_CONTINUATIONS:
-                    stream_kwargs = {"stream": True, "true_stream": True}
+                    stream_kwargs = {}
                     if model:
                         stream_kwargs["model"] = model
                     else:
-                        stream_kwargs["model_preference"] = (
-                            ctx.active_persona.model_preference
-                        )
+                        stream_kwargs["model_preference"] = ctx.active_persona.model_preference
                     if ctx.active_persona.temperature is not None:
                         stream_kwargs["temperature"] = ctx.active_persona.temperature
-                    stream_response = None
-                    try:
-                        self.live.status_msg = "Calling LLM"
-                        stream_response = await self.agent.a_run_llm_completion(
-                            messages=current_messages,
-                            tools=current_tools,
-                            max_tokens=16384,
-                            **stream_kwargs,
-                        )
 
-                        if asyncio.iscoroutine(stream_response):
-                            stream_response = await stream_response
-                    except Exception as e:
-                        err_msg = str(e)
-                        if "Event loop is closed" in err_msg:
-                            yield enrich(
-                                {
-                                    "type": "error",
-                                    "error": f"LLM stream failed: {err_msg[:200]}",
-                                }
-                            )
-                            break
-                        raise
+                    stream_fn = await self.agent.a_run_llm_completion(
+                        messages=messages,
+                        tools=current_tools,
+                        max_tokens=16384,
+                        stream=True,
+                        with_context=False,
+                        get_response_message=True,
+                        **stream_kwargs,
+                    )
 
-                    finish_reason = None
-
-                    # Background-Task, der das LLM liest und in die Queue pumpt
-                    async def pump_llm(resp):
+                    async def pump_stream():
                         try:
-                            async for c in resp:
-                                await multiplex_queue.put({"_type": "llm", "chunk": c})
-                            await multiplex_queue.put({"_type": "done"})
+                            last_tc = None
+                            async for item in stream_fn():
+                                await multiplex_queue.put({"_type": "chunk", "data": item})
+                                if hasattr(item, "tool_calls"):
+                                    last_tc = item.tool_calls
+                            await multiplex_queue.put({"_type": "done", "tool_calls": last_tc})
+                        except ToolValidationError as err:
+                            await multiplex_queue.put({"_type": "tool_error", "error": err})
                         except Exception as err:
                             await multiplex_queue.put({"_type": "error", "error": err})
 
-                    pumper_task = asyncio.create_task(pump_llm(stream_response))
-
-                    tool_validation_fail_msg = None  # set if LLM hallucinated a tool name
+                    pump_task = asyncio.create_task(pump_stream())
+                    tool_validation_fail_msg = None
 
                     try:
+                        tool_calls = None
                         while True:
                             item = await multiplex_queue.get()
 
                             if item["_type"] == "narrator":
-                                yield enrich(
-                                    {"type": "narrator", "narrator_msg": item["msg"]}
-                                )
+                                yield enrich({"type": "narrator", "narrator_msg": item["msg"]})
                                 continue
 
                             if item["_type"] == "done":
+                                tool_calls = item["tool_calls"]
+                                break
+
+                            if item["_type"] == "tool_error":
+                                tool_validation_fail_msg = str(item["error"])
+                                self.live.log(f"[Engine] Provider rejected tool call: {tool_validation_fail_msg[:200]}",
+                                              logging.WARNING)
                                 break
 
                             if item["_type"] == "error":
                                 err = item["error"]
-                                # Provider rejected the tool call (unknown name / bad schema).
-                                # Don't crash — turn it into a synthetic tool-result so the
-                                # LLM sees the failure in the next iteration and can correct.
-                                if isinstance(err, ToolValidationError):
-                                    tool_validation_fail_msg = str(err)
-                                    self.live.log(
-                                        f"[Engine] Provider rejected tool call: {tool_validation_fail_msg[:200]}",
-                                        logging.WARNING,
-                                    )
+                                if "Event loop is closed" in str(err):
+                                    yield enrich({"type": "error", "error": str(err)[:200]})
                                     break
                                 raise err
 
-                            chunk = item["chunk"]
-                            delta = (
-                                chunk.choices[0].delta
-                                if hasattr(chunk, "choices") and chunk.choices
-                                else None
-                            )
+                            data = item["data"]
 
-                            if not delta:
-                                continue
-
-                            if (
-                                hasattr(chunk.choices[0], "finish_reason")
-                                and chunk.choices[0].finish_reason
-                            ):
-                                finish_reason = chunk.choices[0].finish_reason
-
-                            # 1. Content sammeln (oder abgebrochenes Tool fortsetzen)
-                            if delta and hasattr(delta, "content") and delta.content:
-                                if continuing_tool_idx is not None:
-                                    # Das LLM spuckt den Rest des JSON-Strings als reinen Text aus -> ins Tool umleiten!
-                                    tool_calls_buffer[continuing_tool_idx]["function"][
-                                        "arguments"
-                                    ] += delta.content
-                                else:
+                            if hasattr(data, 'choices') and data.choices:
+                                delta = data.choices[0].delta if data.choices else None
+                                if not delta:
+                                    continue
+                                if hasattr(delta, 'content') and delta.content:
                                     collected_content += delta.content
                                     self._narrator._inspier += delta.content
-                                    yield enrich(
-                                        {"type": "content", "chunk": delta.content}
-                                    )
+                                    yield enrich({"type": "content", "chunk": delta.content})
+                                if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                                    yield enrich({"type": "reasoning", "chunk": delta.reasoning_content})
 
-                            # 2. Reasoning sammeln (falls vorhanden)
-                            if (
-                                delta
-                                and hasattr(delta, "reasoning_content")
-                                and delta.reasoning_content
-                            ):
-                                yield enrich(
-                                    {
-                                        "type": "reasoning",
-                                        "chunk": delta.reasoning_content,
-                                    }
-                                )
+                            # Content chunk (string)
+                            if isinstance(data, str):
+                                collected_content += data
+                                self._narrator._inspier += data
+                                yield enrich({"type": "content", "chunk": data})
 
-                            # 3. Tool Calls SAMMELN
-                            if (
-                                delta
-                                and hasattr(delta, "tool_calls")
-                                and delta.tool_calls
-                            ):
-                                for tc_chunk in delta.tool_calls:
-                                    idx = tc_chunk.index
-
-                                    # Falls das LLM während eines Resumes trotzdem native Tool_calls nutzt
-                                    target_idx = (
-                                        continuing_tool_idx
-                                        if continuing_tool_idx is not None
-                                        else idx
-                                    )
-
-                                    # Neuen Eintrag anlegen, falls Index noch nicht existiert
-                                    if target_idx not in tool_calls_buffer:
-                                        tool_calls_buffer[target_idx] = (
-                                            ChatCompletionMessageToolCall(
-                                                id=tc_chunk.id,
-                                                type="function",
-                                                function=Function(
-                                                    name=tc_chunk.function.name or "",
-                                                    arguments=tc_chunk.function.arguments
-                                                    or "",
-                                                ),
-                                            )
-                                        )
-                                    else:
-                                        # Bestehenden Eintrag erweitern
-                                        if tc_chunk.function.name:
-                                            tool_calls_buffer[target_idx]["function"][
-                                                "name"
-                                            ] += tc_chunk.function.name
-                                        if tc_chunk.function.arguments:
-                                            tool_calls_buffer[target_idx]["function"][
-                                                "arguments"
-                                            ] += tc_chunk.function.arguments
-                    except RuntimeError as e:
-                        if "Event loop is closed" in str(e):
-                            # Partial result recovery
-                            if collected_content:
-                                final_response = collected_content
-                                yield enrich(
-                                    {"type": "final_answer", "answer": final_response}
-                                )
-                            else:
-                                yield enrich(
-                                    {
-                                        "type": "error",
-                                        "error": f"Stream aborted: {str(e)[:200]}",
-                                    }
-                                )
-                            break
-                        raise
                     finally:
                         self._narrator._set_thought(collected_content[:250], moc=False)
-                        if not pumper_task.done():
-                            pumper_task.cancel()
+                        if not pump_task.done():
+                            pump_task.cancel()
 
+                    # ── Handle tool validation failure ──
                     if tool_validation_fail_msg is not None:
                         correction = (
                             "System: your previous tool call was rejected by the provider. "
                             f"Reason: {tool_validation_fail_msg[:400]}\n\n"
-                            "Most likely cause: you called a tool name that is not currently "
-                            "loaded/available. Before retrying:\n"
-                            "  1. Call `list_tools` (optionally with a category) to see what exists.\n"
-                            "  2. Call `load_tools(names=[...])` with the exact names you need.\n"
-                            "  3. Then call the tool.\n"
-                            "Do NOT repeat the exact same tool call. Either load the missing tool "
-                            "first, or pick a different already-loaded tool."
+                            "Load the missing tool first via list_tools + load_tools, then retry."
                         )
-                        ctx.working_history.append(
-                            {"role": "system", "content": correction}
-                        )
-                        yield enrich(
-                            {
-                                "type": "warning",
-                                "message": "Tool rejected by provider — injected correction, continuing.",
+                        ctx.working_history.append({"role": "system", "content": correction})
+                        yield enrich({"type": "warning", "message": "Tool rejected — correction injected."})
+                        continue
+
+                    # Process tool calls
+                    if tool_calls:
+                        tool_calls_dicts = []
+                        for tc in tool_calls:
+                            _f_name = tc.function.name
+                            dict_data = tc.to_dict() if hasattr(tc, "to_dict") else {
+                                "id": tc.id,
+                                "function": {"name":tc.function.name,"arguments": tc.function.arguments},
+                                "type": tc.type
                             }
-                        )
-                        # Discard any partially-buffered tool calls from this failed stream
-                        tool_calls_buffer.clear()
-                        collected_content = ""
-                        # Skip continuation-resume logic and go straight to next iteration
-                        continue  # continues the outer `while ctx.current_iteration < ctx.max_iterations` loop
-
-                    # --- Ende des Chunks. Prüfen auf Fortsetzung ---
-                    hit_token_limit = finish_reason in ["length", "max_tokens"]
-
-                    # Tool-JSON-Validation IMMER prüfen, nicht nur bei length
-                    has_truncated_tool = False
-                    if tool_calls_buffer:
-                        last_idx = max(tool_calls_buffer.keys())
-                        last_tc = tool_calls_buffer[last_idx]
-                        try:
-                            json.loads(last_tc["function"]["arguments"])
-                        except json.JSONDecodeError:
-                            has_truncated_tool = True
-
-                    has_truncated_text = _is_code_truncated(collected_content)
-
-                    needs_resume = hit_token_limit or has_truncated_text or has_truncated_tool
-
-                    if not needs_resume:
-                        break
-
-                    # Delta guard
-                    new_progress = len(collected_content) + sum(
-                        len(tc["function"]["arguments"])
-                        for tc in tool_calls_buffer.values()
-                    )
-                    if continuation_count > 0 and new_progress <= _last_progress:
-                        self.live.log("Resume produced no progress, stopping.", logging.WARNING)
-                        break
-                    _last_progress = new_progress
-
-                    continuation_count += 1
-                    if continuation_count >= MAX_CONTINUATIONS:
-                        self.live.log(f"Hit MAX_CONTINUATIONS ({MAX_CONTINUATIONS})", logging.WARNING)
-                        break
-                    self.live.status_msg = (
-                        f"Auto-Resume ({continuation_count}/{MAX_CONTINUATIONS})"
-                    )
-                    self.live.log(
-                        f"Output limit reached. Auto-Resume ({continuation_count}/{MAX_CONTINUATIONS})"
-                    )
-
-                    # Analysieren, WAS genau abgebrochen ist (Text oder Tool-Call JSON?)
-                    is_tool_cut_off = False
-                    active_cut_off_tool_idx = None
-
-                    if tool_calls_buffer:
-                        last_idx = max(tool_calls_buffer.keys())
-                        last_tc = tool_calls_buffer[last_idx]
-                        try:
-                            json.loads(last_tc["function"]["arguments"])
-                            # Valide -> War nicht abgeschnitten
-                        except json.JSONDecodeError:
-                            is_tool_cut_off = True
-                            active_cut_off_tool_idx = last_idx
-
-                    if is_tool_cut_off:
-                        # Ein Tool Call wurde mitten im JSON abgeschnitten
-                        continuing_tool_idx = active_cut_off_tool_idx
-                        last_tc = tool_calls_buffer[continuing_tool_idx]
-                        print(last_tc)
-                        t_name = last_tc["function"]["name"]
-                        t_args = last_tc["function"]["arguments"]
-
-                        resume_msg = (
-                            f"Du hast das Output-Token-Limit erreicht, während du das Tool '{t_name}' ausgeführt hast. "
-                            f"Hier ist der JSON-Argument-String, den du bisher geschrieben hast:\n`{t_args}`\n\n"
-                            f"Bitte antworte AUSSCHLIESSLICH mit den fehlenden Zeichen, um das JSON zu vervollständigen. "
-                            f"Gib keine Erklärungen und keinen Code-Block ab. Mache genau da weiter, wo der String abgerissen ist."
-                        )
-                        current_tools = (
-                            None  # Zwinge das LLM, als reinen Text zu antworten!
-                        )
-                        current_messages = messages.copy() + [
-                            {
-                                "role": "assistant",
-                                "content": collected_content
-                                + f"\n[Starte Tool: {t_name}]",
-                            },
-                            {"role": "user", "content": resume_msg},
-                        ]
-                    else:
-                        # Normaler Text wurde abgeschnitten — structural hints geben
-                        continuing_tool_idx = None
-                        last_words = collected_content[-200:]
-
-                        missing_hints = []
-                        if collected_content.count("```") % 2 != 0:
-                            missing_hints.append("unclosed code fence (```)")
-                        open_braces = collected_content.count("{") - collected_content.count("}")
-                        if open_braces > 2:
-                            missing_hints.append(f"{open_braces} unclosed curly braces")
-                        for tag in ["<script>", "<style>", "<html>", "<body>", "<div>"]:
-                            close = tag.replace("<", "</")
-                            if collected_content.count(tag) > collected_content.count(close):
-                                missing_hints.append(f"unclosed {tag}")
-
-                        structural_hint = ""
-                        if missing_hints:
-                            structural_hint = (
-                                f"\n\nStructural issues detected: {', '.join(missing_hints)}. "
-                                f"You MUST complete these before stopping."
-                            )
-
-                        resume_msg = (
-                            f"Your output was cut off. Continue EXACTLY where you stopped. "
-                            f"Last 200 chars for orientation:\n'...{last_words}'\n\n"
-                            f"Continue seamlessly, no preamble, no repetition.{structural_hint}"
-                        )
-                        current_tools = tool_definitions if tool_definitions else None
-                        current_messages = messages.copy() + [
-                            {"role": "assistant", "content": collected_content},
-                            {"role": "user", "content": resume_msg},
-                        ]
-
-                # --- NACH DER SCHLEIFE ---
-                # Das Dictionary in eine Liste umwandeln
-
-                # Nach dem Loop: Das Dictionary in eine Liste umwandeln
-                tool_calls = list(tool_calls_buffer.values())
-
-                # Process tool calls
-                if tool_calls:
-                    assistant_msg = {
-                        "role": "assistant",
-                        "content": collected_content,
-                        "tool_calls": tool_calls,
-                    }
-                    ctx.working_history.append(assistant_msg)
-
-                    # ── Loop 1: Classify ──────────────────────────────────────────
-                    final_tc = None
-                    sub_agent_tcs = []
-                    think_tcs = []
-                    normal_tcs = []
-
-                    SOLO_TOOLS = {
-                        "final_answer",
-                        "shift_focus",
-                    }  # dürfen nie parallel laufen
-
-                    for tc in tool_calls:
-                        tc = clean_tc_dict(tc)
-                        f_name = tc.get("function", {}).get("name", "")
-                        if f_name in SOLO_TOOLS:
-                            final_tc = (
-                                tc  # behandle wie final_answer: sofort, solo, break
-                            )
-                            break
-                        elif (
-                            f_name in ("spawn_sub_agent", "wait_for", "resume_sub_agent")
-                            and self._sub_agent_manager
-                        ):
-                            sub_agent_tcs.append(tc)
-                        elif f_name == "think":
-                            think_tcs.append(tc)
-                        else:
-                            normal_tcs.append(tc)
-
-                    # Emit tool_start for all
-                    for tc in (
-                        normal_tcs
-                        + think_tcs
-                        + sub_agent_tcs
-                        + ([final_tc] if final_tc else [])
-                    ):
-                        f_name = tc.get("function", {}).get("name", "")
-                        f_args = tc.get("function", {}).get("arguments", "{}")
-                        f_id = tc.get("id", tc.get("function", {}).get("id", f_name))
-                        # Notify narrator so external systems see tool context
-                        args_preview = ""
-                        try:
-                            _parsed = json.loads(f_args) if isinstance(f_args, str) else f_args
-                            args_preview = str(_parsed.get(list(_parsed.keys())[0], ""))[:80] if _parsed else ""
-                        except Exception:
-                            args_preview = str(f_args)[:80]
-                        self._narrator.on_tool_start(f"{f_name} {args_preview}")
-                        yield enrich(
-                            {"type": "tool_start", "name": f_name, "args": f_args, "id": f_id}
-                        )
-
-                    if final_tc:
-                        f_args = final_tc.get("function", {}).get("arguments", "{}")
-                        try:
-                            args = (
-                                json.loads(f_args) if isinstance(f_args, str) else f_args
-                            )
-                            final_response = args.get("answer", collected_content)
-                            success_status = args.get("success", True)
-                        except Exception:
-                            final_response = collected_content
-                            success_status = True
-                        yield enrich(
-                            {
-                                "type": "final_answer",
-                                "answer": final_response,
-                                "success": success_status,
-                            }
-                        )
-                        self._narrator.on_summarise()
-                        break
-
-                    # ── Loop 2: Execute in parallel ───────────────────────────────
-
-                    # 2a) Normal tools: gather, no streaming needed
-                    async def _run_normal(tc):
-                        result, is_final = await self._execute_tool_call(ctx, tc)
-                        return tc, result, is_final
-
-                    normal_results = await asyncio.gather(
-                        *[_run_normal(tc) for tc in normal_tcs]
-                    )
-
-                    for tc, result, is_final in normal_results:
-                        f_name = tc.get("function", {}).get("name", "")
-                        f_id = tc.get("id", tc.get("function", {}).get("id", f_name))
-                        yield enrich(
-                            {
-                                "type": "tool_result",
-                                "name": f_name,
-                                "is_final": is_final,
-                                "result": str(result),
-                                "id": f_id
-                            }
-                        )
-
-                    # 2a- Think tools: stream chunks as events
-                    for tc in think_tcs:
-                        f_name = tc.get("function", {}).get("name", "")
-                        f_args_raw = tc.get("function", {}).get("arguments", "{}")
-                        try:
-                            f_args = (
-                                json.loads(f_args_raw)
-                                if isinstance(f_args_raw, str)
-                                else f_args_raw
-                            )
-                        except Exception:
-                            f_args = {}
-
-                        async for chunk_event in self._execute_think_streaming(
-                            ctx, tc.get("id"), f_args
-                        ):
-                            yield chunk_event
-                    # 2b) Sub-agent tools: parallel tasks + merged chunk draining
-                    if sub_agent_tcs:
-                        sub_tasks = {
-                            asyncio.create_task(self._execute_tool_call(ctx, tc)): tc
-                            for tc in sub_agent_tcs
+                            tool_calls_dicts.append(dict_data)
+                        assistant_msg = {
+                            "role": "assistant",
+                            "content": collected_content,
+                            "tool_calls": tool_calls_dicts,
                         }
+                        ctx.working_history.append(assistant_msg)
 
-                        pending = set(sub_tasks.keys())
-                        while pending:
-                            # Drain any queued chunks
+                        # ── Loop 1: Classify ──────────────────────────────────────────
+                        final_tc, normal_tcs, sub_agent_tcs, think_tcs = self._classify_tool_calls(tool_calls, dict_mode=False)
+
+                        # Emit tool_start for all
+                        for tc in (
+                            normal_tcs
+                            + think_tcs
+                            + sub_agent_tcs
+                            + ([final_tc] if final_tc else [])
+                        ):
+                            f_name = tc.function.name
+                            f_args = tc.function.arguments
+                            f_id = tc.id
+                            # Notify narrator so external systems see tool context
+                            args_preview = ""
+                            try:
+                                _parsed = json.loads(f_args) if isinstance(f_args, str) else f_args
+                                args_preview = str(_parsed.get(list(_parsed.keys())[0], ""))[:80] if _parsed else ""
+                            except Exception:
+                                args_preview = str(f_args)[:80]
+                            self._narrator.on_tool_start(f"{f_name} {args_preview}")
+                            yield enrich(
+                                {"type": "tool_start", "name": f_name, "args": f_args, "id": f_id}
+                            )
+
+                        if final_tc:
+                            f_args = final_tc.function.arguments
+                            try:
+                                args = (
+                                    json.loads(f_args) if isinstance(f_args, str) else f_args
+                                )
+                                final_response = args.get("answer", collected_content)
+                                success_status = args.get("success", True)
+                            except Exception:
+                                final_response = collected_content
+                                success_status = True
+                            yield enrich(
+                                {
+                                    "type": "final_answer",
+                                    "answer": final_response,
+                                    "success": success_status,
+                                }
+                            )
+                            self._narrator.on_summarise()
+                            break
+
+                        # ── Loop 2: Execute in parallel ───────────────────────────────
+
+                        # 2a) Normal tools: gather, no streaming needed
+                        async def _run_normal(tc):
+                            result, is_final = await self._execute_tool_call(ctx, tc)
+                            return tc, result, is_final
+
+                        normal_results = await asyncio.gather(
+                            *[_run_normal(tc) for tc in normal_tcs]
+                        )
+
+                        for tc, result, is_final in normal_results:
+                            f_name = tc.get("function", {}).get("name", "")
+                            f_id = tc.get("id", tc.get("function", {}).get("id", f_name))
+                            yield enrich(
+                                {
+                                    "type": "tool_result",
+                                    "name": f_name,
+                                    "is_final": is_final,
+                                    "result": str(result),
+                                    "id": f_id
+                                }
+                            )
+
+                        # 2a- Think tools: stream chunks as events
+                        for tc in think_tcs:
+                            f_name = tc.get("function", {}).get("name", "")
+                            f_args_raw = tc.get("function", {}).get("arguments", "{}")
+                            try:
+                                f_args = (
+                                    json.loads(f_args_raw)
+                                    if isinstance(f_args_raw, str)
+                                    else f_args_raw
+                                )
+                            except Exception:
+                                f_args = {}
+
+                            async for chunk_event in self._execute_think_streaming(
+                                ctx, tc.get("id"), f_args
+                            ):
+                                yield chunk_event
+                        # 2b) Sub-agent tools: parallel tasks + merged chunk draining
+                        if sub_agent_tcs:
+                            sub_tasks = {
+                                asyncio.create_task(self._execute_tool_call(ctx, tc)): tc
+                                for tc in sub_agent_tcs
+                            }
+
+                            pending = set(sub_tasks.keys())
+                            while pending:
+                                # Drain any queued chunks
+                                while not self._sub_agent_manager._chunk_queue.empty():
+                                    try:
+                                        sub_chunk = (
+                                            self._sub_agent_manager._chunk_queue.get_nowait()
+                                        )
+                                        if sub_chunk.get("type") != "_sub_done":
+                                            yield sub_chunk
+                                    except asyncio.QueueEmpty:
+                                        break
+
+                                # Check for completed tasks
+                                done = {t for t in pending if t.done()}
+                                for task in done:
+                                    tc = sub_tasks[task]
+                                    f_name = tc.get("function", {}).get("name", "")
+                                    result, is_final = await task
+                                    yield enrich(
+                                        {
+                                            "type": "tool_result",
+                                            "name": f_name,
+                                            "is_final": is_final,
+                                            "result": str(result),
+                                        }
+                                    )
+                                pending -= done
+
+                                if pending:
+                                    # Yield control briefly so other tasks can progress
+                                    try:
+                                        sub_chunk = await asyncio.wait_for(
+                                            self._sub_agent_manager._chunk_queue.get(),
+                                            timeout=0.05,
+                                        )
+                                        if sub_chunk.get("type") != "_sub_done":
+                                            yield sub_chunk
+                                    except asyncio.TimeoutError:
+                                        pass
+
+                            # Final drain
                             while not self._sub_agent_manager._chunk_queue.empty():
                                 try:
                                     sub_chunk = (
@@ -2867,99 +2376,42 @@ BEISPIELE:
                                 except asyncio.QueueEmpty:
                                     break
 
-                            # Check for completed tasks
-                            done = {t for t in pending if t.done()}
-                            for task in done:
-                                tc = sub_tasks[task]
-                                f_name = tc.get("function", {}).get("name", "")
-                                result, is_final = await task
-                                yield enrich(
-                                    {
-                                        "type": "tool_result",
-                                        "name": f_name,
-                                        "is_final": is_final,
-                                        "result": str(result),
-                                    }
-                                )
-                            pending -= done
+                    else:
+                        if collected_content:
+                            final_response = collected_content
+                            yield enrich({"type": "final_answer", "answer": final_response})
+                            break
 
-                            if pending:
-                                # Yield control briefly so other tasks can progress
-                                try:
-                                    sub_chunk = await asyncio.wait_for(
-                                        self._sub_agent_manager._chunk_queue.get(),
-                                        timeout=0.05,
-                                    )
-                                    if sub_chunk.get("type") != "_sub_done":
-                                        yield sub_chunk
-                                except asyncio.TimeoutError:
-                                    pass
+                # Handle max iterations
+                if final_response is None:
+                    final_response = self._handle_max_iterations(ctx, query)
+                    success = False
+                    yield enrich({"type": "max_iterations", "answer": final_response})
 
-                        # Final drain
-                        while not self._sub_agent_manager._chunk_queue.empty():
-                            try:
-                                sub_chunk = (
-                                    self._sub_agent_manager._chunk_queue.get_nowait()
-                                )
-                                if sub_chunk.get("type") != "_sub_done":
-                                    yield sub_chunk
-                            except asyncio.QueueEmpty:
-                                break
+                # Narrator cleanup (billig, muss jetzt)
+                self._narrator.on_live_update_callback = None
 
-                else:
-                    if collected_content:
-                        final_response = collected_content
-                        yield enrich({"type": "final_answer", "answer": final_response})
-                        break
+                # Dezenter Hinweis dass Post-Processing läuft
+                yield enrich(
+                    {
+                        "type": "post_processing",
+                        "status_msg": "Saving context",
+                    }
+                )
 
-            # Handle max iterations
-            if final_response is None:
-                final_response = self._handle_max_iterations(ctx, query)
+                # Finalize: commit + skills + persona + learning.
+                # Default: background (user sieht done SOFORT).
+                # persist_blocking=True: await für crash-safety.
+                await self._record_and_finalize(ctx, session, query, final_response, success, trigger_kw, trigger_skill, persist_blocking)
+            except Exception as e:
+                self.live.log(f"[CRASH] {e}", logging.ERROR)
                 success = False
-                yield enrich({"type": "max_iterations", "answer": final_response})
-
-            if not hasattr(ctx.active_persona, "stats"):
-                ctx.active_persona.stats = PersonaStats()
-
-            ctx.active_persona.stats.record_use(
-                source=ctx.active_persona.source,
-                query=query,
-                success=success,
-                iterations_used=ctx.current_iteration,
-                iterations_budget=max_iterations,
-                trigger_keyword=trigger_kw,
-                trigger_skill=trigger_skill,
-            )
-
-            # Narrator cleanup (billig, muss jetzt)
-            self._narrator.on_live_update_callback = None
-
-            # Dezenter Hinweis dass Post-Processing läuft
-            yield enrich(
-                {
-                    "type": "post_processing",
-                    "status_msg": "Saving context",
-                }
-            )
-
-            # Finalize: commit + skills + persona + learning.
-            # Default: background (user sieht done SOFORT).
-            # persist_blocking=True: await für crash-safety.
-            finalize_coro = self._finalize_run(
-                ctx,
-                session,
-                query,
-                final_response,
-                success,
-                trigger_kw,
-                trigger_skill,
-            )
-            if persist_blocking:
-                await finalize_coro
-            else:
-                task = asyncio.create_task(finalize_coro)
-                self._pending_finalize_tasks[ctx.run_id] = task
-
+                final_response = final_response or f"Agent crashed: {e}"
+            finally:
+                # OBS: IMMER end_run, auch bei crash
+                _obs = getattr(self.agent, 'obs', None)
+                if _obs and _obs._current_run:
+                    _obs.end_run(success=success, final_answer=final_response or "CRASH")
             yield enrich(
                 {"type": "done", "success": success, "final_answer": final_response}
             )
@@ -3020,39 +2472,9 @@ BEISPIELE:
                 "agent": agent_name,
                 "iter": 0,
             }
-            max_iterations, trigger_kw, trigger_skill = await self._parallel_init(
-                ctx, session, query, max_iterations
-            )
-            system_prompt = self._build_system_prompt(ctx, session)
-            history_depth = 2 if self.is_sub_agent else 6
-            permanent_history = session.get_history_for_llm(last_n=history_depth)
-            ctx.working_history = [
-                {"role": "system", "content": system_prompt},
-                *permanent_history,
-                {"role": "user", "content": query},
-            ]
-
-        # --- Live state ---
-        self.live.run_id = ctx.run_id
-        self.live.max_iterations = max_iterations
-        self.live.t_start = time.time()
-        self.live.skills = (
-            [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
+        max_iterations, trigger_kw, trigger_skill = await self._setup_init(
+            ctx, session, query, max_iterations, is_resume
         )
-        self.live.tools_loaded = ctx.get_dynamic_tool_names() if ctx.dynamic_tools else []
-        self.live.persona = ctx.active_persona.name
-        self.live.enter(
-            AgentPhase.INIT,
-            f"{'Resume' if is_resume else 'Start'} non-stream [{ctx.run_id}]",
-        )
-        self._narrator.reset(query)
-        self._narrator.on_init(query)
-        self._narrator.schedule_skills_update(
-            query, ctx.working_history, self.skills_manager, ctx=ctx
-        )
-        self._narrator.schedule_ruleset_update(ctx.working_history, session, ctx)
-
-        ctx.max_iterations = max_iterations
 
         # --- enrich (same as stream_generator) ---
         def enrich(chunk):
@@ -3101,286 +2523,228 @@ BEISPIELE:
             return chunks
 
         try:
-            # --- Main loop ---
-            while ctx.current_iteration < ctx.max_iterations:
-                ctx.current_iteration += 1
-                self.live.max_iterations = ctx.max_iterations
-                self.live.iteration = ctx.current_iteration
-
-                self._narrator.on_llm_pre_call(ctx.working_history)
-                self.live.status_msg = (
-                    f"Thinking (iter {ctx.current_iteration}/{max_iterations})"
-                )
-                self.live.enter(
-                    AgentPhase.LLM_CALL, f"iter {ctx.current_iteration}/{max_iterations}"
-                )
-
-                yield enrich(
-                    {"type": "iteration_start", "iteration": ctx.current_iteration}
-                )
-
-                # Flush narrator updates that accumulated
-                for nc in _flush_narrator():
-                    yield nc
-
-                # Pause / Cancel
-                if ctx.status == "paused":
-                    yield enrich({"type": "paused", "run_id": ctx.run_id})
-                    return
-                if ctx.status == "cancelled":
-                    yield enrich({"type": "cancelled", "run_id": ctx.run_id})
-                    return
-
-                # Loop warning
-                if self._should_warn_loop(ctx):
-                    warning_msg = ctx.loop_detector.get_intervention_message()
-                    if ctx.current_iteration >= max_iterations - 1:
-                        warning_msg += "\nThis is the last iteration! must finalize task immediately and return an final answer with the current status!"
-                    ctx.working_history.append({"role": "system", "content": warning_msg})
-                    ctx.loop_warning_given = True
-                    yield enrich(
-                        {"type": "warning", "message": warning_msg.splitlines()[0]}
-                    )
-
-                current_tools = self._get_tool_definitions(ctx)
-                messages = self._inject_auto_focus(ctx)
-                messages = self._sanitize_history_for_api(messages)
-
-                # --- LLM Call (non-streaming) ---
-                try:
-                    llm_kwargs = {
-                        "stream": False,
-                        "get_response_message": True,
-                        "with_context": False,
-                    }
-                    if model:
-                        llm_kwargs["model"] = model
-                    else:
-                        llm_kwargs["model_preference"] = (
-                            ctx.active_persona.model_preference
-                        )
-                    if ctx.active_persona.temperature is not None:
-                        llm_kwargs["temperature"] = ctx.active_persona.temperature
-
-                    response = await self.agent.a_run_llm_completion(
-                        messages=messages,
-                        tools=current_tools,
-                        **llm_kwargs,
-                    )
-                except Exception as e:
-                    self.live.error = str(e)
-                    self.live.enter(AgentPhase.ERROR, f"LLM Error: {e}")
-                    final_response = f"Es ist ein Fehler aufgetreten: {str(e)}\n\nIch konnte die Aufgabe leider nicht abschließen."
-                    success = False
-                    yield enrich({"type": "error", "error": str(e)})
-                    break
-
-                # Flush narrator after LLM call
-                for nc in _flush_narrator():
-                    yield nc
-
-                if not response:
-                    continue
-
-                # --- Extract content + reasoning ---
-                content = response.content or ""
-                reasoning = getattr(response, "reasoning_content", None) or ""
-
-                # Emit reasoning as block
-                if reasoning:
-                    yield enrich({"type": "reasoning", "chunk": reasoning})
-
-                # Add assistant message to history
-                msg_dict = {"role": "assistant", "content": content}
-                if hasattr(response, "tool_calls") and response.tool_calls:
-                    msg_dict["tool_calls"] = response.tool_calls
-
-                ctx.working_history.append(msg_dict)
-
-                self._narrator._set_thought(content[:250], moc=False)
-                self._narrator._inspier = content
-
-                # --- Process tool calls ---
-                if hasattr(response, "tool_calls") and response.tool_calls:
-                    # Classify
-                    final_tc = None
-                    sub_agent_tcs = []
-                    think_tcs = []
-                    normal_tcs = []
-                    SOLO_TOOLS = {"final_answer", "shift_focus"}
-
-                    for tc in response.tool_calls:
-                        tc = clean_tc_object(tc)
-                        f_name = tc.function.name
-                        if f_name in SOLO_TOOLS:
-                            final_tc = tc
-                            break
-                        elif (
-                            f_name in ("spawn_sub_agent", "wait_for", "resume_sub_agent")
-                            and self._sub_agent_manager
-                        ):
-                            sub_agent_tcs.append(tc)
-                        elif f_name == "think":
-                            think_tcs.append(tc)
-                        else:
-                            normal_tcs.append(tc)
-
-                    # Emit tool_start for all
-                    for tc in (
-                        normal_tcs
-                        + think_tcs
-                        + sub_agent_tcs
-                        + ([final_tc] if final_tc else [])
-                    ):
-                        f_name = tc.function.name
-                        try:
-                            f_args = tc.function.arguments
-                        except Exception:
-                            f_args = "{}"
-                        # Notify narrator so external systems see tool context
-                        args_preview = ""
-                        try:
-                            _parsed = json.loads(f_args) if isinstance(f_args, str) else f_args
-                            args_preview = str(_parsed.get(list(_parsed.keys())[0], ""))[:80] if _parsed else ""
-                        except Exception:
-                            args_preview = str(f_args)[:80]
-                        self._narrator.on_tool_start(f"{f_name} {args_preview}")
-                        yield enrich(
-                            {"type": "tool_start", "name": f_name, "args": f_args}
-                        )
-
-                    # Solo tool check
-                    if final_tc and len(response.tool_calls) > 1:
-                        ctx.working_history.append(
-                            {
-                                "role": "system",
-                                "content": "Action pattern not valid !!! NO tools called. use final_answer ALONE !",
-                            }
-                        )
-                        continue
-
-                    if final_tc:
-                        try:
-                            args = json.loads(final_tc.function.arguments)
-                            final_response = args.get("answer", "")
-                            success = args.get("success", True)
-                        except Exception:
-                            final_response = ""
-                            success = True
-                        yield enrich(
-                            {
-                                "type": "final_answer",
-                                "answer": final_response,
-                                "success": success,
-                            }
-                        )
-                        self._narrator.on_summarise()
-                        break
-
-                    # Execute normal tools in parallel
-                    all_tcs = normal_tcs + sub_agent_tcs
-                    results = await asyncio.gather(
-                        *[self._execute_tool_call(ctx, tc) for tc in all_tcs]
-                    )
-
-                    for tc, (result, is_final) in zip(all_tcs, results):
-                        f_name = tc.function.name
-                        yield enrich(
-                            {
-                                "type": "tool_result",
-                                "name": f_name,
-                                "is_final": is_final,
-                                "result": str(result),
-                            }
-                        )
-                        if is_final:
-                            try:
-                                args = json.loads(tc.function.arguments)
-                                final_response = args.get("answer", result)
-                                success = args.get("success", True)
-                            except Exception:
-                                final_response = result
-                                success = True
-
-                    # Think tools
-                    for tc in think_tcs:
-                        f_args_raw = tc.function.arguments
-                        try:
-                            f_args = (
-                                json.loads(f_args_raw)
-                                if isinstance(f_args_raw, str)
-                                else f_args_raw
-                            )
-                        except Exception:
-                            f_args = {}
-                        async for chunk_event in self._execute_think_streaming(
-                            ctx, tc.id, f_args
-                        ):
-                            yield chunk_event
-
-                    # Flush narrator after tool execution
+            try:
+                # --- Main loop ---
+                while ctx.current_iteration < ctx.max_iterations:
+                    # Flush narrator updates that accumulated
                     for nc in _flush_narrator():
                         yield nc
 
-                    if final_response is not None:
-                        self._narrator.on_summarise()
-                        break
-                else:
-                    # No tool calls — content IS the final answer
-                    if content:
-                        final_response = content
-                        yield enrich({"type": "content", "chunk": content})
-                        yield enrich({"type": "final_answer", "answer": final_response})
-                        break
+                    # Pause / Cancel
+                    if ctx.status == "paused":
+                        yield enrich({"type": "paused", "run_id": ctx.run_id})
+                        return
+                    if ctx.status == "cancelled":
+                        yield enrich({"type": "cancelled", "run_id": ctx.run_id})
+                        return
 
-            # --- Max iterations ---
-            if final_response is None:
-                if self.is_sub_agent:
-                    (
-                        final_response,
-                        should_mark_resumable,
-                    ) = await self._handle_sub_agent_max_iterations(
-                        ctx, query, max_iterations
+                    warning = self._loop_preamble(ctx)
+
+                    yield enrich(
+                        {"type": "iteration_start", "iteration": ctx.current_iteration}
                     )
-                    success = False
-                    if should_mark_resumable:
-                        ctx.status = "max_iterations"
-                else:
-                    final_response = self._handle_max_iterations(ctx, query)
-                    success = False
-                yield enrich({"type": "max_iterations", "answer": final_response})
 
-            # --- Stats ---
-            if not hasattr(ctx.active_persona, "stats"):
-                ctx.active_persona.stats = PersonaStats()
+                    current_tools = self._get_tool_definitions(ctx)
+                    messages = self._sanitize_history_for_api(ctx.working_history.copy())
 
-            ctx.active_persona.stats.record_use(
-                source=ctx.active_persona.source,
-                query=query,
-                success=success,
-                iterations_used=ctx.current_iteration,
-                iterations_budget=max_iterations,
-                trigger_keyword=trigger_kw,
-                trigger_skill=trigger_skill,
-            )
+                    # --- LLM Call (non-streaming) ---
+                    try:
+                        llm_kwargs = {
+                            "stream": False,
+                            "get_response_message": True,
+                            "with_context": False,
+                        }
+                        if model:
+                            llm_kwargs["model"] = model
+                        else:
+                            llm_kwargs["model_preference"] = (
+                                ctx.active_persona.model_preference
+                            )
+                        if ctx.active_persona.temperature is not None:
+                            llm_kwargs["temperature"] = ctx.active_persona.temperature
 
-            # --- Post-processing ---
-            yield enrich({"type": "post_processing", "status_msg": "Saving context"})
+                        response = await self.agent.a_run_llm_completion(
+                            messages=messages,
+                            tools=current_tools,
+                            **llm_kwargs,
+                        )
+                    except Exception as e:
+                        self.live.error = str(e)
+                        self.live.enter(AgentPhase.ERROR, f"LLM Error: {e}")
+                        final_response = f"Es ist ein Fehler aufgetreten: {str(e)}\n\nIch konnte die Aufgabe leider nicht abschließen."
+                        success = False
+                        yield enrich({"type": "error", "error": str(e)})
+                        break
 
-            finalize_coro = self._finalize_run(
-                ctx,
-                session,
-                query,
-                final_response,
-                success,
-                trigger_kw,
-                trigger_skill,
-            )
-            if persist_blocking:
-                await finalize_coro
-            else:
-                task = asyncio.create_task(finalize_coro)
-                self._pending_finalize_tasks[ctx.run_id] = task
+                    # Flush narrator after LLM call
+                    for nc in _flush_narrator():
+                        yield nc
+
+                    if not response:
+                        continue
+
+                    # --- Extract content + reasoning ---
+                    content = response.content or ""
+                    reasoning = getattr(response, "reasoning_content", None) or ""
+
+                    # Emit reasoning as block
+                    if reasoning:
+                        yield enrich({"type": "reasoning", "chunk": reasoning})
+
+                    # Add assistant message to history
+                    msg_dict = {"role": "assistant", "content": content}
+                    if hasattr(response, "tool_calls") and response.tool_calls:
+                        msg_dict["tool_calls"] = response.tool_calls
+
+                    ctx.working_history.append(msg_dict)
+
+                    self._narrator._set_thought(content[:250], moc=False)
+                    self._narrator._inspier = content
+
+                    # --- Process tool calls ---
+                    if hasattr(response, "tool_calls") and response.tool_calls:
+                        # Classify
+                        final_tc, normal_tcs, sub_agent_tcs, think_tcs = self._classify_tool_calls(response.tool_calls, dict_mode=False)
+
+                        # Emit tool_start for all
+                        for tc in (
+                            normal_tcs
+                            + think_tcs
+                            + sub_agent_tcs
+                            + ([final_tc] if final_tc else [])
+                        ):
+                            f_name = tc.function.name
+                            try:
+                                f_args = tc.function.arguments
+                            except Exception:
+                                f_args = "{}"
+                            # Notify narrator so external systems see tool context
+                            args_preview = ""
+                            try:
+                                _parsed = json.loads(f_args) if isinstance(f_args, str) else f_args
+                                args_preview = str(_parsed.get(list(_parsed.keys())[0], ""))[:80] if _parsed else ""
+                            except Exception:
+                                args_preview = str(f_args)[:80]
+                            self._narrator.on_tool_start(f"{f_name} {args_preview}")
+                            yield enrich(
+                                {"type": "tool_start", "name": f_name, "args": f_args}
+                            )
+
+                        # Solo tool check
+                        if final_tc and len(response.tool_calls) > 1:
+                            ctx.working_history.append(
+                                {
+                                    "role": "system",
+                                    "content": "Action pattern not valid !!! NO tools called. use final_answer ALONE !",
+                                }
+                            )
+                            continue
+
+                        if final_tc:
+                            try:
+                                args = json.loads(final_tc.function.arguments)
+                                final_response = args.get("answer", "")
+                                success = args.get("success", True)
+                            except Exception:
+                                final_response = ""
+                                success = True
+                            yield enrich(
+                                {
+                                    "type": "final_answer",
+                                    "answer": final_response,
+                                    "success": success,
+                                }
+                            )
+                            self._narrator.on_summarise()
+                            break
+
+                        # Execute normal tools in parallel
+                        all_tcs = normal_tcs + sub_agent_tcs
+                        results = await asyncio.gather(
+                            *[self._execute_tool_call(ctx, tc) for tc in all_tcs]
+                        )
+
+                        for tc, (result, is_final) in zip(all_tcs, results):
+                            f_name = tc.function.name
+                            yield enrich(
+                                {
+                                    "type": "tool_result",
+                                    "name": f_name,
+                                    "is_final": is_final,
+                                    "result": str(result),
+                                }
+                            )
+                            if is_final:
+                                try:
+                                    args = json.loads(tc.function.arguments)
+                                    final_response = args.get("answer", result)
+                                    success = args.get("success", True)
+                                except Exception:
+                                    final_response = result
+                                    success = True
+
+                        # Think tools
+                        for tc in think_tcs:
+                            f_args_raw = tc.function.arguments
+                            try:
+                                f_args = (
+                                    json.loads(f_args_raw)
+                                    if isinstance(f_args_raw, str)
+                                    else f_args_raw
+                                )
+                            except Exception:
+                                f_args = {}
+                            async for chunk_event in self._execute_think_streaming(
+                                ctx, tc.id, f_args
+                            ):
+                                yield chunk_event
+
+                        # Flush narrator after tool execution
+                        for nc in _flush_narrator():
+                            yield nc
+
+                        if final_response is not None:
+                            self._narrator.on_summarise()
+                            break
+                    else:
+                        # No tool calls — content IS the final answer
+                        if content:
+                            final_response = content
+                            yield enrich({"type": "content", "chunk": content})
+                            yield enrich({"type": "final_answer", "answer": final_response})
+                            break
+
+                # --- Max iterations ---
+                if final_response is None:
+                    if self.is_sub_agent:
+                        (
+                            final_response,
+                            should_mark_resumable,
+                        ) = await self._handle_sub_agent_max_iterations(
+                            ctx, query, max_iterations
+                        )
+                        success = False
+                        if should_mark_resumable:
+                            ctx.status = "max_iterations"
+                    else:
+                        final_response = self._handle_max_iterations(ctx, query)
+                        success = False
+                    yield enrich({"type": "max_iterations", "answer": final_response})
+
+                # --- Post-processing ---
+                yield enrich({"type": "post_processing", "status_msg": "Saving context"})
+
+                await self._record_and_finalize(ctx, session, query, final_response, success, trigger_kw, trigger_skill, persist_blocking)
+            except Exception as e:
+                self.live.log(f"[CRASH] {e}", logging.ERROR)
+                success = False
+                final_response = final_response or f"Agent crashed: {e}"
+            finally:
+                # OBS: IMMER end_run, auch bei crash
+                _obs = getattr(self.agent, 'obs', None)
+                if _obs and _obs._current_run:
+                    _obs.end_run(success=success, final_answer=final_response or "CRASH")
+
             ctx.status = "paused"
             yield enrich(
                 {"type": "done", "success": success, "final_answer": final_response}
@@ -3388,6 +2752,123 @@ BEISPIELE:
 
         finally:
             self._narrator.on_live_update_callback = None
+
+    async def _setup_context(
+        self,
+        query: str,
+        session_id: str,
+        max_iterations: int,
+        ctx: "ExecutionContext | None",
+    ) -> "tuple[ExecutionContext, Session, bool]":
+        """
+        Phase 1: Session, context object, tracking, sub-agent manager.
+        Cheap — no LLM, no disk. Safe to call before first yield.
+        """
+        session = await self.agent.session_manager.get_or_create(session_id)
+        is_resume = ctx is not None
+        if ctx is None:
+            ctx = ExecutionContext()
+
+        if (
+            not is_resume
+            and hasattr(self.agent, "amd")
+            and hasattr(self.agent.amd, "context_config")
+        ):
+            ctx.context_config = self.agent.amd.context_config
+
+        self._active_executions[ctx.run_id] = ctx
+        self._session_last_run[session_id] = ctx.run_id
+        ctx.session_id = session_id
+        ctx.query = query
+
+        if not is_resume:
+            self._evict_if_over_limit(exclude_run_id=ctx.run_id)
+
+        await self._wait_for_pending_finalize(session_id)
+
+        if not self.is_sub_agent and not is_resume:
+            self._sub_agent_manager = SubAgentManager(
+                parent_engine=self, parent_session=session, is_sub_agent=False
+            )
+        else:
+            if self.sub_agent_output_dir:
+                session.vfs = RestrictedVFSWrapper(
+                    session.vfs, self.sub_agent_output_dir
+                )
+
+        self._current_session = session
+        return ctx, session, is_resume
+
+    async def _setup_init(
+        self,
+        ctx: "ExecutionContext",
+        session: "Session",
+        query: str,
+        max_iterations: int,
+        is_resume: bool,
+    ) -> "tuple[int, str | None, str | None]":
+        """
+        Phase 2: parallel_init, history, live state, narrator.
+        Expensive — skill matching, tool loading, embeddings.
+        Returns (max_iterations, trigger_kw, trigger_skill).
+        """
+        trigger_kw, trigger_skill = None, None
+        _setup_t0 = time.time()
+        if not is_resume:
+            max_iterations, trigger_kw, trigger_skill = await self._parallel_init(
+                ctx, session, query, max_iterations
+            )
+            system_prompt = self._build_system_prompt(ctx, session)
+            history_depth = 2 if self.is_sub_agent else 6
+            permanent_history = session.get_history_for_llm(last_n=history_depth)
+            ctx.working_history = [
+                {"role": "system", "content": system_prompt},
+                *permanent_history,
+                {"role": "user", "content": query},
+            ]
+
+        ctx.max_iterations = max_iterations
+        # Live state
+        agent_type = "SUB-AGENT" if self.is_sub_agent else "MAIN"
+        action = "Resuming" if is_resume else "Start"
+        self.live.run_id = ctx.run_id
+        self.live.max_iterations = ctx.max_iterations
+        self.live.t_start = time.time()
+        self.live.skills = (
+            [s.name for s in ctx.matched_skills] if ctx.matched_skills else []
+        )
+        self.live.tools_loaded = (
+            ctx.get_dynamic_tool_names() if ctx.dynamic_tools else []
+        )
+        self.live.persona = ctx.active_persona.name
+        self.live.enter(
+            AgentPhase.INIT,
+            f"{action} [{agent_type}] {ctx.run_id}: {query[:80]}",
+        )
+
+        if self.agent.obs is None:
+            await self.agent.post_init()
+        if self.agent.obs:
+            self.agent.obs.begin_run(
+                ctx.run_id, query, session.session_id,
+                persona=ctx.active_persona.name,
+                skills=[s.name for s in ctx.matched_skills] if ctx.matched_skills else [],
+            )
+
+        # Narrator
+        self._narrator.reset(query)
+        self._narrator.on_init(query)
+        self._narrator.schedule_skills_update(
+            query, ctx.working_history, self.skills_manager, ctx=ctx
+        )
+        self._narrator.schedule_ruleset_update(ctx.working_history, session, ctx)
+        if self.agent.obs:
+            self.agent.obs._audit("INIT", ctx.run_id, details={
+                "duration_s": round(time.time() - _setup_t0, 3) if '_setup_t0' in dir() else 0,
+                "persona": ctx.active_persona.name if ctx.active_persona else "default",
+                "skills_matched": len(ctx.matched_skills) if ctx.matched_skills else 0,
+            })
+        return max_iterations, trigger_kw, trigger_skill
 
     async def _parallel_init(
         self,
@@ -3458,6 +2939,131 @@ BEISPIELE:
 
         return max_iterations, trigger_kw, trigger_skill
 
+    async def _record_and_finalize(
+        self,
+        ctx: ExecutionContext,
+        session,
+        query: str,
+        final_response: str,
+        success: bool,
+        trigger_kw: str | None,
+        trigger_skill: str | None,
+        persist_blocking: bool = False,
+    ):
+        """Common post-loop: stats + finalize."""
+        if not hasattr(ctx.active_persona, "stats"):
+            ctx.active_persona.stats = PersonaStats()
+
+        ctx.active_persona.stats.record_use(
+            source=ctx.active_persona.source,
+            query=query,
+            success=success,
+            iterations_used=ctx.current_iteration,
+            iterations_budget=ctx.max_iterations,
+            trigger_keyword=trigger_kw,
+            trigger_skill=trigger_skill,
+        )
+
+        self.live.status_msg = f"done (ok={success}, iters={ctx.current_iteration})"
+        self.live.enter(
+            AgentPhase.DONE,
+            f"Execution [{ctx.run_id}] complete (success={success}, iters={ctx.current_iteration})",
+        )
+
+        finalize_coro = self._finalize_run(
+            ctx, session, query, final_response, success, trigger_kw, trigger_skill
+        )
+        if persist_blocking:
+            await finalize_coro
+        else:
+            task = asyncio.create_task(finalize_coro)
+            self._pending_finalize_tasks[ctx.run_id] = task
+
+    def _loop_preamble(self, ctx: ExecutionContext) -> str | None:
+        """Iteration bookkeeping + loop warning. Returns warning msg or None."""
+        _obs = getattr(self.agent, 'obs', None)
+        if _obs:
+            snapshot = ctx.to_checkpoint() if (ctx.current_iteration % self.agent.obs.snapshot_interval == 0) else None
+            _obs.end_step(ctx_checkpoint=snapshot)
+        ctx.current_iteration += 1
+        if _obs:
+            _obs.begin_step(ctx.current_iteration)
+        self.live.max_iterations = ctx.max_iterations
+        self.live.iteration = ctx.current_iteration
+        self._narrator.on_llm_pre_call(ctx.working_history)
+        self.live.status_msg = (
+            f"Thinking (iter {ctx.current_iteration}/{ctx.max_iterations})"
+        )
+        self.live.enter(
+            AgentPhase.LLM_CALL,
+            f"iter {ctx.current_iteration}/{ctx.max_iterations}",
+        )
+
+        warning = None
+        if self._should_warn_loop(ctx):
+            warning = ctx.loop_detector.get_intervention_message()
+            if ctx.current_iteration >= ctx.max_iterations - 1:
+                warning += (
+                    "\nThis is the last iteration! must finalize task "
+                    "immediately and return a final answer with the current status!"
+                )
+            ctx.working_history.append({"role": "system", "content": warning})
+            ctx.loop_warning_given = True
+        ctx.working_history = clean_messages(ctx.working_history)
+        return warning
+
+    def _classify_tool_calls(
+        self, tool_calls: list, dict_mode: bool = False,
+    ) -> tuple[dict | None, list, list, list]:
+        """
+        Returns (final_tc, normal_tcs, sub_agent_tcs, think_tcs).
+        dict_mode=True for execute_stream (dicts), False for execute (objects).
+        """
+        SOLO_TOOLS = {"final_answer", "shift_focus"}
+        final_tc = None
+        normal_tcs = []
+        sub_agent_tcs = []
+        think_tcs = []
+
+        clean = clean_tc_dict if dict_mode else clean_tc_object
+
+        for tc in tool_calls:
+            tc = clean(tc)
+            f_name = (
+                tc.get("function", {}).get("name", "")
+                if dict_mode
+                else tc.function.name
+            )
+            if f_name in SOLO_TOOLS:
+                final_tc = tc
+                break
+            elif (
+                f_name in ("spawn_sub_agent", "wait_for", "resume_sub_agent")
+                and self._sub_agent_manager
+            ):
+                sub_agent_tcs.append(tc)
+            elif f_name == "think":
+                think_tcs.append(tc)
+            else:
+                normal_tcs.append(tc)
+
+        return final_tc, normal_tcs, sub_agent_tcs, think_tcs
+
+    def _extract_final_answer(
+        self, tc, dict_mode: bool = False, fallback: str = "",
+    ) -> tuple[str, bool]:
+        """Returns (answer, success)."""
+        try:
+            raw = (
+                tc.get("function", {}).get("arguments", "{}")
+                if dict_mode
+                else tc.function.arguments
+            )
+            args = json.loads(raw) if isinstance(raw, str) else raw
+            return args.get("answer", fallback), args.get("success", True)
+        except Exception:
+            return fallback, True
+
     def _should_warn_loop(self, ctx: ExecutionContext) -> bool:
         """Check if we should inject a loop warning"""
         if ctx.loop_warning_given:
@@ -3466,7 +3072,7 @@ BEISPIELE:
         if len(ctx.loop_detector.history) >= 3:
             # Check if last 3 are the same
             last3 = ctx.loop_detector.history[-3:]
-            if len(set(last3)) == 1:
+            if len(set([str(x)+str(y)for x,y in last3])) == 1:
                 return True
 
         return False
@@ -3508,14 +3114,16 @@ BEISPIELE:
     async def _execute_think_streaming(self, ctx: ExecutionContext, f_id, f_args: dict):
         """Execute think tool with streaming — yields chunk events, then final tool_result."""
         f_name = "think"
-
         # ── Pre-call bookkeeping (same as _execute_tool_call) ──
         async with ctx.lock:
             ctx.tools_used.append(f_name)
             loop_detected = ctx.loop_detector.record(f_name, f_args)
-            focus_msg = ctx.auto_focus.get_focus_message()
 
         if loop_detected:
+            _obs = getattr(self.agent, 'obs', None)
+            if _obs:
+                _obs.record_tool_start(f_name, "loop_detected")
+                _obs.record_tool_end(f_name, result_summary="loop_intervention", status="ok")
             yield {
                 "type": "tool_result",
                 "name": f_name,
@@ -3530,6 +3138,7 @@ BEISPIELE:
         self.live.enter(AgentPhase.TOOL_EXEC)
         self.live.status_msg = f"Calling tool {f_name}"
         self._narrator.on_tool_start(f_name + " " + str(f_args.get("thought", "")[:80]))
+        if self.agent.obs: self.agent.obs.record_tool_start(f_name, str(f_args))
 
         thought = f_args.get("thought", "")
         effort = f_args.get("effort", "fast")
@@ -3538,9 +3147,6 @@ BEISPIELE:
         if self._current_session is not None:
             vfs_content = self._current_session.vfs.build_context_string()
         current_user_task = ctx.query
-        current_focus = focus_msg
-        if current_focus and isinstance(current_focus, dict):
-            current_focus = current_focus.get("content", "")
 
         messages = [
             {
@@ -3562,7 +3168,6 @@ BEISPIELE:
                 "role": "user",
                 "content": (
                     f"## Original User Task:\n{current_user_task}\n---\n\n"
-                    f"## Current Focus:\n{current_focus}\n---\n\n"
                     f"## Vfs Content:\n{vfs_content}\n---\n\n"
                     f"## Agent's Working History:\n{working_history}\n---\n\n"
                     f"## Agent's Current Thought:\n{thought}\n---\n\n"
@@ -3572,9 +3177,10 @@ BEISPIELE:
         ]
 
         # Schedule background tasks
-        try:
+        def _():
+            try:
 
-            def _():
+
                 self._narrator.schedule_skills_update(
                     ctx.query, ctx.working_history, self.skills_manager, ctx=ctx
                 )
@@ -3588,9 +3194,9 @@ BEISPIELE:
                     history=ctx.working_history, session=self._current_session, ctx=ctx
                 )
 
-            threading.Thread(target=_).start()
-        except Exception as e:
-            print(e)
+            except Exception as e:
+                if self.agent.obs: self.agent.obs.record_tool_end(f_name, error=str(e), status="error")
+        threading.Thread(target=_).start()
 
         thought_acc = ""
         try:
@@ -3635,6 +3241,7 @@ BEISPIELE:
             result = thought_acc
         except Exception as e:
             result = thought_acc + str(e) if thought_acc else str(e)
+            if self.agent.obs: self.agent.obs.record_tool_end(f_name, error=result, status="error")
 
         self.live.thought = result[-200:] if result else ""
 
@@ -3645,7 +3252,6 @@ BEISPIELE:
             managed_msg = self._manage_context_budget(ctx, f_name, str(result), f_id)
             ctx.working_history.append(managed_msg)
             ctx.tools_dict.append({"name": f_name, "args": f_args, "result": result})
-            ctx.auto_focus.record(f_name, f_args, str(result))
             if f_name in ["think", "load_tools", "list_tools"]:
                 ctx.max_iterations += 1
         try:
@@ -3665,10 +3271,12 @@ BEISPIELE:
 
         except Exception as e:
             self.live.narrator_msg = "Failed to execute narrator tool post processing"
+            if self.agent.obs: self.agent.obs.record_tool_end(f_name, error="Failed to execute narrator tool post processing", status="error")
             get_app().debug_rains(e)
             get_app().print(e)
 
         # Final tool_result with complete thought
+        if self.agent.obs: self.agent.obs.record_tool_end(f_name, str(result), status="ok" if not isinstance(result, dict) else ( "ok" if  result.get("success", True) else "error"))
         yield {"type": "tool_result", "name": f_name, "is_final": False, "result": result}
 
     async def _execute_tool_call(
@@ -3694,7 +3302,7 @@ BEISPIELE:
                 r"Do NOT escape single quotes (\'). Do NOT wrap the JSON in ``` fences. "
                 f"Raw args received (first 500 chars): {str(tool_call.function.arguments)[:500]}"
             ), False
-
+        if self.agent.obs: self.agent.obs.record_tool_start(f_name, args_str)
         self._narrator.on_tool_start(
             f_name + " " + str(f_args.get(list(f_args.keys())[0], "") if f_args else "")
         )
@@ -3705,9 +3313,12 @@ BEISPIELE:
             ctx.tools_used.append(f_name)
             # Loop detection (record before execution)
             loop_detected = ctx.loop_detector.record(f_name, f_args)
-            focus_msg = ctx.auto_focus.get_focus_message()
 
         if loop_detected:
+            _obs = getattr(self.agent, 'obs', None)
+            if _obs:
+                _obs.record_tool_start(f_name, "loop_detected")
+                _obs.record_tool_end(f_name, result_summary="loop_intervention", status="ok")
             return ctx.loop_detector.get_intervention_message(), False
 
         result = ""
@@ -3720,140 +3331,19 @@ BEISPIELE:
 
         # === STATIC TOOLS ===
         if f_name == "think":
-            thought = f_args.get("thought", "")
-            effort = f_args.get("effort", "fast")
-            working_history = str(ctx.working_history[-25:])
-            vfs_content = ""
-            if self._current_session is not None:
-                vfs_content = self._current_session.vfs.build_context_string()
-            current_user_task = ctx.query
-            current_focus = focus_msg
-            if current_focus and isinstance(current_focus, dict):
-                current_focus = current_focus.get("content", "")
-            messages = [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a strategic reasoning assistant embedded inside an AI agent execution loop.\n"
-                        "Your role is NOT to execute tasks — you analyze the current situation and guide the agent.\n\n"
-                        "## Your output must include:\n"
-                        "1. **Situation Assessment** — What has happened so far? Where is the agent stuck or making progress?\n"
-                        "2. **Key Insights** — Patterns, risks, or opportunities visible in the history.\n"
-                        "3. **Concrete Tips** — Actionable next steps the agent can directly attempt.\n"
-                        "4. **Partial Solutions / Hints** — Sketch approaches, pseudo-steps, or known-good patterns relevant to the task.\n"
-                        "5. **Pitfalls to Avoid** — Common mistakes or dead ends visible from the current trajectory.\n\n"
-                        "Be direct and dense. No filler. The agent will act on your output.\n\n"
-                        f"All available tools : {await self._tool_list_tools()}"
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"## Original User Task:\n{current_user_task}\n---\n\n"
-                        f"## Current Focus:\n{current_focus}\n---\n\n"
-                        f"## Vfs Content:\n{vfs_content}\n---\n\n"
-                        f"## Agent's Working History:\n{working_history}\n---\n\n"
-                        f"## Agent's Current Thought:\n{thought}\n---\n\n"
-                        "Based on the above, provide your situation assessment, tips, hints, and partial solutions."
-                    ),
-                },
-            ]
-            try:
-
-                def _():
-                    self._narrator.schedule_skills_update(
-                        ctx.query, ctx.working_history, self.skills_manager, ctx=ctx
-                    )
-                    self.live.status_msg = f"Skills updated successfully scheduled"
-
-                    self._narrator.schedule_memory_extraction(
-                        query=ctx.query,
-                        history=ctx.working_history,
-                        ctx=ctx,
-                        session=self._current_session,
-                    )
-
-                    self.live.status_msg = f"Memory updated successfully scheduled"
-                    self._narrator.schedule_ruleset_update(
-                        history=ctx.working_history,
-                        session=self._current_session,
-                        ctx=ctx,
-                    )
-
-                    self.live.status_msg = f"Ruleset updated successfully scheduled"
-
-                threading.Thread(target=_).start()
-            except Exception as e:
-                get_logger().warning(f"Narr error on execute tool call : {e}")
 
             thought_acc = ""
-
             try:
-                kwargs = {}
-                if effort == "fast":
-                    kwargs["model"] = (
-                        os.getenv("BLITZMODEL", self.agent.amd.fast_llm_model)
-                        if len(thought) < 320
-                        else os.getenv("LIGHNIGMODEL", self.agent.amd.fast_llm_model)
-                    )
-                else:
-                    kwargs["model_preference"] = (
-                        "complex" if len(thought) < 520 else "fast"
-                    )
-                stream_response = await self.agent.a_run_llm_completion(
-                    messages=messages,
-                    max_tokens=2048,
-                    stream=True,
-                    true_stream=True,
-                    with_context=False,
-                )
-                if asyncio.iscoroutine(stream_response):
-                    stream_response = await stream_response
-
-                # Stream think output — update narrator mock after each paragraph
-                chunk_buffer = ""
-
-                # Definiere Trennzeichen, bei denen ein Gedanke "sinnvoll" pausiert
-                # Satzzeichen, Doppelpunkt oder Newline markieren oft eine abgeschlossene Idee
-                pause_chars = {".", "\n", ":", ";", "?"}
-
-                async for chunk in stream_response:
-                    delta = (
-                        chunk.choices[0].delta
-                        if hasattr(chunk, "choices") and chunk.choices
-                        else None
-                    )
-                    if delta and hasattr(delta, "content") and delta.content:
-                        content = delta.content
-                        thought_acc += content
-                        chunk_buffer += content
-
-                        # Update live.thought UI
-                        self.live.thought = thought_acc[-200:]
-
-                        # Prüfe, ob das Chunk eines der Pause-Zeichen enthält
-                        if (
-                            any(pc in content for pc in pause_chars)
-                            and len(chunk_buffer) > 40
-                        ):
-                            # Wir haben einen Sinnabschnitt!
-                            # Übergebe diesen Satz an den Narrator. Der `moc=False` (oder True, je nach deiner Logik)
-                            # sorgt dafür, dass dieser echte Kontext im `context_str` landet.
-
-                            clean_sentence = chunk_buffer.strip().replace("\n", " ")
-
-                            # Hier greift unsere neue Intelligenz:
-                            # Anstatt den Text roh auszugeben, triggern wir `_set_thought` mit dem echten Text,
-                            # ODER wir rufen mock("llm_pre", ...) auf, damit der Remixer den `chunk_buffer` frisst!
-
-                            # Update inspier manuell für den Remixer
-                            self._narrator._inspier += " " + clean_sentence
-
-                            # Triggere einen neuen Mock-Lauf, der jetzt die echten Daten aus _inspier nutzt
-                            self._narrator.mock("llm_pre")
-
-                            # Buffer leeren für den nächsten Satz
-                            chunk_buffer = ""
+                async for chunk in self._execute_think_streaming(ctx, f_id, f_args):
+                    # {"type": "tool_result", "name": f_name, "is_final": False, "result": result}
+                    # {"type": "reasoning", "content": content, "chunk": content}
+                    if not chunk:
+                        continue
+                    c_type = chunk.get("type", "")
+                    is_final = chunk.get("is_final", "")
+                    thought_acc = chunk.get("result", "")
+                    if c_type == "tool_result":
+                        break
 
                 thought = thought_acc
                 result = thought
@@ -3952,13 +3442,13 @@ BEISPIELE:
                                 f"✅ Sub-Agent completed successfully.\n"
                                 f"Output: {sub_result.output_dir}\n"
                                 f"Files: {', '.join(sub_result.files_written)}\n"
-                                f"Result: {sub_result.result if sub_result.result else 'result in files'}"
+                                f"Result: {sub_result.result if sub_result.result else 'result in files'}\n"
                             )
                         else:
                             result = (
                                 f"❌ Sub-Agent failed: {sub_result.error}\n"
                                 f"Status: {sub_result.status.value}\n"
-                                f"Output dir: {sub_result.output_dir}"
+                                f"Output dir: {sub_result.output_dir}\n"
                             )
                         # Inject into AutoFocus
                         focus_text = (
@@ -3966,7 +3456,7 @@ BEISPIELE:
                                 {sub_result.id: sub_result}
                             )
                         )
-                        ctx.auto_focus.actions.append(focus_text)
+                        result += focus_text
                     else:
                         # spawn_result is sub_agent_id string
                         result = f"🚀 Sub-Agent gestartet: {spawn_result}\nOutput dir: /sub/{output_dir}\nNutze wait_for('{spawn_result}') um auf das Ergebnis zu warten."
@@ -4008,7 +3498,7 @@ BEISPIELE:
                     focus_text = self._sub_agent_manager.format_results_for_auto_focus(
                         results
                     )
-                    ctx.auto_focus.actions.append(focus_text)
+                    result += focus_text
 
                 except Exception as e:
                     result = f"ERROR waiting for sub-agents: {str(e)}"
@@ -4084,7 +3574,6 @@ BEISPIELE:
                     f_name = f_name+f_args.get("command", " _").split(" ")[0]
                     f_name = f_name.strip()
                 ctx.tools_dict.append({"name": f_name, "args": f_args, "result": result})
-            ctx.auto_focus.record(f_name, f_args, str(result))
             if f_name in ["think", "load_tools", "list_tools"]:
                 ctx.max_iterations += 1
         try:
@@ -4095,17 +3584,27 @@ BEISPIELE:
                     thinking_content=thinking_content,
                     history=ctx.working_history,
                 )
+                if self.agent.obs: self.agent.obs.record_tool_end(f_name, str(result),
+                                                                  status=(( "ok" if result.get("success", True) else "error")
+                                                                          if isinstance(result, dict) else "ok"))
+
             else:
                 self._narrator.schedule_tool_end(
                     tool_name=f_name,
                     result_snippet=str(result)[:80],
                     history=ctx.working_history,
                 )
+                if self.agent.obs: self.agent.obs.record_tool_end(f_name, str(result),
+                                                                  status=(
+                                                                      "error" if result.startswith("Error") else "ok") if not isinstance(
+                                                                      result, dict) else (
+                                                                      "ok" if result.get("success", True) else "error"))
 
         except Exception as e:
             self.live.narrator_msg = "Failed to execute narrator tool post processing"
             get_app().debug_rains(e)
             get_app().print(e)
+
 
         self.live.tools.pop(f_id, None)
         return result, is_final
@@ -4444,7 +3943,6 @@ BEISPIELE:
         ]
 
         # 5. Trackers zurücksetzen für neue Phase
-        ctx.auto_focus.clear()
         ctx.loop_detector.reset()
         ctx.loop_warning_given = False
         # 1. Begrenze, wie oft ein Agent den Fokus shiften darf (Sicherung gegen Loops)
@@ -5468,17 +4966,6 @@ BEISPIELE:
 
         return "\n".join(prompt_parts)
 
-    def _inject_auto_focus(self, ctx: ExecutionContext) -> List[dict]:
-        """Inject AutoFocus message before last user query"""
-        messages = ctx.working_history.copy()
-
-        focus_msg = ctx.auto_focus.get_focus_message()
-        if focus_msg:
-            # Find last user message and insert before it
-            messages.insert(-1, focus_msg)
-
-        return messages
-
     def _sanitize_history_for_api(self, messages: List[dict]) -> List[dict]:
         """Fixes invalid JSON in assistant tool_calls to prevent API 400 errors."""
         for msg in messages:
@@ -5821,57 +5308,261 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         """
         return self._active_executions.get(execution_id)
 
+    def _evict_if_over_limit(self, exclude_run_id: str = ""):
+        """
+        Evict oldest paused/max_iterations contexts if _active_executions
+        exceeds max_resumable. Running contexts are never evicted.
+
+        Args:
+            exclude_run_id: The just-registered run_id (never self-evict)
+        """
+        # Count only resumable (paused / max_iterations) entries
+        resumable = [
+            (rid, ctx) for rid, ctx in self._active_executions.items()
+            if ctx.status in ("paused", "max_iterations") and rid != exclude_run_id
+        ]
+
+        if len(resumable) < self.max_resumable:
+            return
+
+        # Sort by current_iteration ascending → least progress = evict first
+        resumable.sort(key=lambda x: x[1].current_iteration)
+
+        evict_count = len(resumable) - self.max_resumable + 1  # +1 for the new one
+        for i in range(evict_count):
+            rid, ctx = resumable[i]
+            self._active_executions.pop(rid, None)
+            self._session_last_run.pop(ctx.session_id, None)
+            self.live.log(
+                f"[MemCap] Evicted paused run {rid} (iter={ctx.current_iteration}) "
+                f"from memory. Cold resume still available via obs.",
+                logging.DEBUG,
+            )
+
+    async def _restore_cold_ctx(self, ctx, session):
+        """
+        Resolve cold-resume stubs: re-attach matched_skills objects
+        and active_persona from their stored IDs/names.
+
+        Called ONLY on cold resume (from disk), not hot resume.
+        """
+        # 1. Resolve matched_skills from IDs
+        if hasattr(ctx, '_cold_skill_ids') and ctx._cold_skill_ids:
+            resolved = []
+            for sid in ctx._cold_skill_ids:
+                skill = self.skills_manager.skills.get(sid)
+                if skill:
+                    resolved.append(skill)
+            ctx.matched_skills = resolved
+            del ctx._cold_skill_ids
+
+        # 2. Resolve active_persona from name
+        if hasattr(ctx, '_cold_persona_name') and ctx._cold_persona_name:
+            # Load learned personas if not done yet
+            if not self._personas_loaded:
+                self._persona_router.load_learned_personas(session)
+                self._personas_loaded = True
+
+            persona_name = ctx._cold_persona_name
+            if persona_name in self._persona_router.personas:
+                import dataclasses
+                ctx.active_persona = dataclasses.replace(
+                    self._persona_router.personas[persona_name],
+                    source="cold_resume",
+                )
+            else:
+                # Fallback: default persona with the stored name
+                ctx.active_persona = PersonaProfile(name=persona_name, source="cold_resume")
+            del ctx._cold_persona_name
+
+        # 3. Ensure status is correct
+        ctx.status = "running"
+
+    async def resume_from_disk(
+        self,
+        run_id: str,
+        max_iterations: int = 30,
+        content: str = "",
+        stream: bool = False,
+    ):
+        """
+        Resume an interrupted execution from disk (cold resume).
+
+        Flow:
+        1. Load ctx_snapshot from obs layer's live JSONL
+        2. Reconstruct ExecutionContext
+        3. Validate session exists
+        4. Resolve cold stubs (skills, persona)
+        5. Re-enter execute() loop
+
+        Args:
+            run_id: The interrupted run's ID
+            max_iterations: Additional iterations to allow
+            content: Optional new user message to inject
+            stream: If True, return (stream_func, ctx)
+
+        Returns:
+            Final response string or (stream_func, ctx)
+        """
+        obs = getattr(self.agent, 'obs', None)
+        if obs is None:
+            return f"Error: ObservabilityLayer not configured on agent"
+
+        # 1. Load from disk
+        result = obs.get_resumable_run(run_id)
+        if result is None:
+            return f"Error: No resumable data found for run_id={run_id}"
+
+        run_record, ctx_snapshot = result
+
+        if ctx_snapshot is None:
+            return (
+                f"Error: Run {run_id} found ({len(run_record.steps)} steps recorded) "
+                f"but no ctx_snapshot available. Cannot resume without execution state. "
+                f"Increase obs.snapshot_interval or ensure snapshots are written."
+            )
+
+        # 2. Reconstruct ExecutionContext
+        ctx = ExecutionContext.from_checkpoint(ctx_snapshot)
+
+        # 3. Validate session
+        session_id = ctx.session_id or "default"
+        try:
+            session = await self.agent.session_manager.get_or_create(session_id)
+        except Exception as e:
+            return f"Error: Session '{session_id}' restore failed: {e}"
+
+        # 4. Resolve cold stubs
+        await self._restore_cold_ctx(ctx, session)
+
+        # 5. Set iteration ceiling
+        ctx.max_iterations = ctx.current_iteration + max_iterations
+
+        # 6. Inject new user content if provided
+        if content:
+            ctx.working_history.append({
+                "role": "system",
+                "content": "[COLD RESUME] Agent restarted from disk checkpoint. Continuing previous task.",
+            })
+            ctx.working_history.append({"role": "user", "content": content})
+        else:
+            ctx.working_history.append({
+                "role": "system",
+                "content": (
+                    "[COLD RESUME] Agent restarted from disk checkpoint at "
+                    f"iteration {ctx.current_iteration}. Continue where you left off."
+                ),
+            })
+
+        # 7. Register in active executions
+        self._active_executions[ctx.run_id] = ctx
+
+        # 8. Clean up live file (obs will create a new one on begin_run)
+        # Keep the old live file as backup until new run completes
+        live_backup = None
+        import os
+        live_path = os.path.join(obs.obs_dir, f"live_{run_id}.jsonl")
+        if os.path.exists(live_path):
+            live_backup = live_path + ".bak"
+            try:
+                os.rename(live_path, live_backup)
+            except OSError:
+                pass
+
+        self.live.log(
+            f"[COLD RESUME] Restored run {run_id} at iter {ctx.current_iteration}, "
+            f"session={session_id}, skills={len(ctx.matched_skills)}, "
+            f"persona={ctx.active_persona.name}",
+            logging.INFO,
+        )
+
+        # 9. Enter execution
+        if stream:
+            return await self.execute_stream(
+                query=ctx.query,
+                session_id=session_id,
+                max_iterations=max_iterations,
+                ctx=ctx,
+            )
+
+        return await self.execute(
+            query=ctx.query,
+            session_id=session_id,
+            max_iterations=max_iterations,
+            ctx=ctx,
+        )
+
+    def get_interrupted_runs(self) -> list[dict]:
+        """
+        List runs that can be cold-resumed from disk.
+
+        Returns:
+            List of {run_id, step_count, last_step_id, has_snapshot}
+        """
+        obs = getattr(self.agent, 'obs', None)
+        if obs is None:
+            return []
+        return obs.get_interrupted_runs()
+
+
+
     async def resume(
         self,
         execution_id: str,
         max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30),
         content="",
         stream=False,
-    ) -> (
-        str | tuple[Callable[[...], Any], ExecutionContext] | tuple[str, ExecutionContext]
-    ):
+    ) -> str | tuple[Callable[[...], Any], ExecutionContext] | tuple[str, ExecutionContext]:
         """
-        Resume a paused execution.
+           Resume a paused execution (hot) or interrupted execution (cold from disk).
 
-        Args:
-            execution_id: The run_id of the execution to resume
-            max_iterations: Max additional iterations
+           Hot: run_id found in _active_executions (in-memory, process still alive)
+           Cold: run_id NOT in memory → fallback to resume_from_disk via obs layer
 
-        Returns:
-            Final response string
-        """
+           Args:
+               execution_id: The run_id of the execution to resume
+               max_iterations: Max additional iterations
+               content: Additional user input
+               stream: If True, return streaming interface
+
+           Returns:
+               Final response string or (stream_func, ctx)
+           """
+        # --- HOT PATH: in-memory resume ---
         ctx = self._active_executions.get(execution_id)
-        if ctx is None:
-            return f"Error: Execution {execution_id} not found"
+        if ctx is not None:
+            if ctx.status not in ("paused", "max_iterations"):
+                return f"Error: Execution {execution_id} is not resumable (status: {ctx.status})"
 
-        if ctx.status != "paused":
-            return f"Error: Execution {execution_id} is not paused (status: {ctx.status})"
-
-        ctx.status = "running"
-        ctx.max_iterations = ctx.current_iteration + max_iterations
-        if content:
-            ctx.working_history.append(
-                {
+            ctx.status = "running"
+            ctx.max_iterations = ctx.current_iteration + max_iterations
+            if content:
+                ctx.working_history.append({
                     "role": "system",
                     "content": "Continue with old task using new user information's",
-                }
-            )
-            ctx.working_history.append({"role": "user", "content": content})
+                })
+                ctx.working_history.append({"role": "user", "content": content})
 
-        if stream:
-            # Resume execution
-            return await self.execute_stream(
+            if stream:
+                return await self.execute_stream(
+                    query=ctx.query,
+                    session_id=ctx.session_id,
+                    max_iterations=max_iterations,
+                    ctx=ctx,
+                )
+            return await self.execute(
                 query=ctx.query,
                 session_id=ctx.session_id,
                 max_iterations=max_iterations,
                 ctx=ctx,
             )
-        # Resume execution
-        return await self.execute(
-            query=ctx.query,
-            session_id=ctx.session_id,
+
+        # --- COLD PATH: disk resume ---
+        return await self.resume_from_disk(
+            run_id=execution_id,
             max_iterations=max_iterations,
-            ctx=ctx,
+            content=content,
+            stream=stream,
         )
 
 

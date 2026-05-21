@@ -768,6 +768,12 @@ class PersonaConfig:
         """Check if post-processing should be applied"""
         return self.apply_method in ["post_process", "both"]
 
+@dataclass
+class ObservabilityConfig:
+    enabled: bool = True
+    max_runs: int = 3              # ring buffer: keep last N completed runs
+    snapshot_interval: int = 5     # ctx snapshot to disk every N steps
+    enable_audit: bool = True      # send events to app.audit_logger
 class AgentModelData(BaseModel):
     name: str = "FlowAgent"
     fast_llm_model: str = "openrouter/anthropic/claude-3-haiku"
@@ -807,6 +813,7 @@ You are Isaa (via simplecore.app), a self-correcting, autonomous software. You v
     enable_lsp: bool = True
     enable_docker: bool = True
     docker_config: DockerConfig | None = None
+    obs_config: ObservabilityConfig = field(default_factory=ObservabilityConfig)
     context_config: ContextBudgetConfig = field(default_factory=ContextBudgetConfig)
 
     def get_system_message(self) -> str:

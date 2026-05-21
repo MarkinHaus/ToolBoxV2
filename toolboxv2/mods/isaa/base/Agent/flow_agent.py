@@ -36,6 +36,7 @@ from toolboxv2.mods.isaa.base.patch.power_vfs import grep_vfs, search_vfs, find_
 from toolboxv2.mods.isaa.base.audio_io.audioIo import (
     setup_isaa_audio, LocalPlayer, WebPlayer, NullPlayer, AudioStreamPlayer
 )
+from toolboxv2.mods.isaa.base.Agent.observability import ObservabilityLayer
 from toolboxv2.mods.isaa.base.audio_io.Tts import TTSConfig, TTSBackend
 AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
 # Framework imports
@@ -382,12 +383,64 @@ class FlowAgent:
         # Execution engine instance (lazy loaded)
         self._execution_engine_cache = None
 
+        self._config_chash = None
+        self.obs = None
+        self._done_post_init = False
+
+
         self._init_managers(auto_load_checkpoint)
         self._init_rate_limiter()
-
-        self._config_chash = None
+        self._init_obs()
 
         logger.info(f"FlowAgent '{amd.name}' initialized")
+
+    def _init_obs(self):
+        """
+        INSERT this block into _init_managers after checkpoint_manager init.
+        """
+        from toolboxv2.mods.isaa.base.Agent.observability import ObservabilityLayer
+        import os
+
+        # obs_cfg comes from AgentConfig.obs (set by builder)
+        obs_cfg = getattr(self.amd, 'obs_config', None)
+        if obs_cfg is None:
+            # Default: enabled with defaults
+            class _defaults:
+                enabled = True
+                max_runs = 3
+                snapshot_interval = 5
+                enable_audit = True
+
+            obs_cfg = _defaults()
+
+        if obs_cfg.enabled:
+            from toolboxv2 import get_app
+            obs_dir = os.path.join(
+                str(get_app().data_dir), 'Agents', self.amd.name, 'obs'
+            )
+            audit = getattr(get_app(), 'audit_logger', None) if obs_cfg.enable_audit else None
+            self.obs = ObservabilityLayer(
+                agent_name=self.amd.name,
+                obs_dir=obs_dir,
+                max_runs=obs_cfg.max_runs,
+                snapshot_interval=obs_cfg.snapshot_interval,
+                audit_logger=audit,
+            )
+        else:
+            self.obs = None
+
+    async def post_init(self):
+        if self._done_post_init:
+            return
+        self._done_post_init = True
+
+
+
+
+    # Neue Methode:
+    def set_obs_callback(self, callback):
+        """Set async callback for live obs streaming (SSE/WS)."""
+        self.obs.on_step = callback
 
     def _init_managers(self, auto_load_checkpoint: bool):
         from toolboxv2.mods.isaa.base.Agent.bind_manager import BindManager
@@ -627,7 +680,8 @@ class FlowAgent:
             # "request_timeout": 300,
             **kwargs,
         }
-
+        if use_stream:
+            llm_kwargs["stream_options"] = {"include_usage": True}
         # Ollama ignoriert tool_choice='auto' bei einigen Modellen
         if model.startswith("ollama") and llm_kwargs.get("tool_choice") == "auto":
             llm_kwargs.pop("tool_choice", None)
@@ -712,6 +766,12 @@ class FlowAgent:
         prompt_hash = hashlib.sha256(prompt_content.encode()).hexdigest()[:16]
         start_time = time.time()
 
+
+        # --- Obs: LLM call start ---
+        _obs = getattr(self, 'obs', None)
+        if _obs:
+            _obs.record_llm_start(model=model)
+
         # Get user_id from session if available
         user_id = "anonymous"
         if session_id:
@@ -721,376 +781,412 @@ class FlowAgent:
             elif session and hasattr(session, 'session_id'):
                 user_id = session.session_id
 
-        try:
-            from litellm.types.utils import ChatCompletionMessageToolCall, Function, Message
-            import litellm
-            litellm.drop_params = True
-            litellm.suppress_debug_info = True
-            original_messages = llm_kwargs["messages"].copy()
-            original_tools = llm_kwargs.get("tools")
+        async def internal_stream():
 
-            continuation_count = 0
+            try:
+                from litellm.types.utils import ChatCompletionMessageToolCall, Function, Message
+                import litellm
+                litellm.drop_params = True
+                litellm.suppress_debug_info = True
 
-            final_text_content = ""
-            final_tool_calls_raw = []
-            accumulated_usage = None
-            len_final_text_content = 0
+                original_messages = llm_kwargs["messages"].copy()
+                original_tools = llm_kwargs.get("tools")
 
-            active_cut_off_tool = None
+                continuation_count = 0
+
+                final_text_content = ""
+                final_tool_calls_raw = []
+                accumulated_usage = None
+                len_final_text_content = 0
+
+                active_cut_off_tool = None
             # Edge Case für True-Streaming (wird vom UI-Streaming direkt an Nutzer geleitet)
-            if use_stream and true_stream:
-                llm_kwargs["stream_options"] = {"include_usage": True}
-                return await self.llm_handler.completion_with_rate_limiting(litellm, **llm_kwargs)
+            #if use_stream and true_stream:
+            #    llm_kwargs["stream_options"] = {"include_usage": True}
+            #    return await self.llm_handler.completion_with_rate_limiting(litellm, **llm_kwargs)
 
             # --- AUTO-RESUME SCHLEIFE (bis zu MAX_CONTINUATIONS x Output Limit!) ---
-            while continuation_count < MAX_CONTINUATIONS:
 
-                current_progress = len(final_text_content) + sum(
-                    len(tc.get("args", "")) for tc in final_tool_calls_raw
-                )
-                if active_cut_off_tool:
-                    current_progress += len(active_cut_off_tool.get("args", ""))
+                while continuation_count < MAX_CONTINUATIONS:
 
-                if self.verbose:
-                    print("MX ITTER COPLETION :", continuation_count, "delta",
-                          current_progress - len_final_text_content)
-                len_final_text_content = current_progress
-
-                if use_stream:
-                    llm_kwargs["stream_options"] = {"include_usage": True}
-
-                if self.verbose:
-                    print(f"[DEBUG] max_tokens={llm_kwargs.get('max_tokens')}, "
-                          f"input_msg_count={len(llm_kwargs['messages'])}, "
-                          f"tools_count={len(llm_kwargs.get('tools') or [])}, "
-                          f"estimated_input_tokens={len(str(llm_kwargs['messages']))//3.5}")
-                response = await self.llm_handler.completion_with_rate_limiting(
-                    litellm, **llm_kwargs
-                )
-
-                chunk_text = ""
-                chunk_tool_calls = []
-                finish_reason = None
-                current_usage = None
-                # Datenextrahierung abhängig davon, ob es ein Stream ist oder nicht
-                if use_stream:
-                    result_obj, current_usage, finish_reason = await self._process_streaming_response(
-                        response, task_id, model, get_response_message=True
+                    current_progress = len(final_text_content) + sum(
+                        len(tc.get("args", "")) for tc in final_tool_calls_raw
                     )
-                    chunk_text = result_obj.content or ""
-                    chunk_tool_calls = getattr(result_obj, "tool_calls", []) or []
-                else:
-                    msg_obj = response.choices[0].message
-                    chunk_text = msg_obj.content or ""
-                    chunk_tool_calls = msg_obj.tool_calls or []
-                    finish_reason = response.choices[0].finish_reason
-                    current_usage = response.usage
-                if self.verbose:
-                    print(f"[DEBUG] finish_reason={finish_reason}, chunk_len={len(chunk_text)}, "
-                          f"accumulated_len={len(final_text_content)}")
-                # --- 1. USAGE MERGEN ---
-                if current_usage:
-                    if accumulated_usage is None:
-                        accumulated_usage = current_usage
+                    if active_cut_off_tool:
+                        current_progress += len(active_cut_off_tool.get("args", ""))
+
+                    if self.verbose:
+                        print("MX ITTER COPLETION :", continuation_count, "delta",
+                              current_progress - len_final_text_content)
+                    len_final_text_content = current_progress
+
+
+                    if self.verbose:
+                        print(f"[DEBUG] max_tokens={llm_kwargs.get('max_tokens')}, "
+                              f"input_msg_count={len(llm_kwargs['messages'])}, "
+                              f"tools_count={len(llm_kwargs.get('tools') or [])}, "
+                              f"estimated_input_tokens={len(str(llm_kwargs['messages']))//3.5}")
+                    response = await self.llm_handler.completion_with_rate_limiting(
+                        litellm, **llm_kwargs
+                    )
+
+                    chunk_text = ""
+                    chunk_tool_calls = []
+                    finish_reason = None
+                    current_usage = None
+                    # Datenextrahierung abhängig davon, ob es ein Stream ist oder nicht
+                    if use_stream:
+                        result_obj, current_usage, finish_reason = None, None, None
+                        async for data in self._process_streaming_response(
+                            response, get_response_message=True, row=true_stream
+                        ):
+                            if isinstance(data, tuple):
+                                result_obj, current_usage, finish_reason = data
+                            else:
+                                chunk = data
+                                if _obs and _obs._current_llm and _obs._current_llm.t_first_token == 0:
+                                    _obs.record_llm_first_token()
+                                yield chunk
+                        if result_obj is None:
+                            raise RuntimeError("Response result_obj is None")
+                        chunk_text = result_obj.content or ""
+                        chunk_tool_calls = getattr(result_obj, "tool_calls", []) or []
                     else:
-                        if hasattr(current_usage, "prompt_tokens"):
-                            accumulated_usage.prompt_tokens += current_usage.prompt_tokens
-                            accumulated_usage.completion_tokens += current_usage.completion_tokens
-                            accumulated_usage.total_tokens += current_usage.total_tokens
-
-                # --- 2. CONTENT & TOOL CALLS MERGEN (unified) ---
-
-                # A) Text-Content routen
-                if active_cut_off_tool is not None:
-                    # Wir haben tools=None gesetzt → Text IST die Tool-Arg-Fortsetzung
-                    active_cut_off_tool["args"] += chunk_text
-                else:
-                    final_text_content += chunk_text
-
-                # B) Tool-Calls IMMER verarbeiten, unabhängig von active_cut_off_tool
-                for idx, tc in enumerate(chunk_tool_calls):
-                    if active_cut_off_tool is not None and tc.function and tc.function.arguments:
-                        # Model hat es doch nativ als tool_call geschickt statt als Text
-                        active_cut_off_tool["args"] += tc.function.arguments
-                    else:
-                        tc_dict = {
-                            "id": getattr(tc, "id", f"call_{uuid.uuid4().hex[:8]}"),
-                            "name": tc.function.name,
-                            "args": tc.function.arguments,
-                        }
-                        is_last_tc = idx == len(chunk_tool_calls) - 1
-                        # Validate JSON for EVERY last tool call, not just on length/max_tokens
-                        if is_last_tc:
-                            try:
-                                json.loads(tc_dict["args"])
-                                final_tool_calls_raw.append(tc_dict)
-                            except json.JSONDecodeError:
-                                active_cut_off_tool = tc_dict
+                        msg_obj = response.choices[0].message
+                        chunk_text = msg_obj.content or ""
+                        chunk_tool_calls = msg_obj.tool_calls or []
+                        finish_reason = response.choices[0].finish_reason
+                        current_usage = response.usage
+                    if self.verbose:
+                        print(f"[DEBUG] finish_reason={finish_reason}, chunk_len={len(chunk_text)}, "
+                              f"accumulated_len={len(final_text_content)}")
+                    # --- 1. USAGE MERGEN ---
+                    if current_usage:
+                        if accumulated_usage is None:
+                            accumulated_usage = current_usage
                         else:
-                            final_tool_calls_raw.append(tc_dict)
+                            if hasattr(current_usage, "prompt_tokens"):
+                                accumulated_usage.prompt_tokens += current_usage.prompt_tokens
+                                accumulated_usage.completion_tokens += current_usage.completion_tokens
+                                accumulated_usage.total_tokens += current_usage.total_tokens
 
-                # C) Cut-off tool validieren (nach jedem Durchlauf)
-                if active_cut_off_tool is not None:
-                    try:
-                        json.loads(active_cut_off_tool["args"])
-                        final_tool_calls_raw.append(active_cut_off_tool)
-                        active_cut_off_tool = None
-                    except json.JSONDecodeError:
-                        pass  # noch unvollständig
+                    # --- 2. CONTENT & TOOL CALLS MERGEN (unified) ---
 
-                # --- 3. STOPP ODER FORTSETZUNG? ---
-                hit_token_limit = finish_reason in ["length", "max_tokens"]
-                has_truncated_text = _is_code_truncated(final_text_content)
-                has_truncated_tool = active_cut_off_tool is not None
+                    # A) Text-Content routen
+                    if active_cut_off_tool is not None:
+                        # Wir haben tools=None gesetzt → Text IST die Tool-Arg-Fortsetzung
+                        active_cut_off_tool["args"] += chunk_text
+                    else:
+                        final_text_content += chunk_text
 
-                needs_resume = hit_token_limit or has_truncated_text or has_truncated_tool
+                    # B) Tool-Calls IMMER verarbeiten, unabhängig von active_cut_off_tool
+                    for idx, tc in enumerate(chunk_tool_calls):
+                        if active_cut_off_tool is not None and tc.function and tc.function.arguments:
+                            # Model hat es doch nativ als tool_call geschickt statt als Text
+                            active_cut_off_tool["args"] += tc.function.arguments
+                        else:
+                            tc_dict = {
+                                "id": getattr(tc, "id", f"call_{uuid.uuid4().hex[:8]}"),
+                                "name": tc.function.name,
+                                "args": tc.function.arguments,
+                            }
+                            is_last_tc = idx == len(chunk_tool_calls) - 1
+                            # Validate JSON for EVERY last tool call, not just on length/max_tokens
+                            if is_last_tc:
+                                try:
+                                    json.loads(tc_dict["args"])
+                                    final_tool_calls_raw.append(tc_dict)
+                                except json.JSONDecodeError:
+                                    active_cut_off_tool = tc_dict
+                            else:
+                                final_tool_calls_raw.append(tc_dict)
 
-                if not needs_resume:
-                    break
+                    # C) Cut-off tool validieren (nach jedem Durchlauf)
+                    if active_cut_off_tool is not None:
+                        try:
+                            json.loads(active_cut_off_tool["args"])
+                            final_tool_calls_raw.append(active_cut_off_tool)
+                            active_cut_off_tool = None
+                        except json.JSONDecodeError:
+                            pass  # noch unvollständig
 
-                # Delta guard: if last iteration produced nothing, stop looping
-                new_progress = len(final_text_content) + sum(
-                    len(tc.get("args", "")) for tc in final_tool_calls_raw
-                )
-                if active_cut_off_tool:
-                    new_progress += len(active_cut_off_tool.get("args", ""))
+                    # --- 3. STOPP ODER FORTSETZUNG? ---
+                    hit_token_limit = finish_reason in ["length", "max_tokens"]
+                    has_truncated_text = _is_code_truncated(final_text_content)
+                    has_truncated_tool = active_cut_off_tool is not None
 
-                if continuation_count > 0 and new_progress <= len_final_text_content:
-                    logger.warning("Resume produced no progress, stopping.")
-                    break
+                    needs_resume = hit_token_limit or has_truncated_text or has_truncated_tool
 
-                continuation_count += 1
-                if continuation_count >= MAX_CONTINUATIONS:
-                    logger.warning(f"Hit MAX_CONTINUATIONS ({MAX_CONTINUATIONS})")
-                    break
+                    if not needs_resume:
+                        break
 
-                if not hit_token_limit:
-                    logger.info(f"Premature stop detected, forcing resume ({continuation_count})")
-
-                if AGENT_VERBOSE:
-                    logger.info(
-                        f"Auto-Resume ({continuation_count}/{MAX_CONTINUATIONS}) "
-                        f"[reason={finish_reason}, trunc_text={has_truncated_text}, trunc_tool={has_truncated_tool}]"
+                    # Delta guard: if last iteration produced nothing, stop looping
+                    new_progress = len(final_text_content) + sum(
+                        len(tc.get("args", "")) for tc in final_tool_calls_raw
                     )
+                    if active_cut_off_tool:
+                        new_progress += len(active_cut_off_tool.get("args", ""))
 
-                # --- 4. RESUME MESSAGES BAUEN ---
-                if active_cut_off_tool is not None:
-                    # Ein Tool-Call ist abgerissen → LLM soll fehlende JSON-Teile als Text ausgeben
-                    resume_msg = (
-                        f"Du hast das Output-Token-Limit erreicht, während du das Tool '{active_cut_off_tool['name']}' ausgeführt hast. "
-                        f"Hier ist der JSON-Argument-String, den du bisher geschrieben hast:\n`{active_cut_off_tool['args']}`\n\n"
-                        f"Bitte antworte AUSSCHLIESSLICH mit den fehlenden Zeichen, um das JSON zu vervollständigen. "
-                        f"Gib keine Erklärungen und keinen Code-Block ab. Mache genau da weiter, wo der String abgerissen ist."
-                    )
-                    llm_kwargs["tools"] = None  # Verhindert native tool-call Kapselung
+                    if continuation_count > 0 and new_progress <= len_final_text_content:
+                        logger.warning("Resume produced no progress, stopping.")
+                        break
 
-                    llm_kwargs["messages"] = original_messages + [
-                        {"role": "assistant",
-                         "content": final_text_content + f"\n[Starte Tool: {active_cut_off_tool['name']}]"},
-                        {"role": "user", "content": resume_msg}
-                    ]
-                else:
-                    # Text-Output ist abgerissen → strukturelle Hinweise geben
-                    last_words = final_text_content[-200:]
+                    continuation_count += 1
+                    if continuation_count >= MAX_CONTINUATIONS:
+                        logger.warning(f"Hit MAX_CONTINUATIONS ({MAX_CONTINUATIONS})")
+                        break
 
-                    missing_hints = []
-                    if final_text_content.count("```") % 2 != 0:
-                        missing_hints.append("unclosed code fence (```)")
-                    open_braces = final_text_content.count("{") - final_text_content.count("}")
-                    if open_braces > 2:
-                        missing_hints.append(f"{open_braces} unclosed braces")
-                    for tag in ["<script>", "<style>", "<html>", "<body>", "<div>"]:
-                        close = tag.replace("<", "</")
-                        if final_text_content.count(tag) > final_text_content.count(close):
-                            missing_hints.append(f"unclosed {tag}")
+                    if not hit_token_limit:
+                        logger.info(f"Premature stop detected, forcing resume ({continuation_count})")
 
-                    structural_hint = ""
-                    if missing_hints:
-                        structural_hint = (
-                            f"\n\nStructural issues detected: {', '.join(missing_hints)}. "
-                            f"You MUST complete these before stopping."
+                    if AGENT_VERBOSE:
+                        logger.info(
+                            f"Auto-Resume ({continuation_count}/{MAX_CONTINUATIONS}) "
+                            f"[reason={finish_reason}, trunc_text={has_truncated_text}, trunc_tool={has_truncated_tool}]"
                         )
 
-                    resume_msg = (
-                        f"Your output was cut off. Continue EXACTLY where you stopped. "
-                        f"Last 200 chars for orientation:\n'...{last_words}'\n\n"
-                        f"Continue seamlessly, no preamble, no repetition.{structural_hint}"
-                    )
-                    llm_kwargs["tools"] = original_tools
-                    llm_kwargs["messages"] = original_messages + [
-                        {"role": "assistant", "content": final_text_content},
-                        {"role": "user", "content": resume_msg}
-                    ]
+                    # --- 4. RESUME MESSAGES BAUEN ---
+                    if active_cut_off_tool is not None:
+                        # Ein Tool-Call ist abgerissen → LLM soll fehlende JSON-Teile als Text ausgeben
+                        resume_msg = (
+                            f"Du hast das Output-Token-Limit erreicht, während du das Tool '{active_cut_off_tool['name']}' ausgeführt hast. "
+                            f"Hier ist der JSON-Argument-String, den du bisher geschrieben hast:\n`{active_cut_off_tool['args']}`\n\n"
+                            f"Bitte antworte AUSSCHLIESSLICH mit den fehlenden Zeichen, um das JSON zu vervollständigen. "
+                            f"Gib keine Erklärungen und keinen Code-Block ab. Mache genau da weiter, wo der String abgerissen ist."
+                        )
+                        llm_kwargs["tools"] = None  # Verhindert native tool-call Kapselung
 
-            # --- NACH DER SCHLEIFE: ZUSAMMENFÜHREN ---
-            reconstructed_tool_calls = []
-            for tc in final_tool_calls_raw:
-                reconstructed_tool_calls.append(
-                    ChatCompletionMessageToolCall(
-                        id=tc["id"],
-                        type="function",
-                        function=Function(name=tc["name"], arguments=tc["args"])
-                    )
-                )
-
-            final_message = Message(
-                role="assistant",
-                content=final_text_content or None,
-                tool_calls=reconstructed_tool_calls if reconstructed_tool_calls else None
-            )
-
-            # Statistik Update
-            input_tokens = accumulated_usage.prompt_tokens if accumulated_usage else 0
-            output_tokens = accumulated_usage.completion_tokens if accumulated_usage else 0
-            cost = self.calculate_llm_cost(model, input_tokens, output_tokens, None)
-
-            self.total_tokens_in += input_tokens
-            self.total_tokens_out += output_tokens
-            self.total_cost_accumulated += cost
-            self.total_llm_calls += (continuation_count + 1)
-
-            result_to_return = final_message if get_response_message else (final_text_content or "")
-
-            # Wenn Tool-Ausführung in FlowAgent verlangt war
-            if do_tool_execution and original_tools and reconstructed_tool_calls:
-                tool_response = await self.run_tool_response(final_message, session_id)
-                llm_kwargs["messages"] = original_messages + [
-                    {
-                        "role": "assistant",
-                        "content": final_text_content,
-                        "tool_calls": final_message.tool_calls
-                    }
-                ] + tool_response
-                llm_kwargs["tools"] = original_tools
-
-                return await self.a_run_llm_completion(
-                    llm_kwargs["messages"],
-                    model_preference,
-                    with_context,
-                    stream,
-                    get_response_message,
-                    task_id,
-                    session_id,
-                    _media_retry=_media_retry,
-                    _removed_types=_removed_types,
-                    **kwargs,
-                )
-
-            # NEU: Audit-Log Success (mit echten Kosten aus der Response)
-            try:
-                execution_time = time.time() - start_time
-
-                # Echte Kosten und Token aus der Response holen
-                input_tokens = 0
-                output_tokens = 0
-                cost = 0
-
-                if accumulated_usage:
-                    if hasattr(accumulated_usage, "prompt_tokens"):
-                        input_tokens = accumulated_usage.prompt_tokens or 0
-                        output_tokens = accumulated_usage.completion_tokens or 0
-                    elif hasattr(accumulated_usage, "_asdict"):
-                        # Dict-Form probieren
-                        usage_dict = accumulated_usage._asdict() if hasattr(accumulated_usage, "_asdict") else {}
-                        input_tokens = usage_dict.get("prompt_tokens", 0)
-                        output_tokens = usage_dict.get("completion_tokens", 0)
-
-                # Prüfe auf LiteLLM _hidden_params für echte Kosten
-                if "result_to_return" in locals() and result_to_return and hasattr(result_to_return, "_hidden_params"):
-                    hidden_params = getattr(result_to_return, "_hidden_params", None) or {}
-                    if hidden_params:
-                        input_tokens = hidden_params.get("prompt_tokens", input_tokens)
-                        output_tokens = hidden_params.get("completion_tokens", output_tokens)
-                        cost = hidden_params.get("llm_cost", 0) or 0
-
-                get_app("audit-isaa").audit_logger.log_action(
-                    user_id=user_id,
-                    action="llm.call.success",
-                    resource=f"/llm/{model}",
-                    status="SUCCESS",
-                    model=model,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cost=cost,
-                    duration=round(execution_time, 2),
-                    prompt_hash=prompt_hash,
-                    continuation_count=continuation_count,
-                    session_id=session_id or "none",
-                )
-            except Exception:
-                pass  # Audit-Errors dürfen nicht crashen
-
-            return result_to_return
-
-        except Exception as e:
-            # =====================================================================
-            # NEU: Intelligente Media-Fehlerbehandlung mit Auto-Retry
-            # =====================================================================
-            if _is_media_error(e) and _media_retry < 3:
-                logger.warning(f"Media-Fehler erkannt (Versuch {_media_retry + 1}): {e}")
-
-                # Bestimme welchen Typ entfernen
-                failed_type = _extract_failed_media_type(e)
-
-                if failed_type:
-                    new_types = list(set(_removed_types + [failed_type]))
-                else:
-                    # Entferne schrittweise: erst pdf, dann audio, dann video
-                    priority_order = ["pdf", "audio", "video", "image"]
-                    for ptype in priority_order:
-                        if ptype not in _removed_types:
-                            new_types = _removed_types + [ptype]
-                            break
+                        llm_kwargs["messages"] = original_messages + [
+                            {"role": "assistant",
+                             "content": final_text_content + f"\n[Starte Tool: {active_cut_off_tool['name']}]"},
+                            {"role": "user", "content": resume_msg}
+                        ]
                     else:
-                        new_types = _removed_types + ["image"]  # Fallback
+                        # Text-Output ist abgerissen → strukturelle Hinweise geben
+                        last_words = final_text_content[-200:]
 
-                logger.info(f"Retry ohne Media-Typen: {new_types}")
+                        missing_hints = []
+                        if final_text_content.count("```") % 2 != 0:
+                            missing_hints.append("unclosed code fence (```)")
+                        open_braces = final_text_content.count("{") - final_text_content.count("}")
+                        if open_braces > 2:
+                            missing_hints.append(f"{open_braces} unclosed braces")
+                        for tag in ["<script>", "<style>", "<html>", "<body>", "<div>"]:
+                            close = tag.replace("<", "</")
+                            if final_text_content.count(tag) > final_text_content.count(close):
+                                missing_hints.append(f"unclosed {tag}")
 
-                return await self.a_run_llm_completion(
-                    messages,  # Original messages!
-                    model_preference,
-                    with_context,
-                    stream,
-                    get_response_message,
-                    task_id,
-                    session_id,
-                    do_tool_execution,
-                    _media_retry=_media_retry + 1,
-                    _removed_types=new_types,
-                    **kwargs,
+                        structural_hint = ""
+                        if missing_hints:
+                            structural_hint = (
+                                f"\n\nStructural issues detected: {', '.join(missing_hints)}. "
+                                f"You MUST complete these before stopping."
+                            )
+
+                        resume_msg = (
+                            f"Your output was cut off. Continue EXACTLY where you stopped. "
+                            f"Last 200 chars for orientation:\n'...{last_words}'\n\n"
+                            f"Continue seamlessly, no preamble, no repetition.{structural_hint}"
+                        )
+                        llm_kwargs["tools"] = original_tools
+                        llm_kwargs["messages"] = original_messages + [
+                            {"role": "assistant", "content": final_text_content},
+                            {"role": "user", "content": resume_msg}
+                        ]
+
+                # --- NACH DER SCHLEIFE: ZUSAMMENFÜHREN ---
+                reconstructed_tool_calls = []
+                for tc in final_tool_calls_raw:
+                    reconstructed_tool_calls.append(
+                        ChatCompletionMessageToolCall(
+                            id=tc["id"],
+                            type="function",
+                            function=Function(name=tc["name"], arguments=tc["args"])
+                        )
+                    )
+
+                final_message = Message(
+                    role="assistant",
+                    content=final_text_content or None,
+                    tool_calls=reconstructed_tool_calls if reconstructed_tool_calls else None
                 )
-            # =====================================================================
 
-            logger.error(f"LLM call failed: {e}")
+                # Statistik Update
+                input_tokens = accumulated_usage.prompt_tokens if accumulated_usage else 0
+                output_tokens = accumulated_usage.completion_tokens if accumulated_usage else 0
+                cost = self.calculate_llm_cost(model, input_tokens, output_tokens, None)
 
-            # NEU: Audit-Log Error (vollständige Fehlermeldung)
-            try:
-                execution_time = time.time() - start_time
-                error_msg = str(e)
+                self.total_tokens_in += input_tokens
+                self.total_tokens_out += output_tokens
+                self.total_cost_accumulated += cost
+                self.total_llm_calls += (continuation_count + 1)
 
-                # Erste 200 + letzte 200 Zeichen für vollständiges Bild
-                if len(error_msg) > 400:
-                    error_msg_truncated = error_msg[:200] + " [...] " + error_msg[-200:]
-                else:
-                    error_msg_truncated = error_msg
+                # --- Obs: LLM call end ---
+                if _obs:
+                    _obs.record_llm_end(
+                        tokens_in=accumulated_usage.prompt_tokens if accumulated_usage and hasattr(accumulated_usage,
+                                                                                                   'prompt_tokens') else 0,
+                        tokens_out=accumulated_usage.completion_tokens if accumulated_usage and hasattr(accumulated_usage,
+                                                                                                        'completion_tokens') else 0,
+                        model=model,
+                    )
 
-                get_app("audit-isaa").audit_logger.log_action(
-                    user_id=user_id,
-                    action="llm.call.error",
-                    resource=f"/llm/{model}",
-                    status="FAILURE",
-                    model=model,
-                    error_type=type(e).__name__,
-                    error_message=error_msg_truncated,
-                    error_length=len(error_msg),
-                    duration=round(execution_time, 2),
-                    prompt_hash=prompt_hash,
-                    session_id=session_id or "none",
-                )
-            except Exception:
-                pass  # Audit-Errors dürfen nicht crashen
+                result_to_return = final_message if get_response_message else (final_text_content or "")
 
-            raise
+                # Wenn Tool-Ausführung in FlowAgent verlangt war
+                if do_tool_execution and original_tools and reconstructed_tool_calls:
+                    tool_response = await self.run_tool_response(final_message, session_id)
+                    llm_kwargs["messages"] = original_messages + [
+                        {
+                            "role": "assistant",
+                            "content": final_text_content,
+                            "tool_calls": final_message.tool_calls
+                        }
+                    ] + tool_response
+                    llm_kwargs["tools"] = original_tools
+
+                    yield await self.a_run_llm_completion(
+                        llm_kwargs["messages"],
+                        model_preference,
+                        with_context,
+                        stream,
+                        get_response_message,
+                        task_id,
+                        session_id,
+                        _media_retry=_media_retry,
+                        _removed_types=_removed_types,
+                        **kwargs,
+                    )
+
+                # NEU: Audit-Log Success (mit echten Kosten aus der Response)
+                try:
+                    execution_time = time.time() - start_time
+
+                    # Echte Kosten und Token aus der Response holen
+                    input_tokens = 0
+                    output_tokens = 0
+                    cost = 0
+
+                    if accumulated_usage:
+                        if hasattr(accumulated_usage, "prompt_tokens"):
+                            input_tokens = accumulated_usage.prompt_tokens or 0
+                            output_tokens = accumulated_usage.completion_tokens or 0
+                        elif hasattr(accumulated_usage, "_asdict"):
+                            # Dict-Form probieren
+                            usage_dict = accumulated_usage._asdict() if hasattr(accumulated_usage, "_asdict") else {}
+                            input_tokens = usage_dict.get("prompt_tokens", 0)
+                            output_tokens = usage_dict.get("completion_tokens", 0)
+
+                    # Prüfe auf LiteLLM _hidden_params für echte Kosten
+                    if "result_to_return" in locals() and result_to_return and hasattr(result_to_return, "_hidden_params"):
+                        hidden_params = getattr(result_to_return, "_hidden_params", None) or {}
+                        if hidden_params:
+                            input_tokens = hidden_params.get("prompt_tokens", input_tokens)
+                            output_tokens = hidden_params.get("completion_tokens", output_tokens)
+                            cost = hidden_params.get("llm_cost", 0) or 0
+
+                    get_app("audit-isaa").audit_logger.log_action(
+                        user_id=user_id,
+                        action="llm.call.success",
+                        resource=f"/llm/{model}",
+                        status="SUCCESS",
+                        model=model,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        cost=cost,
+                        duration=round(execution_time, 2),
+                        prompt_hash=prompt_hash,
+                        continuation_count=continuation_count,
+                        session_id=session_id or "none",
+                    )
+                except Exception:
+                    pass  # Audit-Errors dürfen nicht crashen
+
+                yield result_to_return
+
+            except Exception as e:
+                # =====================================================================
+                # NEU: Intelligente Media-Fehlerbehandlung mit Auto-Retry
+                # =====================================================================
+                if _is_media_error(e) and _media_retry < 3:
+                    logger.warning(f"Media-Fehler erkannt (Versuch {_media_retry + 1}): {e}")
+
+                    # Bestimme welchen Typ entfernen
+                    failed_type = _extract_failed_media_type(e)
+
+                    if failed_type:
+                        new_types = list(set(_removed_types + [failed_type]))
+                    else:
+                        # Entferne schrittweise: erst pdf, dann audio, dann video
+                        priority_order = ["pdf", "audio", "video", "image"]
+                        for ptype in priority_order:
+                            if ptype not in _removed_types:
+                                new_types = _removed_types + [ptype]
+                                break
+                        else:
+                            new_types = _removed_types + ["image"]  # Fallback
+
+                    logger.info(f"Retry ohne Media-Typen: {new_types}")
+
+                    yield await self.a_run_llm_completion(
+                        messages,  # Original messages!
+                        model_preference,
+                        with_context,
+                        stream,
+                        get_response_message,
+                        task_id,
+                        session_id,
+                        do_tool_execution,
+                        _media_retry=_media_retry + 1,
+                        _removed_types=new_types,
+                        **kwargs,
+                    )
+                # =====================================================================
+
+                logger.error(f"LLM call failed: {e}")
+                if _obs:
+                    _obs.record_llm_end(tokens_in=0, tokens_out=0, model=model)
+
+                # NEU: Audit-Log Error (vollständige Fehlermeldung)
+                try:
+                    execution_time = time.time() - start_time
+                    error_msg = str(e)
+
+                    # Erste 200 + letzte 200 Zeichen für vollständiges Bild
+                    if len(error_msg) > 400:
+                        error_msg_truncated = error_msg[:200] + " [...] " + error_msg[-200:]
+                    else:
+                        error_msg_truncated = error_msg
+
+                    get_app("audit-isaa").audit_logger.log_action(
+                        user_id=user_id,
+                        action="llm.call.error",
+                        resource=f"/llm/{model}",
+                        status="FAILURE",
+                        model=model,
+                        error_type=type(e).__name__,
+                        error_message=error_msg_truncated,
+                        error_length=len(error_msg),
+                        duration=round(execution_time, 2),
+                        prompt_hash=prompt_hash,
+                        session_id=session_id or "none",
+                    )
+                except Exception:
+                    pass  # Audit-Errors dürfen nicht crashen
+
+                raise
+
+        if use_stream:
+            return internal_stream
+
+        last = None
+        async for chunk in internal_stream():
+            last = chunk
+            if stream_callback:
+                pos_coro = stream_callback(last)
+                if asyncio.iscoroutine(pos_coro):
+                    await pos_coro
+        return last
 
     @staticmethod
     def calculate_llm_cost(
@@ -1132,7 +1228,7 @@ class FlowAgent:
         return cost or (input_tokens / 1000) * 0.002 + (output_tokens / 1000) * 0.01
 
 
-    async def _process_streaming_response(self, response, task_id, model, get_response_message, call_callback=None):
+    async def _process_streaming_response(self, response, get_response_message, row=True):
         from litellm.types.utils import ChatCompletionMessageToolCall, Function, Message
 
         result = ""
@@ -1141,13 +1237,15 @@ class FlowAgent:
         finish_reason = None
 
         async for chunk in response:
+            if row:
+                yield chunk
+
             delta = chunk.choices[0].delta
             content = delta.content or ""
             result += content
-            if hasattr(self, 'stream_callback') and self.stream_callback:
-                res = self.stream_callback(content)
-                if res and asyncio.iscoroutine(res):
-                    await res
+
+            if not row:
+                yield content
 
             if getattr(delta, "tool_calls", None):
                 for tc in delta.tool_calls:
@@ -1178,7 +1276,7 @@ class FlowAgent:
                 tool_calls=list(tool_calls_acc.values()) if tool_calls_acc else [],
             )
 
-        return result, usage, finish_reason
+        yield (result, usage, finish_reason)
 
     async def run_tool_response(self, response, session_id):
         tool_calls = response.tool_calls
@@ -1536,6 +1634,51 @@ class FlowAgent:
         engine = self._get_execution_engine()
         return engine.list_executions()
 
+    def get_all_resumable(self) -> dict:
+        """
+        Get ALL resumable executions: hot (in-memory) + cold (on disk).
+        Total capped to obs.max_runs (default 3). Most recent first.
+
+        Returns:
+            {
+                "hot": [...],   # in-memory paused executions
+                "cold": [...],  # disk-based interrupted runs
+                "max_resumable": int,
+            }
+        """
+        engine = self._get_execution_engine()
+
+        hot = [
+            {
+                "run_id": eid,
+                "session_id": ctx.session_id,
+                "query": ctx.query[:80],
+                "status": ctx.status,
+                "iteration": ctx.current_iteration,
+                "source": "memory",
+            }
+            for eid, ctx in engine._active_executions.items()
+            if ctx.status in ("paused", "max_iterations")
+        ]
+        # Sort hot by iteration desc (most progress first)
+        hot.sort(key=lambda x: x["iteration"], reverse=True)
+
+        max_total = engine.max_resumable
+        remaining = max_total - len(hot)
+
+        cold = []
+        if remaining > 0:
+            all_cold = engine.get_interrupted_runs()
+            for c in all_cold:
+                c["source"] = "disk"
+            # Sort cold by last_step_id desc (most progress first)
+            all_cold.sort(key=lambda x: x["last_step_id"], reverse=True)
+            # Exclude any that are already in hot (same run_id)
+            hot_ids = {h["run_id"] for h in hot}
+            cold = [c for c in all_cold if c["run_id"] not in hot_ids][:remaining]
+
+        return {"hot": hot[:max_total], "cold": cold, "max_resumable": max_total}
+
     async def resume_last_execution(
         self,
         content: str = "",
@@ -1556,22 +1699,38 @@ class FlowAgent:
             str or tuple[Callable, ExecutionContext] depending on stream
         """
         engine = self._get_execution_engine()
-
+        resumable = []
         if execution_id is None:
             # Find most recent resumable
             resumable = [
                 (eid, ctx) for eid, ctx in engine._active_executions.items()
                 if ctx.status in ("paused", "max_iterations")
             ]
-            if not resumable:
-                return "Keine resumable Execution gefunden."
+        if resumable:
             # Sort by iteration count desc (most progressed = most recent)
             resumable.sort(key=lambda x: x[1].current_iteration, reverse=True)
             execution_id = resumable[0][0]
 
-        return await engine.resume(
-            execution_id, max_iterations, content=content, stream=stream
-        )
+            return await engine.resume(
+                execution_id, max_iterations, content=content, stream=stream
+            )
+
+        # 2. Try cold (disk)
+        interrupted = engine.get_interrupted_runs()
+        if interrupted:
+            # Pick the one with most progress
+            interrupted.sort(key=lambda x: x["last_step_id"], reverse=True)
+            best = interrupted[0]
+            if not best["has_snapshot"]:
+                return (
+                    f"Interrupted run {best['run_id']} found ({best['step_count']} steps) "
+                    f"but has no ctx_snapshot. Cannot resume."
+                )
+            return await engine.resume_from_disk(
+                best["run_id"], max_iterations, content=content, stream=stream
+            )
+
+        return "Keine resumable Execution gefunden (weder in-memory noch auf Disk)."
 
     # =========================================================================
     # CORE: a_stream - Voice-First Intelligent Streaming

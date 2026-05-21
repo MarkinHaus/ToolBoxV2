@@ -785,6 +785,7 @@ class ImageGenerator:
             return fal_client.subscribe(model, arguments=args)
         except Exception as e:
             self.logger.error(f"FAL API call failed for {model}: {e}")
+
             return None
 
     async def _upload_to_fal(self, image_path: Path) -> Optional[str]:
