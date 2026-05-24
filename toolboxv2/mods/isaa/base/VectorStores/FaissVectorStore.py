@@ -2,7 +2,14 @@ import os
 import pickle
 import logging
 
-import numpy as np
+try:
+    import numpy as np
+
+except ImportError:
+    print("use pip install numpy or uv pip install numpy")
+    np = lambda :None
+    np.ndarray = object
+    np.float32 = object
 
 from toolboxv2.mods.isaa.base.VectorStores.types import AbstractVectorStore, Chunk
 

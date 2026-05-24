@@ -571,6 +571,49 @@ class VFSFile:
             self.lsp_enabled = self.file_type.lsp_server is not None
 
 
+@dataclass
+class VFSDelta:
+    """One tracked VFS mutation with full content for revert."""
+    index: int                              # monotonic per VFS instance
+    step_id: int                            # set by obs via vfs._current_step_id
+    timestamp: float
+    path: str
+    action: str                             # create|write|edit|delete|append|mv|mkdir|rmdir
+    before_content: str | None = None       # None for create/mkdir
+    after_content: str | None = None        # None for delete/rmdir
+    old_path: str | None = None             # mv only: source path before move
+    edit_range: tuple[int, int] | None = None  # edit only: (line_start, line_end)
+    before_meta: dict | None = None         # {size_bytes, line_count, backing_type}
+
+    def to_dict(self) -> dict:
+        return {
+            "index": self.index,
+            "step_id": self.step_id,
+            "timestamp": self.timestamp,
+            "path": self.path,
+            "action": self.action,
+            "before_content": self.before_content,
+            "after_content": self.after_content,
+            "old_path": self.old_path,
+            "edit_range": list(self.edit_range) if self.edit_range else None,
+            "before_meta": self.before_meta,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "VFSDelta":
+        er = d.get("edit_range")
+        return cls(
+            index=d.get("index", 0),
+            step_id=d.get("step_id", 0),
+            timestamp=d.get("timestamp", 0.0),
+            path=d.get("path", ""),
+            action=d.get("action", ""),
+            before_content=d.get("before_content"),
+            after_content=d.get("after_content"),
+            old_path=d.get("old_path"),
+            edit_range=tuple(er) if er else None,
+            before_meta=d.get("before_meta"),
+        )
 # =============================================================================
 # VIRTUAL FILE SYSTEM V2
 # =============================================================================
@@ -607,6 +650,7 @@ class VirtualFileSystemV2:
         summarizer: Callable[[str], str] | None = None,
         lsp_manager: "LSPManager | None" = None,
     ):
+        self._context_cache = None
         self.session_id = session_id
         self.agent_name = agent_name
         self.max_window_lines = max_window_lines
@@ -622,9 +666,219 @@ class VirtualFileSystemV2:
 
         self._dirty = True
 
+        # ── Delta tracking ─────────────────────────────────────────
+        self._change_log: list[VFSDelta] = []
+        self._delta_counter: int = 0
+        self._current_step_id: int = 0
+        self._suppress_deltas: bool = False
+        self.on_change: Callable[[VFSDelta], None] | None = None
+
         # Initialize root and system files
         self._init_root()
         self._init_system_files()
+
+    # =========================================================================
+    # DELTA TRACKING + REVERT
+    # =========================================================================
+
+    def _safe_get_content(self, path: str) -> str | None:
+        """Get file content without raising. Returns None if unavailable."""
+        path = self._normalize_path(path)
+        f = self.files.get(path)
+        if f is None:
+            return None
+        if isinstance(f, VFSFile):
+            return f._content  # None if shadow not loaded — that's fine
+        return getattr(f, "content", None)
+
+    def _safe_get_meta(self, path: str) -> dict | None:
+        """Capture file metadata before mutation."""
+        path = self._normalize_path(path)
+        f = self.files.get(path)
+        if f is None:
+            return None
+        return {
+            "size_bytes": getattr(f, "size_bytes", 0),
+            "line_count": getattr(f, "line_count", 0),
+            "backing_type": f.backing_type.name if isinstance(f, VFSFile) else "MEMORY",
+            "is_dirty": getattr(f, "is_dirty", False),
+        }
+
+    def _emit_delta(
+        self,
+        path: str,
+        action: str,
+        before_content: str | None = None,
+        after_content: str | None = None,
+        old_path: str | None = None,
+        edit_range: tuple[int, int] | None = None,
+        before_meta: dict | None = None,
+    ) -> VFSDelta | None:
+        """Record a VFS mutation. Skipped when _suppress_deltas is True."""
+        if self._suppress_deltas:
+            return None
+        import time as _time
+        delta = VFSDelta(
+            index=self._delta_counter,
+            step_id=self._current_step_id,
+            timestamp=_time.time(),
+            path=path,
+            action=action,
+            before_content=before_content,
+            after_content=after_content,
+            old_path=old_path,
+            edit_range=edit_range,
+            before_meta=before_meta,
+        )
+        self._delta_counter += 1
+        self._change_log.append(delta)
+        if self.on_change is not None:
+            try:
+                self.on_change(delta)
+            except Exception:
+                pass
+        return delta
+
+    def _apply_revert(self, delta: VFSDelta) -> dict:
+        """Apply the inverse of a single delta. Auto-syncs to disk."""
+        self._suppress_deltas = True
+        try:
+            if delta.action == "create":
+                if self._is_file(delta.path):
+                    return self.delete(delta.path)
+                return {"success": True, "message": f"Already gone: {delta.path}"}
+
+            elif delta.action in ("write", "edit", "append"):
+                if delta.before_content is None:
+                    # File didn't exist before this mutation
+                    if self._is_file(delta.path):
+                        return self.delete(delta.path)
+                    return {"success": True, "message": f"Already gone: {delta.path}"}
+                return self.write(delta.path, delta.before_content)
+
+            elif delta.action == "delete":
+                if delta.before_content is not None:
+                    result = self.create(delta.path, delta.before_content)
+                    if not result.get("success") and "already exists" in result.get("error", "").lower():
+                        return self.write(delta.path, delta.before_content)
+                    return result
+                return {"success": True, "message": "No content to restore"}
+
+            elif delta.action == "mv":
+                if delta.old_path and self._path_exists(delta.path):
+                    return self.mv(delta.path, delta.old_path)
+                return {"success": False, "error": f"Cannot revert mv: {delta.path} → {delta.old_path}"}
+
+            elif delta.action == "mkdir":
+                if self._is_directory(delta.path):
+                    return self.rmdir(delta.path)
+                return {"success": True, "message": f"Already gone: {delta.path}"}
+
+            elif delta.action == "rmdir":
+                if not self._is_directory(delta.path):
+                    return self.mkdir(delta.path, parents=True)
+                return {"success": True, "message": f"Already exists: {delta.path}"}
+
+            return {"success": False, "error": f"Unknown action: {delta.action}"}
+        finally:
+            self._suppress_deltas = False
+
+    def revert_delta(self, delta_index: int) -> dict:
+        """Revert a single delta by its index."""
+        for d in self._change_log:
+            if d.index == delta_index:
+                return self._apply_revert(d)
+        return {"success": False, "error": f"Delta {delta_index} not found in change_log"}
+
+    def revert_step(self, step_id: int) -> dict:
+        """Revert ALL deltas from a given step, in reverse order."""
+        deltas = [d for d in self._change_log if d.step_id == step_id]
+        if not deltas:
+            return {"success": False, "error": f"No deltas for step {step_id}"}
+        results = []
+        for d in reversed(deltas):
+            r = self._apply_revert(d)
+            results.append({"index": d.index, "path": d.path, "action": d.action, **r})
+        ok = all(r.get("success", False) for r in results)
+        return {"success": ok, "reverted": len(results), "details": results}
+
+    def revert_file(self, path: str, to_step: int | None = None) -> dict:
+        """Revert all deltas for a specific file path, optionally only since to_step."""
+        path = self._normalize_path(path)
+        deltas = [
+            d for d in self._change_log
+            if d.path == path and (to_step is None or d.step_id >= to_step)
+        ]
+        if not deltas:
+            return {"success": False, "error": f"No deltas for {path}"}
+        results = []
+        for d in reversed(deltas):
+            r = self._apply_revert(d)
+            results.append({"index": d.index, "action": d.action, **r})
+        ok = all(r.get("success", False) for r in results)
+        return {"success": ok, "reverted": len(results), "details": results}
+
+    def revert_dir(self, prefix: str, to_step: int | None = None) -> dict:
+        """Revert all deltas under a directory prefix."""
+        prefix = self._normalize_path(prefix)
+        if not prefix.endswith("/"):
+            prefix += "/"
+        deltas = [
+            d for d in self._change_log
+            if (d.path.startswith(prefix) or d.path == prefix.rstrip("/"))
+               and (to_step is None or d.step_id >= to_step)
+        ]
+        if not deltas:
+            return {"success": False, "error": f"No deltas under {prefix}"}
+        results = []
+        for d in reversed(deltas):
+            r = self._apply_revert(d)
+            results.append({"index": d.index, "path": d.path, "action": d.action, **r})
+        ok = all(r.get("success", False) for r in results)
+        return {"success": ok, "reverted": len(results), "details": results}
+
+    def revert_all(self, to_step: int | None = None) -> dict:
+        """Revert all deltas, optionally only those since to_step."""
+        deltas = [
+            d for d in self._change_log
+            if to_step is None or d.step_id >= to_step
+        ]
+        if not deltas:
+            return {"success": False, "error": "No deltas to revert"}
+        results = []
+        for d in reversed(deltas):
+            r = self._apply_revert(d)
+            results.append({"index": d.index, "path": d.path, "action": d.action, **r})
+        ok = all(r.get("success", False) for r in results)
+        return {"success": ok, "reverted": len(results), "details": results}
+
+    def get_change_log(
+        self, path: str | None = None, step_id: int | None = None
+    ) -> list[dict]:
+        """Query change log. Filters optional."""
+        out = self._change_log
+        if path is not None:
+            path = self._normalize_path(path)
+            out = [d for d in out if d.path == path]
+        if step_id is not None:
+            out = [d for d in out if d.step_id == step_id]
+        return [d.to_dict() for d in out]
+
+    def inject_deltas(self, deltas: list[dict]) -> int:
+        """Inject deltas from obs persistence (run_*.json / live_*.jsonl).
+        Used by obs.load_and_revert_from_run(). Returns count injected."""
+        count = 0
+        for dd in deltas:
+            delta = VFSDelta.from_dict(dd)
+            delta.index = self._delta_counter
+            self._delta_counter += 1
+            self._change_log.append(delta)
+            count += 1
+        return count
+
+    def clear_change_log(self) -> None:
+        """Clear all recorded deltas."""
+        self._change_log.clear()
 
     def _init_root(self):
         """Initialize root directory"""
@@ -1180,8 +1434,11 @@ Session: {self.session_id}
         for mount_point in list(self.mounts.keys()):
             if mount_point != "/global":  # Preserve global tools
                 self.unmount(mount_point, save_changes=False)
+        # 4.clears change log
+        self._change_log.clear()
+        self._delta_counter = 0
 
-        # 4. Re-initialize Root & System Files
+        # 5. Re-initialize Root & System Files
         self._init_root()
         self._init_system_files()
 
@@ -1301,7 +1558,7 @@ Session: {self.session_id}
             name=self._get_basename(path), readonly=mount.readonly if mount else False
         )
         self._dirty = True
-
+        self._emit_delta(path, "mkdir")
         return {"success": True, "message": f"Created directory: {path}"}
 
     def rmdir(self, path: str, force: bool = False) -> dict:
@@ -1358,7 +1615,7 @@ Session: {self.session_id}
             for d in dirs_to_remove:
                 del self.directories[d]
         self._dirty = True
-
+        self._emit_delta(path, "rmdir")
         return {"success": True, "message": f"Removed directory: {path}"}
 
     def _list_directory_contents(self, path: str) -> list[dict]:
@@ -1465,7 +1722,10 @@ Session: {self.session_id}
             Result dict with success status
         """
         source = self._normalize_path(source)
+        _before_content = self._safe_get_content(source)
+        _before_meta = self._safe_get_meta(source)
         destination = self._normalize_path(destination)
+
 
         if not self._path_exists(source):
             return {"success": False, "error": f"Source not found: {source}"}
@@ -1541,6 +1801,8 @@ Session: {self.session_id}
                 del self.files[old_path]
 
         self._dirty = True
+        self._emit_delta(destination, "mv", _before_content, _before_content,
+                         old_path=source, before_meta=_before_meta)
         return {"success": True, "message": f"Moved {source} to {destination}"}
 
     # =========================================================================
@@ -1555,6 +1817,8 @@ Session: {self.session_id}
         vfs_shell is already decoded via _decode_content before reaching here.
         """
         path = self._normalize_path(path)
+        _before_content = self._safe_get_content(path)
+        _before_meta = self._safe_get_meta(path)
 
         if self._path_exists(path):
             if self._is_file(path) and self.files[path].readonly:
@@ -1588,7 +1852,7 @@ Session: {self.session_id}
         if mount:
             rel_path = path[len(mount.vfs_path) :].lstrip("/")
             local_path = os.path.join(mount.local_path, rel_path.replace("/", os.sep))
-            backing_type = FileBackingType.MODIFIED
+            backing_type = FileBackingType.SHADOW
 
         self.files[path] = VFSFile(
             filename=filename,
@@ -1611,7 +1875,7 @@ Session: {self.session_id}
             self._shadow_index[path] = local_path
 
         self._dirty = True
-
+        self._emit_delta(path, "create", _before_content, content, before_meta=_before_meta)
         return {
             "success": True,
             "message": f"Created '{path}' ({len(content)} chars)",
@@ -1754,6 +2018,8 @@ Session: {self.session_id}
         Write file - synct Shadow-Dateien automatisch.
         """
         path = self._normalize_path(path)
+        _before_content = self._safe_get_content(path)
+        _before_meta = self._safe_get_meta(path)
 
         if self._is_directory(path):
             return {"success": False, "error": f"Cannot write to directory: {path}"}
@@ -1806,6 +2072,7 @@ Session: {self.session_id}
                         )
                         self._shadow_index[path] = local_path_on_disk
                     self._dirty = True
+                    self._emit_delta(path, "write", _before_content, content, before_meta=_before_meta)
                     return {
                         "success": True,
                         "message": f"Updated '{path}' via shared store",
@@ -1887,6 +2154,7 @@ Session: {self.session_id}
                     self._dirty = True
 
                     if sync_result["success"]:
+                        self._emit_delta(path, "write", _before_content, content, before_meta=_before_meta)
                         return {
                             "success": True,
                             "message": f"Updated and synced '{path}'",
@@ -1900,6 +2168,7 @@ Session: {self.session_id}
             f.updated_at = datetime.now().isoformat()
             self._dirty = True
 
+            self._emit_delta(path, "write", _before_content, content, before_meta=_before_meta)
             return {"success": True, "message": f"Updated '{path}'"}
 
         # Create new file
@@ -1926,7 +2195,7 @@ Session: {self.session_id}
 
             f.local_mtime = os.path.getmtime(f.local_path)
             f.is_dirty = False
-
+            f.backing_type = FileBackingType.SHADOW
             return {"success": True, "synced_to": f.local_path}
 
         except Exception as e:
@@ -2006,6 +2275,8 @@ Session: {self.session_id}
     def append(self, path: str, content: str) -> dict:
         """Append to file - mit Shadow auto-sync"""
         path = self._normalize_path(path)
+        _before_content = self._safe_get_content(path)
+        _before_meta = self._safe_get_meta(path)
 
         if not self._is_file(path):
             return self.create(path, content)
@@ -2094,12 +2365,15 @@ Session: {self.session_id}
 
         f.updated_at = datetime.now().isoformat()
         self._dirty = True
-
+        _after_content = self._safe_get_content(path)
+        self._emit_delta(path, "append", _before_content, _after_content, before_meta=_before_meta)
         return {"success": True, "message": f"Appended to '{path}'"}
 
     def edit(self, path: str, line_start: int, line_end: int, new_content: str) -> dict:
         """Edit file by replacing lines (1-indexed) - mit Shadow auto-sync"""
         path = self._normalize_path(path)
+        _before_content = self._safe_get_content(path)
+        _before_meta = self._safe_get_meta(path)
 
         if not self._is_file(path):
             return {"success": False, "error": f"File not found: {path}"}
@@ -2175,7 +2449,9 @@ Session: {self.session_id}
 
         f.updated_at = datetime.now().isoformat()
         self._dirty = True
-
+        _after_content = self._safe_get_content(path)
+        self._emit_delta(path, "edit", _before_content, _after_content,
+                         edit_range=(line_start, line_end), before_meta=_before_meta)
         return {
             "success": True,
             "message": f"Edited {path} lines {line_start}-{line_end}",
@@ -2184,7 +2460,8 @@ Session: {self.session_id}
     def delete(self, path: str) -> dict:
         """Delete a file - löscht auch lokale Shadow-Datei"""
         path = self._normalize_path(path)
-
+        _before_content = self._safe_get_content(path)
+        _before_meta = self._safe_get_meta(path)
         if not self._is_file(path):
             if self._is_directory(path):
                 return self.rmdir(path)
@@ -2208,6 +2485,7 @@ Session: {self.session_id}
                     self.files.pop(path, None)
                     self._shadow_index.pop(path, None)
                     self._dirty = True
+                    self._emit_delta(path, "delete", _before_content, None, before_meta=_before_meta)
                     return {
                         "success": True,
                         "message": f"Deleted '{path}' via shared store",
@@ -2243,6 +2521,7 @@ Session: {self.session_id}
         if local_deleted:
             msg += " (and local file)"
 
+        self._emit_delta(path, "delete", _before_content, None, before_meta=_before_meta)
         return {"success": True, "message": msg}
 
     # =========================================================================
@@ -2712,7 +2991,9 @@ Session: {self.session_id}
     def build_context_string(self) -> str:
         """Build VFS context string for LLM"""
         self.update_system_context()
-
+        if not self._dirty and hasattr(self, '_context_cache'):
+            return self._context_cache
+        self._dirty = False
         parts = self.file_tree_string(as_list=True)
 
         # Order: system_context, active_rules, then others
@@ -2757,8 +3038,9 @@ Session: {self.session_id}
         closed_count = sum(1 for f in self.files.values() if f.state == "closed")
         if closed_count > 0:
             parts.append(f"\n📋 {closed_count} closed files available")
-
-        return "\n".join(parts)
+        result = "\n".join(parts)
+        self._context_cache = result
+        return result
 
     def _build_tree_string(
         self, path: str = "/", prefix: str = "", max_depth: int = 3

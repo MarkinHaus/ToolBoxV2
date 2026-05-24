@@ -13,6 +13,7 @@ Author: FlowAgent V2
 import asyncio
 import contextlib
 import copy
+import hashlib
 import io
 import json
 import logging
@@ -30,7 +31,7 @@ from pydantic import BaseModel
 from toolboxv2 import Style, get_logger, get_app
 from toolboxv2.mods.isaa.base.Agent.chain import Chain, ConditionalChain
 from toolboxv2.mods.isaa.base.Agent.types import (
-    AgentModelData,
+    AgentModelData, _ToolCall, _ToolFunction, _AssistantMessage,
 )
 from toolboxv2.mods.isaa.base.patch.power_vfs import grep_vfs, search_vfs, find_files
 from toolboxv2.mods.isaa.base.audio_io.audioIo import (
@@ -38,17 +39,20 @@ from toolboxv2.mods.isaa.base.audio_io.audioIo import (
 )
 from toolboxv2.mods.isaa.base.Agent.observability import ObservabilityLayer
 from toolboxv2.mods.isaa.base.audio_io.Tts import TTSConfig, TTSBackend
+
+# Layer 2 Router
+from toolboxv2.mods.isaa.base.llm_router.router import CompletionRouter
+from toolboxv2.mods.isaa.base.llm_router.adapters.setup import setup_default_adapters
+from toolboxv2.mods.isaa.base.llm_router.compat import (
+    completion_result_to_message,
+    completion_result_to_model_response,
+    stream_chunk_to_shim,
+)
+from toolboxv2.mods.isaa.base.llm_router.stream_accumulator import StreamAccumulator
+from toolboxv2.mods.isaa.base.llm_router.model_info import ctx_limit, supports_tools
+
 AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
 # Framework imports
-try:
-    #import litellm
-    ## Unterdrückt die störenden LiteLLM Konsolen-Logs
-    #logging.getLogger("LiteLLM").setLevel(logging.WARNING)
-    #logging.getLogger("litellm").setLevel(logging.WARNING)
-    #litellm.suppress_debug_info = not AGENT_VERBOSE
-    LITELLM_AVAILABLE = True
-except ImportError:
-    LITELLM_AVAILABLE = False
 try:
 
     A2A_AVAILABLE = False
@@ -387,6 +391,9 @@ class FlowAgent:
         self.obs = None
         self._done_post_init = False
 
+        self.llm_handler= None
+        self._router: CompletionRouter | None = None
+
 
         self._init_managers(auto_load_checkpoint)
         self._init_rate_limiter()
@@ -433,9 +440,6 @@ class FlowAgent:
         if self._done_post_init:
             return
         self._done_post_init = True
-
-
-
 
     # Neue Methode:
     def set_obs_callback(self, callback):
@@ -488,6 +492,41 @@ class FlowAgent:
             self.llm_handler = load_handler_from_file(self.amd.handler_path_or_dict)
         else:
             self.llm_handler = LiteLLMRateLimitHandler(max_retries=3)
+
+    def _resolve_api_key_env(self, model: str) -> str:
+        """Given a model string like 'groq/llama-3.3-70b', return the env var name."""
+        _MAP = {
+            "groq": "GROQ_API_KEY",
+            "gemini": "GEMINI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "zai": "ZAI_API_KEY",
+            "zglm": "ZAI_API_KEY",
+            "cerebras": "CEREBRAS_API_KEY",
+            "mistral": "MISTRAL_API_KEY",
+            "openrouter": "OPENROUTER_API_KEY",
+            "deepseek": "DEEPSEEK_API_KEY",
+            "xai": "XAI_API_KEY",
+            "nvidia_nim": "NVIDIA_NIM_API_KEY",
+            "together_ai": "TOGETHER_API_KEY",
+            "minimax": "MINIMAX_API_KEY",
+            "ollama": "",
+        }
+        prefix = model.split("/", 1)[0] if "/" in model else ""
+        return _MAP.get(prefix, "OPENROUTER_API_KEY")
+
+    @property
+    def router(self) -> CompletionRouter:
+        """Lazy-init CompletionRouter with all configured adapters."""
+        if self._router is None:
+            rate_limiter = getattr(self, 'llm_handler', None)
+            if rate_limiter is not None:
+                rate_limiter = rate_limiter.rate_limiter
+            self._router = CompletionRouter(
+                rate_limiter=rate_limiter,
+                strict_mode=False,  # fallback to litellm for unmapped providers
+            )
+            setup_default_adapters(self._router)
+        return self._router
 
     def _create_summarizer(self) -> Callable:
         async def summarize(content: str) -> str:
@@ -566,52 +605,17 @@ class FlowAgent:
                 processed_messages.append(msg)
         return processed_messages
 
-    async def save_supports_vision(self, messages:list|None=None,model_preference="fast"):
+    async def save_supports_vision(self, messages: list | None = None, model_preference="fast"):
         if hasattr(self, "_vison"):
-            self._vison[model_preference] = self._vison.get(model_preference)
-            if isinstance(self._vison[model_preference], bool):
-                return self._vison[model_preference]
+            cached = self._vison.get(model_preference)
+            if isinstance(cached, bool):
+                return cached
+
         model = self.amd.fast_llm_model if model_preference == "fast" else self.amd.complex_llm_model
-        provider = model.split('/')[-2]
-        try:
-            from litellm import supports_vision
-            self._vison[model_preference] = supports_vision(model)
-            return self._vison[model_preference]
-        except:
-            try:
-                from litellm import supports_vision
-                self._vison[model_preference] = supports_vision(model, provider)
-                return self._vison[model_preference]
-            except:
-                import litellm
-                has_media = False
-                if not messages:
-                    return False
-                for msg in messages:
-                    if not isinstance(msg.get("content"), str):
-                        continue
-
-                    content = msg["content"]
-
-                    if not content:
-                        continue
-
-                    # Check if content contains media tags
-                    if "[media:" in content:
-                        has_media = True
-                        break
-                if not has_media:
-                    return False
-
-                processed_messages = self._process_media_in_messages(messages.copy())
-                try:
-                    response = await self.llm_handler.completion_with_rate_limiting(
-                        litellm, model=model, messages=processed_messages, max_tokens=1)
-                    self._vison[model_preference] = True
-                    return self._vison[model_preference]
-                except:
-                    self._vison[model_preference] = False
-                    return self._vison[model_preference]
+        # Heuristic: all modern providers support vision except ollama base models
+        self._vison = getattr(self, "_vison", {})
+        self._vison[model_preference] = not model.startswith("ollama/")
+        return self._vison[model_preference]
 
     async def a_run_llm_completion(
         self,
@@ -628,8 +632,6 @@ class FlowAgent:
         _removed_types: list[str] | None = None,
         **kwargs,
     ) -> str | Any:
-        if not LITELLM_AVAILABLE:
-            raise RuntimeError("LiteLLM required")
 
         _removed_types = _removed_types or []
 
@@ -729,6 +731,7 @@ class FlowAgent:
         for m in llm_kwargs["messages"]:
             if m.get("role") == "assistant":
                 for tc in m.get("tool_calls", []) or []:
+                    print(tc, "SHOWING TC")
                     tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
                     if tc_id:
                         known_tool_ids.add(tc_id)
@@ -744,12 +747,12 @@ class FlowAgent:
                 }
                 if AGENT_VERBOSE or os.getenv("AGENT_VERBOSE", "false") == "true":
                     logger.warning(
-                        f"Repair: orphaned tool message (id={tool_id}) converted to user message."
+                        f"Repair: orphaned tool message (id={tool_id}) converted to user message. {known_tool_ids}"
                     )
+        print(
+            f"known_ids={known_tool_ids}, orphan_count={sum(1 for m in llm_kwargs['messages'] if m.get('role') == 'tool' and m.get('tool_call_id') not in known_tool_ids)}")
         # NEU: Prompt Hash für Audit-Log
-        import hashlib
-        import json
-        import time
+
         def safe_serializer(obj):
             # If OpenAI tool call object
             if hasattr(obj, "model_dump"):
@@ -770,7 +773,7 @@ class FlowAgent:
         # --- Obs: LLM call start ---
         _obs = getattr(self, 'obs', None)
         if _obs:
-            _obs.record_llm_start(model=model)
+            _obs.record_llm_start(model=model, messages=llm_kwargs["messages"])
 
         # Get user_id from session if available
         user_id = "anonymous"
@@ -784,11 +787,6 @@ class FlowAgent:
         async def internal_stream():
 
             try:
-                from litellm.types.utils import ChatCompletionMessageToolCall, Function, Message
-                import litellm
-                litellm.drop_params = True
-                litellm.suppress_debug_info = True
-
                 original_messages = llm_kwargs["messages"].copy()
                 original_tools = llm_kwargs.get("tools")
 
@@ -826,9 +824,19 @@ class FlowAgent:
                               f"input_msg_count={len(llm_kwargs['messages'])}, "
                               f"tools_count={len(llm_kwargs.get('tools') or [])}, "
                               f"estimated_input_tokens={len(str(llm_kwargs['messages']))//3.5}")
-                    response = await self.llm_handler.completion_with_rate_limiting(
-                        litellm, **llm_kwargs
-                    )
+
+                    if not use_stream:
+                        _result = await self.router.complete(
+                            model=llm_kwargs["model"],
+                            messages=llm_kwargs["messages"],
+                            tools=llm_kwargs.get("tools"),
+                            api_key=os.environ.get(self._resolve_api_key_env(llm_kwargs["model"]), ""),
+                            **{k: v for k, v in llm_kwargs.items()
+                               if k not in ("model", "messages", "tools", "stream", "stream_options")},
+                        )
+                        response = completion_result_to_model_response(_result)
+
+
 
                     chunk_text = ""
                     chunk_tool_calls = []
@@ -836,6 +844,27 @@ class FlowAgent:
                     current_usage = None
                     # Datenextrahierung abhängig davon, ob es ein Stream ist oder nicht
                     if use_stream:
+                        _api_key = os.environ.get(self._resolve_api_key_env(llm_kwargs["model"]), "")
+                        _stream_kw = {k: v for k, v in llm_kwargs.items()
+                                      if k not in ("model", "messages", "tools", "stream", "stream_options")}
+
+                        async def _router_stream_wrapper():
+                            """Wrap router.stream() to yield litellm-compatible chunks."""
+                            acc = StreamAccumulator()
+                            async for chunk in self.router.stream(
+                                model=llm_kwargs["model"],
+                                messages=llm_kwargs["messages"],
+                                tools=llm_kwargs.get("tools"),
+                                api_key=_api_key,
+                                collect_metrics=True,
+                                **_stream_kw,
+                            ):
+                                acc.feed(chunk)
+                                yield stream_chunk_to_shim(chunk)
+                            # After stream ends, the accumulated result is available via acc.build()
+
+                        response = _router_stream_wrapper()
+
                         result_obj, current_usage, finish_reason = None, None, None
                         async for data in self._process_streaming_response(
                             response, get_response_message=True, row=true_stream
@@ -846,6 +875,7 @@ class FlowAgent:
                                 chunk = data
                                 if _obs and _obs._current_llm and _obs._current_llm.t_first_token == 0:
                                     _obs.record_llm_first_token()
+
                                 yield chunk
                         if result_obj is None:
                             raise RuntimeError("Response result_obj is None")
@@ -995,20 +1025,18 @@ class FlowAgent:
                         ]
 
                 # --- NACH DER SCHLEIFE: ZUSAMMENFÜHREN ---
-                reconstructed_tool_calls = []
-                for tc in final_tool_calls_raw:
-                    reconstructed_tool_calls.append(
-                        ChatCompletionMessageToolCall(
-                            id=tc["id"],
-                            type="function",
-                            function=Function(name=tc["name"], arguments=tc["args"])
-                        )
+                reconstructed_tool_calls = [
+                    _ToolCall(
+                        id=tc["id"],
+                        type="function",
+                        function=_ToolFunction(name=tc["name"], arguments=tc["args"]),
                     )
+                    for tc in final_tool_calls_raw
+                ]
 
-                final_message = Message(
-                    role="assistant",
+                final_message = _AssistantMessage(
                     content=final_text_content or None,
-                    tool_calls=reconstructed_tool_calls if reconstructed_tool_calls else None
+                    tool_calls=reconstructed_tool_calls or None,
                 )
 
                 # Statistik Update
@@ -1029,6 +1057,7 @@ class FlowAgent:
                         tokens_out=accumulated_usage.completion_tokens if accumulated_usage and hasattr(accumulated_usage,
                                                                                                         'completion_tokens') else 0,
                         model=model,
+                        output_text=final_text_content
                     )
 
                 result_to_return = final_message if get_response_message else (final_text_content or "")
@@ -1142,8 +1171,8 @@ class FlowAgent:
                         **kwargs,
                     )
                 # =====================================================================
-
-                logger.error(f"LLM call failed: {e}")
+                import traceback
+                logger.error(f"LLM call failed: {e} || {traceback.format_exc()}")
                 if _obs:
                     _obs.record_llm_end(tokens_in=0, tokens_out=0, model=model)
 
@@ -1196,43 +1225,14 @@ class FlowAgent:
         completion_response: Any = None,
     ) -> float:
         """Calculate approximate LLM cost"""
-        cost = (input_tokens / 1000) * 0.002 + (output_tokens / 1000) * 0.01
+        cost = None
         if hasattr(completion_response, "_hidden_params"):
             cost = completion_response._hidden_params.get("response_cost", 0)
-
-        try:
-            devnull = open(os.devnull, "w")
-        except Exception as e:
-            devnull = io.StringIO()
-            if os.getenv("AGENT_VERBOSE", "false") == "true":
-                print(e, "\nWhile trying to get devnull")
-
-        with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
-            try:
-                import litellm
-
-                cost = litellm.completion_cost(
-                    model=model, completion_response=completion_response
-                )
-            except ImportError:
-                pass
-            except Exception as e:
-                try:
-                    import litellm
-
-                    cost = litellm.completion_cost(
-                        model=model.split("/")[-1], completion_response=completion_response
-                    )
-                except Exception:
-                    pass
         return cost or (input_tokens / 1000) * 0.002 + (output_tokens / 1000) * 0.01
 
-
     async def _process_streaming_response(self, response, get_response_message, row=True):
-        from litellm.types.utils import ChatCompletionMessageToolCall, Function, Message
-
         result = ""
-        tool_calls_acc = {}
+        tool_calls_acc: dict[int, _ToolCall] = {}
         final_chunk = None
         finish_reason = None
 
@@ -1249,18 +1249,22 @@ class FlowAgent:
 
             if getattr(delta, "tool_calls", None):
                 for tc in delta.tool_calls:
-                    idx = tc.index
+                    idx = tc.index if hasattr(tc, "index") else tc.get("index", 0)
                     if idx not in tool_calls_acc:
-                        tool_calls_acc[idx] = ChatCompletionMessageToolCall(
-                            id=tc.id,
+                        tc_id = tc.id if hasattr(tc, "id") else tc.get("id", "")
+                        tool_calls_acc[idx] = _ToolCall(
+                            id=tc_id or "",
                             type="function",
-                            function=Function(name="", arguments=""),
+                            function=_ToolFunction(name="", arguments=""),
                         )
-                    if tc.function:
-                        if tc.function.name:
-                            tool_calls_acc[idx].function.name += tc.function.name
-                        if tc.function.arguments:
-                            tool_calls_acc[idx].function.arguments += tc.function.arguments
+                    func = tc.function if hasattr(tc, "function") else tc.get("function")
+                    if func:
+                        name = func.name if hasattr(func, "name") else func.get("name")
+                        args = func.arguments if hasattr(func, "arguments") else func.get("arguments")
+                        if name:
+                            tool_calls_acc[idx].function.name += name
+                        if args:
+                            tool_calls_acc[idx].function.arguments += args
 
             if hasattr(chunk.choices[0], "finish_reason") and chunk.choices[0].finish_reason:
                 finish_reason = chunk.choices[0].finish_reason
@@ -1270,10 +1274,9 @@ class FlowAgent:
         usage = final_chunk.usage if hasattr(final_chunk, "usage") else None
 
         if get_response_message:
-            result = Message(
-                role="assistant",
+            result = _AssistantMessage(
                 content=result or None,
-                tool_calls=list(tool_calls_acc.values()) if tool_calls_acc else [],
+                tool_calls=list(tool_calls_acc.values()) if tool_calls_acc else None,
             )
 
         yield (result, usage, finish_reason)
@@ -2631,6 +2634,111 @@ class FlowAgent:
             from toolboxv2.mods.isaa.base.patch.power_vfs import get_sharing_manager
             return get_sharing_manager().mount_share(session.vfs, share_id, mount_point)
 
+        # ── VFS Revert ────────────────────────────────────────────────
+        def vfs_revert(
+            mode: str = "all",
+            path: str | None = None,
+            step_id: int | None = None,
+            delta_index: int | None = None,
+            run_id: str | None = None,
+        ) -> dict:
+            """Revert VFS changes tracked by the observability layer.
+
+            Modes:
+              delta  — revert a single change by delta_index
+              step   — revert all changes from one execution step
+              file   — revert all changes to a specific file (optionally since step_id)
+              dir    — revert all changes under a directory prefix
+              all    — revert everything (optionally since step_id)
+
+            If run_id is given, loads deltas from a persisted obs run first
+            (useful for reverting changes from a previous execution).
+            All reverts auto-sync to disk for mounted files.
+
+            Args:
+                mode:        'delta' | 'step' | 'file' | 'dir' | 'all'
+                path:        Required for file/dir modes
+                step_id:     Required for step mode, optional filter for others
+                delta_index: Required for delta mode
+                run_id:      Optional — load deltas from a past run before reverting
+            """
+            vfs = session.vfs
+
+            # If run_id given, use obs to load + revert
+            if run_id is not None:
+                obs = getattr(self, 'obs', None) or getattr(getattr(self, 'agent', None), 'obs', None)
+                if obs is None:
+                    return {"success": False, "error": "ObservabilityLayer not available"}
+                return obs.revert_from_run(
+                    run_id=run_id, vfs=vfs, mode=mode,
+                    path=path, step_id=step_id, delta_index=delta_index,
+                )
+
+            # Direct VFS revert (current run deltas)
+            if mode == "delta":
+                if delta_index is None:
+                    return {"success": False, "error": "delta_index required"}
+                return vfs.revert_delta(delta_index)
+            elif mode == "step":
+                if step_id is None:
+                    return {"success": False, "error": "step_id required"}
+                return vfs.revert_step(step_id)
+            elif mode == "file":
+                if path is None:
+                    return {"success": False, "error": "path required"}
+                return vfs.revert_file(path, to_step=step_id)
+            elif mode == "dir":
+                if path is None:
+                    return {"success": False, "error": "path required"}
+                return vfs.revert_dir(path, to_step=step_id)
+            elif mode == "all":
+                return vfs.revert_all(to_step=step_id)
+            return {"success": False, "error": f"Unknown mode: {mode}"}
+
+        def vfs_change_log(
+            path: str | None = None,
+            step_id: int | None = None,
+            run_id: str | None = None,
+            compact: bool = True,
+        ) -> list[dict]:
+            """View the VFS change log — all tracked file mutations.
+
+            Args:
+                path:     Filter by file path
+                step_id:  Filter by execution step
+                run_id:   Load from a persisted run (obs layer)
+                compact:  If True, omit before/after content (just metadata)
+
+            Returns:
+                List of delta dicts
+            """
+            vfs = session.vfs
+
+            if run_id is not None:
+                obs = getattr(self, 'obs', None) or getattr(getattr(self, 'agent', None), 'obs', None)
+                if obs is None:
+                    return [{"error": "ObservabilityLayer not available"}]
+                deltas = obs.get_run_deltas(run_id)
+            else:
+                deltas = vfs.get_change_log(path=path, step_id=step_id)
+
+            # Apply filters for run_id case
+            if run_id is not None:
+                if path is not None:
+                    n_path = vfs._normalize_path(path)
+                    deltas = [d for d in deltas if d.get("path") == n_path]
+                if step_id is not None:
+                    deltas = [d for d in deltas if d.get("step_id") == step_id]
+
+            if compact:
+                for d in deltas:
+                    bc = d.get("before_content")
+                    ac = d.get("after_content")
+                    d["before_content"] = f"({len(bc)} chars)" if bc else None
+                    d["after_content"] = f"({len(ac)} chars)" if ac else None
+
+            return deltas
+
         # ── LSP Diagnostics (async) ────────────────────────────────────────
         async def vfs_diagnostics(path: str) -> dict:
             """Get LSP diagnostics (errors / warnings / hints) for a code file."""
@@ -2795,6 +2903,30 @@ class FlowAgent:
                         "Must return a list (may be empty). Each item should be a dict with at least "
                         "a 'path' key. For mode='content' entries may additionally contain 'snippet' or 'line'."
                     ),
+                },
+                "cleanup_func": None,
+            },
+
+            "vfs_revert": {
+                "live_test_inputs": [{"mode": "all", "step_id": 999999}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "dict",
+                    "semantic_check_hint": (
+                        "Must contain 'success' (bool). For this probe (no deltas at step 999999) "
+                        "success should be False with an error message. On real revert, must contain "
+                        "'reverted' (int) count."
+                    ),
+                },
+                "cleanup_func": None,
+            },
+
+            "vfs_change_log": {
+                "live_test_inputs": [{}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "list",
+                    "semantic_check_hint": "Must return a list (may be empty).",
                 },
                 "cleanup_func": None,
             },
@@ -3074,6 +3206,29 @@ class FlowAgent:
                 "category": ["filesystem", "vfs"],
                 "flags": {"filesystem_access": True},
             },
+            # ── VFS REVERT ────────────────────────────────────────────
+            {
+                "tool_func": vfs_revert,
+                "name": "vfs_revert",
+                "category": ["vfs", "revert", "observability"],
+                "description": (
+                    "Revert VFS file changes. Modes: delta (single change), "
+                    "step (all changes in one iteration), file (all changes to one file), "
+                    "dir (all changes under a path prefix), all (everything). "
+                    "Supports reverting from past runs via run_id. Auto-syncs to disk."
+                ),
+            },
+            {
+                "tool_func": vfs_change_log,
+                "name": "vfs_change_log",
+                "category": ["vfs", "observability"],
+                "description": (
+                    "View the VFS change log — every tracked file mutation with "
+                    "path, action, step_id, and content sizes. Use compact=False "
+                    "to see full before/after content. Supports run_id to inspect "
+                    "past execution runs."
+                ),
+            },
             # ── MOUNT ─────────────────────────────────────────────────────
             {
                 "tool_func": vfs_mount,
@@ -3207,9 +3362,6 @@ class FlowAgent:
         Analysiert den *exakten* Token-Verbrauch durch Simulation eines echten Engine-Schritts.
         Schlüsselt System-Prompt, Tools und History präzise auf.
         """
-        if not LITELLM_AVAILABLE:
-            if f_print: f_print("LiteLLM not available.")
-            return {}
 
         target_session = session_id or self.active_session or "default"
         session = await self.session_manager.get_or_create(target_session)
@@ -3263,39 +3415,13 @@ class FlowAgent:
         # 4. Präzises Token Counting mit Overhead
         model = self.amd.fast_llm_model.split("/")[-1]
         try:
-            import litellm
-            try:
-                devnull = open(os.devnull, "w")
-            except Exception as e:
-                devnull = io.StringIO()
-                if os.getenv("AGENT_VERBOSE", "false") == "true":
-                    print(e, "\nWhile trying to get devnull")
-
-            with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
-                model_info = litellm.get_model_info(model)
-            context_limit = model_info.get("max_input_tokens") or model_info.get("max_tokens") or 128000
+            from toolboxv2.mods.isaa.base.llm_router.model_info import ctx_limit
+            context_limit = ctx_limit(model)
         except:
             context_limit = 128000
 
         def count(msgs, tools=None):
-            # Nutzt die exakte Tokenizer-Logik des Modells inkl. Protokoll-Overhead
-
-            try:
-                devnull = open(os.devnull, "w")
-            except Exception as e:
-                devnull = io.StringIO()
-                if os.getenv("AGENT_VERBOSE", "false") == "true":
-                    print(e, "\nWhile trying to get devnull")
-
-            with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
-                import litellm
-                try:
-                    if tools:
-                        return litellm.token_counter(model=model, messages=msgs, tools=tools)
-                    return litellm.token_counter(model=model, messages=msgs)
-                except Exception:
-                    # Fallback: Grobe Schätzung
-                    return len(str(msgs)) // 3 + len(str(tools or "")) // 3
+            return len(str(msgs)) // 3.7 + len(str(tools or "")) // 3.7
 
         # -- Deep Dive Analyse der System-Komponenten --
         # Wir zerlegen den System-Prompt, um zu sehen, was Platz frisst

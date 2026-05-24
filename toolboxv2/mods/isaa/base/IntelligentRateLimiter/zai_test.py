@@ -1,6 +1,5 @@
 import os
 import requests
-import litellm
 import json
 
 # ==========================================
@@ -45,10 +44,10 @@ def test_direct_openai():
 def test_litellm_native_openai():
     print("\n--- TEST 2: LiteLLM nativer OpenAI Provider ---")
     print("Nutzt LiteLLMs eingebautes OpenAI Format ohne Custom Adapter.")
-
+    from toolboxv2.mods.isaa.extras.adapter import litellm_complete
     try:
         # Indem wir "openai/" voranstellen, nutzt LiteLLM den nativen OpenAI Code
-        response = litellm.completion(
+        response = litellm_complete(
             model=f"openai/{MODEL_NAME}",
             api_base="https://api.z.ai/api/coding/paas/v4/",  # Coding Endpunkt!
             api_key=API_KEY,

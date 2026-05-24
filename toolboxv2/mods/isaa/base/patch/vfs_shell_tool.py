@@ -1287,7 +1287,7 @@ def make_vfs_view(session: "AgentSessionV2"):
                 if not local_path or not os.path.exists(local_path):
                     return {"success": False, "error": f"Media file needs a local backing file: {path}"}
 
-                import litellm
+                from toolboxv2.mods.isaa.extras.adapter import litellm_complete
                 import base64
 
                 model = os.getenv("VISIONMODEL", "openrouter/openai/gpt-4.1-mini")
@@ -1304,7 +1304,7 @@ def make_vfs_view(session: "AgentSessionV2"):
                                 {"type": "text", "text": prompt},
                                 {"type": "image_url", "image_url": {"url": f"data:application/pdf;base64,{b64_pdf}"}}
                             ]}]
-                            resp = litellm.completion(model=model, messages=messages)
+                            resp = litellm_complete(model=model, messages=messages)
                             text_result = resp.choices[0].message.content
                         except Exception as native_err:
                             # Attempt 2: Fallback to PyMuPDF (fitz) converting pages to images

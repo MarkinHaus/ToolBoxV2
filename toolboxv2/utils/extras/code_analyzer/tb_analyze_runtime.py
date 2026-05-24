@@ -38,7 +38,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-logger = logging.getLogger("tb_analyze_runtime")
+from toolboxv2 import get_logger
+
+logger = get_logger()
 
 # ---------------------------------------------------------------------------
 # Lazy Dependency Install (reuse from tb_analyze)

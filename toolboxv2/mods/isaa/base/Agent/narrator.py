@@ -5,7 +5,7 @@ Generates short live-status text for AgentLiveState.thought via a fast
 "Blitz" LLM (e.g. groq/llama-3.1-8b-instant).
 
 Activation:
-    BLITZ_MODEL=groq/llama-3.1-8b-instant   # required – if empty, narrator is off
+    LIGHNIGMODEL=groq/llama-3.1-8b-instant   # required – if empty, narrator is off
     AGENT_NARRATOR_ENABLED=true              # default true
     NARRATOR_LANG=auto                       # auto | de | en
 
@@ -39,7 +39,7 @@ logger = get_logger()
 # Config / Constants
 # ---------------------------------------------------------------------------
 
-BLITZ_MODEL: str = os.getenv("BLITZMODEL", "")
+LIGHNIGMODEL: str = os.getenv("BLITZMODEL", "")
 NARRATOR_ENABLED: bool = os.getenv("AGENT_NARRATOR_ENABLED", "true").lower() == "true"
 NARRATOR_LANG: str = os.getenv("NARRATOR_LANG", "auto")  # auto | de | en
 
@@ -542,68 +542,63 @@ def _build_think_prompt(
 # ---------------------------------------------------------------------------
 # Core: blitz API call  (raw litellm, NOT through agent machinery)
 # ---------------------------------------------------------------------------
-async def _call_blitz(system: str, messages: list[dict], max_tokens: int = 60) -> dict | None:
-    """
-    Call BLITZ_MODEL via LiteLLMRateLimitHandler (with fallback + key rotation).
-    Falls back to raw litellm.acompletion if no handler is initialised.
-    Returns parsed JSON dict or None on any error.
-    """
+async def _call_blitz(system: str, messages: list[dict], max_tokens: int = 260, force_json=True) -> dict | None:
+    """Call LIGHNIGMODEL via CompletionRouter. No fallback, no handler."""
+    raw = None
+    result = None
     try:
+        from toolboxv2.mods.isaa.base.llm_router.router import CompletionRouter
+        from toolboxv2.mods.isaa.base.llm_router.adapters.setup import setup_default_adapters
+
+        # Module-level singleton (lazy)
+        global _blitz_router
+        if "_blitz_router" not in globals() or _blitz_router is None:
+            _blitz_router = CompletionRouter(strict_mode=False)
+            setup_default_adapters(_blitz_router)
+
         all_messages = [{"role": "system", "content": system}] + messages
+        api_key_env = {
+            "groq": "GROQ_API_KEY", "gemini": "GEMINI_API_KEY",
+            "cerebras": "CEREBRAS_API_KEY",
+        }
+        prefix = LIGHNIGMODEL.split("/", 1)[0] if "/" in LIGHNIGMODEL else ""
+        api_key = os.environ.get(api_key_env.get(prefix, ""), "")
 
-        if False and _blitz_handler is not None:
-            import litellm as _litellm_mod
-            async def helper():
-                return await _blitz_handler.completion_with_rate_limiting(
-                    _litellm_mod,
-                    model=BLITZ_MODEL,
-                    messages=all_messages,
-                    max_tokens=max_tokens,
-                    temperature=0.3,
-                    stream=False,
-                    drop_params=True,
-                )
-            # system stürtzt einfach ab...
-            response = await helper() # asyncio.wait_for(helper(),timeout = 10.0)
-        else:
-            # Fallback: direkt litellm ohne handler
-            import litellm  # type: ignore
+        result = await _blitz_router.complete(
+            model=LIGHNIGMODEL,
+            messages=all_messages,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            temperature=0.3,
+        )
 
-            async def helper():
-                return await litellm.acompletion(
-                    model = BLITZ_MODEL,
-                    messages = all_messages,
-                    max_tokens = max_tokens,
-                    temperature = 0.3,
-                    stream = False,
-                    drop_params = True,
-                )
-
-            # system stürtzt einfach ab...
-            response = await helper() # await asyncio.wait_for(helper(),timeout = 10.0)  # ← HARD TIMEOUT
-
-
-        raw = response.choices[0].message.content or ""
+        raw = result.content or ""
         raw = raw.strip().strip("```json").strip("```").strip()
-        data = json.loads(raw)
-        usage = getattr(response, "usage", None)
+        data = json.loads(raw) if force_json else raw
         return {
             "data": data,
             "raw": raw,
-            "in": getattr(usage, "prompt_tokens", 0),
-            "out": getattr(usage, "completion_tokens", 0),
+            "in": result.usage.prompt_tokens,
+            "out": result.usage.completion_tokens,
         }
-    except asyncio.TimeoutError:
-        logger.debug("Blitz call timed out (10s)")
-        return None
     except asyncio.CancelledError:
         raise
     except json.JSONDecodeError as exc:
-        logger.debug("Blitz JSON decode failed (truncated?): %s", exc)
-        return None
+        if force_json:
+            logger.debug(f"Blitz JSON decode failed: {exc} {raw}")
+            return None
+        else:
+            return {
+                "data": raw,
+                "raw": raw,
+                "in": result.usage.prompt_tokens if result else 0,
+                "out": result.usage.completion_tokens if result else 0,
+            }
     except Exception as exc:
-        logger.debug("Blitz call failed: %s", exc)
+        logger.debug(f"Blitz call failed: {exc} : {raw}")
         return None
+
+_blitz_router = None
 # ---------------------------------------------------------------------------
 # AgentLiveNarrator
 # ---------------------------------------------------------------------------
@@ -630,7 +625,7 @@ _GROQ_DEFAULT_FALLBACKS: dict[str, list[str]] = {
     ],
 }
 
-# Generic fallback when BLITZ_MODEL is a groq model not in the table above
+# Generic fallback when LIGHNIGMODEL is a groq model not in the table above
 _GROQ_GENERIC_FALLBACKS: list[str] = [
     "groq/llama-3.1-8b-instant",
     "groq/llama-3.3-70b-versatile",
@@ -663,8 +658,8 @@ def init_narrator_handler(
     Args:
         handler:          Pass an existing handler to share with the rest of
                           the engine.  If None a fresh one is created.
-        fallback_models:  Optional fallback chain for BLITZ_MODEL.
-                          If None AND BLITZ_MODEL is a groq model,
+        fallback_models:  Optional fallback chain for LIGHNIGMODEL.
+                          If None AND LIGHNIGMODEL is a groq model,
                           a sensible default chain is auto-selected.
 
     Returns the active handler so the caller can further configure it.
@@ -676,11 +671,11 @@ def init_narrator_handler(
         return _blitz_handler
 
     # Auto-detect groq fallbacks when none provided
-    if fallback_models is None and "groq" in BLITZ_MODEL.lower():
-        fallback_models = _resolve_groq_fallbacks(BLITZ_MODEL)
+    if fallback_models is None and "groq" in LIGHNIGMODEL.lower():
+        fallback_models = _resolve_groq_fallbacks(LIGHNIGMODEL)
         logger.info(
             "Narrator: auto-selected groq fallbacks for %s -> %s",
-            BLITZ_MODEL, fallback_models,
+            LIGHNIGMODEL, fallback_models,
         )
 
     # lazy import – keep module importable without the handler installed
@@ -695,7 +690,7 @@ def init_narrator_handler(
 
     if fallback_models:
         _blitz_handler.add_fallback_chain(
-            primary_model=BLITZ_MODEL,
+            primary_model=LIGHNIGMODEL,
             fallback_models=fallback_models,
             fallback_duration=90.0,
         )
@@ -721,7 +716,7 @@ class AgentLiveNarrator:
         self._inspier = None
         self.live = live
         self.agent = agent  # kept for future: model preference routing
-        self._enabled: bool = bool(BLITZ_MODEL) and NARRATOR_ENABLED and do_narator
+        self._enabled: bool = bool(LIGHNIGMODEL) and NARRATOR_ENABLED and do_narator
 
         if self._enabled:
             init_narrator_handler(handler=handler, fallback_models=fallback_models)
@@ -917,6 +912,7 @@ class AgentLiveNarrator:
         schema: dict | None = None,
         respect_ratelimit: bool = False,
         history: list[dict] | None = None,
+        max_tokens: int = 250,
     ) -> dict | str | None:
         """
         Public raw Blitz-Model call – now routed through the rate-limit handler.
@@ -928,6 +924,7 @@ class AgentLiveNarrator:
             respect_ratelimit: If True, checks internal narrator PM budget
                                before calling (handler has its own limits too).
             history:           Working history – for internal budget estimation.
+            max_tokens:        max_tokens for copletion
 
         Returns:
             Parsed dict if schema given and valid,
@@ -942,7 +939,7 @@ class AgentLiveNarrator:
                 logger.debug("Blitz _budget_ok False")
                 return None
         with Spinner(message="calling blitz", symbols="q"):
-            result = await _call_blitz(system, messages)
+            result = await _call_blitz(system, messages,max_tokens=max_tokens, force_json=schema is not None)
         if result is None:
             return None
 
@@ -1215,7 +1212,7 @@ class AgentLiveNarrator:
     # ------------------------------------------------------------------
     # 2. RuleSet – extract situation/intent and activate matching rules
     # ------------------------------------------------------------------
-
+    # disabeld
     def schedule_ruleset_update(
         self,
         history: list[dict],
@@ -1228,7 +1225,7 @@ class AgentLiveNarrator:
 
         Call after on_init() and after substantial tool results.
         """
-        if not self._enabled:
+        if not self._enabled or True:
             return
         rule_set = getattr(session, "rule_set", None)
         if rule_set is None:

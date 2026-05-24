@@ -22,8 +22,6 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
-
 from toolboxv2 import Singleton, get_app
 
 from .hybrid_memory import HybridMemoryStore
@@ -135,7 +133,7 @@ class AISemanticMemory(metaclass=Singleton):
 
     # ── embedding ──────────────────────────────────────────────────────
 
-    async def get_embeddings(self, text: str | list[str]) -> np.ndarray:
+    async def get_embeddings(self, text: str | list[str]):
         """Generate embeddings via litellm (identical to V1)."""
         from toolboxv2.mods.isaa.extras.adapter import litellm_embed
 

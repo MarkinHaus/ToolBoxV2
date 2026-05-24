@@ -19,7 +19,12 @@ except ImportError:
     def IndexDefinition(*a, **k):
         return None
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    np = lambda :None
+    np.ndarray = object
+    np.float32 = object
 
 from toolboxv2.mods.isaa.base.VectorStores.types import AbstractVectorStore, Chunk
 
@@ -83,7 +88,10 @@ class RedisVectorStore(AbstractVectorStore):
             similarity = 1 - float(doc.score)  # Convert distance to similarity
             if similarity >= min_similarity:
                 embedding_bytes = self.redis_client.hget(doc.id, "embedding")
-                embedding = np.frombuffer(embedding_bytes, dtype=np.float32)
+                if np.ndarray is not None:
+                    embedding = np.frombuffer(embedding_bytes, dtype=np.float32)
+                else:
+                    embedding = embedding_bytes
                 metadata = json.loads(doc.metadata)
                 cluster_id = int(doc.cluster_id) if doc.cluster_id else None
 

@@ -4,7 +4,6 @@ import re
 from urllib.parse import quote_plus
 import concurrent
 import requests
-from bs4 import BeautifulSoup
 
 def web_search_serpapi(query: str, max_results: int = 5, api_key: str = None) -> list[dict[str, str]]:
     """
@@ -265,6 +264,8 @@ def url_to_markdown_robust(url: str) -> str | None:
         print(f"Used encoding: {used_encoding}")
 
         # Parse with BeautifulSoup
+
+        from bs4 import BeautifulSoup
         soup = BeautifulSoup(decoded_content, 'html.parser')
 
         # Remove all unwanted elements aggressively
@@ -490,6 +491,7 @@ def web_search_robust(query: str, max_results: int = 5, max_attempts: int = 15) 
             response = requests.post(search_url, data=data, headers=headers, timeout=15)
             response.raise_for_status()
 
+            from bs4 import BeautifulSoup
             soup = BeautifulSoup(response.content, 'html.parser')
             results = []
 
@@ -594,15 +596,14 @@ def web_search_robust(query: str, max_results: int = 5, max_attempts: int = 15) 
     return good_results
 
 import datetime
-import litellm
 from typing import Optional
 
-def web_search(query: str, max_results: int = 5) -> str:
+async def web_search(query: str, max_results: int = 5) -> str:
     """
     Führt eine aktuelle Websuche über Perplexity (OpenRouter) aus.
     Robuste Fallbacks, komprimierte Antwort, heutiges Datum.
     """
-
+    from toolboxv2.mods.isaa.extras.adapter import litellm_complete
     today = datetime.date.today().isoformat()
 
     system_prompt = (
@@ -634,7 +635,7 @@ def web_search(query: str, max_results: int = 5) -> str:
 
     for model in models:
         try:
-            response = litellm.completion(
+            response = await litellm_complete(
                 model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},

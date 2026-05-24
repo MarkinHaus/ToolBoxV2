@@ -34,7 +34,7 @@ def profile_code(sort_by="cumulative", top_n=30,
 
         # 1) Grouped
         groups = _group_by_package(stats.stats, project_root, group_depth)
-        _print_grouped(groups)
+        _print_grouped(groups, blame_threshold)
 
         # 2) Project Module Imports
         norm_root = os.path.normpath(project_root)
@@ -361,7 +361,7 @@ def _group_by_package(all_stats, project_root, depth):
     return groups
 
 
-def _print_grouped(groups):
+def _print_grouped(groups, blame_threshold=0.005):
     print(f"\n{'='*80}")
     print(f"  GROUPED BY PACKAGE")
     print(f"{'='*80}")
@@ -369,11 +369,11 @@ def _print_grouped(groups):
     print(f"  {'-'*45} {'-'*8} {'-'*8} {'-'*8}")
     sg = sorted(groups.items(), key=lambda x: x[1]["cumtime"], reverse=True)
     for name, d in sg[:30]:
-        if d["cumtime"] < 0.005:
+        if d["cumtime"] < blame_threshold:
             continue
         print(f"  {name:<45} {d['tottime']:>8.3f} {d['cumtime']:>8.3f} {d['calls']:>8}")
 
-    print(f"\n  TOP ENTRIES PER GROUP (cumtime > 0.05s)")
+    print(f"\n  TOP ENTRIES PER GROUP (cumtime > {blame_threshold})")
     print(f"  {'-'*75}")
     for name, d in sg[:15]:
         hot = [(fn, ln, nm, tt, ct, nc) for fn, ln, nm, tt, ct, nc in d["entries"] if ct > 0.05]

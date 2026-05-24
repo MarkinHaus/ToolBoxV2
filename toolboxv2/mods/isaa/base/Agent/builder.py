@@ -288,20 +288,6 @@ class FlowAgentBuilder:
         self.config.temperature = temp
         return self
 
-    def with_budget_manager(self, max_cost: float = 10.0) -> "FlowAgentBuilder":
-        """Enable budget management"""
-        try:
-            import litellm
-            from litellm import BudgetManager
-
-            self._budget_manager = BudgetManager("agent")
-            iprint(f"Budget manager enabled: ${max_cost}")
-        except ImportError:
-            wprint("LiteLLM not available, budget manager disabled")
-
-
-        return self
-
     def verbose(self, enable: bool = True) -> "FlowAgentBuilder":
         """Enable verbose logging"""
         self.config.verbose_logging = enable

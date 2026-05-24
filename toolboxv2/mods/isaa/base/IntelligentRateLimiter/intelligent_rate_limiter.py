@@ -1869,8 +1869,6 @@ class LiteLLMRateLimitHandler:
                     raise
 
 
-
-
     def _inject_api_key(
         self,
         kwargs: Dict[str, Any],

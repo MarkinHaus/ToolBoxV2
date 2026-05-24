@@ -224,6 +224,44 @@ body{font-family:var(--mono);font-size:12px;line-height:1.4;min-height:100vh;pad
 .warn-box{background:var(--bg1);border:1px solid var(--warning);border-left:3px solid var(--warning);padding:8px 12px;margin-bottom:12px;font-size:11px;color:var(--fg1)}
 .warn-box .wt{color:var(--warning);font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
 
+/* COLLAPSE CONTROLS */
+.collapse-bar{display:flex;gap:6px;margin-bottom:12px}
+.collapse-btn{background:var(--bg1);border:1px solid var(--bd);color:var(--fg1);font-family:var(--mono);font-size:10px;padding:4px 10px;cursor:pointer;text-transform:uppercase;letter-spacing:1px;transition:border-color 100ms linear}
+.collapse-btn:hover{border-color:var(--primary);color:var(--fg)}
+.step.minimized>.step-body{display:none}
+.step.minimized{padding:6px 14px;margin-bottom:4px}
+.step-hdr{cursor:pointer;user-select:none}
+.step-hdr .chevron{color:var(--fg2);font-size:10px;margin-right:6px;display:inline-block;transition:transform 80ms linear}
+.step.minimized .step-hdr .chevron{transform:rotate(-90deg)}
+
+/* LLM DETAIL PANEL */
+.llm-toggle{cursor:pointer;transition:background 100ms linear;margin:-2px -4px;padding:2px 4px}
+.llm-toggle:hover{background:rgba(255,255,255,0.04)}
+.llm-detail{display:none;margin-top:8px;background:var(--bg2);border:1px solid var(--bd);max-height:500px;overflow:auto}
+.llm-detail.open{display:block}
+.llm-detail-tab-bar{display:flex;border-bottom:1px solid var(--bd);background:var(--bg1)}
+.llm-detail-tab{padding:4px 12px;font-size:10px;color:var(--fg2);cursor:pointer;border:none;background:0;font-family:var(--mono);border-bottom:2px solid transparent}
+.llm-detail-tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+.llm-detail-content{padding:10px 12px;font-size:11px;white-space:pre-wrap;word-break:break-word;color:var(--fg1);line-height:1.5}
+.llm-detail-content .msg{margin-bottom:8px;padding:6px 8px;border-left:2px solid var(--bd)}
+.llm-detail-content .msg.role-system{border-left-color:var(--warning)}
+.llm-detail-content .msg.role-user{border-left-color:var(--primary)}
+.llm-detail-content .msg.role-assistant{border-left-color:var(--success)}
+.llm-detail-content .msg.role-tool{border-left-color:var(--info)}
+.llm-detail-content .msg-role{font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;font-weight:600}
+.llm-detail-content .msg-role.system{color:var(--warning)}
+.llm-detail-content .msg-role.user{color:var(--primary)}
+.llm-detail-content .msg-role.assistant{color:var(--success)}
+.llm-detail-content .msg-role.tool{color:var(--info)}
+
+/* TOOL DETAIL PANEL */
+.tool-row-wrap{border-bottom:1px solid rgba(255,255,255,0.03)}
+.tool-row{cursor:pointer}.tool-row:hover{background:rgba(255,255,255,0.03)}
+.tool-detail{display:none;padding:6px 12px 8px;font-size:11px;background:var(--bg2);border:1px solid var(--bd);margin:2px 0 6px}
+.tool-detail.open{display:block}
+.tool-detail pre{white-space:pre-wrap;word-break:break-word;color:var(--fg1);line-height:1.4;max-height:300px;overflow:auto;margin:0}
+.tool-detail-l{font-size:10px;color:var(--fg2);text-transform:uppercase;letter-spacing:1px;margin:4px 0 2px}
+
 ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.15)}
 
 @media(max-width:640px){.stats-row{grid-template-columns:repeat(2,1fr)}.run-grid{grid-template-columns:1fr}.calc-grid{grid-template-columns:1fr}}
@@ -434,6 +472,12 @@ function openReplay(run) {
     </div>
   </div>`;
 
+  // Collapse controls
+  h += `<div class="collapse-bar">
+    <button class="collapse-btn" onclick="toggleAllSteps(true)">[ Min All ]</button>
+    <button class="collapse-btn" onclick="toggleAllSteps(false)">[ Open All ]</button>
+  </div>`;
+
   // Time decomposition stats
   h += `<div class="stats-row">
     <div class="stat"><div class="stat-l">LLM TIME</div><div class="stat-v">${F.dur(ra.totalLlm)}</div><div class="stat-s">${F.pct(ra.totalLlm,ra.totalDur)} of total</div></div>
@@ -478,8 +522,10 @@ function openReplay(run) {
     const toolOff = llmOff + parseFloat(llmPct);
     const postOff = toolOff + parseFloat(toolPct);
 
-    h += `<div class="step${cls}">
-      <div class="step-h"><span class="step-id">step ${step.step_id}</span><span class="step-dur">${F.dur(a.total)}</span></div>`;
+    h += `<div class="step${cls}" id="step-${step.step_id}">
+      <div class="step-hdr" onclick="toggleStep('step-${step.step_id}')"><div class="step-h"><span class="step-id"><span class="chevron">▼</span>step ${step.step_id}</span><span class="step-dur">${F.dur(a.total)}</span></div></div>`;
+
+    h += '<div class="step-body">';
 
     // Timing bar
     h += `<div class="t-bar-row">
@@ -501,11 +547,13 @@ function openReplay(run) {
     if (a.post > 0.01) h += `<span style="color:var(--error);opacity:.7">post: ${F.dur(a.post)}</span>`;
     h += `</div>`;
 
-    // LLM details
+    // LLM details — clickable to expand input/output
     if (step.llm) {
       const l = step.llm;
+      const llmId = 'llm-d-'+step.step_id;
       const ttftNote = a.ttftMissing ? ' <span style="color:var(--warning)">▲ not captured</span>' : '';
       h += `<div class="step-sec"><div class="step-sec-l">LLM</div>
+        <div class="llm-toggle" onclick="event.stopPropagation();toggleDetail('${llmId}')" title="click to show input/output">
         <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:var(--fg1)">
           <span class="kv"><span class="k">model </span><span class="v">${l.model||'?'}</span></span>
           <span class="kv"><span class="k">ttft </span><span class="v" style="color:var(--primary)">${a.ttft>0?F.dur(a.ttft):'—'}</span>${ttftNote}</span>
@@ -513,19 +561,36 @@ function openReplay(run) {
           <span class="kv"><span class="k">in </span><span class="v">${F.tok(l.tokens_in)}</span></span>
           <span class="kv"><span class="k">out </span><span class="v">${F.tok(l.tokens_out)}</span></span>
           <span class="kv"><span class="k">tok/s </span><span class="v">${a.tokSec?a.tokSec.toFixed(1):'—'}</span></span>
+        </div></div>
+        <div class="llm-detail" id="${llmId}">
+          <div class="llm-detail-tab-bar">
+            <button class="llm-detail-tab active" onclick="event.stopPropagation();switchLlmTab('${llmId}','input')">Input</button>
+            <button class="llm-detail-tab" onclick="event.stopPropagation();switchLlmTab('${llmId}','output')">Output</button>
+          </div>
+          <div class="llm-detail-content" id="${llmId}-input">${renderLlmMessages(l.input_messages||l.messages||l.input)}</div>
+          <div class="llm-detail-content" id="${llmId}-output" style="display:none">${renderLlmOutput(l.output||l.response||l.output_text)}</div>
         </div></div>`;
     }
 
-    // Tool calls
+    // Tool calls — each row expandable for args/result
     if (step.tool_calls?.length) {
       h += `<div class="step-sec"><div class="step-sec-l">Tools</div>`;
-      step.tool_calls.forEach(tc => {
+      step.tool_calls.forEach((tc,ti) => {
         const isErr = tc.status==='error';
-        h += `<div class="tool-row${isErr?' terr':''}"><span>${isErr?'✕ ':''}${tc.name}</span><span>${F.dur(tc.duration_s)}</span><span>${tc.status}</span><span style="color:var(--fg2)">${(tc.result_summary||tc.error||tc.args_summary||'').substring(0,80)}</span></div>`;
+        const tcId = 'tc-'+step.step_id+'-'+ti;
+        h += `<div class="tool-row-wrap">`;
+        h += `<div class="tool-row${isErr?' terr':''}" onclick="toggleDetail('${tcId}')" title="click to expand"><span>${isErr?'✕ ':'▸ '}${tc.name}</span><span>${F.dur(tc.duration_s)}</span><span>${tc.status}</span><span style="color:var(--fg2)">${esc((tc.result_summary||tc.error||tc.args_summary||'').substring(0,80))}</span></div>`;
+        h += `<div class="tool-detail" id="${tcId}">`;
+        if (tc.args || tc.args_summary || tc.input) {
+          h += `<div class="tool-detail-l">Input / Args</div><pre>${esc(fmtJson(tc.args||tc.input||tc.args_summary))}</pre>`;
+        }
+        if (tc.result || tc.result_summary || tc.output || tc.error) {
+          h += `<div class="tool-detail-l">${isErr?'Error':'Result'}</div><pre>${esc(fmtJson(tc.result||tc.output||tc.result_summary||tc.error))}</pre>`;
+        }
+        h += `</div></div>`;
       });
       h += '</div>';
     } else if (a.pre > 1) {
-      // No tool calls but significant pre-LLM time → flag it
       h += `<div class="step-sec"><div class="step-sec-l">Tools</div>
         <div style="font-size:11px;color:var(--warning)">▲ 0 tool calls recorded, but ${F.dur(a.pre)} spent before LLM call. Likely untracked tool execution or init.</div></div>`;
     }
@@ -545,6 +610,7 @@ function openReplay(run) {
         <div style="font-size:11px;color:var(--fg1)">kept: ${step.compression.kept||0} │ summarized: ${step.compression.summarized||0} │ dropped: ${step.compression.dropped||0}</div></div>`;
     }
 
+    h += '</div>'; // step-body
     h += '</div>'; // step
   });
 
@@ -760,6 +826,57 @@ function showWaterfall(idx) {
 
   container.innerHTML = h;
   container.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+
+// ── Collapse/expand helpers ──
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function fmtJson(v) {
+  if (v == null) return '';
+  if (typeof v === 'string') {
+    try { return JSON.stringify(JSON.parse(v), null, 2); } catch(e) { return v; }
+  }
+  try { return JSON.stringify(v, null, 2); } catch(e) { return String(v); }
+}
+function renderLlmMessages(msgs) {
+  if (!msgs) return '<span style="color:var(--fg2)">no input data captured</span>';
+  if (typeof msgs === 'string') return '<pre>'+esc(msgs)+'</pre>';
+  if (!Array.isArray(msgs)) return '<pre>'+esc(fmtJson(msgs))+'</pre>';
+  return msgs.map(m => {
+    const role = m.role || 'unknown';
+    let content = '';
+    if (typeof m.content === 'string') content = m.content;
+    else if (Array.isArray(m.content)) content = m.content.map(c => typeof c === 'string' ? c : (c.text || JSON.stringify(c))).join('\n');
+    else content = fmtJson(m.content);
+    return `<div class="msg role-${role}"><div class="msg-role ${role}">${esc(role)}</div>${esc(content)}</div>`;
+  }).join('');
+}
+function renderLlmOutput(out) {
+  if (!out) return '<span style="color:var(--fg2)">no output data captured</span>';
+  if (typeof out === 'string') return '<pre>'+esc(out)+'</pre>';
+  return '<pre>'+esc(fmtJson(out))+'</pre>';
+}
+function toggleStep(id) {
+  document.getElementById(id)?.classList.toggle('minimized');
+}
+function toggleAllSteps(minimize) {
+  document.querySelectorAll('.step-tl .step').forEach(el => {
+    el.classList.toggle('minimized', minimize);
+  });
+}
+function toggleDetail(id) {
+  document.getElementById(id)?.classList.toggle('open');
+}
+function switchLlmTab(llmId, tab) {
+  const parent = document.getElementById(llmId);
+  if (!parent) return;
+  parent.querySelectorAll('.llm-detail-tab').forEach(t => t.classList.toggle('active', t.textContent.toLowerCase() === tab));
+  const inp = document.getElementById(llmId+'-input');
+  const out = document.getElementById(llmId+'-output');
+  if (inp) inp.style.display = tab==='input' ? '' : 'none';
+  if (out) out.style.display = tab==='output' ? '' : 'none';
 }
 
 // ── INIT ──

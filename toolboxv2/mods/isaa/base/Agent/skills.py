@@ -709,7 +709,7 @@ class Skill:
         logged = [e["iters"] for e in self.recent_queries if e.get("iters")]
         return sum(logged) / len(logged) if logged else 0.0
 
-    def merge_with(self, other: 'Skill'):
+    async def merge_with(self, other: 'Skill'):
         """
         Merge another skill's data into this one.
         Used when a similar skill is detected during learning.
@@ -729,7 +729,6 @@ class Skill:
                 existing_tools.add(tool)
 
         # call blitz model to merge (unify) instruction
-        import litellm
         # ---- Merge instructions using Blitz model ----
         sys_prompt = (
             "You are an instruction unification engine.\n"
@@ -745,7 +744,8 @@ class Skill:
             "Balanced Merged instruction:"
         )
 
-        response = litellm.completion(
+        from toolboxv2.mods.isaa.extras.adapter import litellm_complete
+        response = await litellm_complete(
             model=os.getenv("BLITZMODEL"),
             messages=[
                 {"role": "system", "content": sys_prompt},
@@ -754,7 +754,7 @@ class Skill:
         )
 
         # Extract merged instruction text safely
-        self.instruction = response.choices[0].message.content.strip()
+        self.instruction = response.strip()
 
         self.last_used = datetime.now()
 
@@ -1701,7 +1701,7 @@ class SkillsManager:
                     query=query,
                     trigger_keyword=triggers[0] if triggers else "",
                 )
-                similar_skill.merge_with(Skill(
+                await similar_skill.merge_with(Skill(
                     id="temp",
                     name=name,
                     triggers=triggers,

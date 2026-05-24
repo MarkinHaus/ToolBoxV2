@@ -2,8 +2,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
-
+try:
+    import numpy as np
+except ImportError:
+    np = lambda :None
+    np.ndarray = object
 
 @dataclass(slots=True)
 class Chunk:

@@ -823,6 +823,70 @@ You are Isaa (via simplecore.app), a self-correcting, autonomous software. You v
         return base_message
 
 
+class _ToolFunction:
+    __slots__ = ("name", "arguments")
+    def __init__(self, name: str, arguments: str):
+        self.name = name
+        self.arguments = arguments
+
+    def __contains__(self, key):
+        # Define custom behavior for the 'in' operator
+        return hasattr(self, key)
+
+    def get(self, key, default=None):
+        # Custom .get() method to access attributes with a default value if the attribute doesn't exist
+        return getattr(self, key, default)
+
+    def __getitem__(self, key):
+        # Allow dictionary-style access to attributes
+        return getattr(self, key)
+
+    def __setitem__(self, key, value):
+        # Allow dictionary-style assignment of attributes
+        # self.__slots__ = tuple([key]+ list(self.__slots__))
+        setattr(self, key, value)
+
+class _ToolCall:
+    __slots__ = ("id", "type", "function")
+    def __init__(self, id: str, type: str, function: _ToolFunction):
+        self.id = id
+        self.type = type
+        self.function = function
+
+    def __contains__(self, key):
+        # Define custom behavior for the 'in' operator
+        return hasattr(self, key)
+
+    def get(self, key, default=None):
+        # Custom .get() method to access attributes with a default value if the attribute doesn't exist
+        return getattr(self, key, default)
+
+    def __getitem__(self, key):
+        # Allow dictionary-style access to attributes
+        return getattr(self, key)
+
+    def __setitem__(self, key, value):
+        # Allow dictionary-style assignment of attributes
+        # self.__slots__ = tuple([key]+ list(self.__slots__))
+        setattr(self, key, value)
+
+class _AssistantMessage:
+    """Drop-in for litellm Message. Attribute-access compatible."""
+    __slots__ = ("role", "content", "tool_calls")
+    def __init__(self, content=None, tool_calls=None):
+        self.role = "assistant"
+        self.content = content
+        # Convert dicts to attribute-access objects
+        if tool_calls:
+            self.tool_calls = [
+                _ToolCall(
+                    id=tc["id"], type="function",
+                    function=_ToolFunction(tc["function"]["name"], tc["function"]["arguments"]),
+                ) if not isinstance(tc, _ToolCall) else tc for tc in tool_calls
+            ]
+        else:
+            self.tool_calls = tool_calls
+
 class ToolAnalysis(BaseModel):
     """Defines the structure for a valid tool analysis."""
     primary_function: str = Field(..., description="The main purpose of the tool.")

@@ -31,9 +31,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Set, Tuple, Union
 
-from litellm import max_tokens
 
-from base.Agent.ctx_cleaner import clean_messages
+from toolboxv2.mods.isaa.base.Agent.ctx_cleaner import clean_messages
 from toolboxv2 import get_app, get_logger
 
 # Import Live State Management
@@ -1338,7 +1337,6 @@ def _is_code_truncated(text: str) -> bool:
             return True
     return False
 
-
 import re
 import json
 import ast
@@ -1898,6 +1896,10 @@ BEISPIELE:
                         )
                         continue
                     if final_tc:
+                        _obs = getattr(self.agent, 'obs', None)
+                        if _obs:
+                            _obs.record_tool_start("final_answer", str(final_tc.function.arguments))
+                            _obs.record_tool_end("final_answer", result_summary="break loop", status="ok")
                         try:
                             args = json.loads(final_tc.function.arguments)
                             final_response = args.get("answer", "")
@@ -2009,11 +2011,6 @@ BEISPIELE:
         async def stream_generator(ctx: ExecutionContext):
             """Generator that yields chunks during execution"""
             nonlocal session, max_iterations
-
-            from litellm.types.utils import (
-                ChatCompletionMessageToolCall,
-                Function,
-            )
 
             final_response = None
             success = True
@@ -2166,14 +2163,14 @@ BEISPIELE:
 
                             if item["_type"] == "tool_error":
                                 tool_validation_fail_msg = str(item["error"])
-                                self.live.log(f"[Engine] Provider rejected tool call: {tool_validation_fail_msg[:200]}",
+                                self.live.log(f"[Engine] Provider rejected tool call: {tool_validation_fail_msg}",
                                               logging.WARNING)
                                 break
 
                             if item["_type"] == "error":
                                 err = item["error"]
                                 if "Event loop is closed" in str(err):
-                                    yield enrich({"type": "error", "error": str(err)[:200]})
+                                    yield enrich({"type": "error", "error": str(err)})
                                     break
                                 raise err
 
@@ -2256,6 +2253,10 @@ BEISPIELE:
                             )
 
                         if final_tc:
+                            _obs = getattr(self.agent, 'obs', None)
+                            if _obs:
+                                _obs.record_tool_start("final_answer", str(final_tc.function.arguments))
+                                _obs.record_tool_end("final_answer", result_summary="break loop", status="ok")
                             f_args = final_tc.function.arguments
                             try:
                                 args = (
@@ -2641,6 +2642,10 @@ BEISPIELE:
                             continue
 
                         if final_tc:
+                            _obs = getattr(self.agent, 'obs', None)
+                            if _obs:
+                                _obs.record_tool_start("final_answer", str(final_tc.function.arguments))
+                                _obs.record_tool_end("final_answer", result_summary="break loop", status="ok")
                             try:
                                 args = json.loads(final_tc.function.arguments)
                                 final_response = args.get("answer", "")
@@ -2797,6 +2802,10 @@ BEISPIELE:
                 )
 
         self._current_session = session
+        # Wire VFS → Obs delta tracking
+        _obs = getattr(self.agent, 'obs', None)
+        if _obs is not None:
+            _obs.hook_vfs(session.vfs)
         return ctx, session, is_resume
 
     async def _setup_init(
@@ -3105,6 +3114,18 @@ BEISPIELE:
                     success=success,
                     llm_completion_func=self.agent.a_run_llm_completion,
                 )
+            # 3. clasify task für memory system
+            # 4. colectct programict data on how the gola was acaeved. and waht didaet worked. ( consomed unessasary time )
+            # 5. inital build or extend golbal vfs task map. mit global index
+            # datt structure for the task map  first layer classes name like [codeing, conversational, brainstoming, homwork, freelancing, ... mor spesifc]
+            # jede kategorie hat dann seinen eigenen ordern. beispel für codeing. diser order hat wider classen spezifische unter order [genral, toolbox, isaa, etc]
+            # jeder dieser unter order hat dann die filgenden unter order. history. experianace. so wie die datei _index.json
+            # in hostry werden die informationen aus step 4 gespeichert und aktumulirt.
+            # um einen ord zu ershaffen der genau sagt das gibt es das habe ich gemacht. so hat es fuctoniert. und was nicht fuktoniert hatte.
+            # zusammen brainstomen wie entwder direkt hier mit minimaler latens sinvolle experianaces erstellt werden können. und wie der dreamer dann dise informationen verwendet um experianxes zu erstellen.
+            # und dann nicht vergessen in dem setup gucken ob dieser task typneu ist oder existirt. dann ob der type |sein untertype neu ist oder exsitert.
+            # und wenn er neu ist. schonmal den neuen order anlagen. wenn er exitiert die experiances "für die task" kopiliren. so wie den order
+            # dann als pre context mit dem aent gaben. damit isaa wirklich aitomatisch adaptive lernt.
         except Exception as e:
             self.live.log(f"Background Learning Error: {e}", logging.WARNING)
 
@@ -3202,19 +3223,18 @@ BEISPIELE:
         try:
             stream_response = await self.agent.a_run_llm_completion(
                 messages=messages,
+                model= os.getenv("BLITZMODEL", os.getenv("LIGHNIGMODEL", self.agent.amd.fast_llm_model)) if effort == "fast" else os.getenv("LIGHNIGMODEL", self.agent.amd.fast_llm_model),
                 max_tokens=2048,
                 stream=True,
                 true_stream=True,
                 with_context=False,
                 tool_choice="none",
             )
-            if asyncio.iscoroutine(stream_response):
-                stream_response = await stream_response
 
             chunk_buffer = ""
             pause_chars = {".", "\n", ":", ";", "?"}
 
-            async for chunk in stream_response:
+            async for chunk in stream_response():
                 delta = (
                     chunk.choices[0].delta
                     if hasattr(chunk, "choices") and chunk.choices
@@ -3353,7 +3373,7 @@ BEISPIELE:
                 )
                 result += str(e)
                 thought = result
-            self.live.thought = thought[-200:] if thought else str(result)[:200]
+            self.live.thought = thought if thought else str(result)
             # Record in AutoFocus
 
         elif f_name == "final_answer":
@@ -3490,7 +3510,7 @@ BEISPIELE:
                             f"  Files: {', '.join(sub_result.files_written[:5])}"
                         )
                         if sub_result.error:
-                            result_lines.append(f"  Error: {sub_result.error[:200]}")
+                            result_lines.append(f"  Error: {sub_result.error}")
 
                     result = "\n".join(result_lines)
 
@@ -3623,12 +3643,10 @@ BEISPIELE:
     def _get_max_context_tokens(self) -> int:
         """Hole max context window des aktuellen Models."""
         try:
-            import litellm
-
             model = getattr(self.agent, "amd", None)
             if model and hasattr(model, "model_name"):
-                info = litellm.get_model_info(model.model_name)
-                return info.get("max_input_tokens", 128000)
+                from toolboxv2.mods.isaa.base.llm_router.model_info import ctx_limit
+                return ctx_limit(model.model_name)
         except Exception:
             pass
         return 128000  # Fallback

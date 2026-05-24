@@ -27,8 +27,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
+try:
+    import numpy as np
 
+except ImportError:
+    print("use pip install numpy or uv pip install numpy")
+    np = lambda :None
+    np.ndarray = object
 # MinIO client import (optional, for cloud backup)
 try:
     from minio import Minio as MinIOClient

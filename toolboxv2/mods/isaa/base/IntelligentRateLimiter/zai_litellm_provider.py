@@ -170,27 +170,44 @@ class ZAIProvider(CustomLLM):
             )
         return self._sync_client
 
+    #@property
+    #def async_client(self) -> AsyncOpenAI:
+    #    """Lazy initialization of async client — resilient to event loop closure."""
+    #    current_loop_id: Optional[int] = None
+    #    try:
+    #        current_loop_id = id(asyncio.get_running_loop())
+    #    except RuntimeError:
+    #        pass
+#
+    #    needs_rebuild = (
+    #        self._async_client is None
+    #        or (current_loop_id is not None and getattr(self, "_async_client_loop_id", None) != current_loop_id)
+    #    )
+#
+    #    if needs_rebuild:
+    #        self._async_client = AsyncOpenAI(
+    #            api_key=self.api_key,<
+    #            base_url=self.base_url,
+    #        )
+    #        self._async_client_loop_id = current_loop_id
+#
+    #    return self._async_client
+
     @property
     def async_client(self) -> AsyncOpenAI:
-        """Lazy initialization of async client — resilient to event loop closure."""
-        current_loop_id: Optional[int] = None
-        try:
-            current_loop_id = id(asyncio.get_running_loop())
-        except RuntimeError:
-            pass
-
-        needs_rebuild = (
-            self._async_client is None
-            or (current_loop_id is not None and getattr(self, "_async_client_loop_id", None) != current_loop_id)
-        )
-
-        if needs_rebuild:
+        """Lazy initialization of async client with persistent warm connections."""
+        if self._async_client is None:
+            import httpx
+            # Verwende einen expliziten HTTPX-Client mit aggressivem Keep-Alive-Pooling
+            http_client = httpx.AsyncClient(
+                limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+                timeout=httpx.Timeout(60.0, connect=5.0),
+            )
             self._async_client = AsyncOpenAI(
                 api_key=self.api_key,
                 base_url=self.base_url,
+                http_client=http_client,
             )
-            self._async_client_loop_id = current_loop_id
-
         return self._async_client
 
     # =========================================================================

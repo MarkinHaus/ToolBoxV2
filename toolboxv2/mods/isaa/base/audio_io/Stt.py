@@ -23,7 +23,6 @@ from enum import Enum
 from pathlib import Path
 from typing import BinaryIO, Generator, Optional, Union
 
-import numpy as np
 
 # Type aliases
 AudioData = Union[bytes, BinaryIO, Path, str]
@@ -142,8 +141,12 @@ def _normalize_audio_input(audio: AudioData) -> bytes:
     if hasattr(audio, "read"):
         return audio.read()
 
-    if isinstance(audio, np.ndarray):
-        return audio.tobytes()
+    try:
+        import numpy as np
+        if isinstance(audio, np.ndarray):
+            return audio.tobytes()
+    except ImportError:
+        print("use pip install numpy or uv pip install numpy")
 
     raise TypeError(f"Unsupported audio input type: {type(audio)}")
 

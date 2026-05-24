@@ -11018,7 +11018,7 @@ class ISAA_Host:
                 return
 
             # Merge logic
-            keep_skill.merge_with(remove_skill)
+            await keep_skill.merge_with(remove_skill)
 
             del sm.skills[remove_id]
             sm._skill_embeddings_dirty = True

@@ -1,38 +1,6 @@
-"""
-LiteLLM LLM Interface Module
-============================
-
-This module provides interfaces for interacting with LiteLLM's language models,
-including text generation and embedding capabilities.
-
-Author: Lightrag Team
-Created: 2025-02-04
-License: MIT License
-Version: 1.0.0
-
-Change Log:
-- 1.0.0 (2025-02-04): Initial LiteLLM release
-    * Ported OpenAI logic to use litellm async client
-    * Updated error types and environment variable names
-    * Preserved streaming and embedding support
-
-Dependencies:
-    - litellm
-    - numpy
-    - pipmaster
-    - Python >= 3.10
-
-Usage:
-    from llm_interfaces.litellm import logging
-if not hasattr(logging, 'NONE'):
-    logging.NONE = 100
-
-import litellm_complete, litellm_embed
-"""
-
 __version__ = "1.0.0"
 __author__ = "Markin Hausmanns"
-__status__ = "Demo"
+__status__ = "Demo" # -> Production
 
 import logging
 import os
@@ -45,19 +13,17 @@ import tenacity
 if not hasattr(logging, 'NONE'):
     logging.NONE = 100
 
-import litellm
 
 # lightRag utilities and types
 import numpy as np
 
 # Use pipmaster to ensure the litellm dependency is installed
-from litellm import APIConnectionError, RateLimitError, Timeout, acompletion
+# APIConnectionError, RateLimitError, Timeout, acompletion
 
 # Import litellm's asynchronous client and error classes
 # Retry handling for transient errors
 from tenacity import (
     retry,
-    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
 )
@@ -68,78 +34,56 @@ from toolboxv2 import get_logger
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=10),
-    retry=retry_if_exception_type((RateLimitError, Timeout, APIConnectionError)),
 )
 async def litellm_complete_if_cache(
-    model,
-    prompt,
-    system_prompt=None,
-    history_messages=None,
-    base_url=None,
-    api_key=None,
-    **kwargs,
+    model, prompt, system_prompt=None, history_messages=None,
+    base_url=None, api_key=None, **kwargs,
 ) -> str | AsyncIterator[str]:
-    """
-    Core function to query the LiteLLM model. It builds the message context,
-    invokes the completion API, and returns either a complete result string or
-    an async iterator for streaming responses.
-    """
-    # Set the API key if provided
-    if api_key:
-        os.environ["LITELLM_API_KEY"] = api_key
+    """Core completion via CompletionRouter (replaces litellm.acompletion)."""
+    from toolboxv2.mods.isaa.base.llm_router.router import CompletionRouter
+    from toolboxv2.mods.isaa.base.llm_router.adapters.setup import setup_default_adapters
 
-    # Remove internal keys not needed for the client call
+    # Module-level singleton
+    global _lightrag_router
+    if "_lightrag_router" not in globals() or _lightrag_router is None:
+        _lightrag_router = CompletionRouter(strict_mode=False)
+        setup_default_adapters(_lightrag_router)
+
     kwargs.pop("hashing_kv", None)
     kwargs.pop("keyword_extraction", None)
+    kwargs.pop("fallbacks", None)
 
-    fallbacks_ = kwargs.pop("fallbacks", [])
-    # Build the messages list from system prompt, conversation history, and the new prompt
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
-    if history_messages is not None:
+    if history_messages:
         messages.extend(history_messages)
     messages.append({"role": "user", "content": prompt})
 
-    # Log query details for debugging purposes
+    _api_key = api_key or ""
+    stream = kwargs.pop("stream", False)
+    clean_kw = {k: v for k, v in kwargs.items()
+                if k not in ("response_format",) or v is not None}
+
     try:
-        # Depending on the response format, choose the appropriate API call
-        if "response_format" in kwargs:
-            response = await acompletion(
-                model=model, messages=messages,
-                fallbacks=fallbacks_+os.getenv("FALLBACKS_MODELS", '').split(','),
-                **kwargs
-            )
+        if stream:
+            async def inner():
+                async for chunk in _lightrag_router.stream(
+                    model=model, messages=messages, api_key=_api_key, **clean_kw,
+                ):
+                    if chunk.content:
+                        yield chunk.content
+            return inner()
         else:
-            response = await acompletion(
-                model=model, messages=messages,
-                fallbacks=os.getenv("FALLBACKS_MODELS", '').split(','),
-                **kwargs
+            result = await _lightrag_router.complete(
+                model=model, messages=messages, api_key=_api_key, **clean_kw,
             )
+            return result.content or ""
     except Exception as e:
-        print(f"\n{model=}\n{prompt=}\n{system_prompt=}\n{history_messages=}\n{base_url=}\n{api_key=}\n{kwargs=}")
-        get_logger().error(f"Failed to litellm memory work {e}")
+        get_logger().error(f"Failed to complete: {e}")
         return ""
 
-    # Check if the response is a streaming response (i.e. an async iterator)
-    if hasattr(response, "__aiter__"):
-
-        async def inner():
-            async for chunk in response:
-                # Assume LiteLLM response structure is similar to OpenAI's
-                content = chunk.choices[0].delta.content
-                if content is None:
-                    continue
-                yield content
-
-        return inner()
-    else:
-        # Non-streaming: extract and return the full content string
-
-        content = response.choices[0].message.content
-        if content is None:
-            content = response.choices[0].message.tool_calls[0].function.arguments
-        return content
+_lightrag_router = None
 
 def enforce_no_additional_properties(schema: dict) -> dict:
     if schema.get("type") == "object":
@@ -188,7 +132,6 @@ async def litellm_complete(
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=60),
-    retry=retry_if_exception_type((RateLimitError, Timeout, APIConnectionError)),
 )
 async def litellm_embed(
     texts: list[str],
@@ -202,8 +145,6 @@ async def litellm_embed(
     """
     Generates embeddings for the given list of texts using LiteLLM.
     """
-    sto = litellm.drop_params
-    litellm.drop_params = True
     try:
         res = await embed(
             model=model,
@@ -214,10 +155,9 @@ async def litellm_embed(
         )
     except tenacity.RetryError as e:
         if "ollama" in model:
-            raise f"Ollama is not running!"
+            raise RuntimeError(f"Ollama is not running!")
         raise e
 
-    litellm.drop_params = sto
     return res
 
 
@@ -237,9 +177,7 @@ from pathlib import Path
 from typing import Any
 
 try:
-    import litellm
     from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
-    from litellm.exceptions import RateLimitError, Timeout, APIConnectionError
     LITELLM_AVAILABLE = True
 except ImportError:
     LITELLM_AVAILABLE = False
@@ -305,7 +243,6 @@ def _convert_openrouter_to_openai_compatible(model: str) -> tuple[str, dict]:
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=60),
-    retry=retry_if_exception_type((RateLimitError, Timeout, APIConnectionError)) if LITELLM_AVAILABLE else (Exception,)
 )
 async def embed(
     texts: list[str],
@@ -348,7 +285,7 @@ async def embed(
     # Baue LiteLLM kwargs
     kwargs: dict[str, Any] = {
         "model": model,
-        "input": texts,
+        "texts": texts,
         **extra_kwargs,
     }
 
@@ -363,61 +300,16 @@ async def embed(
         kwargs["input_type"] = input_type
 
     # API Call
-    response = await litellm.aembedding(**kwargs)
+    from toolboxv2.mods.isaa.base.llm_router.embeddings import litellm_embed as _litellm_embed
+    response = await _litellm_embed(**kwargs)
 
     # Extrahiere Embeddings
-    embeddings = np.array([d["embedding"] for d in response.data])
+    # embeddings = np.array([d["embedding"] for d in response.data])
+    embeddings = [d["embedding"] for d in response.data]
 
     # Dimensionsreduktion für Matryoshka/MRL wenn nötig
-    if dimensions and embeddings.shape[1] > dimensions:
-        embeddings = embeddings[:, :dimensions]
-
-    return embeddings
-
-
-# =========================================================================
-# SYNC VERSION
-# =========================================================================
-
-def embed_sync(
-    texts: list[str],
-    model: str = "ollama/nomic-embed-text",
-    dimensions: int | None = None,
-    api_base: str | None = None,
-    api_key: str | None = None,
-    input_type: str | None = None,
-) -> np.ndarray:
-    """Synchrone Version von embed()"""
-    if not LITELLM_AVAILABLE:
-        raise RuntimeError("LiteLLM required - pip install litellm")
-
-    extra_kwargs: dict[str, Any] = {}
-
-    if _is_openrouter_model(model):
-        model, extra_kwargs = _convert_openrouter_to_openai_compatible(model)
-        print(f"[embed] OpenRouter Workaround: Using {model} via OpenAI-compatible endpoint")
-
-    kwargs: dict[str, Any] = {
-        "model": model,
-        "input": texts,
-        **extra_kwargs,
-    }
-
-    if api_base:
-        kwargs["api_base"] = api_base
-    if api_key:
-        kwargs["api_key"] = api_key
-    if dimensions:
-        kwargs["dimensions"] = dimensions
-    if input_type:
-        kwargs["input_type"] = input_type
-
-    response = litellm.embedding(**kwargs)
-
-    embeddings = np.array([d["embedding"] for d in response.data])
-
-    if dimensions and embeddings.shape[1] > dimensions:
-        embeddings = embeddings[:, :dimensions]
+    # if dimensions and embeddings.shape[1] > dimensions:
+    #     embeddings = embeddings[:, :dimensions]
 
     return embeddings
 

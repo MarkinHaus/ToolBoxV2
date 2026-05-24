@@ -1844,7 +1844,6 @@ uncertain_about_X
                 asyncio.get_running_loop().create_task(_ensure_index())
             except RuntimeError:
                 pass
-        builder.with_budget_manager(max_cost=100.0)
         builder.save_config(str(agent_config_path), format="json")
         return builder
 

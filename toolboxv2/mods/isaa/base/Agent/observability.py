@@ -64,6 +64,9 @@ class LLMCallRecord:
     tokens_in: int = 0
     tokens_out: int = 0
     tokens_per_sec: float = 0.0     # output tokens / duration
+    # Content capture (viewer reads these via input_messages / output)
+    input_messages: list | None = None   # messages sent to LLM
+    output_text: str | None = None       # assistant response text
 
 
 @dataclass
@@ -340,6 +343,9 @@ class ObservabilityLayer:
         if run is None:
             return
 
+        if self._current_step is not None:
+            self.end_step()
+
         run.t_end = time.time()
         run.success = success
         run.final_answer_summary = final_answer
@@ -384,6 +390,9 @@ class ObservabilityLayer:
 
     def begin_step(self, iteration: int):
         self._current_step = StepRecord(step_id=iteration, t_start=time.time())
+        vfs = getattr(self, "_hooked_vfs", None)
+        if vfs is not None:
+            vfs._current_step_id = iteration
 
     def end_step(self, ctx_checkpoint: dict | None = None):
         """Finalize step, persist to live file, fire callback."""
@@ -424,8 +433,11 @@ class ObservabilityLayer:
     # LLM RECORDING
     # =========================================================================
 
-    def record_llm_start(self, model: str = ""):
-        self._current_llm = LLMCallRecord(model=model, t_start=time.time())
+    def record_llm_start(self, model: str = "", messages: list | None = None):
+        self._current_llm = LLMCallRecord(
+            model=model, t_start=time.time(),
+            input_messages=messages,
+        )
 
     def record_llm_first_token(self):
         if self._current_llm and self._current_llm.t_first_token == 0:
@@ -434,7 +446,8 @@ class ObservabilityLayer:
                 self._current_llm.t_first_token - self._current_llm.t_start, 4
             )
 
-    def record_llm_end(self, tokens_in: int = 0, tokens_out: int = 0, model: str = ""):
+    def record_llm_end(self, tokens_in: int = 0, tokens_out: int = 0,
+                        model: str = "", output_text: str | None = None):
         llm = self._current_llm
         if llm is None:
             return
@@ -444,6 +457,8 @@ class ObservabilityLayer:
         llm.tokens_out = tokens_out
         if model:
             llm.model = model
+        if output_text is not None:
+            llm.output_text = output_text
         if llm.duration_s > 0 and tokens_out > 0:
             llm.tokens_per_sec = round(tokens_out / llm.duration_s, 2)
         if self._current_step:
@@ -489,8 +504,19 @@ class ObservabilityLayer:
     # =========================================================================
 
     def record_vfs_delta(self, path: str, action: str,
-                         lines_added: int = 0, lines_removed: int = 0):
-        if self._current_step:
+                         lines_added: int = 0, lines_removed: int = 0,
+                         delta_dict: dict | None = None):
+        """Record a VFS delta for the current step.
+
+        If delta_dict is provided (from VFS on_change callback), it is stored
+        verbatim — including before_content/after_content for revert support.
+        Otherwise falls back to the legacy metadata-only format.
+        """
+        if self._current_step is None:
+            return
+        if delta_dict is not None:
+            self._current_step.vfs_deltas.append(delta_dict)
+        else:
             self._current_step.vfs_deltas.append({
                 "path": path, "action": action,
                 "lines_added": lines_added, "lines_removed": lines_removed,
@@ -500,6 +526,32 @@ class ObservabilityLayer:
         if self._current_step:
             self._current_step.compression = stats
 
+    def hook_vfs(self, vfs: "VirtualFileSystemV2") -> None:
+        """Wire VFS on_change → obs delta recording.
+
+        Also sets vfs._current_step_id on each begin_step so deltas
+        carry the correct step association.
+        """
+        self._hooked_vfs = vfs
+
+        def _on_vfs_change(delta):
+            # delta is a VFSDelta instance from vfs_v2
+            self.record_vfs_delta(
+                path=delta.path,
+                action=delta.action,
+                lines_added=len((delta.after_content or "").splitlines()),
+                lines_removed=len((delta.before_content or "").splitlines()),
+                delta_dict=delta.to_dict(),
+            )
+
+        vfs.on_change = _on_vfs_change
+
+    def unhook_vfs(self) -> None:
+        """Remove VFS hook."""
+        vfs = getattr(self, "_hooked_vfs", None)
+        if vfs is not None:
+            vfs.on_change = None
+            self._hooked_vfs = None
     # =========================================================================
     # PERSISTENCE
     # =========================================================================
@@ -718,6 +770,85 @@ class ObservabilityLayer:
                 return RunRecord.from_dict(json.load(f))
         except (OSError, json.JSONDecodeError):
             return None
+
+    # =========================================================================
+    # REVERT API (delegates to VFS)
+    # =========================================================================
+
+    def get_run_deltas(self, run_id: str) -> list[dict]:
+        """Load all VFS deltas from a persisted run. Returns flat list."""
+        run = self.get_run(run_id)
+        if run is None:
+            # Try live file
+            result = self.get_resumable_run(run_id)
+            if result is None:
+                return []
+            run, _ = result
+        deltas = []
+        for step in run.steps:
+            for vd in step.vfs_deltas:
+                # Ensure step_id is set
+                if "step_id" not in vd or vd["step_id"] == 0:
+                    vd["step_id"] = step.step_id
+                deltas.append(vd)
+        return deltas
+
+    def load_deltas_into_vfs(self, run_id: str, vfs: "VirtualFileSystemV2") -> int:
+        """Load deltas from a persisted run into VFS change_log for revert.
+        Returns number of deltas injected."""
+        deltas = self.get_run_deltas(run_id)
+        if not deltas:
+            return 0
+        return vfs.inject_deltas(deltas)
+
+    def revert_from_run(
+        self,
+        run_id: str,
+        vfs: "VirtualFileSystemV2",
+        mode: str = "all",
+        path: str | None = None,
+        step_id: int | None = None,
+        delta_index: int | None = None,
+    ) -> dict:
+        """Load deltas from a persisted run and revert via VFS.
+
+        Args:
+            run_id: Run to load deltas from
+            vfs: VFS instance to revert on
+            mode: 'all' | 'step' | 'file' | 'dir' | 'delta'
+            path: Required for mode='file'/'dir'
+            step_id: Required for mode='step', optional filter for file/dir/all
+            delta_index: Required for mode='delta'
+
+        Returns:
+            Result dict from VFS revert methods
+        """
+        # Inject deltas if not already present
+        existing_indices = {d.index for d in vfs._change_log}
+        run_deltas = self.get_run_deltas(run_id)
+        new_deltas = [d for d in run_deltas if d.get("index", -1) not in existing_indices]
+        if new_deltas:
+            vfs.inject_deltas(new_deltas)
+
+        if mode == "delta":
+            if delta_index is None:
+                return {"success": False, "error": "delta_index required for mode='delta'"}
+            return vfs.revert_delta(delta_index)
+        elif mode == "step":
+            if step_id is None:
+                return {"success": False, "error": "step_id required for mode='step'"}
+            return vfs.revert_step(step_id)
+        elif mode == "file":
+            if path is None:
+                return {"success": False, "error": "path required for mode='file'"}
+            return vfs.revert_file(path, to_step=step_id)
+        elif mode == "dir":
+            if path is None:
+                return {"success": False, "error": "path required for mode='dir'"}
+            return vfs.revert_dir(path, to_step=step_id)
+        elif mode == "all":
+            return vfs.revert_all(to_step=step_id)
+        return {"success": False, "error": f"Unknown mode: {mode}"}
 
     # =========================================================================
     # AUDIT INTEGRATION
