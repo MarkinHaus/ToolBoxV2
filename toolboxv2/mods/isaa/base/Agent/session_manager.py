@@ -39,7 +39,12 @@ class SessionManager:
         enable_lsp: bool = True,
         enable_docker: bool = True,
         docker_config: DockerConfig | None = None,
-        toolboxv2_wheel_path: str | None = None
+        toolboxv2_wheel_path: str | None = None, #TODO repace with remote pip when pip is stable
+
+        enable_web: bool | None = None,
+        web_headless: bool = False,
+        web_single_site: str | None = None,
+        web_trusted_sites: list[str] | None = None,
     ):
         """
         Initialize SessionManager.
@@ -68,6 +73,11 @@ class SessionManager:
         self.enable_docker = enable_docker
         self.docker_config = docker_config
         self.toolboxv2_wheel_path = toolboxv2_wheel_path
+
+        self.enable_web = enable_web
+        self.web_headless = web_headless
+        self.web_single_site = web_single_site
+        self.web_trusted_sites = web_trusted_sites
 
         # Session storage
         self.sessions: dict[str, AgentSessionV2] = {}
@@ -106,7 +116,12 @@ class SessionManager:
         enable_lsp: bool | None = None,
         enable_docker: bool | None = None,
         docker_config: DockerConfig | None = None,
-        personal_skills: bool = False
+        personal_skills: bool = False,
+
+        enable_web: bool | None = None,
+        web_headless: bool = False,
+        web_single_site: str | None = None,
+        web_trusted_sites: list[str] | None = None,
     ) -> AgentSessionV2:
         """
         Get existing session or create new one.
@@ -150,7 +165,11 @@ class SessionManager:
             enable_docker=enable_docker if enable_docker is not None else self.enable_docker,
             docker_config=docker_config or self.docker_config,
             toolboxv2_wheel_path=self.toolboxv2_wheel_path,
-            skills_manager=self.skills_manager if not personal_skills else None
+            skills_manager=self.skills_manager if not personal_skills else None,
+            enable_web= enable_web or self.enable_web,
+            web_headless= web_headless or self.web_headless,
+            web_single_site= web_single_site or self.web_single_site,
+            web_trusted_sites= web_trusted_sites or self.web_trusted_sites,
         )
 
         await session.initialize()

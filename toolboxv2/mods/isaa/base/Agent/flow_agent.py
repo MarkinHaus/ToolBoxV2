@@ -467,6 +467,11 @@ class FlowAgent:
                 "TOOLBOXV2_WHEEL_PATH",
                 "C:/Users/Markin/Workspace/ToolBoxV2/dist/toolboxv2-0.1.24-py2.py3-none-any.whl",
             ),
+
+            enable_web=self.amd.web_config.enable_web if self.amd.web_config else None,
+            web_headless=self.amd.web_config.web_headless if self.amd.web_config else None,
+            web_single_site=self.amd.web_config.web_single_site if self.amd.web_config else None,
+            web_trusted_sites=self.amd.web_config.web_trusted_sites if self.amd.web_config else None,
         )
 
         self.tool_manager = ToolManager()
@@ -576,6 +581,8 @@ class FlowAgent:
             content = msg["content"]
 
             if not content:
+                # Empty content but message may carry tool_calls — preserve it
+                processed_messages.append(msg)
                 continue
 
             # Check if content contains media tags
@@ -731,7 +738,6 @@ class FlowAgent:
         for m in llm_kwargs["messages"]:
             if m.get("role") == "assistant":
                 for tc in m.get("tool_calls", []) or []:
-                    print(tc, "SHOWING TC")
                     tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
                     if tc_id:
                         known_tool_ids.add(tc_id)
@@ -749,9 +755,8 @@ class FlowAgent:
                     logger.warning(
                         f"Repair: orphaned tool message (id={tool_id}) converted to user message. {known_tool_ids}"
                     )
-        print(
-            f"known_ids={known_tool_ids}, orphan_count={sum(1 for m in llm_kwargs['messages'] if m.get('role') == 'tool' and m.get('tool_call_id') not in known_tool_ids)}")
-        # NEU: Prompt Hash für Audit-Log
+        # print(
+        #     f"known_ids={known_tool_ids}, orphan_count={sum(1 for m in llm_kwargs['messages'] if m.get('role') == 'tool' and m.get('tool_call_id') not in known_tool_ids)}")
 
         def safe_serializer(obj):
             # If OpenAI tool call object
@@ -2515,6 +2520,21 @@ class FlowAgent:
         from functools import partial
         search_vfs_fn = partial(search_vfs, vfs=session.vfs)
 
+        # ── Web Shell (optional) ──────────────────────────────────────────
+        web_shell_fn = None
+        if session._web_enabled:
+            from toolboxv2.mods.isaa.base.patch.web_shell_tool import make_web_shell
+            web_shell_fn = make_web_shell(
+                session,
+                headless=session._web_config["headless"],
+                single_site=session._web_config.get("single_site"),
+                trusted_sites=session._web_config.get("trusted_sites"),
+                enable_ocr=True,
+                ocr_default_tier=session._web_config.get("ocr_default_tier", "fast"),
+                searxng_url=session._web_config.get("searxng_url", ""),
+            )
+            session._web_shell_fn = web_shell_fn
+
         # ── Filesystem copy helpers (real FS ↔ VFS) ───────────────────────
         def fs_copy_to_vfs(
             local_path: str,
@@ -3132,6 +3152,19 @@ class FlowAgent:
                 },
                 "cleanup_func": None,
             },
+
+            "web_shell": {
+                "live_test_inputs": [{"reason": "health check", "command": "status"}],
+                "result_contract": {
+                    "allow_none": False,
+                    "expected_type": "dict",
+                    "semantic_check_hint": (
+                        "Must contain keys: success (bool), stdout (str), stderr (str), returncode (int). "
+                        "For 'status' command, stdout must contain browser state info."
+                    ),
+                },
+                "cleanup_func": None,
+            },
         }
 
         tools = [
@@ -3307,6 +3340,20 @@ class FlowAgent:
                  ),
              },
         ]
+
+        tools.append([{
+            "tool_func": web_shell_fn,
+            "name": "web_shell",
+            "category": ["web", "browser", "scraping"],
+            "is_async": True,
+            "description": (
+                "Unix-like shell for web interaction. Commands: "
+                "goto click type fill extract screenshot ocr eval search wait scroll "
+                "back refresh login status save_template save_flow run_flow list_flows. "
+                "Auto-learns site selectors (Layer 1) and supports saved multi-step flows (Layer 2). "
+                "Returns {success, stdout, stderr, returncode}."
+            ),
+        }]) if web_shell_fn else None
 
         # ── Optional: Google Tools ────────────────────────────────────────
         if os.getenv("WITH_GOOGLE_TOOLS", "false") == "true":
@@ -3729,3 +3776,106 @@ class FlowAgent:
     def __mod__(self, other):
         """Implements % operator for conditional branching"""
         return ConditionalChain(self, other)
+
+
+"""mock_agent.py — Drop-in LLM mock for FlowAgent testing."""
+
+from collections import deque
+import json
+import uuid
+
+from toolboxv2.mods.isaa.base.llm_router.types import (
+    StreamChunk, ToolCallDelta, UsageData, CompletionResult, ToolCallData,
+)
+
+
+class MockRouter:
+    """Drop-in for CompletionRouter — replays predefined messages."""
+
+    def __init__(self, messages: list[str | dict]):
+        self.queue = deque(messages)
+        self.call_log: list[dict] = []
+
+    def _pop(self, **info) -> dict:
+        if not self.queue:
+            raise StopIteration("MockRouter: queue empty")
+        entry = self.queue.popleft()
+        if isinstance(entry, str):
+            entry = {"content": entry}
+        self.call_log.append({"entry": entry, **info})
+        return entry
+
+    async def stream(self, *, model="mock", messages=None, tools=None, **kw):
+        entry = self._pop(model=model, mode="stream")
+        content = entry.get("content", "")
+        tool_calls = entry.get("tool_calls")
+
+        # Content chunks
+        if content:
+            step = max(20, len(content) // 10)
+            for i in range(0, len(content), step):
+                yield StreamChunk(content=content[i:i + step])
+
+        # Tool call chunks
+        if tool_calls:
+            for idx, tc in enumerate(tool_calls):
+                args = tc.get("arguments", "{}")
+                if not isinstance(args, str):
+                    args = json.dumps(args)
+                yield StreamChunk(tool_call_delta=ToolCallDelta(
+                    index=idx,
+                    id=tc.get("id", f"mock_{uuid.uuid4().hex[:8]}"),
+                    name=tc["name"],
+                    arguments_delta=args,
+                ))
+
+        # Final chunk
+        tok_out = max(len(content) // 4, 10)
+        yield StreamChunk(
+            finish_reason="stop" if not tool_calls else "tool_calls",
+            usage=UsageData(prompt_tokens=100, completion_tokens=tok_out, total_tokens=100 + tok_out),
+        )
+
+    async def complete(self, *, model="mock", messages=None, tools=None, **kw):
+        entry = self._pop(model=model, mode="complete")
+        content = entry.get("content", "")
+        tc_raw = entry.get("tool_calls")
+
+        tc_data = None
+        if tc_raw:
+            tc_data = [
+                ToolCallData(
+                    id=tc.get("id", f"mock_{i}"),
+                    name=tc["name"],
+                    arguments=json.loads(tc["arguments"]) if isinstance(tc.get("arguments", "{}"), str) else tc.get("arguments", {}),
+                )
+                for i, tc in enumerate(tc_raw)
+            ]
+
+        tok_out = max(len(content) // 4, 10)
+        return CompletionResult(
+            content=content or None,
+            tool_calls=tc_data,
+            finish_reason="stop" if not tc_raw else "tool_calls",
+            usage=UsageData(prompt_tokens=100, completion_tokens=tok_out, total_tokens=100 + tok_out),
+            model=model,
+        )
+
+
+def agent_to_mock(agent, messages: list[str | dict]) -> MockRouter:
+    """Patch agent._router to replay predefined messages.
+
+    Returns MockRouter (inspect .call_log for test assertions).
+    """
+    mock = MockRouter(messages)
+    agent._mock_original_router = agent._router
+    agent._router = mock
+    return mock
+
+
+def agent_unmock(agent):
+    """Restore original router."""
+    orig = getattr(agent, "_mock_original_router", None)
+    if orig is not None:
+        agent._router = orig
+        del agent._mock_original_router

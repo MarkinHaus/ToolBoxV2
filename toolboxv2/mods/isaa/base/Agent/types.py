@@ -769,11 +769,18 @@ class PersonaConfig:
         return self.apply_method in ["post_process", "both"]
 
 @dataclass
+class AgentWebConfig:
+    enable_web: bool | None = True,
+    web_headless: bool = False,
+    web_single_site: str | None = None,
+    web_trusted_sites: list[str] | None = None,
+
 class ObservabilityConfig:
     enabled: bool = True
     max_runs: int = 3              # ring buffer: keep last N completed runs
     snapshot_interval: int = 5     # ctx snapshot to disk every N steps
     enable_audit: bool = True      # send events to app.audit_logger
+
 class AgentModelData(BaseModel):
     name: str = "FlowAgent"
     fast_llm_model: str = "openrouter/anthropic/claude-3-haiku"
@@ -815,6 +822,7 @@ You are Isaa (via simplecore.app), a self-correcting, autonomous software. You v
     docker_config: DockerConfig | None = None
     obs_config: ObservabilityConfig = field(default_factory=ObservabilityConfig)
     context_config: ContextBudgetConfig = field(default_factory=ContextBudgetConfig)
+    web_config: AgentWebConfig = field(default_factory=AgentWebConfig)
 
     def get_system_message(self) -> str:
         """Get system message with persona integration"""

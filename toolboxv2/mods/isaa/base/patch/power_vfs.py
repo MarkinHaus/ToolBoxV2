@@ -39,6 +39,8 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Generator, Optional
 
+from toolboxv2 import get_logger
+
 if TYPE_CHECKING:
     from toolboxv2.mods.isaa.base.Agent.agent_session_v2 import AgentSessionV2
     from toolboxv2.mods.isaa.base.Agent.docker_vfs import DockerVFS
@@ -1050,7 +1052,7 @@ import subprocess
 
 _rg_path: str | None = None
 _rg_checked: bool = False
-_rg_log = logging.getLogger("vfs.ripgrep")
+_rg_log = get_logger()
 
 
 def ensure_ripgrep() -> str | None:
@@ -1354,10 +1356,38 @@ def rg_grep(
     else:
         covered_prefixes = set()
 
-    # ── Python fallback for pure in-memory files ──
+        # ── Python fallback for pure in-memory files ──
     try:
         regex = re.compile(pattern)
     except re.error:
+        return all_results
+
+        # O(1) shortcut: exact filename → direct lookup instead of full iteration
+    if file_pattern != "*" and not any(c in file_pattern for c in "*?[]"):
+        exact_path = path.rstrip("/") + "/" + file_pattern
+        vfs_file = vfs.files.get(exact_path)
+        if vfs_file and vfs_file.is_loaded and vfs_file.filename not in ("vfs_guide.md",):
+            # Skip if already covered by rg
+            skip = any(
+                exact_path == cp or exact_path.startswith(cp if cp.endswith("/") else cp + "/")
+                for cp in covered_prefixes
+            )
+            if not skip:
+                try:
+                    lines = vfs_file.content.split("\n")
+                    for line_num, line in enumerate(lines, 1):
+                        matched = bool(regex.search(line))
+                        if invert:
+                            matched = not matched
+                        if matched:
+                            result: dict = {"file": exact_path, "line": line_num, "match": line[:200]}
+                            if context_lines > 0:
+                                start = max(0, line_num - 1 - context_lines)
+                                end = min(len(lines), line_num + context_lines)
+                                result["context"] = lines[start:end]
+                            all_results.append(result)
+                except Exception:
+                    pass
         return all_results
 
     for file_path, vfs_file in vfs.files.items():

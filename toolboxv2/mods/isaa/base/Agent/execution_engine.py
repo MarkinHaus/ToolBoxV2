@@ -1504,7 +1504,7 @@ class ExecutionEngine(SubAgentResumeExtension):
             self.skills_manager = agent.session_manager.skills_manager
         else:
             self.skills_manager = SkillsManager(
-                agent_name=agent.amd.name, memory_instance=self._get_memory_instance()
+                agent_name=agent.amd.name, memory_instance=self._get_memory_instance(), match_embedding=False
             )
             # Store back on agent
             agent.session_manager.skills_manager = self.skills_manager
@@ -2999,7 +2999,7 @@ BEISPIELE:
             _obs.begin_step(ctx.current_iteration)
         self.live.max_iterations = ctx.max_iterations
         self.live.iteration = ctx.current_iteration
-        self._narrator.on_llm_pre_call(ctx.working_history)
+        self._narrator.on_llm_pre_call(len(ctx.working_history))
         self.live.status_msg = (
             f"Thinking (iter {ctx.current_iteration}/{ctx.max_iterations})"
         )
@@ -3159,7 +3159,7 @@ BEISPIELE:
         self.live.enter(AgentPhase.TOOL_EXEC)
         self.live.status_msg = f"Calling tool {f_name}"
         self._narrator.on_tool_start(f_name + " " + str(f_args.get("thought", "")[:80]))
-        if self.agent.obs: self.agent.obs.record_tool_start(f_name, str(f_args))
+        if self.agent.obs: self.agent.obs.record_tool_start(f_name, str(f_args), call_id=f_id)
 
         thought = f_args.get("thought", "")
         effort = f_args.get("effort", "fast")
@@ -3216,7 +3216,7 @@ BEISPIELE:
                 )
 
             except Exception as e:
-                if self.agent.obs: self.agent.obs.record_tool_end(f_name, error=str(e), status="error")
+                if self.agent.obs: self.agent.obs.record_tool_end(f_name, error=str(e), status="error", call_id=f_id)
         threading.Thread(target=_).start()
 
         thought_acc = ""
@@ -3261,7 +3261,7 @@ BEISPIELE:
             result = thought_acc
         except Exception as e:
             result = thought_acc + str(e) if thought_acc else str(e)
-            if self.agent.obs: self.agent.obs.record_tool_end(f_name, error=result, status="error")
+            if self.agent.obs: self.agent.obs.record_tool_end(f_name, error=result, status="error", call_id=f_id)
 
         self.live.thought = result[-200:] if result else ""
 
@@ -3291,12 +3291,12 @@ BEISPIELE:
 
         except Exception as e:
             self.live.narrator_msg = "Failed to execute narrator tool post processing"
-            if self.agent.obs: self.agent.obs.record_tool_end(f_name, error="Failed to execute narrator tool post processing", status="error")
+            if self.agent.obs: self.agent.obs.record_tool_end(f_name, error="Failed to execute narrator tool post processing", status="error", call_id=f_id)
             get_app().debug_rains(e)
             get_app().print(e)
 
         # Final tool_result with complete thought
-        if self.agent.obs: self.agent.obs.record_tool_end(f_name, str(result), status="ok" if not isinstance(result, dict) else ( "ok" if  result.get("success", True) else "error"))
+        if self.agent.obs: self.agent.obs.record_tool_end(f_name, str(result), status="ok" if not isinstance(result, dict) else ( "ok" if  result.get("success", True) else "error"), call_id=f_id)
         yield {"type": "tool_result", "name": f_name, "is_final": False, "result": result}
 
     async def _execute_tool_call(
@@ -3322,7 +3322,7 @@ BEISPIELE:
                 r"Do NOT escape single quotes (\'). Do NOT wrap the JSON in ``` fences. "
                 f"Raw args received (first 500 chars): {str(tool_call.function.arguments)[:500]}"
             ), False
-        if self.agent.obs: self.agent.obs.record_tool_start(f_name, args_str)
+        if self.agent.obs: self.agent.obs.record_tool_start(f_name, args_str, call_id=f_id)
         self._narrator.on_tool_start(
             f_name + " " + str(f_args.get(list(f_args.keys())[0], "") if f_args else "")
         )
@@ -3606,7 +3606,7 @@ BEISPIELE:
                 )
                 if self.agent.obs: self.agent.obs.record_tool_end(f_name, str(result),
                                                                   status=(( "ok" if result.get("success", True) else "error")
-                                                                          if isinstance(result, dict) else "ok"))
+                                                                          if isinstance(result, dict) else "ok"), call_id=f_id)
 
             else:
                 self._narrator.schedule_tool_end(
@@ -3618,7 +3618,7 @@ BEISPIELE:
                                                                   status=(
                                                                       "error" if result.startswith("Error") else "ok") if not isinstance(
                                                                       result, dict) else (
-                                                                      "ok" if result.get("success", True) else "error"))
+                                                                      "ok" if result.get("success", True) else "error"), call_id=f_id)
 
         except Exception as e:
             self.live.narrator_msg = "Failed to execute narrator tool post processing"

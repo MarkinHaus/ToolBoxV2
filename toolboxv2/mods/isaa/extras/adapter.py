@@ -8,7 +8,6 @@ import os
 # Ensure AsyncIterator is imported correctly depending on Python version
 from collections.abc import AsyncIterator
 
-import tenacity
 
 if not hasattr(logging, 'NONE'):
     logging.NONE = 100
@@ -17,24 +16,9 @@ if not hasattr(logging, 'NONE'):
 # lightRag utilities and types
 import numpy as np
 
-# Use pipmaster to ensure the litellm dependency is installed
-# APIConnectionError, RateLimitError, Timeout, acompletion
-
-# Import litellm's asynchronous client and error classes
-# Retry handling for transient errors
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-)
-
 from toolboxv2 import get_logger
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=4, max=10),
-)
 async def litellm_complete_if_cache(
     model, prompt, system_prompt=None, history_messages=None,
     base_url=None, api_key=None, **kwargs,
@@ -129,10 +113,6 @@ async def litellm_complete(
     )
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=4, max=60),
-)
 async def litellm_embed(
     texts: list[str],
     model: str = "openrouter/qwen/qwen3-embedding-8b",
@@ -145,19 +125,13 @@ async def litellm_embed(
     """
     Generates embeddings for the given list of texts using LiteLLM.
     """
-    try:
-        res = await embed(
-            model=model,
-            texts=texts,
-            dimensions=dimensions,
-            api_key=api_key,
-            input_type=input_type,
-        )
-    except tenacity.RetryError as e:
-        if "ollama" in model:
-            raise RuntimeError(f"Ollama is not running!")
-        raise e
-
+    res = await embed(
+        model=model,
+        texts=texts,
+        dimensions=dimensions,
+        api_key=api_key,
+        input_type=input_type,
+    )
     return res
 
 
@@ -175,22 +149,6 @@ import os
 import re
 from pathlib import Path
 from typing import Any
-
-try:
-    from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
-    LITELLM_AVAILABLE = True
-except ImportError:
-    LITELLM_AVAILABLE = False
-    def retry(*args, **kwargs):
-        def decorator(func):
-            return func
-        return decorator
-    retry_if_exception_type = lambda x: None
-    stop_after_attempt = lambda x: None
-    wait_exponential = lambda **kw: None
-    RateLimitError = Exception
-    Timeout = Exception
-    APIConnectionError = Exception
 
 
 # =========================================================================
@@ -240,10 +198,6 @@ def _convert_openrouter_to_openai_compatible(model: str) -> tuple[str, dict]:
 # MAIN EMBEDDING FUNCTION
 # =========================================================================
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=4, max=60),
-)
 async def embed(
     texts: list[str],
     model: str = "ollama/nomic-embed-text",
@@ -272,8 +226,6 @@ async def embed(
     Returns:
         np.ndarray: Embeddings Matrix (n_texts, dimensions)
     """
-    if not LITELLM_AVAILABLE:
-        raise RuntimeError("LiteLLM required - pip install litellm")
 
     # WORKAROUND: OpenRouter als OpenAI-kompatiblen Endpoint
     extra_kwargs: dict[str, Any] = {}
@@ -301,15 +253,11 @@ async def embed(
 
     # API Call
     from toolboxv2.mods.isaa.base.llm_router.embeddings import litellm_embed as _litellm_embed
-    response = await _litellm_embed(**kwargs)
-
-    # Extrahiere Embeddings
-    # embeddings = np.array([d["embedding"] for d in response.data])
-    embeddings = [d["embedding"] for d in response.data]
+    embeddings = await _litellm_embed(**kwargs)
 
     # Dimensionsreduktion für Matryoshka/MRL wenn nötig
-    # if dimensions and embeddings.shape[1] > dimensions:
-    #     embeddings = embeddings[:, :dimensions]
+    if dimensions and embeddings.shape[1] > dimensions:
+        embeddings = embeddings[:, :dimensions]
 
     return embeddings
 

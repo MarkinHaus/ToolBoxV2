@@ -17,9 +17,8 @@ import json
 import logging
 import os
 import re
-import httpx
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, UTC
 from enum import Enum
 from typing import Optional, Callable, Any
 from urllib.parse import urljoin, urlparse, quote_plus
@@ -249,7 +248,8 @@ class SearXNGClient:
         self.base_url = base_url.rstrip('/') if base_url else ""
         self.timeout = timeout
         self.logger = logger or AgentLogger("SearXNG", verbose=False)
-        self._client = httpx.AsyncClient(timeout=timeout)
+        from toolboxv2.utils.system.session import Session
+        self._session = Session()
         self._working_instance = None
 
     async def _find_working_instance(self) -> str:
@@ -259,8 +259,10 @@ class SearXNGClient:
 
         for instance in self.PUBLIC_INSTANCES:
             try:
-                resp = await self._client.get(f"{instance}/search", params={"q": "test", "format": "json"}, timeout=10)
-                if resp.status_code == 200:
+                resp = await self._session.fetch(
+                    f"{instance}/search?q=test&format=json", method="GET", timeout=10,
+                )
+                if resp.status == 200:
                     self._working_instance = instance
                     self.logger.info("SearXNG", f"Using instance: {instance}")
                     return instance
@@ -323,9 +325,12 @@ class SearXNGClient:
         })
 
         try:
-            resp = await self._client.get(f"{base}/search", params=params)
-            resp.raise_for_status()
-            data = resp.json()
+            from urllib.parse import urlencode
+            url = f"{base}/search?{urlencode(params)}"
+            resp = await self._session.fetch(url, method="GET", timeout=self.timeout)
+            if resp.status >= 400:
+                raise Exception(f"SearXNG HTTP {resp.status}")
+            data = await resp.json()
 
             results = []
             for i, r in enumerate(data.get("results", [])[:max_results]):
@@ -423,7 +428,7 @@ class SearXNGClient:
         return " ".join(parts)
 
     async def close(self):
-        await self._client.aclose()
+        pass  # Session is singleton, managed globally
 
 
 # ============================================================================
@@ -458,7 +463,7 @@ class ScrapedContent:
     headings: list[ScrapedHeading] = field(default_factory=list)
     links: list[ScrapedLink] = field(default_factory=list)
     meta: dict = field(default_factory=dict)
-    scraped_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    scraped_at: str = field(default_factory=lambda: datetime.now(UTC))
 
     def get_toc(self) -> str:
         if not self.headings:
@@ -486,7 +491,41 @@ class ScrapedContent:
             "scraped_at": self.scraped_at
         }
 
+     # ========================================================================
+    # NEUE METHODE: to_md() für KI-Agenten
+    # ========================================================================
+    def to_md(self, include_toc: bool = True, include_meta: bool = True) -> str:
+        """
+        Konvertiert das gesamte ScrapedContent-Objekt in einen sauberen,
+        zusammenhängenden Markdown-String. Perfekt lesbar für LLMs.
+        """
+        parts = []
 
+        # 1. Titel und Quelle
+        parts.append(f"# {self.title}\n**URL:** {self.url}")
+
+        # 2. Inhaltsverzeichnis (optional, falls vom Agenten gewünscht)
+        if include_toc and self.headings:
+            toc = self.get_toc()
+            if toc:
+                parts.append(toc)
+
+        # 3. Eigentlicher Markdown-Inhalt
+        if self.markdown:
+            parts.append(self.markdown)
+        else:
+            parts.append("*[Kein Textinhalt extrahiert]*")
+
+        # 4. Metadaten am Ende anhängen (optional)
+        if include_meta and self.meta:
+            meta_lines = ["\n---\n### Metadata"]
+            for k, v in self.meta.items():
+                if v:
+                    meta_lines.append(f"- **{k}:** {v}")
+            meta_lines.append(f"- **Scraped at:** {self.scraped_at}")
+            parts.append("\n".join(meta_lines))
+
+        return "\n\n".join(parts)
 # ============================================================================
 # WEB AGENT - HAUPTKLASSE
 # ============================================================================
@@ -795,16 +834,16 @@ class WebAgent:
 
         return results
 
-    async def extract_markdown(self) -> ScrapedContent:
+    async def extract_markdown(self, target_page=None) -> ScrapedContent:
         """Seite als strukturiertes Markdown extrahieren."""
         self.logger.start_timer("extract")
         self.logger.extract("Extract", "Extracting page content")
-
-        title = await self._page.title()
-        url = self._page.url
+        page = target_page or self._page
+        title = await page.title()
+        url = page.url
 
         # Markdown extraction (aus async_web_scraper.py)
-        markdown = await self._page.evaluate(r"""
+        markdown = await page.evaluate(r"""
             () => {
                 const removeSelectors = [
                     'script', 'style', 'noscript', 'iframe', 'svg',
@@ -871,7 +910,7 @@ class WebAgent:
         """)
 
         # Headings extrahieren
-        headings_data = await self._page.evaluate("""
+        headings_data = await page.evaluate("""
             () => {
                 const headings = [];
                 document.querySelectorAll('h1, h2, h3, h4').forEach(h => {
@@ -886,7 +925,7 @@ class WebAgent:
         """)
 
         # Links extrahieren
-        links_data = await self._page.evaluate("""
+        links_data = await page.evaluate("""
             () => {
                 const links = [];
                 document.querySelectorAll('a[href]').forEach(a => {
@@ -901,7 +940,7 @@ class WebAgent:
         """)
 
         # Meta extrahieren
-        meta = await self._page.evaluate("""
+        meta = await page.evaluate("""
             () => {
                 const meta = {};
                 const desc = document.querySelector('meta[name="description"]');
@@ -1005,7 +1044,7 @@ class WebAgent:
     async def search_and_scrape(
         self,
         query: str,
-        max_results: int = 5,
+        max_results: int = 3,
         engines: list[str] = None,
         **dork_kwargs
     ) -> list[ScrapedContent]:
@@ -1042,6 +1081,75 @@ class WebAgent:
                 self.logger.error("SearchAndScrape", f"Failed to scrape {result.url}: {e}")
 
         return scraped
+
+    async def _scrape_in_new_tab(self, url: str) -> Optional[ScrapedContent]:
+        """
+        Hilfsmethode: Öffnet einen neuen Tab, lädt die Seite, extrahiert sie und schließt den Tab wieder.
+        """
+        # Neuen Tab im selben Browser-Kontext öffnen
+        page = await self._context.new_page()
+        try:
+            self.logger.action("ParallelScrape", f"Loading in new tab: {url}")
+
+            # WICHTIG: Wir nutzen 'domcontentloaded' statt 'networkidle'.
+            # Das löst dein Problem mit python.org, da wir nicht auf hängende Tracking-Skripte warten!
+            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+
+            # Übergebe diesen spezifischen Tab an den Extraktor
+            content = await self.extract_markdown(target_page=page)
+            return content
+        except Exception as e:
+            self.logger.error("ParallelScrape", f"Failed to scrape {url}: {e}")
+            return None
+        finally:
+            # Tab sauber schließen, egal ob Erfolg oder Fehler
+            await page.close()
+
+    async def search_and_scrape_parallel(
+        self,
+        query: str,
+        max_results: int = 5,
+        engines: list[str] = None,
+        **dork_kwargs
+    ) -> list[ScrapedContent]:
+        """
+        Suchen und Top-Ergebnisse PARALLEL scrapen (Massiver Speed-Boost).
+        """
+        self.logger.start_timer("search_and_scrape_parallel")
+
+        # 1. Suchen
+        if dork_kwargs:
+            query = self.search.build_dork(query, **dork_kwargs)
+
+        search_results = await self.search.search(
+            query=query,
+            engines=engines,
+            max_results=max_results
+        )
+
+        urls = [result.url for result in search_results.results[:max_results]]
+        self.logger.info("ParallelScrape", f"Found {len(urls)} URLs. Starting parallel extraction...")
+
+        # 2. Parallel ausführen
+        # Wir erstellen für jede URL einen Task
+        tasks = [self._scrape_in_new_tab(url) for url in urls]
+
+        # asyncio.gather führt alle Tasks GESTAFFELT (parallel) aus.
+        # return_exceptions=True verhindert, dass ein einzelner Absturz alle anderen killt.
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 3. Ergebnisse filtern (None-Werte und Exceptions aussortieren)
+        valid_scrapes = []
+        for res in results:
+            if isinstance(res, ScrapedContent):
+                valid_scrapes.append(res)
+            elif isinstance(res, Exception):
+                self.logger.error("ParallelScrape", f"Gather caught an exception: {res}")
+
+        duration = self.logger.stop_timer("search_and_scrape_parallel")
+        self.logger.info("ParallelScrape", f"Finished processing {len(urls)} URLs in {duration:.2f}ms")
+
+        return valid_scrapes
 
     async def login(
         self,
@@ -1089,24 +1197,152 @@ class WebAgent:
 # CONVENIENCE
 # ============================================================================
 
-async def quick_search(query: str, **dork_kwargs) -> SearchResponse:
+def scraped_content2md_str(valid_scrapes, include_toc=False):
+    # Nutzt die neue .to_md() Methode für jedes einzelne Ergebnis
+    if isinstance(valid_scrapes, ScrapedContent):
+        valid_scrapes = [valid_scrapes]
+    divider = "\n\n" + "=" * 50 + "\n\n"
+    return divider.join(item.to_md(include_toc=include_toc) for item in valid_scrapes)
+
+
+_client: list[SearXNGClient | None] = [None]
+async def quick_search(query: str, **dork_kwargs) -> str:
     """Schnelle Suche ohne Browser."""
-    client = SearXNGClient()
-    try:
-        if dork_kwargs:
-            query = client.build_dork(query, **dork_kwargs)
-        return await client.search(query)
-    finally:
-        await client.close()
+    client = _client[0] or SearXNGClient()
+    if _client[0] is None:
+        _client[0] = client
 
+    if dork_kwargs:
+        query = client.build_dork(query, **dork_kwargs)
+    return (await client.search(query)).to_markdown()
 
-async def quick_scrape(url: str, headless: bool = True) -> ScrapedContent:
+_agent: list[WebAgent | None] = [None]
+async def quick_scrape(url: str, headless: bool = True, include_toc=False) -> str:
     """Schnelles Scraping einer URL."""
-    async with WebAgent(headless=headless) as agent:
-        await agent.goto(url)
-        return await agent.extract_markdown()
+    if _agent[0] is None:
+        _agent[0] = WebAgent(headless=headless)
+        await _agent[0].__aenter__()
+    await _agent[0].goto(url, wait_until="domcontentloaded")
+    return scraped_content2md_str(await _agent[0].extract_markdown(), include_toc=include_toc)
+
+async def search_and_scrape_parallel(query: str, headless: bool = True, max_results: int = 5, include_toc=False, **dork_kwargs) -> str:
+    """Schnelles Scraping einer URL."""
+    if _agent[0] is None:
+        _agent[0] = WebAgent(headless=headless)
+        await _agent[0].__aenter__()
+    return scraped_content2md_str(await _agent[0].search_and_scrape_parallel(query, max_results,  **dork_kwargs), include_toc=include_toc)
+
+async def quick_scrape_secure(url: str, headless: bool = True, include_toc=False) -> str:
+    """Schnelles Scraping einer URL."""
+    with WebAgent(headless=headless) as agent:
+        await agent.goto(url, wait_until="domcontentloaded")
+        return scraped_content2md_str(await agent.extract_markdown(), include_toc=include_toc)
+
+async def quit():
+    if _client[0] is not None:
+        await _client[0].close()
+    if _agent[0] is not None:
+        await _agent[0].__aexit__(None, None, None)
 
 
+async def run_baseline_test():
+    print("🚀 STARTE ERWEITERTE ANALYSE (inkl. Parallel Scraping)...")
+    print("-" * 50)
+
+    # Testdaten für 3 Durchläufe
+    test_queries = ["Python asyncio tutorial", "SearXNG API documentation", "Web Scraping best practices"]
+    test_urls = ["https://example.com", "https://python.org", "https://news.ycombinator.com"]
+
+    total_search_time = 0.0
+    total_scrape_time = 0.0
+    total_parallel_time = 0.0
+
+    for i in range(3):
+        print(f"\n▶ Durchlauf {i + 1}/3")
+        query = test_queries[i]
+        url = test_urls[i]
+
+        # --- 1. Test: quick_search ---
+        print(f"  🔍 Suche nach: '{query}'...")
+        start_search = time.perf_counter()
+        try:
+            search_result = await quick_search(query)
+            search_duration = time.perf_counter() - start_search
+            total_search_time += search_duration
+
+            # Ausgabe auf das Wesentliche reduziert, um die Konsole sauber zu halten
+            num_results = len(search_result.results) if hasattr(search_result, 'results') else 0
+            print(f"  ✅ Suche abgeschlossen in {search_duration:.2f} Sekunden. (Gefunden: {num_results} Ergebnisse)")
+        except Exception as e:
+            search_duration = time.perf_counter() - start_search
+            import traceback
+            traceback.print_exc()
+            print(f"  ❌ Suche FEHLGESCHLAGEN nach {search_duration:.2f} Sekunden. Fehler: {e}")
+
+        # --- 2. Test: quick_scrape ---
+        print(f"  🌐 Scrape URL (Sequenziell): '{url}'...")
+        start_scrape = time.perf_counter()
+        try:
+            scrape_result = await quick_scrape(url, headless=True)
+            scrape_duration = time.perf_counter() - start_scrape
+            total_scrape_time += scrape_duration
+
+            # Einfacher Test: Länge des Inhalts prüfen
+            content_length = len(str(scrape_result))
+            print(
+                f"  ✅ Scrape abgeschlossen in {scrape_duration:.2f} Sekunden. (Extrahierte Zeichen: {content_length})")
+        except Exception as e:
+            scrape_duration = time.perf_counter() - start_scrape
+            import traceback
+            traceback.print_exc()
+            print(f"  ❌ Scrape FEHLGESCHLAGEN nach {scrape_duration:.2f} Sekunden. Fehler: {e}")
+
+        # --- 3. Test: search_and_scrape_parallel ---
+        print(f"  🚀 Parallel Search & Scrape (Top 3 Ergebnisse für '{query}')...")
+        start_parallel = time.perf_counter()
+        try:
+            # Führe parallele Suche & Scraping aus (Wir nehmen die Top 3)
+            # TIPP: language='en-US' verhindert das WEB.DE Problem!
+            parallel_results = await search_and_scrape_parallel(
+                query=query,
+                max_results=3,
+                language='en-US'
+            )
+            parallel_duration = time.perf_counter() - start_parallel
+            total_parallel_time += parallel_duration
+
+            # Auswerten wie viele Zeichen insgesamt parallel gesammelt wurden
+            total_parallel_chars = sum(len(res) for res in parallel_results if res)
+
+            print(f"  ✅ Parallel-Job abgeschlossen in {parallel_duration:.2f} Sekunden.")
+            print(
+                f"     -> {len(parallel_results)} Seiten erfolgreich gescraped (Gesamtzeichen: {total_parallel_chars}) {parallel_results}")
+        except Exception as e:
+            parallel_duration = time.perf_counter() - start_parallel
+            import traceback
+            traceback.print_exc()
+            print(f"  ❌ Parallel-Job FEHLGESCHLAGEN nach {parallel_duration:.2f} Sekunden. Fehler: {e}")
+
+        print(
+            f"  ⏱️ Gesamtzeit für Durchlauf {i + 1}: {search_duration + scrape_duration + parallel_duration:.2f} Sekunden")
+
+    # --- ZUSAMMENFASSUNG ---
+    print("\n" + "=" * 50)
+    print("📊 ERGEBNIS DER ERWEITERTEN ANALYSE")
+    print("=" * 50)
+    print(f"Durchschnittliche Such-Zeit:         {(total_search_time / 3):.2f} Sekunden")
+    print(f"Durchschnittliche Scrape-Zeit (1x):  {(total_scrape_time / 3):.2f} Sekunden")
+    print(f"Durchschnittliche Parallel-Zeit (3x):{(total_parallel_time / 3):.2f} Sekunden")
+    print(
+        f"Gesamtzeit für alle Tests:           {(total_search_time + total_scrape_time + total_parallel_time):.2f} Sekunden")
+    print("=" * 50)
+
+    await quit()
+
+if __name__ == "__main__":
+    import time
+    # Führe die Baseline-Analyse aus
+    asyncio.run(run_baseline_test())
 """
 WebAgent - Nutzungsbeispiele
 ============================
@@ -1611,5 +1847,5 @@ async def run_all():
     # await beispiel_quick()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__2":
     asyncio.run(run_all())

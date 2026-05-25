@@ -138,6 +138,17 @@ class HybridMemoryStore:
 
     Thread-safe via thread-local connections (pattern from mobile_db.py)
     """
+    _instances = {}
+    _instance_lock = threading.Lock()
+
+    def __new__(cls, db_dir: str, embedding_dim: int = 768, space: str = "default"):
+        key = (str(db_dir), space)
+        with cls._instance_lock:
+            if key not in cls._instances:
+                instance = super().__new__(cls)
+                instance._initialized = False
+                cls._instances[key] = instance
+            return cls._instances[key]
 
     def __init__(self, db_dir: str, embedding_dim: int = 768, space: str = "default"):
         """
@@ -148,6 +159,9 @@ class HybridMemoryStore:
             embedding_dim: Dimension of embeddings (default 768)
             space: Namespace for entries (default 'default')
         """
+        if getattr(self, "_initialized", False):
+            return
+        self._initialized = True
         self.db_dir = Path(db_dir)
         self.db_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.db_dir / "entries.db"

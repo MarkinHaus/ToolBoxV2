@@ -89,6 +89,12 @@ class AgentSessionV2:
         docker_config: DockerConfig | None = None,
         toolboxv2_wheel_path: str | None = None,
         skills_manager: SkillsManager | None = None,
+        enable_web: bool = False,
+        web_headless: bool = False,
+        web_single_site: str | None = None,
+        web_trusted_sites: list[str] | None = None,
+        web_ocr_default_tier: str = "fast",
+        web_searxng_url: str = "",
     ):
         """
         Initialize AgentSessionV2.
@@ -162,7 +168,7 @@ class AgentSessionV2:
         from toolboxv2.mods.isaa.base.Agent.skills import SkillsManager
 
         self.skills: SkillsManager = skills_manager or SkillsManager(
-            agent_name=agent_name, memory_instance=memory_instance
+            agent_name=agent_name, memory_instance=memory_instance, match_embedding=False
         )
         # Sync RuleSet to VFS
         self._sync_ruleset_to_vfs()
@@ -170,6 +176,17 @@ class AgentSessionV2:
         # State
         self._initialized = False
         self._closed = False
+
+        # Web Shell (optional — only activated via config)
+        self._web_enabled = enable_web
+        self._web_config = {
+            "headless": web_headless,
+            "single_site": web_single_site,
+            "trusted_sites": web_trusted_sites,
+            "ocr_default_tier": web_ocr_default_tier,
+            "searxng_url": web_searxng_url,
+        }
+        self._web_shell_fn = None  # set during init_session_tools
 
         # Audit-Log: Session Created
         try:
@@ -765,6 +782,15 @@ class AgentSessionV2:
         # Stop LSP servers
         if self._lsp_manager:
             await self._lsp_manager.stop_all_servers()
+
+        # Stop web session
+        if self._web_shell_fn is not None:
+            try:
+                from toolboxv2.mods.isaa.base.patch.web_shell_tool import cleanup_web_shell
+                await cleanup_web_shell(self._web_shell_fn)
+            except Exception as e:
+                logger.warning("Web shell cleanup error: %s", e)
+            self._web_shell_fn = None
 
         # Save ChatSession
         if self._chat_session:

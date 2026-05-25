@@ -39,7 +39,7 @@ from toolboxv2.mods.isaa.base.Agent.types import (
     PersonaConfig,
     ResponseFormat,
     TextLength,
-    ObservabilityConfig
+    ObservabilityConfig, AgentWebConfig
 )
 
 logger = get_logger()
@@ -163,6 +163,7 @@ class AgentConfig(BaseModel):
 
     context_config: ContextBudgetConfig = Field(default_factory=ContextBudgetConfig)
     obs: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+    web_config: AgentWebConfig = Field(default_factory=AgentWebConfig)
 
 
 # =============================================================================
@@ -880,6 +881,19 @@ class FlowAgentBuilder:
         })
         return self
 
+    def with_web(
+        self,
+        enable_web: bool  = True,
+        web_headless: bool = False,
+        web_single_site: str | None = None,
+        web_trusted_sites: list[str] | None = None,
+    ) -> "FlowAgentBuilder":
+        self.config.web_config.enable_web = enable_web
+        self.config.web_config.web_headless = web_headless
+        self.config.web_config.web_single_site = web_single_site
+        self.config.web_config.web_trusted_sites = web_trusted_sites
+        return self
+
     def with_observability(
         self,
         enabled: bool = True,
@@ -1043,6 +1057,7 @@ class FlowAgentBuilder:
                     use_fast_response=self.config.use_fast_response,
                     handler_path_or_dict=handler_config,
                     obs_config=self.config.obs,
+                    web_config=self.config.web_config,
                 )
 
                 # Step 4: Create FlowAgent

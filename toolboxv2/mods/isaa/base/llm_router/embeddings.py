@@ -19,6 +19,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
+
 import numpy as np
 
 try:

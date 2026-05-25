@@ -872,6 +872,57 @@ class IsaaObservabilityConfig(BaseModel):
     langfuse_secret_key: str = Field(default="")
 
 
+class OCRTier(str, Enum):
+    FAST = "fast"
+    BALANCED = "balanced"
+    ACCURATE = "accurate"
+    API = "api"
+
+
+class IsaaOCRManifestConfig(BaseModel):
+    """Declares which local engines are enabled. Models only loaded if True."""
+    tesseract: bool = Field(default=True)
+    tesseract_langs: str = Field(default="eng+deu")
+    paddleocr_vl: bool = Field(default=False)
+    paddleocr_vl_model: str = Field(default="PaddlePaddle/PaddleOCR-VL-1.5")
+    paddleocr_vl_task: str = Field(default="ocr")  # ocr|table|chart|formula|spotting|seal
+    deepseek_ocr2: bool = Field(default=False)
+    deepseek_ocr2_model: str = Field(default="deepseek-ai/DeepSeek-OCR-2")
+    deepseek_ocr2_quantize: str = Field(default="bf16")  # bf16|4bit|8bit
+    deepseek_ocr2_base_size: int = Field(default=1024)
+    deepseek_ocr2_image_size: int = Field(default=768)
+
+
+class IsaaOCRAPIConfig(BaseModel):
+    """API engine config."""
+    mistral_enabled: bool = Field(default=False)
+    mistral_api_key_env: str = Field(default="MISTRAL_API_KEY")
+    mistral_model: str = Field(default="mistral-ocr-latest")
+    mistral_endpoint: str = Field(default="https://api.mistral.ai/v1/ocr")
+    vision_llm_enabled: bool = Field(default=False)
+    vision_llm_model: str = Field(default="")  # passed to litellm_complete; e.g. "anthropic/claude-sonnet-4-5"
+    vision_llm_prompt: str = Field(
+        default=(
+            "Extract all text from this image. Preserve layout, tables, headings, "
+            "lists, and reading order. Output as clean markdown. Do not add "
+            "commentary or descriptions of non-text content — only the transcribed text."
+        )
+    )
+
+
+class IsaaOCRConfig(BaseModel):
+    """ISAA OCR configuration."""
+    enabled: bool = Field(default=True)
+    default_tier: OCRTier = Field(default=OCRTier.FAST)
+    manifest: IsaaOCRManifestConfig = Field(default_factory=IsaaOCRManifestConfig)
+    api: IsaaOCRAPIConfig = Field(default_factory=IsaaOCRAPIConfig)
+    fallback_chain: list[OCRTier] = Field(
+        default_factory=lambda: [OCRTier.ACCURATE, OCRTier.BALANCED, OCRTier.FAST, OCRTier.API]
+    )
+    pdf_dpi: int = Field(default=200)
+    http_timeout_s: float = Field(default=60.0)
+
+
 class IsaaConfig(BaseModel):
     """ISAA self-agent configuration (only loaded when isaa is installed)."""
     enabled: bool = Field(default=True)
@@ -880,6 +931,7 @@ class IsaaConfig(BaseModel):
     code_executor: IsaaCodeExecutorConfig = Field(default_factory=IsaaCodeExecutorConfig)
     mcp: IsaaMCPConfig = Field(default_factory=IsaaMCPConfig)
     a2a: IsaaA2AConfig = Field(default_factory=IsaaA2AConfig)
+    ocr: IsaaOCRConfig = Field(default_factory=IsaaOCRConfig)
     observability: IsaaObservabilityConfig = Field(default_factory=IsaaObservabilityConfig)
 
 

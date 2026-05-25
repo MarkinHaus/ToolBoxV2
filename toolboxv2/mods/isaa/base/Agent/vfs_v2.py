@@ -1211,12 +1211,26 @@ Session: {self.session_id}
     def set_memory_index_file(self, content: str, agent_name="default"):
         """Set the memory_index.md file content (from RuleSet)"""
         path = "/memory_index.md"
-        global_path = "/global/default/memory_index.md"
+        global_path = f"/global/{agent_name}/memory_index.md"
         if path not in self.files:
             self.write(global_path, content)
             self.open(global_path)
             if global_path in self.files:
                 self.files[global_path].show_full = True
+        else:
+            self.files[path].content = content
+            self.files[path].updated_at = datetime.now().isoformat()
+            self.files[path].show_full = True
+        self._dirty = True
+
+    def set_gen_system_file(self, content: str, path =None):
+        """Set the memory_index.md file content (from RuleSet)"""
+        if path is None:
+            raise ValueError("path is required")
+        if path not in self.files:
+            self.files[path] = VFSFile(
+                filename="active_rules.md", _content=content, state="open", readonly=True, show_full=True
+            )
         else:
             self.files[path].content = content
             self.files[path].updated_at = datetime.now().isoformat()

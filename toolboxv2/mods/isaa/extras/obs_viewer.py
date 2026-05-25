@@ -599,7 +599,13 @@ function openReplay(run) {
     if (step.vfs_deltas?.length) {
       h += `<div class="step-sec"><div class="step-sec-l">VFS</div>`;
       step.vfs_deltas.forEach(vd => {
-        h += `<div class="vfs-row"><span class="file-path">${vd.path}</span><span>${vd.action}</span><span class="file-d">+${vd.lines_added||0}</span><span class="file-d neg">-${vd.lines_removed||0}</span></div>`;
+        const linesAdded = vd.lines_added != null
+          ? vd.lines_added
+          : (vd.after_content != null ? vd.after_content.split('\n').length : 0);
+        const linesRemoved = vd.lines_removed != null
+          ? vd.lines_removed
+          : (vd.before_content != null ? vd.before_content.split('\n').length : 0);
+        h += `<div class="vfs-row"><span class="file-path">${vd.path}</span><span>${vd.action}</span><span class="file-d">+${linesAdded}</span><span class="file-d neg">-${linesRemoved}</span></div>`;
       });
       h += '</div>';
     }

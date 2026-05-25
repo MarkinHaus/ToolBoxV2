@@ -243,14 +243,14 @@ class TestSyncEventHandlers(unittest.TestCase):
     def test_on_llm_pre_call_sets_thought(self):
         nar, live = _make_narrator()
         nar._lang = "de"
-        nar.on_llm_pre_call([])
+        nar.on_llm_pre_call(0)
         self.assertTrue(len(live.narrator_msg) > 0)
 
     def test_on_llm_pre_call_advances_cursor(self):
         nar, _ = _make_narrator()
         nar._lang = "de"
         hist = _history(("user", "a"), ("assistant", "b"))
-        nar.on_llm_pre_call(hist)
+        nar.on_llm_pre_call(len(hist))
         self.assertEqual(nar._history_cursor, 2)
 
     def test_on_tool_start_normal(self):

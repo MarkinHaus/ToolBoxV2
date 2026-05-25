@@ -268,7 +268,7 @@ class ObservabilityLayer:
         self._current_run: RunRecord | None = None
         self._current_step: StepRecord | None = None
         self._current_llm: LLMCallRecord | None = None
-        self._current_tool: ToolCallRecord | None = None
+        self._current_tools: dict[str, ToolCallRecord] = {}
         self._live_fd: Any = None  # open file handle for live JSONL
 
     # =========================================================================
@@ -469,18 +469,27 @@ class ObservabilityLayer:
     # TOOL RECORDING
     # =========================================================================
 
-    def record_tool_start(self, name: str, args_summary: str = ""):
-        self._current_tool = ToolCallRecord(
+    def record_tool_start(self, name: str, args_summary: str = "", call_id: str = ""):
+        key = call_id or f"{name}_{time.time()}"
+        self._current_tools[key] = ToolCallRecord(
             name=name,
             args_summary=args_summary,
             t_start=time.time(),
         )
+        return key
 
     def record_tool_end(self, name: str, result_summary: str = "",
-                        status: str = "ok", error: str = ""):
-        tool = self._current_tool
-        if tool is None or tool.name != name:
-            # Fallback: create a record without start time
+                        status: str = "ok", error: str = "", call_id: str = ""):
+        tool = self._current_tools.pop(call_id, None) if call_id else None
+
+        # Fallback: suche nach name (für alte Call-Sites ohne call_id)
+        if tool is None:
+            for k, t in list(self._current_tools.items()):
+                if t.name == name:
+                    tool = self._current_tools.pop(k)
+                    break
+
+        if tool is None:
             tool = ToolCallRecord(name=name, t_start=time.time())
 
         tool.t_end = time.time()
@@ -496,8 +505,6 @@ class ObservabilityLayer:
             "duration_s": tool.duration_s, "status": status,
             "run_id": self._current_run.run_id if self._current_run else "",
         })
-
-        self._current_tool = None
 
     # =========================================================================
     # VFS + COMPRESSION RECORDING
@@ -898,3 +905,91 @@ class ObservabilityLayer:
             os.fsync(self._live_fd.fileno())
         except (OSError, ValueError) as e:
             logger.warning(f"[Obs] live write failed: {e}")
+
+    def export_mock_messages(self, run_id: str | None = None) -> list[dict]:
+        """
+        Exportiert die LLM-Antworten eines Runs (live oder aus Datei) als Liste
+        von Mock-Nachrichten, kompatibel mit einem MockRouter.
+
+        Wenn run_id None ist, wird der aktuell aktive Run oder der letzte
+        abgeschlossene Run verwendet.
+        """
+        run = None
+
+        # 1. Run ermitteln (Live Agent, Letzter Run oder spezifizierter Run)
+        if run_id is None:
+            if self._current_run:
+                run = self._current_run
+            else:
+                index = self._load_index()
+                if index:
+                    run_id = index[-1]
+                else:
+                    interrupted = self.get_interrupted_runs()
+                    if interrupted:
+                        run_id = interrupted[-1]["run_id"]
+
+        if run is None and run_id:
+            res = self.get_resumable_run(run_id)
+            if res:
+                run, _ = res
+
+        if not run:
+            raise ValueError(f"Kein Run gefunden für Mock-Export (run_id={run_id}).")
+
+        mock_messages = []
+
+        # 2. Nachrichten Schritt für Schritt rekonstruieren
+        for i, step in enumerate(run.steps):
+            entry = {}
+
+            # Strategie A: Exakte Assistant-Nachricht aus der History des nächsten Schritts holen
+            # (Vorteil: Enthält die exakten, unverkürzten JSON-Argumente der Tool-Calls)
+            exact_msg = None
+            if i + 1 < len(run.steps):
+                next_step = run.steps[i + 1]
+                if next_step.llm and next_step.llm.input_messages:
+                    # Wir suchen die letzte Assistant-Nachricht in der History des nächsten Schritts
+                    assistant_msgs = [m for m in next_step.llm.input_messages if m.get("role") == "assistant"]
+                    if assistant_msgs:
+                        exact_msg = assistant_msgs[-1]
+
+            if exact_msg:
+                entry["content"] = exact_msg.get("content") or ""
+                if "tool_calls" in exact_msg and exact_msg["tool_calls"]:
+                    entry["tool_calls"] = []
+                    for tc in exact_msg["tool_calls"]:
+                        # OpenAI Format entpacken
+                        if "function" in tc:
+                            entry["tool_calls"].append({
+                                "id": tc.get("id", f"mock_{i}_{tc['function']['name']}"),
+                                "name": tc["function"]["name"],
+                                "arguments": tc["function"]["arguments"]
+                            })
+                        else:
+                            entry["tool_calls"].append({
+                                "id": tc.get("id", f"mock_{i}_{tc.get('name', 'tool')}"),
+                                "name": tc.get("name", ""),
+                                "arguments": tc.get("arguments", "{}")
+                            })
+            else:
+                # Strategie B: Fallback auf die aufgezeichneten Step-Daten (für den finalen Schritt)
+                if step.llm:
+                    entry["content"] = step.llm.output_text or ""
+
+                if step.tool_calls:
+                    entry["tool_calls"] = []
+                    for idx, tc in enumerate(step.tool_calls):
+                        # args_summary könnte verkürzt sein, ist aber als Fallback nützlich
+                        args = tc.args_summary if tc.args_summary else "{}"
+                        entry["tool_calls"].append({
+                            "id": f"mock_tc_{i}_{idx}",
+                            "name": tc.name,
+                            "arguments": args
+                        })
+
+            # Eintrag nur hinzufügen, wenn auch Content oder Tools vorhanden sind
+            if entry.get("content") or entry.get("tool_calls"):
+                mock_messages.append(entry)
+
+        return mock_messages

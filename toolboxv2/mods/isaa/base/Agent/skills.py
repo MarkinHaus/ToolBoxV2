@@ -862,7 +862,7 @@ class SkillsManager:
     export_skills = None
     export_skill_file = None
 
-    def __init__(self, agent_name: str, memory_instance: Any = None, anthropic_skills=None):
+    def __init__(self, agent_name: str, memory_instance: Any = None, anthropic_skills=None, match_embedding=False):
         """
         Initialize SkillsManager.
 
@@ -872,6 +872,7 @@ class SkillsManager:
         """
         self.agent_name = agent_name
         self._memory = memory_instance
+        self.match_embedding = match_embedding
 
         # Skills Storage
         self.skills: Dict[str, Skill] = {}
@@ -1407,7 +1408,7 @@ class SkillsManager:
                 matched.append((skill, 1.0))
 
         # Phase 2: Embedding Fallback
-        if len(matched) < max_results and self._memory:
+        if self.match_embedding and len(matched) < max_results and self._memory:
             embedding_matches = await self._match_by_embedding(
                 query,
                 max_results - len(matched)
@@ -1429,8 +1430,15 @@ class SkillsManager:
             return []
 
         try:
-            # Query Embedding
-            query_embedding = await self._memory.get_embeddings([query])
+            # Query Embedding (cached to prevent duplicate network requests)
+            if not hasattr(self, '_query_embedding_cache'):
+                self._query_embedding_cache = {}
+
+            if query not in self._query_embedding_cache:
+                embeddings = await self._memory.get_embeddings([query])
+                self._query_embedding_cache[query] = embeddings[0]
+
+            query_embedding = self._query_embedding_cache[query]
 
             # Ensure skill embeddings are cached
             await self._ensure_skill_embeddings()
@@ -1445,7 +1453,7 @@ class SkillsManager:
                     continue
 
                 # Cosine similarity
-                similarity = self._cosine_similarity(query_embedding[0], embedding)
+                similarity = self._cosine_similarity(query_embedding, embedding)
                 if similarity >= 0.5:  # Threshold
                     results.append((skill, float(similarity)))
 
@@ -1457,7 +1465,7 @@ class SkillsManager:
             return []
 
     async def _ensure_skill_embeddings(self):
-        """Lazy load/update skill embeddings"""
+        """Lazy load/update skill embeddings (Delta updates only)"""
         if not self._skill_embeddings_dirty:
             return
 
@@ -1468,14 +1476,25 @@ class SkillsManager:
             texts = []
             skill_ids = []
 
+            # Hash-Cache für Skills, um redundante API-Calls zu sparen
+            if not hasattr(self, '_skill_text_hash_cache'):
+                self._skill_text_hash_cache = {}
+
             for skill_id, skill in self.skills.items():
                 if skill.is_active():
                     # Combine triggers and instruction for embedding
                     text = f"{skill.name} {' '.join(skill.triggers)} {skill.instruction[:200]}"
-                    texts.append(text)
-                    skill_ids.append(skill_id)
+                    text_hash = hash(text)
+
+                    # Nur re-embedden, wenn Skill neu ist oder Text sich geändert hat
+                    if skill_id not in self._skill_embeddings_cache or self._skill_text_hash_cache.get(
+                        skill_id) != text_hash:
+                        texts.append(text)
+                        skill_ids.append(skill_id)
+                        self._skill_text_hash_cache[skill_id] = text_hash
 
             if texts:
+                # API-Call nur für die wirklich geänderten/neuen Skills
                 embeddings = await self._memory.get_embeddings(texts)
                 for i, skill_id in enumerate(skill_ids):
                     self._skill_embeddings_cache[skill_id] = embeddings[i]

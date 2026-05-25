@@ -542,7 +542,7 @@ def _build_think_prompt(
 # ---------------------------------------------------------------------------
 # Core: blitz API call  (raw litellm, NOT through agent machinery)
 # ---------------------------------------------------------------------------
-async def _call_blitz(system: str, messages: list[dict], max_tokens: int = 260, force_json=True) -> dict | None:
+async def _call_blitz(system: str, messages: list[dict], force_json=True) -> dict | None:
     """Call LIGHNIGMODEL via CompletionRouter. No fallback, no handler."""
     raw = None
     result = None
@@ -568,7 +568,6 @@ async def _call_blitz(system: str, messages: list[dict], max_tokens: int = 260, 
             model=LIGHNIGMODEL,
             messages=all_messages,
             api_key=api_key,
-            max_tokens=max_tokens,
             temperature=0.3,
         )
 
@@ -818,7 +817,7 @@ class AgentLiveNarrator:
         self._lang = _lang(query)
         self.mock("init")
 
-    def on_llm_pre_call(self, history: list[dict]) -> None:
+    def on_llm_pre_call(self, history_cursor: int) -> None:
         """
         Called just before each LLM call.
         Always sets mock immediately.
@@ -826,7 +825,7 @@ class AgentLiveNarrator:
         """
         self.mock("llm_pre")
         # advance cursor so next diff only contains what happened AFTER this call
-        self._history_cursor = len(history)
+        self._history_cursor = history_cursor
 
     def on_tool_start(self, tool_name: str) -> None:
         """Sync: set mock for tool start immediately."""
@@ -912,7 +911,6 @@ class AgentLiveNarrator:
         schema: dict | None = None,
         respect_ratelimit: bool = False,
         history: list[dict] | None = None,
-        max_tokens: int = 250,
     ) -> dict | str | None:
         """
         Public raw Blitz-Model call – now routed through the rate-limit handler.
@@ -924,7 +922,6 @@ class AgentLiveNarrator:
             respect_ratelimit: If True, checks internal narrator PM budget
                                before calling (handler has its own limits too).
             history:           Working history – for internal budget estimation.
-            max_tokens:        max_tokens for copletion
 
         Returns:
             Parsed dict if schema given and valid,
@@ -939,7 +936,7 @@ class AgentLiveNarrator:
                 logger.debug("Blitz _budget_ok False")
                 return None
         with Spinner(message="calling blitz", symbols="q"):
-            result = await _call_blitz(system, messages,max_tokens=max_tokens, force_json=schema is not None)
+            result = await _call_blitz(system, messages, force_json=schema is not None)
         if result is None:
             return None
 
@@ -1202,11 +1199,10 @@ class AgentLiveNarrator:
         valid_names = [skills[sid].name for sid in valid_ids]
         self.live.skills = valid_names
         if ctx:
-            ctx.matched_skills = valid_ids
-
+            ctx.matched_skills = [skills[sid] for sid in valid_ids]
+        r = data.get("reason", "")
         logger.debug(
-            "Narrator: skills updated → %s (reason: %s)",
-            valid_ids, data.get("reason", ""),
+            f"Narrator: skills updated -> {valid_ids} (reason: {r})",
         )
 
     # ------------------------------------------------------------------
@@ -1251,7 +1247,7 @@ class AgentLiveNarrator:
 
         with Spinner(message="Extracting rules", symbols="+"):
             # MAX_TOKENS ERHÖHT, damit das JSON nicht abgeschnitten wird!
-            result = await _call_blitz(system, messages, max_tokens=300)
+            result = await _call_blitz(system, messages)
 
         if result is None:
             return
