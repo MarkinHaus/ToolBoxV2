@@ -6897,12 +6897,13 @@ class ISAA_Host:
                     phase_str = live.phase.value[:10]
 
                     # Show thought or tool (whichever is most recent)
-                    if live.tool.values():
-                        focus_str = f"◇ {live.tool.values()[:18]}"
-                    elif live.thought:
-                        focus_str = f"◎ {live.thought[:18]}"
+                    if live.tools:
+                        for t in live.tools:
+                            focus_str += f"◇ {[t.values()[:18]]  }"
+                    if live.thought:
+                        focus_str += f"◎ {live.thought[:18]}"
                     elif live.status_msg:
-                        focus_str = live.status_msg[:20]
+                        focus_str += live.status_msg[:20]
 
                 except Exception:
                     elapsed = (__import__("time").time() - t.started_at)
@@ -8358,9 +8359,10 @@ class ISAA_Host:
                 print_box_content(f"Phase: {live.phase.value}", "info")
             if live.thought:
                 print_box_content(f"Thought: {live.thought}", "")
-            if live.tool.values():
-                print_box_content(f"Tool: {live.tool.values()}", "")
-                print_code_block(json_to_md(json.loads(live.tool.args_summary)))
+            for t in live.tools:
+                if t.values():
+                    print_box_content(f"Tool: {t.values()}", "")
+                    print_code_block(json_to_md(json.loads(t.args_summary)))
         except Exception as e:
             import traceback
             print_box_content(f"(live state unavailable) {e} {traceback.format_exc()}", "warning")

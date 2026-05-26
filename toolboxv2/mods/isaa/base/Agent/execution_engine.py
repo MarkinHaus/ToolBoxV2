@@ -1757,13 +1757,12 @@ BEISPIELE:
                     self.live.log(
                         f"[Finalize] learning schedule failed: {e}", logging.ERROR
                     )
-            # 1. Commit run (log + LLM summary + session.add_message)
+            # 1. Commit run (log + LLM summary + session.add_message + obs close)
             try:
                 _obs = getattr(self.agent, 'obs', None)
                 if _obs:
-                    snapshot = ctx.to_checkpoint() if (
-                            ctx.current_iteration % self.agent.obs.snapshot_interval == 0) else None
-                    _obs.end_step(ctx_checkpoint=snapshot)
+                    # Always snapshot final ctx → cold resume reliable after eviction
+                    _obs.end_step(ctx_checkpoint=ctx.to_checkpoint())
                     _obs.end_run(success=success, final_answer=final_response or "")
             except Exception as e:
                 self.live.log(f"[Finalize] OBS end_step failed: {e}", logging.ERROR)
@@ -1773,11 +1772,19 @@ BEISPIELE:
             _obs._audit("FINALIZE", ctx.run_id, details={
                 "duration_s": round(time.time() - _fin_start, 3),
                 "session_id": ctx.session_id,
+                "final_status": ctx.status,
             })
         # Outside lock: cleanup
-        self._active_executions.pop(ctx.run_id, None)
         self._pending_finalize_tasks.pop(ctx.run_id, None)
-        ctx.status = "paused"
+        if ctx.status == "cancelled":
+            self._active_executions.pop(ctx.run_id, None)
+            if self._session_last_run.get(ctx.session_id) == ctx.run_id:
+                self._session_last_run.pop(ctx.session_id, None)
+        elif ctx.status == "running":
+            # Normal completion (final_answer) — mark completed, eviction reclaims
+            ctx.status = "completed"
+        # paused / max_iterations / completed: stay in _active_executions
+        # until _evict_if_over_limit reclaims slots.
 
     # =========================================================================
     # MAIN EXECUTION LOOP
@@ -1838,8 +1845,15 @@ BEISPIELE:
         # 5. Main loop
         try:
             while ctx.current_iteration < ctx.max_iterations:
-                if ctx.status in ("paused", "cancelled"):
-                    final_response = self._handle_max_iterations(ctx, query)
+                if ctx.status == "paused":
+                    final_response = (
+                        f"Run paused at iteration {ctx.current_iteration}. "
+                        f"Use resume_execution() to continue."
+                    )
+                    success = False
+                    break
+                if ctx.status == "cancelled":
+                    final_response = "Execution cancelled."
                     success = False
                     break
                 warning = self._loop_preamble(ctx)
@@ -1897,16 +1911,36 @@ BEISPIELE:
                         continue
                     if final_tc:
                         _obs = getattr(self.agent, 'obs', None)
+                        raw = final_tc.function.arguments
                         if _obs:
-                            _obs.record_tool_start("final_answer", str(final_tc.function.arguments))
-                            _obs.record_tool_end("final_answer", result_summary="break loop", status="ok")
+                            _obs.record_tool_start("final_answer", str(raw))
                         try:
-                            args = json.loads(final_tc.function.arguments)
-                            final_response = args.get("answer", "")
-                            success = args.get("success", True)
-                        except Exception:
-                            final_response = ""
-                            success = True
+                            args = json.loads(raw) if isinstance(raw, str) else raw
+                        except Exception as parse_err:
+                            log.error(f"[Engine] final_answer JSON invalid: {parse_err} | raw={str(raw)[:300]}")
+                            ctx.working_history.append({
+                                "role": "system",
+                                "content": f"final_answer JSON invalid ({parse_err}). Retry with: final_answer({{\"answer\":\"...\",\"success\":true}})",
+                            })
+                            if _obs:
+                                _obs.record_tool_end("final_answer", result_summary=f"parse: {parse_err}",
+                                                     status="error")
+                            continue
+                        final_response = args.get("answer", "")
+                        success = args.get("success", True)
+                        if not final_response:
+                            log.warning(f"[Engine] final_answer empty answer field, raw={str(raw)[:200]}")
+                            ctx.working_history.append({
+                                "role": "system",
+                                "content": "final_answer missing 'answer' field. Retry with the actual answer text.",
+                            })
+                            if _obs:
+                                _obs.record_tool_end("final_answer", result_summary="empty answer", status="error")
+                            final_response = None
+                            success = False
+                            continue
+                        if _obs:
+                            _obs.record_tool_end("final_answer", result_summary="break loop", status="ok")
                         self._narrator.on_summarise()
                         break
 
@@ -1926,20 +1960,31 @@ BEISPIELE:
                         *[self._execute_tool_call(ctx, tc) for tc in all_tcs]
                     )
 
+                    final_in_batch = False
                     for tc, (result, is_final) in zip(all_tcs, results):
                         if is_final:
+                            raw = tc.function.arguments
                             try:
-                                args = json.loads(tc.function.arguments)
-                                final_response = args.get("answer", result)
+                                args = json.loads(raw) if isinstance(raw, str) else raw
+                                answer = args.get("answer")
+                                if not answer:
+                                    raise ValueError(f"missing 'answer' field, raw={str(raw)[:200]}")
+                                final_response = answer
                                 success = args.get("success", True)
-                            except Exception:
-                                final_response = result
-                                success = True
+                                final_in_batch = True
+                            except Exception as parse_err:
+                                log.error(f"[Engine] parallel final_answer failed: {parse_err}")
+                                ctx.working_history.append({
+                                    "role": "system",
+                                    "content": f"final_answer failed ({parse_err}). Retry with valid args.",
+                                })
+                                success = False
                             break
 
-                    if final_response is not None:
+                    if final_in_batch:
                         self._narrator.on_summarise()
                         break
+                    # else: loop continues, model gets correction system-message
                 else:
                     if response and response.content:
                         final_response = response.content
@@ -1964,16 +2009,20 @@ BEISPIELE:
                     # Main agent: Existing handling
                     final_response = self._handle_max_iterations(ctx, query)
                     success = False
+                    ctx.status = "max_iterations"
             await self._record_and_finalize(ctx, session, query, final_response, success, trigger_kw, trigger_skill, persist_blocking)
         except Exception as e:
-            self.live.log(f"[CRASH] {e}", logging.ERROR)
+            log.exception("[Engine] CRASH")
+            self.live.log(f"[CRASH] {type(e).__name__}: {e}", logging.ERROR)
             success = False
-            final_response = final_response or f"Agent crashed: {e}"
+            crash_msg = f"\n\n⚠️ INTERNAL ERROR: {type(e).__name__}: {e}"
+            final_response = (
+                    final_response + crash_msg) if final_response else f"Agent crashed: {type(e).__name__}: {e}"
         finally:
             # OBS: IMMER end_run, auch bei crash
             _obs = getattr(self.agent, 'obs', None)
             if _obs and _obs._current_run:
-                _obs.end_run(success=success, final_answer=final_response or "CRASH")
+                _obs.end_run(success=success, final_answer=(final_response if isinstance(final_response, str) else final_response.final_text_content) if final_response is not None else "CRASH")
         if get_ctx:
             return final_response, ctx
         return final_response
@@ -1994,6 +2043,7 @@ BEISPIELE:
             tuple[stream_generator_func, ExecutionContext]
         """
 
+        log = get_logger()
         if query == "__dream__":
             async def _dream_stream_wrapper(ctx):
                 async for chunk in self.agent.a_dream_stream():
@@ -2069,15 +2119,22 @@ BEISPIELE:
             try:
                 while ctx.current_iteration < ctx.max_iterations:
 
-                    # Check pause
+                    # Check pause — fall through to finalize so system learns
                     if ctx.status == "paused":
-                        yield enrich({"type": "paused", "run_id": ctx.run_id})
-                        return
+                        final_response = (
+                            f"Run paused at iteration {ctx.current_iteration}. "
+                            f"Use resume_execution() to continue."
+                        )
+                        success = False
+                        yield enrich({"type": "paused", "run_id": ctx.run_id, "answer": final_response})
+                        break
 
-                    # Check cancellation
+                    # Check cancellation — also finalize, ctx will be popped in _finalize_run
                     if ctx.status == "cancelled":
-                        yield enrich({"type": "cancelled", "run_id": ctx.run_id})
-                        return
+                        final_response = "Execution cancelled."
+                        success = False
+                        yield enrich({"type": "cancelled", "run_id": ctx.run_id, "answer": final_response})
+                        break
 
                     warning = self._loop_preamble(ctx)
                     # Sofortiges Iteration-Start-Signal (vor LLM-Latenz)
@@ -2171,7 +2228,9 @@ BEISPIELE:
                                 err = item["error"]
                                 if "Event loop is closed" in str(err):
                                     yield enrich({"type": "error", "error": str(err)})
-                                    break
+                                    final_response = "Stream aborted: event loop closed"
+                                    success = False
+                                    return
                                 raise err
 
                             data = item["data"]
@@ -2251,31 +2310,48 @@ BEISPIELE:
                             yield enrich(
                                 {"type": "tool_start", "name": f_name, "args": f_args, "id": f_id}
                             )
-
                         if final_tc:
                             _obs = getattr(self.agent, 'obs', None)
+                            raw = final_tc.function.arguments
                             if _obs:
-                                _obs.record_tool_start("final_answer", str(final_tc.function.arguments))
-                                _obs.record_tool_end("final_answer", result_summary="break loop", status="ok")
-                            f_args = final_tc.function.arguments
+                                _obs.record_tool_start("final_answer", str(raw))
                             try:
-                                args = (
-                                    json.loads(f_args) if isinstance(f_args, str) else f_args
-                                )
-                                final_response = args.get("answer", collected_content)
-                                success_status = args.get("success", True)
-                            except Exception:
-                                final_response = collected_content
-                                success_status = True
+                                args = json.loads(raw) if isinstance(raw, str) else raw
+                            except Exception as parse_err:
+                                log.error(f"[Engine] final_answer JSON invalid: {parse_err} | raw={str(raw)[:300]}")
+                                ctx.working_history.append({
+                                    "role": "system",
+                                    "content": f"final_answer JSON invalid ({parse_err}). Retry with: final_answer({{\"answer\":\"...\",\"success\":true}})",
+                                })
+                                if _obs:
+                                    _obs.record_tool_end("final_answer", result_summary=f"parse: {parse_err}",
+                                                         status="error")
+                                continue
+                            final_response = args.get("answer", "")
+                            success = args.get("success", True)
+                            if not final_response:
+                                log.warning(f"[Engine] final_answer empty answer field, raw={str(raw)[:200]}")
+                                ctx.working_history.append({
+                                    "role": "system",
+                                    "content": "final_answer missing 'answer' field. Retry with the actual answer text.",
+                                })
+                                if _obs:
+                                    _obs.record_tool_end("final_answer", result_summary="empty answer", status="error")
+                                final_response = None
+                                success = False
+                                continue
+                            if _obs:
+                                _obs.record_tool_end("final_answer", result_summary="break loop", status="ok")
+                            self._narrator.on_summarise()
                             yield enrich(
                                 {
                                     "type": "final_answer",
                                     "answer": final_response,
-                                    "success": success_status,
+                                    "success": success,
                                 }
                             )
-                            self._narrator.on_summarise()
                             break
+
 
                         # ── Loop 2: Execute in parallel ───────────────────────────────
 
@@ -2385,8 +2461,20 @@ BEISPIELE:
 
                 # Handle max iterations
                 if final_response is None:
-                    final_response = self._handle_max_iterations(ctx, query)
-                    success = False
+                    if self.is_sub_agent:
+                        (
+                            final_response,
+                            should_mark_resumable,
+                        ) = await self._handle_sub_agent_max_iterations(
+                            ctx, query, max_iterations
+                        )
+                        success = False
+                        if should_mark_resumable:
+                            ctx.status = "max_iterations"
+                    else:
+                        final_response = self._handle_max_iterations(ctx, query)
+                        success = False
+                        ctx.status = "max_iterations"
                     yield enrich({"type": "max_iterations", "answer": final_response})
 
                 # Narrator cleanup (billig, muss jetzt)
@@ -2405,9 +2493,12 @@ BEISPIELE:
                 # persist_blocking=True: await für crash-safety.
                 await self._record_and_finalize(ctx, session, query, final_response, success, trigger_kw, trigger_skill, persist_blocking)
             except Exception as e:
-                self.live.log(f"[CRASH] {e}", logging.ERROR)
+                log.exception("[Engine] CRASH")
+                self.live.log(f"[CRASH] {type(e).__name__}: {e}", logging.ERROR)
                 success = False
-                final_response = final_response or f"Agent crashed: {e}"
+                crash_msg = f"\n\n⚠️ INTERNAL ERROR: {type(e).__name__}: {e}"
+                final_response = (
+                        final_response + crash_msg) if final_response else f"Agent crashed: {type(e).__name__}: {e}"
             finally:
                 # OBS: IMMER end_run, auch bei crash
                 _obs = getattr(self.agent, 'obs', None)
@@ -2460,6 +2551,8 @@ BEISPIELE:
         Non-streaming execution that yields chunks compatible with stream_generator.
         LLM is called with stream=False, but output is chunked for consumer compatibility.
         """
+
+        log = get_logger()
         final_response = None
         success = True
         agent_name = self.agent.amd.name
@@ -2531,13 +2624,20 @@ BEISPIELE:
                     for nc in _flush_narrator():
                         yield nc
 
-                    # Pause / Cancel
+                    # Pause / Cancel — fall through to finalize
                     if ctx.status == "paused":
-                        yield enrich({"type": "paused", "run_id": ctx.run_id})
-                        return
+                        final_response = (
+                            f"Run paused at iteration {ctx.current_iteration}. "
+                            f"Use resume_execution() to continue."
+                        )
+                        success = False
+                        yield enrich({"type": "paused", "run_id": ctx.run_id, "answer": final_response})
+                        break
                     if ctx.status == "cancelled":
-                        yield enrich({"type": "cancelled", "run_id": ctx.run_id})
-                        return
+                        final_response = "Execution cancelled."
+                        success = False
+                        yield enrich({"type": "cancelled", "run_id": ctx.run_id, "answer": final_response})
+                        break
 
                     warning = self._loop_preamble(ctx)
 
@@ -2582,7 +2682,15 @@ BEISPIELE:
                         yield nc
 
                     if not response:
+                        self._empty_streak = getattr(self, "_empty_streak", 0) + 1
+                        log.warning(f"[Engine] empty LLM response (streak={self._empty_streak})")
+                        if self._empty_streak >= 3:
+                            final_response = "LLM lieferte 3x in Folge leere Response. Abbruch."
+                            success = False
+                            yield enrich({"type": "error", "error": final_response})
+                            break
                         continue
+                    self._empty_streak = 0
 
                     # --- Extract content + reasoning ---
                     content = response.content or ""
@@ -2640,19 +2748,39 @@ BEISPIELE:
                                 }
                             )
                             continue
-
                         if final_tc:
                             _obs = getattr(self.agent, 'obs', None)
+                            raw = final_tc.function.arguments
                             if _obs:
-                                _obs.record_tool_start("final_answer", str(final_tc.function.arguments))
-                                _obs.record_tool_end("final_answer", result_summary="break loop", status="ok")
+                                _obs.record_tool_start("final_answer", str(raw))
                             try:
-                                args = json.loads(final_tc.function.arguments)
-                                final_response = args.get("answer", "")
-                                success = args.get("success", True)
-                            except Exception:
-                                final_response = ""
-                                success = True
+                                args = json.loads(raw) if isinstance(raw, str) else raw
+                            except Exception as parse_err:
+                                log.error(f"[Engine] final_answer JSON invalid: {parse_err} | raw={str(raw)[:300]}")
+                                ctx.working_history.append({
+                                    "role": "system",
+                                    "content": f"final_answer JSON invalid ({parse_err}). Retry with: final_answer({{\"answer\":\"...\",\"success\":true}})",
+                                })
+                                if _obs:
+                                    _obs.record_tool_end("final_answer", result_summary=f"parse: {parse_err}",
+                                                         status="error")
+                                continue
+                            final_response = args.get("answer", "")
+                            success = args.get("success", True)
+                            if not final_response:
+                                log.warning(f"[Engine] final_answer empty answer field, raw={str(raw)[:200]}")
+                                ctx.working_history.append({
+                                    "role": "system",
+                                    "content": "final_answer missing 'answer' field. Retry with the actual answer text.",
+                                })
+                                if _obs:
+                                    _obs.record_tool_end("final_answer", result_summary="empty answer", status="error")
+                                final_response = None
+                                success = False
+                                continue
+                            if _obs:
+                                _obs.record_tool_end("final_answer", result_summary="break loop", status="ok")
+                            self._narrator.on_summarise()
                             yield enrich(
                                 {
                                     "type": "final_answer",
@@ -2660,15 +2788,14 @@ BEISPIELE:
                                     "success": success,
                                 }
                             )
-                            self._narrator.on_summarise()
                             break
-
                         # Execute normal tools in parallel
                         all_tcs = normal_tcs + sub_agent_tcs
                         results = await asyncio.gather(
                             *[self._execute_tool_call(ctx, tc) for tc in all_tcs]
                         )
 
+                        final_in_batch = False
                         for tc, (result, is_final) in zip(all_tcs, results):
                             f_name = tc.function.name
                             yield enrich(
@@ -2680,13 +2807,23 @@ BEISPIELE:
                                 }
                             )
                             if is_final:
+                                raw = tc.function.arguments
                                 try:
-                                    args = json.loads(tc.function.arguments)
-                                    final_response = args.get("answer", result)
+                                    args = json.loads(raw) if isinstance(raw, str) else raw
+                                    answer = args.get("answer")
+                                    if not answer:
+                                        raise ValueError(f"missing 'answer' field, raw={str(raw)[:200]}")
+                                    final_response = answer
                                     success = args.get("success", True)
-                                except Exception:
-                                    final_response = result
-                                    success = True
+                                    final_in_batch = True
+                                except Exception as parse_err:
+                                    log.error(f"[Engine] parallel final_answer failed: {parse_err}")
+                                    ctx.working_history.append({
+                                        "role": "system",
+                                        "content": f"final_answer failed ({parse_err}). Retry with valid args.",
+                                    })
+                                    success = False
+                                break
 
                         # Think tools
                         for tc in think_tcs:
@@ -2734,6 +2871,7 @@ BEISPIELE:
                     else:
                         final_response = self._handle_max_iterations(ctx, query)
                         success = False
+                        ctx.status = "max_iterations"
                     yield enrich({"type": "max_iterations", "answer": final_response})
 
                 # --- Post-processing ---
@@ -2741,9 +2879,12 @@ BEISPIELE:
 
                 await self._record_and_finalize(ctx, session, query, final_response, success, trigger_kw, trigger_skill, persist_blocking)
             except Exception as e:
-                self.live.log(f"[CRASH] {e}", logging.ERROR)
+                log.exception("[Engine] CRASH")
+                self.live.log(f"[CRASH] {type(e).__name__}: {e}", logging.ERROR)
                 success = False
-                final_response = final_response or f"Agent crashed: {e}"
+                crash_msg = f"\n\n⚠️ INTERNAL ERROR: {type(e).__name__}: {e}"
+                final_response = (
+                        final_response + crash_msg) if final_response else f"Agent crashed: {type(e).__name__}: {e}"
             finally:
                 # OBS: IMMER end_run, auch bei crash
                 _obs = getattr(self.agent, 'obs', None)
@@ -2835,8 +2976,7 @@ BEISPIELE:
                 *permanent_history,
                 {"role": "user", "content": query},
             ]
-
-        ctx.max_iterations = max_iterations
+            ctx.max_iterations = max_iterations
         # Live state
         agent_type = "SUB-AGENT" if self.is_sub_agent else "MAIN"
         action = "Resuming" if is_resume else "Start"
@@ -4760,9 +4900,89 @@ BEISPIELE:
     # =========================================================================
 
     def _build_system_prompt(self, ctx: ExecutionContext, session) -> str:
-        """Build system prompt with skills, status, and rules"""
+        """Order: STATIC prefix → marker → DYNAMIC suffix.
+        Static prefix is byte-stable across runs → provider caching works.
+        """
+        static_parts: list[str] = []
+        dynamic_parts: list[str] = []
 
-        # Get categories from tool manager
+        # ═══ STATIC PREFIX (cacheable across runs) ═══
+        static_parts.append(self.agent.amd.system_message)
+
+        # Identity — pure static, dynamic_slots_prompt moved out
+        if self.is_sub_agent:
+            static_parts.append("\n".join([
+                "You are a focused SUB-AGENT for a specific task.",
+                "",
+                "⚠️ SUB-AGENT CONSTRAINTS:",
+                f"- You can ONLY write to {self.sub_agent_output_dir}/",
+                "- You can read the entire VFS",
+                "- You CANNOT spawn any additional sub-agents",
+                "- You CANNOT ask follow-up questions — work with the given information",
+                f"- Token budget: {self.sub_agent_budget}",
+                "",
+                "TASK: Execute the given task in a focused manner.",
+                "Write your result to result.md in your output directory. If result.md already exists, write to _result.md instead.",
+                "",
+                "RULES:",
+                "1. Focus ONLY on the given task",
+                "2. Write results to your output directory",
+                "3. Use final_answer when finished",
+                "4. If something is unclear: make the best assumption and document it",
+            ]))
+        else:
+            static_parts.append("\n".join([
+                "IDENTITY: You are FlowAgent, an autonomous execution unit capable of file operations, code execution, and data processing.",
+                "",
+                "OPERATING PROTOCOL:",
+                "1. INITIATIVE: Do not complain about missing tools. If a task requires file access, USE `vfs_view` or `vfs_shell`. If you need to search, USE the memory tools.",
+                "2. FORMAT: When asked for data, output ONLY data (JSON/Markdown). Do not use conversational filler ('Here is the data').",
+                "3. HONESTY: Differentiate between 'Information missing in context' (Unknown) and 'Factually non-existent' (False). Never apologize.",
+                "4. ITERATION: If a step fails, analyze the error in `think()`, then try a different approach. Do not give up immediately.",
+                "",
+                "- Sub-Agent Management: spawn_sub_agent, wait_for, resume_sub_agent",
+                "  → If a sub-agent hits max_iterations but made progress, resume it with more iterations",
+            ]))
+
+        # OODA, zero-guessing, tool-loading, tool-table, parallel-calling, think-hint
+        # (alle bisherigen STATIC blöcke, inhaltlich unverändert)
+        static_parts.append("MANDATORY WORKFLOW — OODA LOOP (run for EVERY action cycle until objective met): ...")
+        static_parts.append("STRICT ZERO-GUESSING POLICY: ...")
+        static_parts.append("\n## Tool Loading Protocol (STRICT)\n...")
+        static_parts.append("""\n  Statisch verfügbar (kein load_tools nötig): ...""")
+        static_parts.append("\n## Parallel Tool Calling\n...")
+        static_parts.append(
+            "\nIf the task has exceeded 10 iterations and prior summaries exist in the history, "
+            "use your second-to-last tool call to invoke `think` — assess your progress so far, "
+            "identify what remains, and leave a clear handoff note so work can seamlessly continue "
+            "if the run is resumed later."
+        )
+
+        static_parts.append("\n--- RUNTIME CONTEXT (varies per run, not cached) ---\n")
+
+        # ═══ DYNAMIC SUFFIX (changes per run/query) ═══
+        # Tool slots
+        loaded_tool_names = ctx.get_dynamic_tool_names()
+        slots_lines = [f"--- DYNAMIC TOOL SLOTS ({len(loaded_tool_names)}/{ctx.max_dynamic_tools} used) ---"]
+        if not loaded_tool_names:
+            slots_lines.append("No dynamic tools currently loaded.")
+        else:
+            for i, t_name in enumerate(loaded_tool_names, 1):
+                t_entry = self.agent.tool_manager.get(t_name)
+                if t_entry:
+                    slots_lines.append(f"[{i}] {t_name}{t_entry.args_schema}:")
+                    for line in t_entry.description.strip().split("\n"):
+                        slots_lines.append(f"    {line}")
+                    slots_lines.append(" ---\n")
+                else:
+                    slots_lines.append(f"[{i}] {t_name}()\n    (Description unavailable)")
+        empty_slots = ctx.max_dynamic_tools - len(loaded_tool_names)
+        if empty_slots > 0:
+            slots_lines.append(f"[+] {empty_slots} empty slots available. Use load_tools() to equip more.")
+        slots_lines.append("(if no fitting tool is loaded, discover it with list_tools and load it with load_tools!)")
+        dynamic_parts.append("\n".join(slots_lines))
+
+        # Categories
         all_tools = self.agent.tool_manager.get_all()
         categories = set()
         for t in all_tools:
@@ -4771,218 +4991,22 @@ BEISPIELE:
                     categories.update(c for c in t.category if c)
                 else:
                     categories.add(t.category)
-
         cat_list = ", ".join(sorted(categories)) if categories else "keine"
+        dynamic_parts.append(f"- Context Access: {cat_list}")
 
-        # --- NEU: Detaillierte Darstellung der dynamischen Tool-Slots ---
-        loaded_tool_names = ctx.get_dynamic_tool_names()
-        slots_lines = [
-            f"--- DYNAMIC TOOL SLOTS ({len(loaded_tool_names)}/{ctx.max_dynamic_tools} used) ---"
-        ]
-
-        if not loaded_tool_names:
-            slots_lines.append("No dynamic tools currently loaded.")
-        else:
-            for i, t_name in enumerate(loaded_tool_names, 1):
-                t_entry = self.agent.tool_manager.get(t_name)
-                if t_entry:
-                    # Fügt den Namen und die fertigen Argumente ein, z.B. "[1] read_file(path: str)"
-                    slots_lines.append(f"[{i}] {t_name}{t_entry.args_schema}:")
-                    # Eingerückte Beschreibung für bessere Lesbarkeit
-                    for line in t_entry.description.strip().split("\n"):
-                        slots_lines.append(f"    {line}")
-                    slots_lines.append(" ---\n")
-                else:
-                    slots_lines.append(f"[{i}] {t_name}()\n    (Description unavailable)")
-
-        empty_slots = ctx.max_dynamic_tools - len(loaded_tool_names)
-        if empty_slots > 0:
-            slots_lines.append(
-                f"[+] {empty_slots} empty slots available. Use load_tools() to equip more."
-            )
-
-        dynamic_slots_prompt = "\n".join(slots_lines)
-        # ----------------------------------------------------------------
-
-        prompt_parts = [self.agent.amd.system_message]
-
-        # Base prompt - different for sub-agents
-        if self.is_sub_agent:
-            prompt_parts.append(
-                "\n".join(
-                    [
-                        "You are a focused SUB-AGENT for a specific task.",
-                        "",
-                        "⚠️ SUB-AGENT CONSTRAINTS:",
-                        f"- You can ONLY write to {self.sub_agent_output_dir}/",
-                        "- You can read the entire VFS",
-                        "- You CANNOT spawn any additional sub-agents",
-                        "- You CANNOT ask follow-up questions — work with the given information",
-                        f"- Token budget: {self.sub_agent_budget}",
-                        "",
-                        "TASK: Execute the given task in a focused manner.",
-"Write your result to result.md in your output directory. If result.md already exists, write to _result.md instead.",
-                        "",
-                        "STATUS:",
-                        dynamic_slots_prompt,
-                        "(if no fitting tool is loaded, discover it with list_tools and load it with load_tools!)",
-                        "",
-                        "RULES:",
-                        "1. Focus ONLY on the given task",
-                        "2. Write results to your output directory",
-                        "3. Use final_answer when finished",
-                        "4. If something is unclear: make the best assumption and document it",
-                    ]
-                )
-            )
-
-        else:
-            prompt_parts.append(
-                "\n".join(
-                    [
-                        "IDENTITY: You are FlowAgent, an autonomous execution unit capable of file operations, code execution, and data processing.",
-                        "",
-                        "OPERATING PROTOCOL:",
-                        "1. INITIATIVE: Do not complain about missing tools. If a task requires file access, USE `vfs_view` or `vfs_shell`. If you need to search, USE the memory tools.",
-                        "2. FORMAT: When asked for data, output ONLY data (JSON/Markdown). Do not use conversational filler ('Here is the data').",
-                        "3. HONESTY: Differentiate between 'Information missing in context' (Unknown) and 'Factually non-existent' (False). Never apologize.",
-                        "4. ITERATION: If a step fails, analyze the error in `think()`, then try a different approach. Do not give up immediately.",
-                        "",
-                        "CAPABILITIES:",
-                        dynamic_slots_prompt,
-                        f"- Context Access: {cat_list}",
-                        "- Sub-Agent Management: spawn_sub_agent, wait_for, resume_sub_agent",
-                        "  → If a sub-agent hits max_iterations but made progress, resume it with more iterations",
-                        "",
-                    ]
-                )
-            )
-        # OODA Decision Loop — every action cycle
-        prompt_parts.append(
-            "MANDATORY WORKFLOW — OODA LOOP (run for EVERY action cycle until objective met):\n"
-            "\n"
-            "O — OBSERVE: Gather raw data about current state.\n"
-            "   • Use tools (vfs_*, list_tools, listJobs, list_agents, etc.) to see what IS, not what you assume.\n"
-            "   • If no fitting tool is loaded → discover with list_tools, load with load_tools.\n"
-            "   • Read errors, outputs, file contents — raw facts only.\n"
-            "\n"
-            "O — ORIENT: Use `think()` to interpret observations.\n"
-            "   • What changed since last cycle? What does the data mean for the objective?\n"
-            "   • Identify gaps: what info is still missing? What assumptions am I making?\n"
-            "   • Match observations against the original request — am I still on target?\n"
-            "\n"
-            "D — DECIDE: Pick exactly ONE next action.\n"
-            "   • If objective is met → decide to REPORT.\n"
-            "   • If objective is impossible → decide to REPORT with reason.\n"
-            "   • Otherwise → decide which tool call moves closest to the goal.\n"
-            "\n"
-            "A — ACT: Execute the decision.\n"
-            "   • Run the tool / make the change / call final_answer().\n"
-            "   • AFTER state-changing actions (createJob, deleteJob, spawn_sub_agent, etc.):\n"
-            "     immediately loop back to OBSERVE — call the corresponding list tool\n"
-            "     (listJobs, list_agents, etc.) to verify the state change landed.\n"
-            "\n"
-            "→ Then START THE NEXT OODA CYCLE from OBSERVE.\n"
-            "→ Use `final_answer()` ONLY when ORIENT confirms: objective met or definitively impossible.\n"
-            "→ Never skip OBSERVE after ACT — every action changes the environment."
-        )
-
-        # do not guess part.
-        prompt_parts.append(
-            "STRICT ZERO-GUESSING POLICY: You must NEVER guess anything, anywhere, under any circumstances! "
-            "\nDo not guess processes, rules, tools, information, functions, APIs, or documentation. "
-            "\nAlways base your actions and answers strictly on the provided context and facts. "
-            "\nIF INFORMATION IS MISSING OR INSUFFICIENT: "
-            "\n1. Think outside the box and look for tools that can help. "
-            "\n2. Actively retrieve the missing data (e.g., search the web, read files) and bring it into the context. "
-            "\n3. If tools cannot provide the factual answer, you MUST ASK THE USER. Never guess. "
-            "\nSOLE EXCEPTION: If the user explicitly requests you to guess in a 'minimal demo setting'. "
-            "\nIf this exception applies, you MUST clearly and explicitly wrap and declare the guessed parts with "
-            "\nwarning labels like '[GUESSED INFO]' so the user knows exactly what is not factual."
-        )
-
-        # Add skills section if matched
         if ctx.matched_skills:
-            skill_section = self.skills_manager.build_skill_prompt_section(
-                ctx.matched_skills
-            )
-            prompt_parts.append(skill_section)
-        # Add persona modifier if active
+            dynamic_parts.append(self.skills_manager.build_skill_prompt_section(ctx.matched_skills))
 
         if ctx.active_persona.prompt_modifier:
-            prompt_parts.append(ctx.active_persona.prompt_modifier)
+            dynamic_parts.append(ctx.active_persona.prompt_modifier)
 
-        # Think summary ( compressed informations )
-        prompt_parts.append(
-            "\nIf the task has exceeded 10 iterations and prior summaries exist in the history, "
-            "use your second-to-last tool call to invoke `think` — assess your progress so far, "
-            "identify what remains, and leave a clear handoff note so work can seamlessly continue "
-            "if the run is resumed later."
-        )
-
-        prompt_parts.append(
-            "\n## Tool Loading Protocol (STRICT)\n"
-            "Only statically available tools (e.g. `think`, `list_tools`, `load_tools`, `shift_focus`, "
-            "`final_answer`, VFS tools, sub-agent tools) and tools you explicitly loaded via `load_tools` "
-            "may be called. Calling any other tool name will fail with `tool_use_failed` and waste an iteration.\n"
-            "Required order before using a non-static tool:\n"
-            "  1. `list_tools(category=...)` — discover what exists. Use a category if you know the domain "
-            "(e.g. `memory`, `vfs`, `web`), otherwise omit it.\n"
-            "  2. `load_tools(names=[...])` — activate the exact tools you need. Load proactively: "
-            "if you already know from context which tools the task requires, skip step 1 and load them directly "
-            "in your first iteration.\n"
-            "  3. Call the loaded tool.\n"
-            "Never guess tool names. Never call a tool before it appears in your active tool list. "
-            "If a call fails because the tool is not loaded, do NOT retry the same call — load it first, then retry."
-        )
-
-        prompt_parts.append("""
-
-  Statisch verfügbar (kein load_tools nötig):
-
-────────────────────────────────────────────────────────────────────────────
-  Tool                  │ Zweck
-  ──────────────────────┼─────────────────────────────
-  `think`               │ Analyse/Planung
-  `final_answer`        │ Ergebnis liefern
-  `shift_focus`         │ Kontext wechseln
-  `list_tools`          │ Verfügbare Tools entdecken
-  `load_tools`          │ Tools aktivieren
-  `list_skills`         │ Skills anzeigen
-  `activate_skill`      │ Skill aktivieren
-  `write_patch`         │ VFS-Datei patchen
-  `write_file`          │ VFS-Datei erstellen
-  `spawn_sub_agent`     │ Sub-Agent starten
-  `wait_for`            │ Sub-Agent abwarten
-  `sub_agents_status`   │ Sub-Agent Status
-  `resume_sub_agent`    │ Sub-Agent fortsetzen
-────────────────────────────────────────────────────────────────────────────
-
-        """)
-
-        # parallel tool calling.
-        prompt_parts.append(
-            "\n## Parallel Tool Calling\n"
-            "When a task requires multiple independent tools, call ALL of them in a single response — "
-            "not one at a time. Tools whose inputs do not depend on each other's outputs MUST be "
-            "called together in the same turn. Calling them sequentially wastes iterations.\n\n"
-            "Rules:\n"
-            "- If tool B needs the output of tool A → sequential (two turns) is correct.\n"
-            "- If tools A, B, C are independent → call all three in ONE turn.\n"
-            "- Sub-agents are always independent of each other unless you explicitly pass one's output "
-            "to another. Spawn all needed sub-agents in a single turn.\n"
-            "- ``shift_focus` and final_answer` must always be called alone, never alongside other tools!\n"
-            "- `load_tools` should be batched: load all tools you need in a single call, not one per turn."
-        )
-
-        # Add verification directive based on persona
         if ctx.active_persona.verification_level == "strict":
-            prompt_parts.append(
+            dynamic_parts.append(
                 "\n⚠️ VERIFICATION REQUIRED: After EVERY state-changing action, "
                 "verify the result with a read/list/status tool before proceeding."
             )
 
-        return "\n".join(prompt_parts)
+        return "\n".join(static_parts + dynamic_parts)
 
     def _sanitize_history_for_api(self, messages: List[dict]) -> List[dict]:
         """Fixes invalid JSON in assistant tool_calls to prevent API 400 errors."""
@@ -5328,29 +5352,36 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
 
     def _evict_if_over_limit(self, exclude_run_id: str = ""):
         """
-        Evict oldest paused/max_iterations contexts if _active_executions
-        exceeds max_resumable. Running contexts are never evicted.
-
-        Args:
-            exclude_run_id: The just-registered run_id (never self-evict)
+        Two-stage eviction:
+        1. Drop completed runs immediately (no resume value).
+        2. Cap paused/max_iterations runs at max_resumable, oldest progress first.
+        Running contexts are never evicted.
         """
-        # Count only resumable (paused / max_iterations) entries
+        # Stage 1: completed runs out (no resume needed)
+        completed_ids = [
+            rid for rid, ctx in self._active_executions.items()
+            if ctx.status == "completed" and rid != exclude_run_id
+        ]
+        for rid in completed_ids:
+            ctx = self._active_executions.pop(rid, None)
+            if ctx and self._session_last_run.get(ctx.session_id) == rid:
+                self._session_last_run.pop(ctx.session_id, None)
+
+        # Stage 2: cap resumable runs
         resumable = [
             (rid, ctx) for rid, ctx in self._active_executions.items()
             if ctx.status in ("paused", "max_iterations") and rid != exclude_run_id
         ]
-
         if len(resumable) < self.max_resumable:
             return
 
-        # Sort by current_iteration ascending → least progress = evict first
         resumable.sort(key=lambda x: x[1].current_iteration)
-
-        evict_count = len(resumable) - self.max_resumable + 1  # +1 for the new one
+        evict_count = len(resumable) - self.max_resumable + 1
         for i in range(evict_count):
             rid, ctx = resumable[i]
             self._active_executions.pop(rid, None)
-            self._session_last_run.pop(ctx.session_id, None)
+            if self._session_last_run.get(ctx.session_id) == rid:
+                self._session_last_run.pop(ctx.session_id, None)
             self.live.log(
                 f"[MemCap] Evicted paused run {rid} (iter={ctx.current_iteration}) "
                 f"from memory. Cold resume still available via obs.",

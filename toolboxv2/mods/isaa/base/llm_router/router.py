@@ -1,5 +1,7 @@
 """CompletionRouter — central entry point for LLM completions."""
 from __future__ import annotations
+
+import os
 from typing import AsyncIterator
 
 from .types import CompletionResult, StreamChunk, EmbedResult, ProviderError, UsageData
@@ -14,6 +16,7 @@ class CompletionRouter:
         self._session = session
         self._rate_limiter = rate_limiter
         self._adapters: dict[str, ProviderAdapter] = {}
+        self._api_key_map: dict[str, str] = {}
         self._strict_mode = strict_mode
         self._litellm_fallback: ProviderAdapter | None = None
         self._budget = BudgetTracker()
@@ -41,8 +44,10 @@ class CompletionRouter:
     def budget(self) -> BudgetTracker:
         return self._budget
 
-    def register(self, prefix: str, adapter: ProviderAdapter):
+    def register(self, prefix: str, adapter: ProviderAdapter, env_key_name: str = None):
         self._adapters[prefix] = adapter
+        if env_key_name:
+            self._api_key_map[prefix] = env_key_name
 
     def resolve(self, model_string: str) -> tuple[ProviderAdapter, str, str]:
         """Returns (adapter, actual_model, prefix).
@@ -58,14 +63,33 @@ class CompletionRouter:
             )
         return self._get_litellm_fallback(), model_string, ""
 
+    def quick_key(self, prefix: str, api_key: str) -> str:
+        if prefix not in self._api_key_map:
+            return api_key
+        #if api_key:
+        #    return api_key
+        env_key_name = self._api_key_map[prefix]
+        _api_key = os.getenv(env_key_name)
+        if _api_key is not None and _api_key != api_key:
+            return _api_key
+        return api_key
+
     async def complete(self, model: str, messages: list,
                        tools: list | None = None, **kw) -> CompletionResult:
         adapter, actual_model, prefix = self.resolve(model)
+
+        # Prompt-Caching injection
+        cache_enabled = kw.pop("cache", True)  # default ON
+        cache_ttl = kw.pop("cache_ttl", "5m")
+        if cache_enabled:
+            from .cache_control import inject_cache_breakpoints
+            messages, tools = inject_cache_breakpoints(messages, tools, prefix, cache_ttl)
+
         # Budget pre-check (estimate input tokens as chars//4)
         est = sum(len(str(m)) for m in messages) // 4
         self._budget.check(model, est)
         # Rate limiter
-        api_key = kw.pop("api_key", "")
+        api_key = self.quick_key(prefix, kw.pop("api_key", ""))
         used_model = model
         if self._rate_limiter:
             used_model, limiter_key = await self._rate_limiter.acquire(
@@ -95,9 +119,16 @@ class CompletionRouter:
                      collect_metrics: bool = False, **kw) -> AsyncIterator[StreamChunk]:
         metrics = StreamMetrics() if collect_metrics else kw.pop("metrics", None)
         adapter, actual_model, prefix = self.resolve(model)
+        # Prompt-Caching injection
+        cache_enabled = kw.pop("cache", True)  # default ON
+        cache_ttl = kw.pop("cache_ttl", "5m")
+        if cache_enabled:
+            from .cache_control import inject_cache_breakpoints
+            messages, tools = inject_cache_breakpoints(messages, tools, prefix, cache_ttl)
+
         est = sum(len(str(m)) for m in messages) // 4
         self._budget.check(model, est)
-        api_key = kw.pop("api_key", "")
+        api_key = self.quick_key(prefix, kw.pop("api_key", ""))
         used_model = model
         if self._rate_limiter:
             used_model, limiter_key = await self._rate_limiter.acquire(
@@ -149,7 +180,7 @@ class CompletionRouter:
 
     async def embed(self, model: str, texts: list[str], **kw) -> EmbedResult:
         adapter, actual_model, prefix = self.resolve(model)
-        api_key = kw.pop("api_key", "")
+        api_key = self.quick_key(prefix, kw.pop("api_key", ""))
         return await adapter.embed(self.session, api_key, actual_model, texts, **kw)
 
     def _get_litellm_fallback(self) -> ProviderAdapter:

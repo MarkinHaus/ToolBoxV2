@@ -25,16 +25,16 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from aiohttp import ClientSession
 from pydantic import BaseModel, Field
 
-from toolboxv2 import get_logger
+from toolboxv2 import get_logger, get_app
 from toolboxv2.utils.manifest.schema import OCRTier, IsaaOCRAPIConfig, IsaaOCRConfig, IsaaOCRManifestConfig
 
 logger = get_logger()
 
-
-# ─── Config ────────────────────────────────────────────────────────────────
-
+def get_session() -> ClientSession:
+    return get_app().session.session
 
 # ─── Data Models ───────────────────────────────────────────────────────────
 

@@ -58,8 +58,8 @@ from .base.AgentUtils import (
 from .base.ai_semantic_memory import AISemanticMemory
 
 from toolboxv2.mods.isaa.memory_index import (
-    MemoryIndex, MemoryIndexEdit, MemoryIndexEntry,
-    load_index, save_index, render_index, filter_spaces_by_query,
+    MemoryIndex,
+    load_index, render_index, filter_spaces_by_query,
     build_initial_index, update_index_after_save,
 )
 # Optional dill import for tool serialization
@@ -93,7 +93,7 @@ pipeline_arr = [
 
 row_agent_builder_sto = {}
 
-ISAA_SYSPROMPT ="""# ISAA Agent System Prompt v2.1
+ISAA_SYSPROMPT_FULL = """# ISAA Agent System Prompt v2.1
 
 ---
 
@@ -376,7 +376,31 @@ uncertain_about_X
 - No markdown lists unless user is reading on screen
 - Short sentences in audio context
 - End with a question or an offer: "Want me to investigate that?" / "Should we go deeper on X?"""
+ISAA_SYSPROMPT = """
+# ISAA Agent Core Protocol v2.1
 
+**MODE:** Default is **ACT** (tools, action, `final_answer`). Switch to **TALK** (conversational, no markdown lists) ONLY for brainstorming or voice interaction.
+
+## MANDATORY EXECUTION RULES (OODA)
+1. **Zero-Guessing:** NEVER guess paths, code, or tool availability. Ground everything in evidence.
+2. **Discovery:** If a needed tool is missing, execute `list_tools` → `load_tools`.
+3. **Verify Before & After:**
+   - Before writing: `search_vfs` → `vfs_view` / `cat`.
+   - After writing: Verify success via `stat` or `cat`.
+   - Async actions: Verify via `docker_status` / `vfs_diagnostics`.
+4. **Anti-Looping:** Max 2 consecutive `think` calls. NEVER repeat identical failing tool calls ≥3 times. If stuck, change parameters, find alternatives, or fail explicitly.
+5. **Context Management:** Call `shift_focus` if >8 iterations elapse to archive and reset context.
+6. **Sub-Agents:** They may read globally but MUST write ONLY to their assigned `/workspace/{name}/` directory.
+
+## WORKFLOW CHAINS
+- **File Mod:** `search_vfs` → read → `think` → write → verify → `final_answer`
+- **Unknown Task:** `think` → `list_tools` → `load_tools` → execute → `final_answer`
+
+## OUTPUT FORMAT (ACT Mode)
+Call `final_answer` EXACTLY ONCE when done, blocked, or at max iterations. Use this format:
+✅ Done: [1-line summary]
+📁 [file_path:line_number] (if applicable)
+⚠️ Remaining: [Only if blocked or unfinished, state why]"""
 # =============================================================================
 # TOOL SERIALIZATION HELPERS
 # =============================================================================
@@ -1077,8 +1101,11 @@ class Tools(MainTool):
                 if register:
                     self.agent_data[agent_name] = config_dict
                     self.config[f"agent-instance-{agent_name}"] = agent
+                    if "agents-name-list" not in self.config:
+                        self.config["agents-name-list"] = []
                     if agent_name not in self.config.get("agents-name-list", []):
-                        self.config.setdefault("agents-name-list", []).append(agent_name)
+
+                        self.config["agents-name-list"].append(agent_name)
 
                 self.print(f"Agent '{agent_name}' loaded from {path}")
                 if warnings:
@@ -1573,6 +1600,13 @@ class Tools(MainTool):
                 traceback.print_exc()
                 pass
 
+        async def _refresh_index():
+            nonlocal _memory_index
+            _memory_index = await update_index_after_save(
+                self, name, _data_dir, _memory_index, name, "", None
+            )
+            await _sync_index_to_vfs()
+
         async def memory_recall(query: str, search_type: str = "auto") -> str:
             """
             Ruft persistentes Wissen, Architektur-Dokus oder Projekt-Kontext ab.
@@ -1623,11 +1657,7 @@ class Tools(MainTool):
                 res += f"\nEntity '{entity_name}' zum Architektur-Graphen hinzugefügt."
 
             # index update
-            nonlocal _memory_index
-            _memory_index = await update_index_after_save(
-                self, name, _data_dir, _memory_index, name, content, concepts
-            )
-            await _sync_index_to_vfs()
+            await _refresh_index()
 
             return res
 
@@ -1735,11 +1765,7 @@ class Tools(MainTool):
             )
 
             # 4. Index synchronisieren
-            nonlocal _memory_index
-            _memory_index = await update_index_after_save(
-                self, name, _data_dir, _memory_index, name, new_content, final_concepts
-            )
-            await _sync_index_to_vfs()
+            await _refresh_index()
 
             return f"Eintrag erfolgreich aktualisiert.\nErsetzt:\n'{old_content[:100]}...'\nDurch:\n'{new_content[:100]}...'"
 
@@ -1776,6 +1802,7 @@ class Tools(MainTool):
 
                 # Hard-Delete löscht aus SQLite, FAISS und FTS5
                 await mka.remove_data_point(entry_id, hard=True)
+                await _refresh_index()
                 return f"Eintrag permanent gelöscht: '{content_preview}...'"
 
             elif item_type == "concept":
@@ -1786,6 +1813,7 @@ class Tools(MainTool):
                     (concept, store.space)
                 )
                 store._get_conn().commit()
+                await _refresh_index()
                 return f"Konzept '{concept}' wurde vollständig aus dem Space '{store.space}' entfernt."
 
             elif item_type == "relation":
@@ -1805,6 +1833,7 @@ class Tools(MainTool):
                     (f"%{src_str}%", src_str.lower(), f"%{tgt_str}%", tgt_str.lower())
                 )
                 store._get_conn().commit()
+                await _refresh_index()
                 return f"Graphen-Relationen zwischen '{src_str}' und '{tgt_str}' erfolgreich gelöscht."
 
             else:
@@ -3137,6 +3166,22 @@ async def job_dashboard(self, request: RequestData | None = None) -> dict:
 async def bench(self) -> dict:
     from toolboxv2.mods.isaa.base.bench.main import main as b_main
     await b_main()
+
+@export(mod_name="isaa", name="app")
+async def serve_app(self, app=None, host: str = "127.0.0.1", port: int = 8000, ws_port: int = 8100) -> dict:
+    from toolboxv2.mods.isaa.app.main import wsgi_app, isc, app as isaa_app
+    from waitress import serve as waitress_serve
+    if app is None:
+        app = get_app()
+    print(f"\nISAA App  step 2")
+    print(f"  http  http://{host}:{port}")
+    print(f"  ws    ws://{host}:{ws_port}/ws")
+    print(f"  isaa: {'available' if isc.get_isaa() else 'unavailable'}")
+    print(f"  {len(isaa_app.list_routes())} routes registered\n")
+    try:
+        waitress_serve(wsgi_app, host=host, port=port)
+    except KeyboardInterrupt:
+        self.print("Interrupted")
 # =============================================================================
 # MAIN
 # =============================================================================

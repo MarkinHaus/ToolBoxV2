@@ -15,33 +15,36 @@ def setup_default_adapters(router: CompletionRouter, env: dict | None = None):
     Only registers adapters for providers where keys are present.
     Ollama is always registered (localhost).
     """
-    env = env or dict(os.environ)
+
+    # 9Router
+    if os.getenv("NINEROUTER_KEY"):
+        router.register("9rou", OpenAICompatAdapter(os.getenv("NINEROUTER_URL", "http://localhost:20128/v1")), env_key_name="NINEROUTER_KEY")
 
     # Groq
-    if env.get("GROQ_API_KEY"):
-        router.register("groq", OpenAICompatAdapter("https://api.groq.com/openai/v1"))
+    if os.getenv("GROQ_API_KEY"):
+        router.register("groq", OpenAICompatAdapter("https://api.groq.com/openai/v1"), env_key_name="GROQ_API_KEY")
 
     # Gemini (OpenAI-compat endpoint)
-    if env.get("GEMINI_API_KEY"):
+    if os.getenv("GEMINI_API_KEY"):
         router.register("gemini", OpenAICompatAdapter(
-            "https://generativelanguage.googleapis.com/v1beta/openai"))
+            "https://generativelanguage.googleapis.com/v1beta/openai"), env_key_name="GEMINI_API_KEY")
 
     # ZAI Free + Coding
-    if env.get("ZAI_API_KEY"):
-        router.register("zai", ZAIAdapter(use_coding_plan=False))
-        router.register("zglm", ZAIAdapter(use_coding_plan=True))
+    if os.getenv("ZAI_API_KEY"):
+        router.register("zai", ZAIAdapter(use_coding_plan=False), env_key_name="ZAI_API_KEY")
+        router.register("zglm", ZAIAdapter(use_coding_plan=True), env_key_name="ZAI_API_KEY")
 
     # Anthropic
-    if env.get("ANTHROPIC_API_KEY"):
-        router.register("anthropic", AnthropicAdapter())
+    if os.getenv("ANTHROPIC_API_KEY"):
+        router.register("anthropic", AnthropicAdapter(), env_key_name="ANTHROPIC_API_KEY")
 
     # MiniMax
-    if env.get("MINIMAX_API_KEY"):
-        router.register("minimax", MiniMaxAdapter("https://api.minimax.io/v1"))
+    if os.getenv("MINIMAX_API_KEY"):
+        router.register("minimax", MiniMaxAdapter("https://api.minimax.io/v1"), env_key_name="MINIMAX_API_KEY")
 
     # Ollama (always available)
-    ollama_base = env.get("OLLAMA_BASE_URL", "http://localhost:11434")
-    router.register("ollama", OpenAICompatAdapter(ollama_base.rstrip("/") + "/v1"))
+    ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    router.register("ollama", OpenAICompatAdapter(ollama_base.rstrip("/") + "/v1"), env_key_name="OLLAMA_API_KEY")
 
     # All other OpenAI-compatible providers
     OPENAI_COMPAT: dict[str, tuple[str, str]] = {
@@ -55,10 +58,10 @@ def setup_default_adapters(router: CompletionRouter, env: dict | None = None):
         "cohere":      ("COHERE_API_KEY",      "https://api.cohere.com/v2"),
     }
     for prefix, (env_key, base_url) in OPENAI_COMPAT.items():
-        if env.get(env_key):
-            router.register(prefix, OpenAICompatAdapter(base_url))
+        if os.getenv(env_key):
+            router.register(prefix, OpenAICompatAdapter(base_url), env_key_name=env_key)
 
     # Gateway (custom LLM proxy)
-    gw_url = env.get("TB_LLM_GATEWAY_URL")
+    gw_url = os.getenv("TB_LLM_GATEWAY_URL")
     if gw_url:
-        router.register("gateway", OpenAICompatAdapter(gw_url))
+        router.register("gateway", OpenAICompatAdapter(gw_url), env_key_name="TB_LLM_GATEWAY_URL")

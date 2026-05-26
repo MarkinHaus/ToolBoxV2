@@ -1238,7 +1238,10 @@ class WebSocketMessageHandler:
         user_id = event.payload.get("user_id", "")
         session_id = event.payload.get("session_id", "")
         data = event.payload.get("data", "")
-        path = event.payload.get("path", "/ws")
+        path = event.payload.get("path", "ws")
+
+        if path.startswith("/"):
+            path = path[1:]
 
         self._logger.info(
             f"WS Message from {conn_id} on path {path}: {data[:200] if isinstance(data, str) else str(data)[:200]}...")

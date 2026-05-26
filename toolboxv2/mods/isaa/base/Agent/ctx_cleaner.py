@@ -22,19 +22,19 @@ import re
 from typing import Any
 
 # ── Thresholds ──────────────────────────────────────────────────────
-MIN_LEN = 600          # never touch strings shorter than this
-HARD_CAP = 80_000      # always truncate above this regardless of score
-EXCERPT_LEN = 200      # chars to keep as preview
-MAX_LINES_SAMPLE = 80  # lines to sample for analysis (perf)
+MIN_LEN = 30_000          # never touch strings shorter than this
+HARD_CAP = 8_000_000      # always truncate above this regardless of score
+EXCERPT_LEN = 600      # chars to keep as preview
+MAX_LINES_SAMPLE = 120  # lines to sample for analysis (perf)
 
 # Score thresholds per size bucket:
 #   (min_len, max_len, min_score_to_truncate)
 # Bigger strings need lower chaos score to trigger.
 _BUCKETS = [
-    (600,    2_000,  0.55),   # small: only quite chaotic
-    (2_000,  8_000,  0.32),   # medium: moderately chaotic
-    (8_000,  30_000, 0.25),   # large: mildly chaotic
-    (30_000, HARD_CAP, 0.18), # huge: any chaos signal
+    (30_000,   120_000,  0.55),   # small: only quite chaotic
+    (120_000,  480_000,  0.32),   # medium: moderately chaotic
+    (480_000,  2_000_000, 0.25),   # large: mildly chaotic
+    (2_000_000, HARD_CAP, 0.18), # huge: any chaos signal
 ]
 
 

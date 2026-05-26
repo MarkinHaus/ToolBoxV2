@@ -1757,7 +1757,7 @@ class WebSocketContext:
             "authenticated": self.is_authenticated,
         }
 
-
+# from toolboxv2.utils.system.session import Session as AioSession
 class AppType:
     prefix: str
     id: str
@@ -1826,7 +1826,7 @@ class AppType:
     called_exit: tuple[bool, float]
     args_sto: AppArgs
     system_flag = None
-    session = None
+    session: 'AioSession' = None
     appdata = None
     exit_tasks = []
 

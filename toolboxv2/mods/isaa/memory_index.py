@@ -1,38 +1,34 @@
 """
-Memory Index — persistent, BLITZMODEL-updated index of what's stored where in memory.
-
-Integration point: module.py get_agent_builder() closures.
+Memory Index — derived from the graph (entities + relations + concepts).
+Zero LLM calls. Rebuilds passively on every memory_save via SQL queries.
 """
 from __future__ import annotations
 
-import json
-import logging
 from pathlib import Path
 from pydantic import BaseModel, Field
 
 from toolboxv2 import get_logger
+from toolboxv2.mods.isaa.base.memory_graph_visualizer import MemoryGraphVisualizer
 
 logger = get_logger()
 
 
 # ── Schema ──────────────────────────────────────────────────────────────
 
-class MemoryIndexEntry(BaseModel):
-    key_concepts: list[str] = Field(default_factory=list)
-    summary: str = ""  # mini-summary over related entries
-
-
-class MemoryIndexEdits(BaseModel):
-    edits: list[MemoryIndexEntry] = Field(default_factory=list)
-
-class MemoryIndexEdit(BaseModel):
-    space: str
-    concept_cluster: str
-    new_information: str
+class SpaceSnapshot(BaseModel):
+    nodes: list[dict] = Field(default_factory=list)   # from to_json()
+    edges: list[dict] = Field(default_factory=list)
+    concepts: dict[str, int] = Field(default_factory=dict)  # concept -> count
+    entry_count: int = 0
 
 
 class MemoryIndex(BaseModel):
-    entries: dict[str, list[MemoryIndexEntry]] = Field(default_factory=dict)
+    spaces: dict[str, SpaceSnapshot] = Field(default_factory=dict)
+
+    # back-compat: module.py checks `len(idx.entries) > 0`
+    @property
+    def entries(self) -> dict[str, SpaceSnapshot]:
+        return self.spaces
 
 
 # ── Persistence ─────────────────────────────────────────────────────────
@@ -47,196 +43,79 @@ def load_index(data_dir: str, agent_name: str) -> MemoryIndex:
         try:
             return MemoryIndex.model_validate_json(p.read_text())
         except Exception as e:
-            logger.warning(f"Failed to load memory index from {p}: {e}")
+            logger.warning(f"memory_index load failed ({p}): {e}")
     return MemoryIndex()
 
 
-def save_index(data_dir: str, agent_name: str, index: MemoryIndex):
+def save_index(data_dir: str, agent_name: str, index: MemoryIndex) -> None:
     p = _index_path(data_dir, agent_name)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(index.model_dump_json(indent=2))
 
 
-# ── Apply edit from BLITZMODEL ──────────────────────────────────────────
+# ── Per-space snapshot (no LLM) ─────────────────────────────────────────
 
-def apply_edit(index: MemoryIndex, edit: MemoryIndexEdit) -> MemoryIndex:
-    """Patch a single concept_cluster in a space. Upsert logic."""
-    space = edit.space
-    if space not in index.entries:
-        index.entries[space] = []
-
-    # find existing cluster by concept overlap
-    for entry in index.entries[space]:
-        if edit.concept_cluster.lower() in [c.lower() for c in entry.key_concepts]:
-            # update existing
-            entry.summary = edit.new_information
-            return index
-
-    # new cluster
-    index.entries[space].append(MemoryIndexEntry(
-        key_concepts=[edit.concept_cluster],
-        summary=edit.new_information,
-    ))
-    return index
+def _top_concepts(store, limit: int = 25) -> dict[str, int]:
+    try:
+        with store._tx() as conn:
+            cur = conn.execute(
+                """SELECT c.concept, COUNT(*) AS cnt
+                   FROM concept_index c
+                   JOIN entries e ON c.entry_id = e.id
+                   WHERE e.space = ? AND e.is_active = 1
+                   GROUP BY c.concept
+                   ORDER BY cnt DESC
+                   LIMIT ?""",
+                (store.space, limit),
+            )
+            return {row[0]: int(row[1]) for row in cur}
+    except Exception as e:
+        logger.debug(f"_top_concepts({store.space}) failed: {e}")
+        return {}
 
 
-# ── Render to VFS string ────────────────────────────────────────────────
-
-def render_index(index: MemoryIndex) -> str:
-    """Render index as compact markdown for the VFS system file."""
-    if not index.entries:
-        return "# Memory Index\n\n_Empty — no entries yet._"
-
-    lines = ["# Memory Index", ""]
-    for space in sorted(index.entries.keys()):
-        entries = index.entries[space]
-        if not entries:
-            continue
-        lines.append(f"## {space}")
-        for e in entries:
-            concepts = ", ".join(e.key_concepts)
-            lines.append(f"- **[{concepts}]** {e.summary}")
-        lines.append("")
-
-    return "\n".join(lines)
+def _entry_count(store) -> int:
+    try:
+        with store._tx() as conn:
+            cur = conn.execute(
+                "SELECT COUNT(*) FROM entries WHERE space = ? AND is_active = 1",
+                (store.space,),
+            )
+            return int(cur.fetchone()[0])
+    except Exception:
+        return 0
 
 
-# ── Recall filter — local keyword match against index ───────────────────
-
-def filter_spaces_by_query(index: MemoryIndex, query: str) -> list[str]:
-    """Return space names whose concept clusters match query keywords. No LLM call."""
-    if not index.entries:
-        return []
-
-    query_tokens = set(query.lower().split())
-    scored: list[tuple[str, int]] = []
-
-    for space, entries in index.entries.items():
-        hits = 0
-        for entry in entries:
-            for concept in entry.key_concepts:
-                if concept.lower() in query_tokens or any(t in concept.lower() for t in query_tokens):
-                    hits += 1
-            # also check summary words
-            summary_tokens = set(entry.summary.lower().split())
-            hits += len(query_tokens & summary_tokens)
-        if hits > 0:
-            scored.append((space, hits))
-
-    scored.sort(key=lambda x: x[1], reverse=True)
-    return [s for s, _ in scored]
+def build_snapshot(store) -> SpaceSnapshot:
+    """One space → snapshot. Pure SQL via MemoryGraphVisualizer + concept_index."""
+    graph = MemoryGraphVisualizer(store).to_json()
+    return SpaceSnapshot(
+        nodes=graph.get("nodes", []),
+        edges=graph.get("edges", []),
+        concepts=_top_concepts(store),
+        entry_count=_entry_count(store),
+    )
 
 
-# ── Initial build — scan all spaces, build index via BLITZMODEL ─────────
+def build_index_from_memory(mem) -> MemoryIndex:
+    """All non-empty spaces. Sync, fast, no LLM."""
+    idx = MemoryIndex()
+    for space_name, store in mem.memories.items():
+        try:
+            snap = build_snapshot(store)
+            if snap.entry_count > 0 or snap.nodes:
+                idx.spaces[space_name] = snap
+        except Exception as e:
+            logger.warning(f"snapshot {space_name} failed: {e}")
+    return idx
 
-INITIAL_BUILD_PROMPT = """You receive a list of memory spaces with their entry counts and sample concepts.
-Create a structured index. For each NON-EMPTY space, produce a JSON array of MemoryIndexEdit objects.
 
-Each MemoryIndexEdit has:
-- space: the space name
-- concept_cluster: a short label grouping related concepts
-- new_information: a 1-2 sentence summary of what this cluster contains
-
-Rules:
-- Skip spaces with 0 entries
-- Group related concepts into clusters (max 5 clusters per space)
-- Keep summaries concise — this is an overview, not documentation
-- Output ONLY valid JSON array, no markdown, no explanation
-
-Input:
-{space_data}"""
-
+# ── Compat wrappers (same signatures module.py already calls) ───────────
 
 async def build_initial_index(isaa_ref, agent_name: str, data_dir: str) -> MemoryIndex:
-    """Scan all non-empty spaces and ask BLITZMODEL to produce the initial index."""
-    mem = isaa_ref.get_memory()
-    spaces = list(mem.memories.keys())
-
-    # collect metadata per space
-    space_data = []
-    for space_name in spaces:
-        try:
-            mka_temp = None
-            # import here to avoid circular at module level
-            from toolboxv2.mods.isaa.base.MemoryKnowledgeActor import MemoryKnowledgeActor
-            mka_temp = MemoryKnowledgeActor(memory=mem, space_name=space_name)
-            stats = await mka_temp.get_stats() if hasattr(mka_temp, 'get_stats') else {}
-            entry_count = stats.get('total_entries', 0) if isinstance(stats, dict) else 0
-
-            # try to get concepts
-            concepts = []
-            if hasattr(mka_temp, 'list_concepts'):
-                concepts = await mka_temp.list_concepts()
-            elif hasattr(mka_temp, 'get_all_concepts'):
-                concepts = await mka_temp.get_all_concepts()
-
-            if entry_count == 0:
-                continue  # skip empty spaces
-
-            space_data.append({
-                "space": space_name,
-                "entry_count": entry_count,
-                "sample_concepts": concepts[:20] if concepts else [],
-            })
-        except Exception as e:
-            logger.error(f"Skipping space {space_name} during index build: {e}")
-            continue
-
-    if not space_data:
-        return MemoryIndex()
-
-    # call BLITZMODEL via format_class
-    prompt = INITIAL_BUILD_PROMPT.format(space_data=json.dumps(space_data, indent=2))
-
-    try:
-        result = await isaa_ref.format_class(
-            format_schema=MemoryIndexEntry,
-            task=prompt,
-            agent_name=agent_name,
-        )
-    except Exception as e:
-        logger.warning(f"BLITZMODEL initial index build failed: {e}")
-        return MemoryIndex()
-
-    if not result:
-        return MemoryIndex()
-
-    # result should be a list of dicts matching MemoryIndexEdit
-    index = MemoryIndex()
-    edits = result if isinstance(result, list) else result.get("items", result.get("edits", []))
-    for edit_data in edits:
-        try:
-            if isinstance(edit_data, dict):
-                edit = MemoryIndexEdit(**edit_data)
-            elif isinstance(edit_data, MemoryIndexEdit):
-                edit = edit_data
-            else:
-                continue
-            index = apply_edit(index, edit)
-        except Exception as e:
-            logger.debug(f"Skipping malformed edit: {e}")
-            continue
-
-    save_index(data_dir, agent_name, index)
-    return index
-
-
-# ── Post-save update — ask BLITZMODEL to patch index ────────────────────
-
-POST_SAVE_PROMPT = """A new fact was saved to memory space "{space}".
-
-New content: "{content}"
-Concepts: {concepts}
-
-Current index for this space:
-{current_space_index}
-
-Produce a single MemoryIndexEdit to update the index:
-- space: "{space}"
-- concept_cluster: which cluster this belongs to (existing or new)
-- new_information: updated summary incorporating the new fact
-
-Output ONLY valid JSON object, no markdown."""
+    idx = build_index_from_memory(isaa_ref.get_memory())
+    save_index(data_dir, agent_name, idx)
+    return idx
 
 
 async def update_index_after_save(
@@ -245,43 +124,101 @@ async def update_index_after_save(
     data_dir: str,
     index: MemoryIndex,
     space: str,
-    content: str,
-    concepts: list[str] | None,
+    content: str = "",          # ignored — graph is the source of truth now
+    concepts: list[str] | None = None,  # ignored
 ) -> MemoryIndex:
-    """Ask BLITZMODEL to produce a partial edit after a memory_save."""
-    current_entries = index.entries.get(space, [])
-    current_str = json.dumps([e.model_dump() for e in current_entries], indent=1) if current_entries else "[]"
-
-    prompt = POST_SAVE_PROMPT.format(
-        space=space,
-        content=content[:500],  # cap to keep prompt small
-        concepts=json.dumps(concepts or []),
-        current_space_index=current_str,
-    )
-
-    try:
-        result = await isaa_ref.format_class(
-            format_schema=MemoryIndexEdit,
-            task=prompt,
-            agent_name=agent_name,
-        )
-    except Exception as e:
-        logger.warning(f"BLITZMODEL index update failed: {e}")
+    """Refresh just the affected space — other snapshots stay cached."""
+    mem = isaa_ref.get_memory()
+    store = mem.memories.get(space)
+    if store is None:
         return index
-
-    if not result:
-        return index
-
     try:
-        if isinstance(result, dict):
-            edit = MemoryIndexEdit(**result)
-        elif isinstance(result, MemoryIndexEdit):
-            edit = result
+        snap = build_snapshot(store)
+        if snap.entry_count > 0 or snap.nodes:
+            index.spaces[space] = snap
         else:
-            return index
-        index = apply_edit(index, edit)
+            index.spaces.pop(space, None)
         save_index(data_dir, agent_name, index)
     except Exception as e:
-        logger.debug(f"Failed to apply post-save edit: {e}")
-
+        logger.warning(f"update_index_after_save({space}) failed: {e}")
     return index
+
+
+# ── Markdown render (VFS file) ──────────────────────────────────────────
+
+def render_index(index: MemoryIndex) -> str:
+    if not index.spaces:
+        return "# Memory Index\n\n_Empty — no entries yet._"
+
+    out: list[str] = ["# Memory Index", ""]
+    for space in sorted(index.spaces.keys()):
+        snap = index.spaces[space]
+        if snap.entry_count == 0 and not snap.nodes:
+            continue
+
+        out.append(
+            f"## {space}  ·  {snap.entry_count} entries  ·  "
+            f"{len(snap.nodes)} entities  ·  {len(snap.edges)} relations"
+        )
+        out.append("")
+
+        if snap.nodes:
+            id_to_label = {n["id"]: (n.get("label") or n["id"]) for n in snap.nodes}
+            outgoing: dict[str, list[tuple[str, str]]] = {}
+            for e in snap.edges:
+                outgoing.setdefault(e["source"], []).append(
+                    (e["target"], e.get("type") or "rel")
+                )
+
+            out.append("### Entities & Relations")
+            for n in sorted(snap.nodes, key=lambda x: (x.get("label") or x["id"]).lower()):
+                label = n.get("label") or n["id"]
+                ntype = n.get("type", "?")
+                outs = outgoing.get(n["id"], [])
+                if outs:
+                    rels = ", ".join(
+                        f"{rtype}→{id_to_label.get(tgt, tgt)}" for tgt, rtype in outs
+                    )
+                    out.append(f"- **{label}** *({ntype})* — {rels}")
+                else:
+                    out.append(f"- **{label}** *({ntype})*")
+            out.append("")
+
+        if snap.concepts:
+            top = ", ".join(f"`{c}`({n})" for c, n in list(snap.concepts.items())[:20])
+            out.append("### Concepts")
+            out.append(top)
+            out.append("")
+
+    return "\n".join(out)
+
+
+# ── Recall filter (no LLM) ──────────────────────────────────────────────
+
+def filter_spaces_by_query(index: MemoryIndex, query: str) -> list[str]:
+    if not index.spaces:
+        return []
+
+    tokens = {t for t in query.lower().split() if len(t) > 2}
+    if not tokens:
+        return []
+
+    scored: list[tuple[str, int]] = []
+    for space, snap in index.spaces.items():
+        hits = 0
+        for n in snap.nodes:
+            label = (n.get("label") or "").lower()
+            ntype = (n.get("type") or "").lower()
+            if any(t in label or t in ntype for t in tokens):
+                hits += 2
+        for e in snap.edges:
+            if any(t in (e.get("type") or "").lower() for t in tokens):
+                hits += 1
+        for concept, cnt in snap.concepts.items():
+            if any(t in concept.lower() for t in tokens):
+                hits += min(cnt, 3)
+        if hits > 0:
+            scored.append((space, hits))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return [s for s, _ in scored]

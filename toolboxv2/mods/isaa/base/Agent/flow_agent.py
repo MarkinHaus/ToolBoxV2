@@ -359,7 +359,7 @@ class FlowAgent:
         max_parallel_tasks: int = 3,
         auto_load_checkpoint: bool = True,
         rule_config_path: str | None = None,
-        progress_callback: Callable | None = None,
+        stream_callback: Callable | None = None,
         stream: bool = True,
         **kwargs,
     ):
@@ -368,6 +368,7 @@ class FlowAgent:
         self.amd : AgentModelData= amd
         self.verbose = verbose
         self.stream = stream
+        self.stream_callback = stream_callback
         self._rule_config_path = rule_config_path
 
         self.is_running = False
@@ -514,6 +515,7 @@ class FlowAgent:
             "nvidia_nim": "NVIDIA_NIM_API_KEY",
             "together_ai": "TOGETHER_API_KEY",
             "minimax": "MINIMAX_API_KEY",
+            "9rou": "NINEROUTER_KEY",
             "ollama": "",
         }
         prefix = model.split("/", 1)[0] if "/" in model else ""
@@ -624,6 +626,12 @@ class FlowAgent:
         self._vison[model_preference] = not model.startswith("ollama/")
         return self._vison[model_preference]
 
+    async def chat(self, query:str,
+                   is_new=False, with_tools=True, stream=False):
+        res = await self.a_run_llm_completion(
+
+        )
+
     async def a_run_llm_completion(
         self,
         messages: list[dict],
@@ -703,9 +711,15 @@ class FlowAgent:
             if session:
                 await session.initialize()
                 session_context = session.build_vfs_context()
-            system_msg = (session_context or "") + self.amd.get_system_message()
+
+            static_sys = self.amd.get_system_message()  # cacheable
+            dynamic_sys = session_context or ""  # NOT cached
+
+            sysmsg = [{"role": "system", "content": static_sys}]
+            if dynamic_sys.strip():
+                sysmsg.append({"role": "system", "content": dynamic_sys})
+
             if session:
-                sysmsg = [{"role": "system", "content": system_msg}]
                 full_history = session.get_history(kwargs.get("history_size", 6))
                 current_msg = llm_kwargs["messages"]
                 for msg in full_history:
@@ -729,18 +743,26 @@ class FlowAgent:
                         break
                 llm_kwargs["messages"] = sysmsg + full_history + current_msg
             else:
-                llm_kwargs["messages"] = [
-                    {"role": "system", "content":system_msg}
-                ] + llm_kwargs["messages"]
+                llm_kwargs["messages"] = sysmsg  + llm_kwargs["messages"]
 
         # Repair orphaned tool messages (required by Cerebras strict template validation)
         known_tool_ids = set()
         for m in llm_kwargs["messages"]:
             if m.get("role") == "assistant":
+                tcs = []
                 for tc in m.get("tool_calls", []) or []:
-                    tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                    if not isinstance(tc, dict):
+                        tc = tc.to_dict() if hasattr(tc, "to_dict") else {
+                                "id": tc.id,
+                                "function": {"name":tc.function.name,"arguments": tc.function.arguments},
+                                "type": tc.type
+                            }
+                    tcs.append(tc)
+                    tc_id = tc.get("id")
                     if tc_id:
                         known_tool_ids.add(tc_id)
+                if tcs:
+                    m["tool_calls"] = tcs
 
         for i, m in enumerate(llm_kwargs["messages"]):
             if m.get("role") == "tool" and m.get("tool_call_id") not in known_tool_ids:
@@ -836,6 +858,7 @@ class FlowAgent:
                             messages=llm_kwargs["messages"],
                             tools=llm_kwargs.get("tools"),
                             api_key=os.environ.get(self._resolve_api_key_env(llm_kwargs["model"]), ""),
+                            cache=self.amd.caching,
                             **{k: v for k, v in llm_kwargs.items()
                                if k not in ("model", "messages", "tools", "stream", "stream_options")},
                         )
@@ -1244,7 +1267,9 @@ class FlowAgent:
         async for chunk in response:
             if row:
                 yield chunk
-
+            res = self.stream_callback(chunk) if self.stream_callback is not None else None
+            if asyncio.iscoroutine(res) or asyncio.isfuture(res):
+                await res
             delta = chunk.choices[0].delta
             content = delta.content or ""
             result += content
@@ -3341,7 +3366,7 @@ class FlowAgent:
              },
         ]
 
-        tools.append([{
+        tools.append({
             "tool_func": web_shell_fn,
             "name": "web_shell",
             "category": ["web", "browser", "scraping"],
@@ -3353,7 +3378,7 @@ class FlowAgent:
                 "Auto-learns site selectors (Layer 1) and supports saved multi-step flows (Layer 2). "
                 "Returns {success, stdout, stderr, returncode}."
             ),
-        }]) if web_shell_fn else None
+        }) if web_shell_fn else None
 
         # ── Optional: Google Tools ────────────────────────────────────────
         if os.getenv("WITH_GOOGLE_TOOLS", "false") == "true":

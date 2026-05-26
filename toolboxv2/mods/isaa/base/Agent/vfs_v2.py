@@ -887,14 +887,14 @@ class VirtualFileSystemV2:
     def _build_vfs_guide(self) -> str:
         """Build the VFS usage guide that is injected as /vfs_guide.md."""
         return (
-            r"""# VFS — Schnellreferenz
+            fr"""# VFS — Schnellreferenz
 
 ## Die zwei Kern-Tools
 
 | Tool | Zweck |
 |------|-------|
 | `vfs_shell(reason, command)` | Alle Datei-Operationen (lesen, schreiben, suchen, navigieren) |
-| `vfs_view(path, ...)` | Kontext-Fenster steuern — was du im nächsten Prompt **siehst** |
+| `vfs_view(path, ...)` | Kontext-Fenster {self.max_window_lines} steuern — was du im nächsten Prompt **siehst** |
 
 ---
 
@@ -905,6 +905,8 @@ Geschlossene Dateien sind unsichtbar — nur Metadaten bleiben erhalten.
 
 **Regel**: Öffne immer nur den Bereich, der für deine aktuelle Aufgabe direkt relevant ist.
 
+dein fester pro file ist {self.max_window_lines}.
+sache dier als indeterminists "oder genauer" diese größe an sektionen an {self.max_window_lines}.
 ---
 
 ## Fokussierter Recherche-Workflow (x und y finden)
@@ -968,8 +970,8 @@ Grund: JSON-Tool-Calls können bei Längenbeschränkung abbrechen.
 Ein abgebrochener Call = keine Wirkung. Kein partial-write.
 
 REGEL:
-  < 40 Zeilen  →  write <path> "..."   (ein Call)
-  ≥ 40 Zeilen  →  write_chunk          (ein Call pro Block)
+  < 750 Zeilen  →  write <path> "..."   (ein Call)
+  ≥ 750 Zeilen  →  write_chunk          (ein Call pro Block)
 
 CHUNK-PROTOKOLL:
   write_chunk <path> 0 <N> "<block_0_content>"   ← erzeugt/überschreibt Datei
@@ -1046,13 +1048,13 @@ Prüfe Whitespace und verwende ein kürzeres, eindeutiges Pattern.
 ---
 
 
-## Chunk-Protokoll (Beispiel für 120 Zeilen Datei)
+## Chunk-Protokoll (Beispiel für 750 Zeilen Datei)
 
-Wenn eine Datei zu groß für einen Call ist, teile sie in Blöcke à ~40 Zeilen:
+Wenn eine Datei zu groß für einen Call ist, teile sie in Blöcke à ~250 Zeilen:
 
-1. `vfs_shell("init big file", "write_chunk /src/big.py 0 3 '...zeile 1-40...'")`
-2. `vfs_shell("add chunk 1", "write_chunk /src/big.py 1 3 '...zeile 41-80...'")`
-3. `vfs_shell("finalize", "write_chunk /src/big.py 2 3 '...zeile 81-120...'")`
+1. `vfs_shell("init big file", "write_chunk /src/big.py 0 3 '...zeile 1-250...'")`
+2. `vfs_shell("add chunk 1", "write_chunk /src/big.py 1 3 '...zeile 251-500...'")`
+3. `vfs_shell("finalize", "write_chunk /src/big.py 2 3 '...zeile 501-750...'")`
 
 pythonBei Verbindungsabbruch: `write_chunk_status /src/big.py` prüft, welche Indizes fehlen.
 

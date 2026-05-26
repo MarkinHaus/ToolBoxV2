@@ -29,7 +29,7 @@ try:
     import customtkinter as ctk
 except ImportError:
     ctk = lambda :None
-    ctk.CTk = None
+    ctk.CTk = object
 # ─── Colors ───────────────────────────────────────────────────────────────────
 C = {
     "bg":      "#0d1117",
