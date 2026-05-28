@@ -180,12 +180,20 @@
           return;
         }
         Store.pushFrame(f);
-        renderChat();
+        // Don't rebuild the chat view while in widget mode — it would wipe the grid.
+        if (document.querySelector('.isaa-body').dataset.view !== 'widgets') renderChat();
       },
     });
     WS.connect(chatId);
 
-    renderChat();
+    // Fix 1: switch to chat view (and play the slide animation) only once the
+    // chat actually has messages — a freshly created/empty chat stays on Welcome
+    // until the first message is sent from the text input.
+    if (Store.frames.length || Store.isRunning) {
+      renderChat();
+    } else {
+      await renderWelcome();
+    }
   }
 
   // ============================================================================
@@ -197,20 +205,22 @@
     const text = ta.value.trim();
     const atts = Store.attachments.slice();
     if (!text && !atts.length) return;
-    if (!Store.activeChatId) {
-      // Create a chat first
-      newChat().then(() => sendNow(text, atts));
-    } else {
-      sendNow(text, atts);
-    }
     ta.value = '';
     Store.clearDraft();
     Store.clearAttachments();
     renderAttachments();
     autoresize(ta);
-  }
-  function sendNow(text, atts) {
-    WS.send({ op: 'send', text, attachments: atts.map(a => ({ upload_id: a.upload_id, vfs_path: a.vfs_path })) });
+    (async () => {
+      if (!Store.activeChatId) await newChat();
+      const attMapped = atts.map(a => ({ upload_id: a.upload_id, vfs_path: a.vfs_path, name: a.name }));
+      // Immediate feedback: optimistic user bubble + thinking state (Fix 3),
+      // and switch to chat view → plays the welcome→chat animation (Fix 1).
+      Store.isRunning = true;
+      Store.pushFrame({ type: 'user_msg', text, attachments: attMapped, _optimistic: true });
+      renderChat();
+      // Reliable delivery even if the socket is still connecting (first message).
+      WS.sendWhenReady({ op: 'send', text, attachments: attMapped.map(a => ({ upload_id: a.upload_id, vfs_path: a.vfs_path })) });
+    })();
   }
   function cancel() {
     WS.send({ op: 'cancel' });

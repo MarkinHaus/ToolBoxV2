@@ -8,6 +8,8 @@ restart (we surface a 'rebuild_required' flag when the model changes).
 """
 from __future__ import annotations
 
+import json
+
 # Fields that can be hot-applied to an existing built agent.
 HOT_FIELDS = {
     "system_message",
@@ -56,7 +58,7 @@ def register(app, ctx):
 
     @app.get("/api/agents/{name}/config")
     async def get_config(name: str):
-        cfg = isaa.agent_data.get(name)
+        cfg = isaa.agent_data.get(name) #TODO fix dosnot foud self agent
         if cfg is None:
             return (404, {"error": "Agent not found"})
         return cfg
@@ -104,6 +106,57 @@ def register(app, ctx):
             "applied_hot": changed_hot,
             "rebuild_required": changed_rebuild,
         }
+
+    @app.get("/api/agents/{name}/personas")
+    async def list_personas(name: str, request):
+        """Persona suggestions: config persona_profiles + VFS-learned personas."""
+        qp = request.query_params
+        sid = qp.get("session_id", "")
+        if isinstance(sid, list):
+            sid = sid[0] if sid else ""
+        cfg = isaa.agent_data.get(name) or {}
+        out = []
+        seen = set()
+        for pname, prof in (cfg.get("persona_profiles") or {}).items():
+            seen.add(pname)
+            out.append({"name": pname, "source": "config",
+                        "model_preference": (prof or {}).get("model_preference", "")})
+        if sid:
+            try:
+                agent = await isaa.get_agent(name)
+                sess = agent.session_manager.get(sid)
+                path = "/global/.memory/dreamer/personas.json"
+                raw = None
+                if sess is not None and hasattr(sess, "vfs_read"):
+                    r = sess.vfs_read(path)
+                    if isinstance(r, dict) and r.get("success"):
+                        raw = r.get("content")
+                if raw is None and sess is not None and hasattr(sess, "vfs"):
+                    try:
+                        rr = sess.vfs.read(path)
+                        raw = rr.get("content", rr) if isinstance(rr, dict) else rr
+                    except Exception:
+                        raw = None
+                if raw:
+                    store_ = json.loads(raw) if isinstance(raw, str) else raw
+                    for key, entry in (store_ or {}).items():
+                        if not isinstance(entry, dict):
+                            continue
+                        if entry.get("confidence", 0.0) < 0.30:
+                            continue
+                        prof = entry.get("profile", {}) or {}
+                        pname = prof.get("name", key)
+                        if pname in seen:
+                            continue
+                        seen.add(pname)
+                        out.append({
+                            "name": pname, "source": "dreamer_learned",
+                            "confidence": entry.get("confidence", 0.0),
+                            "model_preference": prof.get("model_preference", ""),
+                        })
+            except Exception:
+                pass
+        return {"active": cfg.get("active_persona"), "personas": out}
 
     @app.post("/api/agents/{name}/duplicate")
     async def duplicate(name: str, request):

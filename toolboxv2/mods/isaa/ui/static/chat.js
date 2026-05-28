@@ -375,8 +375,10 @@
       if (g.user) html += renderUserMsg(g.user);
       for (let si = 0; si < g.steps.length; si++) {
         const step = g.steps[si];
-        if (!step.body && !step.tools.length && !step.reasoning && !step.error && !step.finalAnswer) continue;
         const isLastOverall = (gi === groups.length - 1) && (si === g.steps.length - 1);
+        const hasContent = step.body || step.tools.length || step.reasoning || step.error || step.finalAnswer;
+        // Keep the trailing empty step visible while running → immediate thinking feedback.
+        if (!hasContent && !(isLastOverall && store.isRunning)) continue;
         const expanded = store.expandedSteps.has(step.step_id);
         const l2 = store.l2Steps.has(step.step_id);
         html += renderStep(step, isLastOverall, expanded, l2);
@@ -384,6 +386,18 @@
     }
     html += '</div>';
     container.innerHTML = html;
+    // §8: ISA logo spinner pinned at the current streaming position (moves down
+    // with the content as new frames arrive + auto-scroll).
+    if (store.isRunning) {
+      const tpl = document.getElementById('tpl-logo');
+      const stream = container.querySelector('.chat-stream');
+      if (tpl && stream) {
+        const sp = document.createElement('div');
+        sp.className = 'stream-spinner';
+        sp.appendChild(tpl.content.cloneNode(true));
+        stream.appendChild(sp);
+      }
+    }
   }
 
   // ============================================================================

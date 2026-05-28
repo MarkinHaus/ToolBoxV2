@@ -103,6 +103,12 @@
 
     // ----- frames -----
     pushFrame(frame) {
+      // Drop the optimistic (client-only) user_msg once the server's confirmed
+      // copy (carrying a seq) arrives, to avoid a duplicate user bubble.
+      if (frame.type === 'user_msg' && frame.seq) {
+        const i = this.frames.findIndex(f => f.type === 'user_msg' && f._optimistic && f.text === frame.text);
+        if (i !== -1) this.frames.splice(i, 1);
+      }
       this.frames.push(frame);
       if (frame.seq && frame.seq > this.lastSeq) this.lastSeq = frame.seq;
       // Side effects

@@ -95,6 +95,22 @@
       <ul class="vfs-tree" id="vfs-tree"><li><em>laden…</em></li></ul>
     `;
     const tree = panel.querySelector('#vfs-tree');
+    const collapsed = new Set();
+    const applyVis = () => {
+      let hideBelow = null;
+      tree.querySelectorAll('li[data-depth]').forEach(li => {
+        const depth = +li.dataset.depth;
+        if (hideBelow !== null && depth > hideBelow) { li.style.display = 'none'; return; }
+        hideBelow = null;
+        li.style.display = '';
+        if (li.dataset.type === 'directory') {
+          const isCol = collapsed.has(li.dataset.path);
+          const chev = li.querySelector('.vfs-chev');
+          if (chev) chev.textContent = isCol ? '▸' : '▾';
+          if (isCol) hideBelow = depth;
+        }
+      });
+    };
     const load = async () => {
       tree.innerHTML = '<li><em>laden…</em></li>';
       let data;
@@ -107,16 +123,24 @@
       tree.innerHTML = items.map(item => {
         const indent = (item.depth || 0) * 12;
         const isDir = item.type === 'directory';
-        return `<li class="${isDir ? 'vfs-dir' : ''}" data-path="${escape(item.path)}" data-type="${escape(item.type)}" style="padding-left:${indent + 8}px">
-          ${isDir ? '▸' : '·'} ${escape(item.name)}
+        const marker = isDir ? '<span class="vfs-chev">▾</span>' : '<span class="vfs-bullet">·</span>';
+        return `<li class="${isDir ? 'vfs-dir' : ''}" data-path="${escape(item.path)}" data-type="${escape(item.type)}" data-depth="${item.depth || 0}" style="padding-left:${indent + 8}px">
+          ${marker} ${escape(item.name)}
         </li>`;
       }).join('');
       tree.querySelectorAll('li').forEach(li => {
         li.addEventListener('click', () => {
+          if (li.dataset.type === 'directory') {
+            if (collapsed.has(li.dataset.path)) collapsed.delete(li.dataset.path);
+            else collapsed.add(li.dataset.path);
+            applyVis();
+            return;
+          }
           if (li.dataset.type !== 'file') return;
           openVfsFile(li.dataset.path);
         });
       });
+      applyVis();
     };
     panel.querySelector('#vfs-refresh').addEventListener('click', load);
     panel.querySelector('#vfs-zip').addEventListener('click', () => {
@@ -195,28 +219,104 @@
       let cfg;
       try { cfg = await get(`/api/agents/${encodeURIComponent(name)}/config`); }
       catch (e) { fieldsHost.innerHTML = `<em>Fehler: ${escape(e.message)}</em>`; return; }
+      let personas = { active: cfg.active_persona || '', personas: [] };
+      try {
+        const sid = Store.activeChatId ? `?session_id=${encodeURIComponent(Store.activeChatId)}` : '';
+        personas = await get(`/api/agents/${encodeURIComponent(name)}/personas${sid}`);
+      } catch (_) {}
+      const curPersona = cfg.active_persona || '';
+      const pSeen = new Set();
+      const pOpts = [`<option value="">— keine —</option>`];
+      (personas.personas || []).forEach(p => {
+        if (pSeen.has(p.name)) return; pSeen.add(p.name);
+        const conf = (p.confidence != null) ? ` · ${Math.round(p.confidence * 100)}%` : '';
+        pOpts.push(`<option value="${escape(p.name)}" ${p.name === curPersona ? 'selected' : ''}>${escape(p.name)} (${escape(p.source)}${conf})</option>`);
+      });
+      if (curPersona && !pSeen.has(curPersona)) pOpts.splice(1, 0, `<option value="${escape(curPersona)}" selected>${escape(curPersona)} (current)</option>`);
+      const obs = cfg.obs || {};
+      const web = cfg.web_config || {};
+      const ctxb = cfg.context_config || {};
       fieldsHost.innerHTML = `
         <div><label>Fast Model</label><input id="f-fast" value="${escape(cfg.fast_llm_model || '')}"></div>
         <div><label>Complex Model</label><input id="f-complex" value="${escape(cfg.complex_llm_model || '')}"></div>
         <div><label>System Message</label><textarea id="f-sys" rows="6">${escape(cfg.system_message || '')}</textarea></div>
         <div><label>Temperature</label><input id="f-temp" type="number" step="0.1" min="0" max="2" value="${cfg.temperature ?? 0.7}"></div>
-        <div><label>Max Iterations (Agent default)</label><input id="f-iter" type="number" value="${cfg.max_parallel_tasks ?? 3}"></div>
-        <div><label>Active Persona</label><input id="f-persona" value="${escape(cfg.active_persona || '')}"></div>
+        <div><label>Max Parallel Tasks</label><input id="f-iter" type="number" value="${cfg.max_parallel_tasks ?? 3}"></div>
+        <div><label>Active Persona</label>
+          <select id="f-persona-sel">${pOpts.join('')}</select>
+          <input id="f-persona" value="${escape(curPersona)}" placeholder="custom persona…" style="margin-top:4px">
+        </div>
+        <details class="cfg-advanced">
+          <summary>Advanced</summary>
+          <div><label>Max Tokens Output</label><input id="f-mto" type="number" value="${cfg.max_tokens_output ?? 2048}"></div>
+          <div><label>Max Tokens Input</label><input id="f-mti" type="number" value="${cfg.max_tokens_input ?? 32768}"></div>
+          <div><label>VFS Window Lines</label><input id="f-vfs" type="number" value="${cfg.vfs_max_window_lines ?? 250}"></div>
+          <div><label><input id="f-fast-resp" type="checkbox" ${cfg.use_fast_response !== false ? 'checked' : ''}> Use Fast Response</label></div>
+          <div><label><input id="f-stream" type="checkbox" ${cfg.stream !== false ? 'checked' : ''}> Stream</label></div>
+          <div><label><input id="f-verbose" type="checkbox" ${cfg.verbose_logging ? 'checked' : ''}> Verbose Logging</label></div>
+          <hr>
+          <div><label><input id="f-obs-en" type="checkbox" ${obs.enabled !== false ? 'checked' : ''}> Observability</label></div>
+          <div><label>Obs Max Runs</label><input id="f-obs-runs" type="number" value="${obs.max_runs ?? 3}"></div>
+          <div><label>Obs Snapshot Interval</label><input id="f-obs-snap" type="number" value="${obs.snapshot_interval ?? 5}"></div>
+          <div><label><input id="f-obs-audit" type="checkbox" ${obs.enable_audit !== false ? 'checked' : ''}> Enable Audit</label></div>
+          <hr>
+          <div><label><input id="f-web-en" type="checkbox" ${web.enable_web !== false ? 'checked' : ''}> Web Enabled</label></div>
+          <div><label><input id="f-web-head" type="checkbox" ${web.web_headless ? 'checked' : ''}> Web Headless</label></div>
+          <div><label>Web Single Site</label><input id="f-web-single" value="${escape(web.web_single_site || '')}"></div>
+          <div><label>Web Trusted Sites (komma)</label><input id="f-web-trust" value="${escape((web.web_trusted_sites || []).join(', '))}"></div>
+          <hr>
+          <div><label>Ctx Max Ratio</label><input id="f-ctx-max" type="number" step="0.05" value="${ctxb.max_context_ratio ?? 0.85}"></div>
+          <div><label>Ctx Immediate Offload</label><input id="f-ctx-imm" type="number" step="0.05" value="${ctxb.immediate_offload_ratio ?? 0.7}"></div>
+          <div><label>Ctx Displacement Thr</label><input id="f-ctx-disp" type="number" step="0.05" value="${ctxb.displacement_threshold ?? 0.4}"></div>
+          <div><label>Ctx Safety Margin</label><input id="f-ctx-safe" type="number" value="${ctxb.safety_margin_tokens ?? 500}"></div>
+          <div><label>Ctx Heavy Hitter Min</label><input id="f-ctx-heavy" type="number" value="${ctxb.heavy_hitter_min_tokens ?? 1000}"></div>
+        </details>
         <div class="btn-row">
           <button class="btn-primary" id="cfg-save">Speichern</button>
         </div>
         <div id="cfg-status" style="font-size:11px;color:var(--text-muted)"></div>
       `;
+      const pSel = fieldsHost.querySelector('#f-persona-sel');
+      const pInp = fieldsHost.querySelector('#f-persona');
+      pSel.addEventListener('change', () => { pInp.value = pSel.value; });
       fieldsHost.querySelector('#cfg-save').addEventListener('click', async () => {
         const status = fieldsHost.querySelector('#cfg-status');
         status.textContent = 'speichere…';
+        const num = (id, d) => { const v = parseFloat(fieldsHost.querySelector(id).value); return isNaN(v) ? d : v; };
+        const int = (id, d) => { const v = parseInt(fieldsHost.querySelector(id).value); return isNaN(v) ? d : v; };
+        const chk = (id) => fieldsHost.querySelector(id).checked;
         const body = {
           fast_llm_model: fieldsHost.querySelector('#f-fast').value,
           complex_llm_model: fieldsHost.querySelector('#f-complex').value,
           system_message: fieldsHost.querySelector('#f-sys').value,
-          temperature: parseFloat(fieldsHost.querySelector('#f-temp').value),
-          max_parallel_tasks: parseInt(fieldsHost.querySelector('#f-iter').value),
-          active_persona: fieldsHost.querySelector('#f-persona').value,
+          temperature: num('#f-temp', 0.7),
+          max_parallel_tasks: int('#f-iter', 3),
+          active_persona: pInp.value || null,
+          max_tokens_output: int('#f-mto', 2048),
+          max_tokens_input: int('#f-mti', 32768),
+          vfs_max_window_lines: int('#f-vfs', 250),
+          use_fast_response: chk('#f-fast-resp'),
+          stream: chk('#f-stream'),
+          verbose_logging: chk('#f-verbose'),
+          obs: {
+            enabled: chk('#f-obs-en'),
+            max_runs: int('#f-obs-runs', 3),
+            snapshot_interval: int('#f-obs-snap', 5),
+            enable_audit: chk('#f-obs-audit'),
+          },
+          web_config: {
+            enable_web: chk('#f-web-en'),
+            web_headless: chk('#f-web-head'),
+            web_single_site: fieldsHost.querySelector('#f-web-single').value || null,
+            web_trusted_sites: fieldsHost.querySelector('#f-web-trust').value.split(',').map(s => s.trim()).filter(Boolean),
+          },
+          context_config: {
+            max_context_ratio: num('#f-ctx-max', 0.85),
+            immediate_offload_ratio: num('#f-ctx-imm', 0.7),
+            displacement_threshold: num('#f-ctx-disp', 0.4),
+            safety_margin_tokens: int('#f-ctx-safe', 500),
+            heavy_hitter_min_tokens: int('#f-ctx-heavy', 1000),
+          },
         };
         try {
           const r = await put(`/api/agents/${encodeURIComponent(name)}/config`, body);
@@ -520,17 +620,60 @@
         }
       });
     });
+    // Mobile-only close button (bottom-right) closes the open panel/Rubrik
+    const mClose = document.getElementById('mobile-panel-close');
+    if (mClose) mClose.addEventListener('click', closeMobilePanel);
+
+    // Desktop: drag the sidebar's right edge to resize; width is persisted forever.
+    const sidebarEl = document.getElementById('sidebar');
+    const bodyEl = document.querySelector('.isaa-body');
+    const resize = document.getElementById('sb-resize');
+    const savedW = localStorage.getItem('isaa.sb_width');
+    if (savedW && bodyEl) bodyEl.style.setProperty('--sb-width', savedW);
+    if (resize && bodyEl && sidebarEl) {
+      let dragging = false;
+      const onMove = (e) => {
+        if (!dragging) return;
+        const w = Math.max(200, Math.min(640, e.clientX));
+        bodyEl.style.setProperty('--sb-width', w + 'px');
+      };
+      const onUp = () => {
+        if (!dragging) return;
+        dragging = false;
+        sidebarEl.style.transition = '';
+        document.body.style.userSelect = '';
+        const w = bodyEl.style.getPropertyValue('--sb-width').trim();
+        if (w) localStorage.setItem('isaa.sb_width', w);
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+      };
+      resize.addEventListener('pointerdown', (e) => {
+        if (window.innerWidth <= 767) return;
+        e.preventDefault();
+        dragging = true;
+        sidebarEl.style.transition = 'none';  // crisp drag, no width easing
+        document.body.style.userSelect = 'none';
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+      });
+    }
+
     // Restore last panel
     if (Store.sidebarPanel) openPanel(Store.sidebarPanel);
+  }
+
+  function closeMobilePanel() {
+    const sidebar = document.getElementById('sidebar');
+    sidebar.dataset.mobileOpen = 'false';
+    document.querySelectorAll('.mn-btn').forEach(b => b.dataset.active = 'false');
+    Store.setPanel(null);
   }
 
   function openMobilePanel(name) {
     const sidebar = document.getElementById('sidebar');
     if (sidebar.dataset.mobileOpen === 'true' && Store.sidebarPanel === name) {
       // close
-      sidebar.dataset.mobileOpen = 'false';
-      document.querySelectorAll('.mn-btn').forEach(b => b.dataset.active = 'false');
-      Store.setPanel(null);
+      closeMobilePanel();
       return;
     }
     sidebar.dataset.mobileOpen = 'true';

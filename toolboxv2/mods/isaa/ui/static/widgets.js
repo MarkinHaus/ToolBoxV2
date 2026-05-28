@@ -258,6 +258,15 @@
     if (window.ISAA.App && window.ISAA.App.rerender) window.ISAA.App.rerender();
   }
 
+  /** Manual switch between chat and widget mode (bottom-right button). */
+  async function toggleMode() {
+    if (document.querySelector('.isaa-body').dataset.view === 'widgets') {
+      exitWidgetMode();
+    } else {
+      await ensureGrid();
+    }
+  }
+
   // ============================================================================
   // FRAME ROUTING — recognize widget_create/update/close/template_register/var_set
   // ============================================================================
@@ -323,5 +332,8 @@
   });
 
   window.ISAA = window.ISAA || {};
-  window.ISAA.Widgets = { handleFrame, createWidget, closeWidget, updateWidget, exitWidgetMode };
+  window.ISAA.Widgets = { handleFrame, createWidget, closeWidget, updateWidget, exitWidgetMode, toggleMode };
+
+  const _tg = document.getElementById('widget-toggle');
+  if (_tg) _tg.addEventListener('click', toggleMode);
 })();

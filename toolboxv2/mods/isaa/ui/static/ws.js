@@ -25,6 +25,7 @@
       this.pingTimer = null;
       this.chatId = null;
       this.connected = false;
+      this.pending = [];   // queued sends while socket not open (first-message race)
       this.handlers = {
         frame: null,
         open: null,
@@ -57,6 +58,9 @@
         const lastSeq = (window.ISAA && window.ISAA.Store) ? window.ISAA.Store.lastSeq : 0;
         this.send({ op: 'hello', chat_id: this.chatId, last_seq: lastSeq });
         this._startPing();
+        // Flush anything queued while the socket was still connecting.
+        const q = this.pending; this.pending = [];
+        for (const m of q) this.send(m);
         if (this.handlers.open) this.handlers.open();
       };
       this.ws.onmessage = (e) => {
@@ -102,6 +106,13 @@
       } catch (e) {
         return false;
       }
+    }
+
+    /** Send now if open, else queue and flush on next open (fixes first-msg race). */
+    sendWhenReady(obj) {
+      if (this.send(obj)) return true;
+      this.pending.push(obj);
+      return false;
     }
 
     close() {

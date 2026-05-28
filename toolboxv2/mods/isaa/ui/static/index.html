@@ -43,6 +43,9 @@
       </button>
     </nav>
     <div id="sb-panel" class="sb-panel"></div>
+    <div id="sb-resize" class="sb-resize" title="Breite ziehen"></div>
+    <!-- Mobile-only: fixed bottom-right button to close the open panel/Rubrik -->
+    <button id="mobile-panel-close" class="mobile-panel-close" title="Schließen" aria-label="Schließen">✕</button>
   </aside>
 
   <!-- Main -->
@@ -68,6 +71,9 @@
 
   <!-- Running footer (sub-agents + parallel chats) -->
   <div id="running-footer" class="running-footer" hidden></div>
+
+  <!-- Manual widget-mode toggle (bottom-right) -->
+  <button id="widget-toggle" class="widget-toggle" title="Widget-Mode umschalten" aria-label="Widget-Mode umschalten">▦</button>
 
   <!-- Mobile bottom-nav (hidden on desktop via CSS) -->
   <nav id="mobile-nav" class="mobile-nav">

@@ -3189,11 +3189,18 @@ async def serve_app(self, app=None, host: str = "127.0.0.1", port: int = 8000, w
         self.print("Interrupted")
 
 @export(mod_name="isaa", name="ui")
-async def serve_app(self, app=None, host: str = "127.0.0.1", port: int = 8080, ws_port: int = 8100) -> dict:
+async def serve_app(self, app=None, host: str = "127.0.0.1", port: int = 8080):
     from toolboxv2.mods.isaa.ui.app import main as isaa_ui
 
     self.print(f"[ISAA UI] serving on http://{host}:{port}")
     isaa_ui(host, port)
+
+@export(mod_name="isaa", name="obs")
+async def obs_app(self, app=None, host: str = "127.0.0.1", port: int = 7000, wit_static=True):
+    from toolboxv2.mods.isaa.extras.live_obs_server import main as obs_ui
+
+    self.print(f"[ISAA OBS] serving on http://{host}:{port}")
+    obs_ui(host, port, wit_static)
 # =============================================================================
 # MAIN
 # =============================================================================

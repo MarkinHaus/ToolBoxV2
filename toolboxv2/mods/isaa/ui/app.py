@@ -234,8 +234,7 @@ def build_app(tb_app=None) -> FastTB:
     ws_handler.attach(bridge, store)
 
     app = FastTB(title="ISAA UI", app_instance=tb_app)
-    app.inject_style = True  # rely on _maybe_inject_style for tbjs-main.css
-
+    app.inject_style = False
     # Static mount: relative to this file
     static_dir = Path(__file__).parent / "static"
     app.mount_static("/static", str(static_dir))
@@ -333,7 +332,6 @@ def _resolve_ctx(conn_id, session, ctx, **kw):
 def main(host: str = "127.0.0.1", port: int = 8765) -> None:
     from toolboxv2.utils.workers.fast_tb_handler import FastTBHandler
     app = build_app()
-    app.inject_style = False
     wsgi_app = FastTBHandler(app).as_wsgi_app(enable_ws=True)
 
     print(f"[ISAA UI] serving on http://{host}:{port}")

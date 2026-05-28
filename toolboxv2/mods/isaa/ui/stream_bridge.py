@@ -11,12 +11,41 @@ Concurrency: one running stream per chat. Cancel/pause via tracker.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 logger = logging.getLogger("isaa.ui.bridge")
+
+
+def _ui_templates_dir(store, agent_name: str) -> Path:
+    """Per-agent dir for persisted custom widget templates (sibling of chats dir)."""
+    return Path(store.root).parent / "templates" / (agent_name or "_")
+
+
+def _load_agent_templates(store, agent_name: str) -> list[dict]:
+    """Read persisted templates → list of template_register frames."""
+    d = _ui_templates_dir(store, agent_name)
+    frames: list[dict] = []
+    if not d.exists():
+        return frames
+    for fp in d.glob("*.json"):
+        try:
+            spec = json.loads(fp.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        frames.append({
+            "type": "template_register",
+            "template_id": spec.get("template_id") or fp.stem,
+            "name": spec.get("name", fp.stem),
+            "adapter": spec.get("adapter", "html"),
+            "schema": spec.get("schema", {}),
+            "render_js": spec.get("render_js"),
+        })
+    return frames
 
 # Frame types that are turn-terminal (close the running stream tracker).
 TERMINAL_TYPES = frozenset({"done", "max_iterations", "cancelled", "paused", "error"})
@@ -101,12 +130,26 @@ class StreamBridge:
             await self._emit(chat_id, {"type": "done", "success": False, "final_answer": ""})
             self._running.pop(chat_id, None)
             return
+        try:
+            from toolboxv2.mods.isaa.extras.live_obs_server import register_agent_obs
+            register_agent_obs(agent)
+        except Exception as e:
+            logger.exception("[bridge] live_obs_server failed")
+            await self._emit(chat_id, {"type": "error", "error": f"register_agent_obs: {e}"})
 
         # Register UI tools (idempotent per agent instance)
         try:
             _register_ui_tools(agent, self, self.store)
         except Exception:
             logger.exception("[bridge] register_ui_tools failed (non-fatal)")
+
+        # Re-broadcast persisted custom templates so they survive across chats.
+        try:
+            _ag_name = getattr(getattr(agent, "amd", None), "name", "") or rs.agent_name
+            for _tf in _load_agent_templates(self.store, _ag_name):
+                await self.broadcast(chat_id, _tf)
+        except Exception:
+            logger.exception("[bridge] template replay failed (non-fatal)")
 
         # Build query — append upload paths if any.
         query = text
@@ -232,6 +275,8 @@ def _register_ui_tools(agent, bridge: "StreamBridge", store) -> None:
     if not hasattr(agent, "add_tool"):
         return  # not a FlowAgent
 
+    agent_name = getattr(getattr(agent, "amd", None), "name", "") or ""
+
     async def create_widget(template_id: str, props: dict, pin: dict | None = None) -> str:
         """Create a UI widget visible in the chat. Returns widget_id.
 
@@ -318,6 +363,15 @@ def _register_ui_tools(agent, bridge: "StreamBridge", store) -> None:
         if not chat_id:
             return "error: no active session"
         template_id = name.lower().replace(" ", "_").replace("-", "_")
+        try:
+            _d = _ui_templates_dir(store, agent_name)
+            _d.mkdir(parents=True, exist_ok=True)
+            (_d / f"{template_id}.json").write_text(json.dumps({
+                "template_id": template_id, "name": name, "adapter": adapter,
+                "schema": schema or {}, "render_js": render_js,
+            }), encoding="utf-8")
+        except Exception:
+            logger.exception("[bridge] template persist failed (non-fatal)")
         await bridge._emit(chat_id, {
             "type": "template_register",
             "template_id": template_id,

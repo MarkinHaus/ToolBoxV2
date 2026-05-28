@@ -30,10 +30,11 @@ html, body {
   display: grid;
   grid-template-columns: 56px 1fr;
   height: 100vh;
+  --sb-width: 280px;
 }
 
 .isaa-body[data-panel-open="true"] {
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: var(--sb-width, 280px) 1fr;
 }
 
 /* ============================================================================
@@ -47,8 +48,22 @@ html, body {
   display: flex;
   height: 100vh;
   overflow: hidden;
+  position: relative;
   transition: width var(--duration-normal, 200ms) var(--ease-default, ease);
 }
+
+/* Desktop drag-to-resize handle (right edge, only when a panel is open) */
+.sb-resize { display: none; }
+.isaa-sidebar[data-expanded="true"] .sb-resize {
+  display: block;
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 5;
+}
+.sb-resize:hover { background: var(--primary, #4a9eff); opacity: 0.4; }
+@media (max-width: 767px) { .sb-resize { display: none !important; } }
 
 .sb-icons {
   width: 56px;
@@ -922,7 +937,74 @@ body.is-running .isa-logo,
   }
   .isaa-sidebar[data-mobile-open="true"] .sb-icons { display: none; }
   .isaa-sidebar[data-mobile-open="true"] .sb-panel { width: 100% !important; opacity: 1 !important; pointer-events: auto !important; padding: var(--space-5, 24px); }
+  .isaa-sidebar[data-mobile-open="true"] .mobile-panel-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    right: var(--space-4, 16px);
+    bottom: calc(72px + env(safe-area-inset-bottom));
+    width: 48px;
+    height: 48px;
+    z-index: 101;
+    border: 1px solid var(--glass-border, rgba(255,255,255,0.05));
+    border-radius: var(--radius-full, 9999px);
+    background: var(--glass-bg, rgba(255,255,255,0.06));
+    backdrop-filter: blur(var(--glass-blur, 12px));
+    box-shadow: var(--shadow-micro, 0 2px 4px rgba(0,0,0,0.5));
+    color: var(--text-main, rgba(255,255,255,0.85));
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+  }
 }
+
+.mobile-panel-close { display: none; }
+
+/* Manual widget-mode toggle (fixed bottom-right) */
+.widget-toggle {
+  position: fixed;
+  right: var(--space-4, 16px);
+  bottom: calc(var(--space-4, 16px) + env(safe-area-inset-bottom));
+  width: 44px;
+  height: 44px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--glass-border, rgba(255,255,255,0.05));
+  border-radius: var(--radius-full, 9999px);
+  background: var(--glass-bg, rgba(255,255,255,0.06));
+  backdrop-filter: blur(var(--glass-blur, 12px));
+  box-shadow: var(--shadow-micro, 0 2px 4px rgba(0,0,0,0.5));
+  color: var(--text-muted, rgba(255,255,255,0.6));
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.widget-toggle:hover { color: var(--primary, #4a9eff); }
+.isaa-body[data-view="widgets"] .widget-toggle { color: var(--primary, #4a9eff); }
+/* On mobile, lift above the bottom-nav */
+@media (max-width: 767px) {
+  .widget-toggle { bottom: calc(72px + env(safe-area-inset-bottom)); }
+}
+
+/* §8 streaming logo spinner (inline at current stream position) */
+.stream-spinner { display: flex; justify-content: flex-start; padding: var(--space-3, 12px) 0; }
+.stream-spinner .isa-logo { width: 28px; height: 28px; color: var(--primary, #4a9eff); opacity: 0.85; }
+
+/* Agent-config advanced section */
+.cfg-advanced { margin-top: var(--space-2, 8px); }
+.cfg-advanced summary {
+  cursor: pointer;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs, 9px);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-label, rgba(255,255,255,0.4));
+  padding: var(--space-2, 8px) 0;
+}
+.cfg-advanced hr { border: none; border-top: 1px solid var(--border-subtle, rgba(255,255,255,0.08)); margin: var(--space-2, 8px) 0; }
 
 /* ============================================================================
    LIGHT THEME — task 26
