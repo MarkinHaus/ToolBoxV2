@@ -1,5 +1,5 @@
 name: web
-version: "0.1.25"
+version: "0.1.26"
 enabled: true
 immutable: false
 description: "Web server — HTTP/WebSocket workers, Starlette, icli_web + Minu mods"

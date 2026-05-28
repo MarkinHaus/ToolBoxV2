@@ -92,7 +92,12 @@ class TestToolboxv2Mods(PersistentAppTestCase):
         cls.app.debug = True
 
         # Load all mods ONCE
-        result = cls._loop.run_until_complete(cls.app.load_all_mods_in_file())
+        async def heper():
+            sto = cls.app.debug_rains
+            cls.app.debug_rains = lambda e: None
+            await cls.app.load_all_mods_in_file()
+            cls.app.debug_rains = sto
+        result = cls._loop.run_until_complete(heper())
         print(f"setUpClass: {result}")
 
     @classmethod
@@ -273,13 +278,20 @@ class TestToolboxv2Mods(PersistentAppTestCase):
         mod.printc("test123")
 
     def test_02d_mod_online(self):
+        sto = self.app.debug_rains
+        self.app.debug_rains = lambda e:None
         self.app.remove_all_modules(True)
+        self.app.debug_rains = sto
         self.assertFalse(self.app.mod_online('welcome'))
         self.app.get_mod('welcome')
         self.assertTrue(self.app.mod_online('welcome'))
 
     def test_02e_get_all_mods(self):
+
+        sto = self.app.debug_rains
+        self.app.debug_rains = lambda e:None
         mods = self.app.get_all_mods()
+        self.app.debug_rains = sto
         self.assertIsInstance(mods, list)
         self.assertTrue(len(mods) > 0)
         self.assertIsInstance(mods[0], str)
@@ -308,7 +320,11 @@ class TestToolboxv2Mods(PersistentAppTestCase):
             self.app.data_dir = "../test_mods/.test_data"
 
             # Reload modules only if they were removed by earlier tests
+
+            sto = self.app.debug_rains
+            self.app.debug_rains = lambda e: None
             await self.app.load_all_mods_in_file()
+            self.app.debug_rains = sto
 
             # res = await self.app.execute_all_functions_(test_class=self)
             # print("RES:", res.result.data_info)
@@ -333,7 +349,11 @@ class TestToolboxv2Mods(PersistentAppTestCase):
 
     def test_04b_remove_all_modules(self):
         """Must be the very last test — removes everything."""
+
+        sto = self.app.debug_rains
+        self.app.debug_rains = lambda e:None
         self.app.remove_all_modules(delete=True)
+        self.app.debug_rains = sto
         self.assertEqual(self.app.functions, {})
 
 

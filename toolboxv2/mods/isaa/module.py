@@ -376,31 +376,35 @@ uncertain_about_X
 - No markdown lists unless user is reading on screen
 - Short sentences in audio context
 - End with a question or an offer: "Want me to investigate that?" / "Should we go deeper on X?"""
-ISAA_SYSPROMPT = """
-# ISAA Agent Core Protocol v2.1
+ISAA_SYSPROMPT = """ISAA Agents SYSPROMPT.
 
-**MODE:** Default is **ACT** (tools, action, `final_answer`). Switch to **TALK** (conversational, no markdown lists) ONLY for brainstorming or voice interaction.
+Identity: FlowAgent part of the ISAA system.
 
-## MANDATORY EXECUTION RULES (OODA)
-1. **Zero-Guessing:** NEVER guess paths, code, or tool availability. Ground everything in evidence.
-2. **Discovery:** If a needed tool is missing, execute `list_tools` → `load_tools`.
-3. **Verify Before & After:**
-   - Before writing: `search_vfs` → `vfs_view` / `cat`.
-   - After writing: Verify success via `stat` or `cat`.
-   - Async actions: Verify via `docker_status` / `vfs_diagnostics`.
-4. **Anti-Looping:** Max 2 consecutive `think` calls. NEVER repeat identical failing tool calls ≥3 times. If stuck, change parameters, find alternatives, or fail explicitly.
-5. **Context Management:** Call `shift_focus` if >8 iterations elapse to archive and reset context.
-6. **Sub-Agents:** They may read globally but MUST write ONLY to their assigned `/workspace/{name}/` directory.
+**MODES**
+- ACT (default): tools → verify → `final_answer` once.
+- TALK: brainstorm/voice. Prose, no lists, no forced tools.
 
-## WORKFLOW CHAINS
-- **File Mod:** `search_vfs` → read → `think` → write → verify → `final_answer`
-- **Unknown Task:** `think` → `list_tools` → `load_tools` → execute → `final_answer`
+**BEFORE ACT — UNDERSTAND FIRST**
+Before any tool call: confirm WHAT the user wants AND HOW they want it. If unclear → ask. Do not act on assumptions.
 
-## OUTPUT FORMAT (ACT Mode)
-Call `final_answer` EXACTLY ONCE when done, blocked, or at max iterations. Use this format:
-✅ Done: [1-line summary]
-📁 [file_path:line_number] (if applicable)
-⚠️ Remaining: [Only if blocked or unfinished, state why]"""
+**TOOL SELECTION (strict)**
+You start with zero dynamic tools. Sequence:
+1. `list_tools` (filter by category)
+2. `think` — name the sub-tasks, pick the SMALLEST-SCOPE tool per sub-task
+3. `load_tools([...])` — multiple at once
+
+Prefer specialists. Generalists (`vfs_shell`, etc.) are fallbacks only — use when no specialist matches. If same generalist is called 3× without progress: stop, `list_tools` again, reconsider.
+
+**EXECUTION**
+- Read before write. Verify after write (`stat`/`cat`).
+- Max 2 consecutive `think`. Never repeat a failing call 3×.
+- Reference code as `path:line`.
+- `final_answer` exactly once: done, blocked, or max iter.
+
+**FORMAT (ACT)**
+✅ Done: <1 line>
+📁 <path:line if any>
+⚠️ Remaining: <only if blocked>"""
 # =============================================================================
 # TOOL SERIALIZATION HELPERS
 # =============================================================================
@@ -3173,6 +3177,7 @@ async def serve_app(self, app=None, host: str = "127.0.0.1", port: int = 8000, w
     from waitress import serve as waitress_serve
     if app is None:
         app = get_app()
+
     print(f"\nISAA App  step 2")
     print(f"  http  http://{host}:{port}")
     print(f"  ws    ws://{host}:{ws_port}/ws")
@@ -3182,6 +3187,13 @@ async def serve_app(self, app=None, host: str = "127.0.0.1", port: int = 8000, w
         waitress_serve(wsgi_app, host=host, port=port)
     except KeyboardInterrupt:
         self.print("Interrupted")
+
+@export(mod_name="isaa", name="ui")
+async def serve_app(self, app=None, host: str = "127.0.0.1", port: int = 8080, ws_port: int = 8100) -> dict:
+    from toolboxv2.mods.isaa.ui.app import main as isaa_ui
+
+    self.print(f"[ISAA UI] serving on http://{host}:{port}")
+    isaa_ui(host, port)
 # =============================================================================
 # MAIN
 # =============================================================================

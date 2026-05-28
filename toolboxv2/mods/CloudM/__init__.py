@@ -11,7 +11,6 @@ from .UI.widget import get_widget
 from .UserAccountManager import Name as UserAccountManagerName
 from .UserDashboard import Name as UserDashboardName
 from .UserInstances import UserInstances
-from .FolderSync import Name as FolderSyncName
 
 Tools = _Tools
 Name = "CloudM"

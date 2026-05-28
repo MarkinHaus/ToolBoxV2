@@ -40,7 +40,16 @@ def run_first_run() -> str:
     chosen = keys[idx]
     label, _ = PROFILES[chosen]
     print_status(f"Profile set: {label}", "success")
-
+    profile_hints = {
+        "consumer": "Will open the local web UI on next 'tb' start.",
+        "homelab": "Will open the local web UI on next 'tb' start.",
+        "developer": "Will open the terminal CLI on next 'tb' start.",
+        "server": "Headless — run 'tb status' to inspect.",
+        "business": "Headless health summary — run 'tb' for overview.",
+    }
+    hint = profile_hints.get(chosen)
+    if hint:
+        c_print(f"  {Colors.DIM}{hint}{Colors.RESET}")
     # Schreibe ins Manifest via manifest set (nutzt bestehende Logik)
     try:
         from toolboxv2.utils.clis.manifest_cli import cmd_set

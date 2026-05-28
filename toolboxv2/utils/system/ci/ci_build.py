@@ -257,13 +257,16 @@ def _find_wheel() -> Path | None:
     if not DIST_DIR.exists():
         return None
     wheels = sorted(DIST_DIR.glob("*.whl"), key=lambda p: p.stat().st_mtime)
+    from toolboxv2 import get_app
+    version = get_app().version
+    wheels = [w for w in wheels if version in str(w)]
     return wheels[-1] if wheels else None
 
 def _run_feature_test(
     feature_name: str,
     extras: list[str],
     wheel: Path,
-    timeout: int = 120,
+    timeout: int = 240,
 ) -> dict:
     """Teste ein Feature in isoliertem venv."""
     result = {
@@ -330,39 +333,45 @@ def _run_feature_test(
 
         result["install_ok"] = True
 
-        test_dir = ROOT / "toolboxv2" / "tests"
-        feature_test_dir = test_dir / feature_name
+        # Resolve tests path from installed wheel (NOT source tree).
+        # ROOT in cwd/rootdir would shadow site-packages via sys.path.
+        resolve = subprocess.run(
+            [str(venv_python), "-c",
+             "import toolboxv2, pathlib; "
+             "print(pathlib.Path(toolboxv2.__file__).parent / 'tests')"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if resolve.returncode != 0 or not resolve.stdout.strip():
+            result["output"] = f"Cannot resolve installed tests path:\n{resolve.stderr[-800:]}"
+            result["status"] = "RESOLVE_FAIL"
+            return result
+        installed_tests = Path(resolve.stdout.strip())
+        feature_test_dir = installed_tests / f"test_{feature_name}"
 
-        test_targets = []
         if feature_test_dir.exists():
-            test_targets.append(str(feature_test_dir))
-        test_file = test_dir / f"test_{feature_name}"
-        if test_file.exists():
-            test_targets.append(str(test_file))
-
-        if not test_targets and test_dir.exists():
-            test_targets.append(str(test_dir))
-
-        if not test_targets:
-            result["output"] = "No tests found"
+            target = str(feature_test_dir)
+        elif installed_tests.exists():
+            target = str(installed_tests)
+        else:
+            result["output"] = f"No tests in installed wheel at {installed_tests}"
             result["passed"] = True
             result["status"] = "PASS"
             return result
-        print(test_targets[0])
         t0 = time.monotonic()
         proc = subprocess.run(
             [
                 str(venv_python), "-m", "pytest",
-                test_targets[0],
+                target,
                 "-v",
                 "--tb=short",
                 "-n", "auto",
                 "--asyncio-mode=auto",
+                "--rootdir", str(venv_dir),
             ],
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=ROOT,
+            cwd=str(venv_dir),
         )
         result["duration"] = round(time.monotonic() - t0, 2)
         result["output"] = proc.stdout + proc.stderr
@@ -383,16 +392,21 @@ def _run_feature_test(
             result["errors"] = int(m_error.group(1))
             tests_run += result["errors"]
 
+        result["tests_run"] = tests_run
+        result["passed"] = proc.returncode == 0
+        result["status"] = "PASS" if proc.returncode == 0 else "TEST_FAIL"
+
         # Fix #5: pytest parse fallback
         if tests_run == 0 and result["failures"] == 0 and result["errors"] == 0:
             combined_lower = combined.lower()
             if "error" in combined_lower or "failed" in combined_lower:
                 result["errors"] = 1
                 result["parse_warning"] = "pytest output could not be parsed"
-
-        result["tests_run"] = tests_run
-        result["passed"] = proc.returncode == 0
-        result["status"] = "PASS" if proc.returncode == 0 else "TEST_FAIL"
+            if proc.returncode == 5 or "no tests ran" in combined.lower():
+                result["status"] = "NO_TESTS"
+                result["passed"] = False
+                result["errors"] = 1
+                return result
 
     except subprocess.TimeoutExpired:
         # Fix #3: timeout sets error counters
@@ -408,13 +422,12 @@ def _run_feature_test(
         result["failures"] = 0
         result["status"] = "ERROR"
     finally:
-        print(venv_dir)
         if venv_dir and venv_dir.exists():
             shutil.rmtree(venv_dir, ignore_errors=True)
 
     return result
 
-def cmd_test() -> list[dict]:
+def cmd_test(only_feature: str | None = None) -> list[dict]:
     """Teste jedes Feature isoliert."""
     console.rule("TEST")
 
@@ -438,7 +451,11 @@ def cmd_test() -> list[dict]:
         if name in ALWAYS_SOURCE:
             continue
         test_matrix.append({"name": name, "extras": [name]})
-
+    if only_feature:
+        test_matrix = [t for t in test_matrix if t["name"] == only_feature]
+        if not test_matrix:
+            _p(f"  ✗ Feature '{only_feature}' nicht in Matrix", style="red")
+            return []
     def _test_runner(entry, res, i):
         # Fix #4: thread crash protection
         try:
@@ -704,8 +721,36 @@ def cmd_upload(production: bool = False):
         _p(f"\n  ✗ Upload fehlgeschlagen: {e}", style="red")
     except FileNotFoundError:
         _p("  ✗ twine nicht installiert → pip install twine", style="red")
+    _upload_features_to_registry()
 
-
+def _upload_features_to_registry(only_feature: str | None = None):
+    """Upload packed feature ZIPs to TB Registry."""
+    _p("\n  ── TB Registry ──")
+    try:
+        from toolboxv2.feature_loader_registry import upload_feature_to_registry
+    except ImportError as e:
+        _p(f"  ✗ feature_loader_registry import failed: {e}", style="red")
+        return
+    for name, config in discover_features().items():
+        if only_feature and name != only_feature:
+            continue
+        if name in ALWAYS_SOURCE:
+            _p(f"  ⊘ {name} (source-only)")
+            continue
+        version = config.get("version", "0.0.0")
+        zip_path = PACKED_DIR / f"tbv2-feature-{name}-{version}.zip"
+        if not zip_path.exists():
+            _p(f"  ✗ {name}@{version}: ZIP fehlt", style="red")
+            continue
+        try:
+            ok = upload_feature_to_registry(
+                feature_name=name,
+                version=version,
+                zip_path=zip_path,
+            )
+            _p(f"  {'✓' if ok else '✗'} {name}@{version}", style="" if ok else "red")
+        except Exception as e:
+            _p(f"  ✗ {name}@{version}: {e}", style="red")
 # ═════════════════════════════════════════════════════════════════════════════
 #  DEPS
 # ═════════════════════════════════════════════════════════════════════════════
@@ -876,11 +921,14 @@ def main():
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("build", help="Pack features + create wheel/sdist")
-    sub.add_parser("test", help="Build + isolated venv tests per feature")
 
-    p_upload = sub.add_parser("upload", help="Upload to PyPI")
+    p_test = sub.add_parser("test", help="Build + isolated venv tests per feature")
+    p_test.add_argument("--feature", help="Nur dieses Feature testen (z.B. mini, web)")
+
+    p_upload = sub.add_parser("upload", help="Upload to PyPI + Registry")
     p_upload.add_argument("--test", action="store_true", help="Upload to test.pypi.org")
     p_upload.add_argument("--prod", action="store_true", help="Upload to pypi.org")
+    p_upload.add_argument("--feature", help="Nur dieses Feature zur Registry (skip PyPI)")
 
     p_deps = sub.add_parser("deps", help="Dependency management")
     p_deps.add_argument("--analyze", action="store_true", help="Show dependency map")
@@ -903,20 +951,23 @@ def main():
     if args.command == "build":
         cmd_build()
 
+
     elif args.command == "test":
         # Fix #1: exit with code 1 on failures
-        results = cmd_test()
+        results = cmd_test(only_feature=args.feature)
         cmd_report([], results)
         if any(not r.get("passed", False) for r in results if r):
             sys.exit(1)
 
     elif args.command == "upload":
-        if args.prod:
+        if args.feature:
+            _upload_features_to_registry(only_feature=args.feature)
+        elif args.prod:
             cmd_upload(production=True)
         elif args.test:
             cmd_upload(production=False)
         else:
-            _p("  Spezifiziere --test oder --prod", style="red")
+            _p("  Spezifiziere --test, --prod oder --feature", style="red")
 
     elif args.command == "deps":
         if args.analyze:

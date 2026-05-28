@@ -705,7 +705,7 @@ class FastTBHandler:
                 req_endpoint=config.zmq.req_endpoint,
                 rep_endpoint=config.zmq.rep_endpoint,
                 http_to_ws_endpoint=config.zmq.http_to_ws_endpoint,
-                is_broker=True,
+                cluster_secret=getattr(config.zmq, "cluster_secret", ""),
             )
             loop.run_until_complete(broker.start())
             loop.run_forever()
@@ -740,7 +740,7 @@ class FastTBHandler:
                 req_endpoint=config.zmq.req_endpoint,
                 rep_endpoint=config.zmq.rep_endpoint,
                 http_to_ws_endpoint=config.zmq.http_to_ws_endpoint,
-                is_broker=False,
+                cluster_secret=getattr(config.zmq, "cluster_secret", ""),
             )
             await em.start()
 

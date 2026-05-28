@@ -50,7 +50,7 @@ def load_index(data_dir: str, agent_name: str) -> MemoryIndex:
 def save_index(data_dir: str, agent_name: str, index: MemoryIndex) -> None:
     p = _index_path(data_dir, agent_name)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(index.model_dump_json(indent=2))
+    p.write_text(index.spaces.get(agent_name, index).model_dump_json(indent=2))
 
 
 # ── Per-space snapshot (no LLM) ─────────────────────────────────────────

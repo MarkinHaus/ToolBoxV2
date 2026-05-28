@@ -58,6 +58,8 @@ if _feature_enabled("web"):
         _WEB_AVAILABLE = True
     except ImportError as _e:
         import sys
+        import traceback
+        traceback.print_exc()
         print(f"[web] Import failed: {_e}", file=sys.stderr)
 
 # ── ISAA-Feature: MCP server ──────────────────────────────────────────────────
@@ -2043,6 +2045,9 @@ def runner_setup():
         ).main(),
         "db": cli_db_runner,
         "gui": helper_gui,
+        "local-cli": lambda: __import__(
+            "toolboxv2.utils.clis.local_cli", fromlist=["main"]
+        ).main(),
         "p2p": cli_tcm_runner,
         "status": status_helper,
         "analyze": lambda: __import__(
@@ -2112,7 +2117,7 @@ def runner_setup():
             "toolboxv2.ytss", fromlist=["main"]
         ).main(),
         "LiveSync": lambda: __import__(
-            "toolboxv2.mods.CloudM.LiveSync", fromlist=["main"]
+            "toolboxv2.mods.CloudM.LiveSync.cli", fromlist=["main"]
         ).main(),
     }
 
@@ -2254,7 +2259,11 @@ def main_runner():
                         profile = run_first_run()
 
                     if profile == "consumer":
-                        runner_name = "gui"
+                        runner_name = "gui"  # web UI in Tauri
+                    elif profile == "homelab":
+                        runner_name = "gui"  # web UI in Tauri/browser — same surface
+                    elif profile == "developer":
+                        runner_name = "local-cli"  # terminal version of the same screens
                     elif profile == "server":
                         _run_server_overview()
                         if len(sys.argv) < 2:
@@ -2264,8 +2273,7 @@ def main_runner():
                         if len(sys.argv) < 2:
                             return
                     else:
-                        # homelab, developer → interactive dashboard
-                        runner_name = "default"
+                        runner_name = "default"  # fallback to legacy dashboard
 
                 app = await main(TbApp, runner_name == "default")
 
@@ -2275,7 +2283,10 @@ def main_runner():
                     if not app.manifest.observability.slow_on_init:
                         app.run_bg_task_advanced(app.observability_health_check_and_anabel)
 
-                    app.run_bg_task_advanced(app._initialize_network)
+                        # app.run_bg_task_advanced(app._initialize_network)
+                        # if app.ping is None:
+                        #     await asyncio.sleep(1)
+
                     # Setze sys.argv für Runner
                     sys.argv = [sys.argv[0]] + runner_args
 
@@ -2285,6 +2296,7 @@ def main_runner():
                             await res
                     except KeyboardInterrupt:
                         return
+
                 elif runner_name and not app.alive and runner_name != "default":
                     raise ValueError(f"FIX DAS SOFORT WENN RUNNER {runner_name} muss {app.alive=} == TRUE sein")
 

@@ -37,6 +37,7 @@ async def _db_get(app: App, key: str) -> Optional[dict]:
     """Load data from TBEF.DB, returns parsed dict or None."""
     result = await app.a_run_any(TBEF.DB.GET, query=key, get_results=True)
     if result.is_error():
+        result.print(show_data=True)
         return None
     return _parse_db_result(result.get())
 

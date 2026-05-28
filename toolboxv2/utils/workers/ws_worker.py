@@ -15,9 +15,11 @@ Features:
 """
 
 import asyncio
+import errno
 import json
 import logging
 import os
+import random
 import signal
 import sys
 import time
@@ -245,6 +247,7 @@ class WSWorker:
         self._event_manager: Optional[ZMQEventManager] = None
         self._running = False
         self._server = None
+        self._ws_active = False  # True when this worker owns the ws_serve port
 
         # Direct PULL socket for HTTP->WS messages (lower latency)
         self._direct_pull_socket = None
@@ -299,7 +302,11 @@ class WSWorker:
         return None
 
     async def start(self):
-        """Start the WebSocket worker."""
+        """Start the WebSocket worker.
+
+        P2P: try to bind the WS port; if EADDRINUSE, enter standby and periodically
+        retry. ZMQ event manager runs regardless of WS-server ownership.
+        """
         logger.info(f"Starting WS worker {self.worker_id}")
 
         # Initialize ZMQ event manager
@@ -308,49 +315,73 @@ class WSWorker:
         # Initialize direct PULL socket for HTTP->WS messages
         await self._init_direct_pull()
 
-        # Start WebSocket server
-        host = self.config.ws_worker.host
-        port = self.config.ws_worker.port
-
         self._running = True
 
         # Start background tasks
         asyncio.create_task(self._ping_loop())
         asyncio.create_task(self._direct_pull_loop())
 
-        # Build serve kwargs - new API doesn't support 'compression' the same way
-        serve_kwargs = {
+        # Drive WS-port bind/standby in a loop until stop()
+        await self._ws_serve_loop()
+
+    def _build_ws_serve_kwargs(self):
+        """Build serve_kwargs + (handler, process_request) pair for current API version."""
+        kwargs = {
             "ping_interval": self.config.ws_worker.ping_interval,
             "ping_timeout": self.config.ws_worker.ping_timeout,
             "max_size": self.config.ws_worker.max_message_size,
         }
-
-        # Select handler and process_request based on API version
         if WEBSOCKETS_NEW_API:
             handler = self._handle_connection_new_api
-            serve_kwargs["process_request"] = self._process_request_new_api
-            logger.info(f"Using new websockets API (>= 13.0)")
+            kwargs["process_request"] = self._process_request_new_api
         else:
             handler = self._handle_connection_legacy
-            serve_kwargs["process_request"] = self._process_request_legacy
-            serve_kwargs["compression"] = "deflate" if self.config.ws_worker.compression else None
-            logger.info(f"Using legacy websockets API")
+            kwargs["process_request"] = self._process_request_legacy
+            kwargs["compression"] = "deflate" if self.config.ws_worker.compression else None
+        return handler, kwargs
 
-        # Start server
-        self._server = await ws_serve(
-            handler,
-            host,
-            port,
-            **serve_kwargs,
-        )
+    async def _ws_serve_loop(self):
+        """Try to bind WS port; on EADDRINUSE wait with jitter and retry (standby)."""
+        host = self.config.ws_worker.host
+        port = self.config.ws_worker.port
+        jitter_max = getattr(self.config.zmq, "takeover_jitter_max_s", 0.5)
+        retry_period = max(1.0, getattr(self.config.zmq, "heartbeat_timeout_s", 3.0))
+        handler, serve_kwargs = self._build_ws_serve_kwargs()
 
-        logger.info(f"WS worker listening on {host}:{port}")
+        while self._running:
+            try:
+                self._server = await ws_serve(handler, host, port, **serve_kwargs)
+            except OSError as e:
+                if e.errno not in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", 10048)):
+                    raise
+                self._ws_active = False
+                wait_s = retry_period + random.uniform(0.0, jitter_max)
+                logger.info(
+                    f"[WS-P2P] Port {host}:{port} busy, standby for {wait_s:.2f}s"
+                )
+                try:
+                    await asyncio.sleep(wait_s)
+                except asyncio.CancelledError:
+                    return
+                continue
 
-        # Keep running - use serve_forever for new API, wait_closed for legacy
-        if WEBSOCKETS_NEW_API:
-            await self._server.serve_forever()
-        else:
-            await self._server.wait_closed()
+            self._ws_active = True
+            logger.info(f"WS worker listening on {host}:{port} (active)")
+            try:
+                if WEBSOCKETS_NEW_API:
+                    await self._server.serve_forever()
+                else:
+                    await self._server.wait_closed()
+            except asyncio.CancelledError:
+                self._ws_active = False
+                self._server = None
+                return
+            finally:
+                self._ws_active = False
+                self._server = None
+            # If we reach here, server stopped externally — loop will retry
+            if self._running:
+                await asyncio.sleep(random.uniform(0.0, jitter_max))
 
     async def stop(self):
         """Stop the WebSocket worker."""
@@ -390,7 +421,18 @@ class WSWorker:
             req_endpoint=self.config.zmq.req_endpoint,
             rep_endpoint=self.config.zmq.rep_endpoint,
             http_to_ws_endpoint=self.config.zmq.http_to_ws_endpoint,
-            is_broker=False,
+            cluster_secret=getattr(self.config.zmq, "cluster_secret", ""),
+            heartbeat_period_s=getattr(self.config.zmq, "heartbeat_period_s", 1.0),
+            heartbeat_timeout_s=getattr(self.config.zmq, "heartbeat_timeout_s", 3.0),
+            takeover_jitter_max_s=getattr(self.config.zmq, "takeover_jitter_max_s", 0.5),
+            status_period_s=getattr(self.config.zmq, "status_period_s", 5.0),
+            topology_broadcast_period_s=getattr(
+                self.config.zmq, "topology_broadcast_period_s", 2.0
+            ),
+        )
+        self._event_manager.set_status_providers(
+            worker_type="WS",
+            connection_counter=lambda: self._conn_manager.connection_count if hasattr(self, "_conn_manager") else 0,
         )
         await self._event_manager.start()
 

@@ -19,6 +19,7 @@ import hmac
 import json
 import logging
 import os
+import random
 import signal
 import struct
 import threading
@@ -30,6 +31,11 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 try:
     import zmq
@@ -75,6 +81,12 @@ class EventType(str, Enum):
     SHUTDOWN = "system.shutdown"
     ROLLING_UPDATE = "system.rolling_update"
     HEALTH_CHECK = "system.health_check"
+
+    # P2P cluster events
+    SYS_HEARTBEAT = "system.heartbeat"
+    WORKER_STATUS = "system.worker_status"
+    SYS_TOPOLOGY = "system.topology"
+    LEADER_ELECTED = "system.leader_elected"
 
     # Module events
     MODULE_CALL = "module.call"
@@ -262,6 +274,12 @@ class ZMQEventManager:
         is_broker: bool = False,
         hwm_send: int = 10000,
         hwm_recv: int = 10000,
+        cluster_secret: str = "",
+        heartbeat_period_s: float = 1.0,
+        heartbeat_timeout_s: float = 3.0,
+        takeover_jitter_max_s: float = 0.5,
+        status_period_s: float = 5.0,
+        topology_broadcast_period_s: float = 2.0,
     ):
         self.worker_id = worker_id
         self.pub_endpoint = pub_endpoint
@@ -269,9 +287,18 @@ class ZMQEventManager:
         self.req_endpoint = req_endpoint
         self.rep_endpoint = rep_endpoint
         self.http_to_ws_endpoint = http_to_ws_endpoint
-        self.is_broker = is_broker
+        # is_broker arg is kept for backwards-compat but ignored — role is decided
+        # at runtime by port-binding mutex in start()/_takeover().
+        self.is_broker = False
         self.hwm_send = hwm_send
         self.hwm_recv = hwm_recv
+        self.cluster_secret = cluster_secret
+        self.heartbeat_period_s = heartbeat_period_s
+        self.heartbeat_timeout_s = heartbeat_timeout_s
+        self.takeover_jitter_max_s = takeover_jitter_max_s
+        self.status_period_s = status_period_s
+        self.topology_broadcast_period_s = topology_broadcast_period_s
+        self._started_at = time.time()
 
         self._ctx: zmq.asyncio.Context | None = None
         self._pub_socket: zmq.asyncio.Socket | None = None
@@ -295,6 +322,15 @@ class ZMQEventManager:
         self._sync_ctx: zmq.Context | None = None
         self._sync_push: zmq.Socket | None = None
 
+        # P2P state
+        self._last_heartbeat: float = time.time()
+        self._topology_state: Dict[str, Any] = {"leader": None, "workers": {}, "updated_at": 0.0}
+        self._last_persisted_sig: Optional[str] = None
+        self.worker_type: str = "UNKNOWN"
+        self._connection_counter: Optional[Callable[[], int]] = None
+        self._route_provider: Optional[Callable[[], List[str]]] = None
+        self._role_change_cb: Optional[Callable[[bool], Any]] = None  # called as cb(is_leader)
+
         # Metrics
         self._metrics = {
             "events_sent": 0,
@@ -305,24 +341,41 @@ class ZMQEventManager:
         }
 
         logger.info(
-            f"ZMQEventManager initialized: worker_id={worker_id}, is_broker={is_broker}"
+            f"ZMQEventManager initialized: worker_id={worker_id} (role decided at start)"
         )
 
+    def set_status_providers(
+        self,
+        *,
+        worker_type: Optional[str] = None,
+        connection_counter: Optional[Callable[[], int]] = None,
+        route_provider: Optional[Callable[[], List[str]]] = None,
+        role_change_cb: Optional[Callable[[bool], Any]] = None,
+    ) -> None:
+        """Inject worker-side providers for WORKER_STATUS payload + role-change hook."""
+        if worker_type is not None:
+            self.worker_type = worker_type
+        if connection_counter is not None:
+            self._connection_counter = connection_counter
+        if route_provider is not None:
+            self._route_provider = route_provider
+        if role_change_cb is not None:
+            self._role_change_cb = role_change_cb
+
     async def start(self):
-        """Start the event manager."""
+        """Start the event manager.
+
+        P2P leader election: try to bind broker sockets. If EADDRINUSE, fall back
+        to follower mode (connect-only). Role is decided at runtime, not by flag.
+        """
         if self._running:
             return
 
         self._ctx = zmq.asyncio.Context()
         self._running = True
 
-        if self.is_broker:
-            await self._start_broker()
-        else:
-            await self._start_worker()
-
-        # Start background tasks
-        self._tasks.append(asyncio.create_task(self._sub_loop()))
+        became_leader = await self._try_bind_as_leader()
+        await self._assume_role(became_leader)
 
         # Announce worker start
         await self.publish(Event(
@@ -332,7 +385,76 @@ class ZMQEventManager:
             payload={"worker_id": self.worker_id, "pid": os.getpid()},
         ))
 
-        logger.info(f"ZMQEventManager started: worker_id={self.worker_id}")
+        logger.info(
+            f"ZMQEventManager started: worker_id={self.worker_id}, "
+            f"role={'LEADER' if self.is_broker else 'FOLLOWER'}"
+        )
+
+    async def _try_bind_as_leader(self) -> bool:
+        """Attempt to bind broker sockets. Returns True on success, False on EADDRINUSE.
+
+        On failure, cleans up partial sockets so caller can proceed as follower.
+        """
+        try:
+            await self._start_broker()
+            return True
+        except zmq.error.ZMQError as e:
+            if e.errno != zmq.EADDRINUSE:
+                raise
+            logger.info(
+                f"[Election] Broker ports busy, joining as follower: {self.worker_id}"
+            )
+            # Cleanup partial broker sockets that may have bound before the failure
+            for attr in ("_xpub_socket", "_xsub_socket", "_rep_socket", "_pull_socket"):
+                sock = getattr(self, attr, None)
+                if sock is not None:
+                    try:
+                        sock.close(linger=0)
+                    except Exception:
+                        pass
+                    setattr(self, attr, None)
+            # Cancel any tasks _start_broker spawned before failing
+            for t in list(self._tasks):
+                t.cancel()
+            self._tasks.clear()
+            return False
+
+    async def _assume_role(self, leader: bool) -> None:
+        """Set up role-specific tasks and handlers. Idempotent on per-call basis."""
+        if not leader:
+            await self._start_worker()
+        self.is_broker = leader
+
+        # Common: dispatch loop
+        self._tasks.append(asyncio.create_task(self._sub_loop()))
+
+        if leader:
+            # Leader: restore topology, broadcast heartbeat + topology, collect status
+            await self._restore_topology()
+            self._topology_state["leader"] = self.worker_id
+            self._topology_state["updated_at"] = time.time()
+            self.on(EventType.WORKER_STATUS)(self._on_worker_status)
+            self._tasks.append(asyncio.create_task(self._heartbeat_loop()))
+            self._tasks.append(asyncio.create_task(self._topology_broadcast_loop()))
+            self._tasks.append(asyncio.create_task(self._topology_prune_loop()))
+            self._emit_audit_safe(
+                "LEADER_ELECTED",
+                {"worker_id": self.worker_id, "pid": os.getpid()},
+            )
+        else:
+            self._last_heartbeat = time.time()
+            self.on(EventType.SYS_HEARTBEAT)(self._on_heartbeat)
+            self.on(EventType.SYS_TOPOLOGY)(self._on_topology_snapshot)
+            self._tasks.append(asyncio.create_task(self._watchdog_loop()))
+            self._tasks.append(asyncio.create_task(self._status_send_loop()))
+
+        if self._role_change_cb is not None:
+            try:
+                result = self._role_change_cb(leader)
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception as e:
+                logger.warning(f"[Role] role_change_cb error: {e}")
 
     async def _start_broker(self):
         """Start as central broker (binds to endpoints)."""
@@ -420,11 +542,20 @@ class ZMQEventManager:
                 if self._xsub_socket in events:
                     msg = await self._xsub_socket.recv()
                     msg_count += 1
-                    # Try to parse and log event type
+                    # Try to parse and log event type; also dispatch P2P events locally
                     try:
                         event = Event.from_bytes(msg)
                         if event.type.startswith("ws."):
                             logger.info(f"[Broker] Forwarding #{msg_count}: {event.type} from {event.source} to {event.target}")
+                        # Leader must observe P2P events from followers (WORKER_STATUS etc.)
+                        # since broker doesn't normally receive its own forwarded traffic.
+                        if event.source != self.worker_id and event.type in (
+                            EventType.WORKER_STATUS,
+                            EventType.WORKER_START,
+                            EventType.WORKER_STOP,
+                        ):
+                            if self._validate_token(event):
+                                asyncio.create_task(self._dispatch_event(event))
                     except Exception:
                         logger.debug(f"[Broker] Forwarding #{msg_count}: raw message ({len(msg)} bytes)")
                     await self._xpub_socket.send(msg)
@@ -564,6 +695,10 @@ class ZMQEventManager:
                     logger.debug(f"[EventManager] Skipping expired event: {event.type}")
                     continue
 
+                # Cluster-secret token check (anti-spoofing)
+                if not self._validate_token(event):
+                    continue
+
                 # Skip our own events
                 if event.source == self.worker_id:
                     logger.debug(f"[EventManager] Skipping own event: {event.type}")
@@ -621,6 +756,7 @@ class ZMQEventManager:
         if not self._running:
             raise RuntimeError("Event manager not started")
 
+        self._inject_token(event)
         socket = self._pub_socket if not self.is_broker else self._xpub_socket
         await socket.send(event.to_bytes())
         self._metrics["events_sent"] += 1
@@ -630,6 +766,7 @@ class ZMQEventManager:
         if not self._push_socket:
             raise RuntimeError("PUSH socket not available")
 
+        self._inject_token(event)
         await self._push_socket.send(event.to_bytes())
         self._metrics["events_sent"] += 1
 
@@ -640,8 +777,398 @@ class ZMQEventManager:
             self._sync_push = self._sync_ctx.socket(zmq.PUSH)
             self._sync_push.connect(self.http_to_ws_endpoint)
 
+        self._inject_token(event)
         self._sync_push.send(event.to_bytes())
         self._metrics["events_sent"] += 1
+
+    def _inject_token(self, event: Event) -> None:
+        """Auto-inject cluster_secret into outgoing event payload."""
+        if not self.cluster_secret:
+            return
+        if isinstance(event.payload, dict):
+            event.payload.setdefault("_token", self.cluster_secret)
+
+    def _validate_token(self, event: Event) -> bool:
+        """Drop events with mismatching cluster token. Empty secret disables check."""
+        if not self.cluster_secret:
+            return True
+        token = None
+        if isinstance(event.payload, dict):
+            token = event.payload.get("_token")
+        if token != self.cluster_secret:
+            logger.warning(
+                f"[Security] Token mismatch from {event.source} (type={event.type}) — drop"
+            )
+            return False
+        return True
+
+    # ========================================================================
+    # P2P Cluster: Heartbeat, Watchdog, Takeover, Topology
+    # ========================================================================
+
+    async def _heartbeat_loop(self):
+        """Leader: emit SYS_HEARTBEAT every heartbeat_period_s seconds."""
+        logger.info(f"[P2P] Heartbeat loop started (leader={self.worker_id})")
+        while self._running and self.is_broker:
+            try:
+                await self.publish(Event(
+                    type=EventType.SYS_HEARTBEAT,
+                    source=self.worker_id,
+                    target="*",
+                    payload={
+                        "leader": self.worker_id,
+                        "ts": time.time(),
+                    },
+                    ttl=5,
+                ))
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"[P2P] Heartbeat emit failed: {e}")
+            try:
+                await asyncio.sleep(self.heartbeat_period_s)
+            except asyncio.CancelledError:
+                break
+
+    def _on_heartbeat(self, event: Event):
+        """Follower: update last-heartbeat timestamp."""
+        self._last_heartbeat = time.time()
+
+    def _on_topology_snapshot(self, event: Event):
+        """Follower: cache the leader-broadcast SYS_TOPOLOGY payload locally so
+        /live/snapshot served by *any* worker returns current data."""
+        if self.is_broker:
+            return  # leader builds state itself
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        self._topology_state = {
+            "leader": payload.get("leader"),
+            "updated_at": payload.get("updated_at", time.time()),
+            "workers": payload.get("workers", {}) or {},
+        }
+
+    async def _watchdog_loop(self):
+        """Follower: detect leader death and trigger takeover."""
+        logger.info(f"[P2P] Watchdog started (follower={self.worker_id})")
+        while self._running and not self.is_broker:
+            try:
+                await asyncio.sleep(0.5)
+            except asyncio.CancelledError:
+                break
+            elapsed = time.time() - self._last_heartbeat
+            if elapsed > self.heartbeat_timeout_s:
+                logger.warning(
+                    f"[P2P] No heartbeat for {elapsed:.2f}s — initiating takeover"
+                )
+                try:
+                    await self._takeover()
+                except Exception as e:
+                    logger.error(f"[P2P] Takeover failed: {e}", exc_info=True)
+                return  # new role's tasks took over
+
+    async def _takeover(self):
+        """Follower → leader transition after detected leader death."""
+        # Cancel follower-side tasks except this one
+        current = asyncio.current_task()
+        for t in list(self._tasks):
+            if t is not current:
+                t.cancel()
+        self._tasks = [t for t in self._tasks if t is current]
+
+        # Close follower sockets (broker bind needs the endpoints free)
+        for attr in ("_sub_socket", "_pub_socket", "_req_socket", "_push_socket"):
+            sock = getattr(self, attr, None)
+            if sock is not None:
+                try:
+                    sock.close(linger=0)
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+
+        # Jitter to prevent thundering herd
+        jitter = random.uniform(0.0, self.takeover_jitter_max_s)
+        logger.info(f"[P2P] Takeover jitter: {jitter*1000:.0f}ms")
+        await asyncio.sleep(jitter)
+
+        became_leader = await self._try_bind_as_leader()
+        await self._assume_role(became_leader)
+        logger.info(
+            f"[P2P] Takeover result: {self.worker_id} is now "
+            f"{'LEADER' if became_leader else 'FOLLOWER'}"
+        )
+
+    # --- Worker status emission (followers) ---
+
+    async def _status_send_loop(self):
+        """Follower: emit WORKER_STATUS every status_period_s seconds."""
+        logger.info(f"[P2P] Status sender started ({self.worker_id})")
+        # Prime cpu_percent on first call so subsequent calls return non-zero
+        if psutil is not None:
+            try:
+                psutil.Process(os.getpid()).cpu_percent(interval=None)
+            except Exception:
+                pass
+        while self._running and not self.is_broker:
+            try:
+                payload = self._build_worker_status_payload()
+                await self.publish(Event(
+                    type=EventType.WORKER_STATUS,
+                    source=self.worker_id,
+                    target="*",
+                    payload=payload,
+                    ttl=15,
+                ))
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"[P2P] Status emit failed: {e}")
+            try:
+                await asyncio.sleep(self.status_period_s)
+            except asyncio.CancelledError:
+                break
+
+    def _build_worker_status_payload(self) -> Dict[str, Any]:
+        """Build per-process status payload (own CPU/RAM, not system-global)."""
+        cpu = 0.0
+        mem = 0.0
+        if psutil is not None:
+            try:
+                p = psutil.Process(os.getpid())
+                cpu = p.cpu_percent(interval=None)
+                mem = round(p.memory_info().rss / (1024 * 1024), 2)
+            except Exception:
+                pass
+        connections = 0
+        if self._connection_counter is not None:
+            try:
+                connections = int(self._connection_counter())
+            except Exception:
+                connections = 0
+        routes: List[str] = []
+        if self._route_provider is not None:
+            try:
+                routes = list(self._route_provider())
+            except Exception:
+                routes = []
+        return {
+            "worker_id": self.worker_id,
+            "worker_type": self.worker_type,
+            "pid": os.getpid(),
+            "started_at": self._started_at,
+            "cpu_percent": cpu,
+            "memory_mb": mem,
+            "connections": connections,
+            "routes": routes,
+        }
+
+    # --- Topology aggregation (leader) ---
+
+    async def _on_worker_status(self, event: Event):
+        """Leader handler: merge follower status into topology state."""
+        if not self.is_broker:
+            return
+        wid = event.payload.get("worker_id")
+        if not wid:
+            return
+        entry = {
+            k: v for k, v in event.payload.items()
+            if k not in ("_token",)
+        }
+        entry["last_status_at"] = time.time()
+        self._topology_state.setdefault("workers", {})[wid] = entry
+        # Ensure leader itself is in the state too
+        if self.worker_id not in self._topology_state["workers"]:
+            self._topology_state["workers"][self.worker_id] = self._build_worker_status_payload()
+            self._topology_state["workers"][self.worker_id]["last_status_at"] = time.time()
+        self._topology_state["leader"] = self.worker_id
+        self._topology_state["updated_at"] = time.time()
+        # Persist only when the *meaningful* shape changed (skip monotonic timestamps)
+        self._persist_if_changed()
+
+    async def _topology_broadcast_loop(self):
+        """Leader: broadcast SYS_TOPOLOGY every topology_broadcast_period_s seconds.
+
+        Sent both via ZMQ (subscribers can listen) and via WS bridge for /live UI.
+        """
+        logger.info(f"[P2P] Topology broadcaster started (leader={self.worker_id})")
+        # Ensure leader itself is represented
+        leader_status = self._build_worker_status_payload()
+        leader_status["last_status_at"] = time.time()
+        self._topology_state.setdefault("workers", {})[self.worker_id] = leader_status
+
+        while self._running and self.is_broker:
+            try:
+                # Refresh leader's own metrics
+                self_status = self._build_worker_status_payload()
+                self_status["last_status_at"] = time.time()
+                self._topology_state["workers"][self.worker_id] = self_status
+                self._topology_state["leader"] = self.worker_id
+                self._topology_state["updated_at"] = time.time()
+
+                payload = self._snapshot_topology()
+                # Publish over ZMQ for any direct subscribers
+                await self.publish(Event(
+                    type=EventType.SYS_TOPOLOGY,
+                    source=self.worker_id,
+                    target="*",
+                    payload=payload,
+                    ttl=10,
+                ))
+                # Broadcast to /live UI via WS bridge if available
+                await self._broadcast_topology_to_ws(payload)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"[P2P] Topology broadcast failed: {e}")
+            try:
+                await asyncio.sleep(self.topology_broadcast_period_s)
+            except asyncio.CancelledError:
+                break
+
+    async def _topology_prune_loop(self):
+        """Leader: remove workers whose status is stale (>3× status period)."""
+        prune_after = self.status_period_s * 3.0
+        while self._running and self.is_broker:
+            try:
+                await asyncio.sleep(self.status_period_s)
+            except asyncio.CancelledError:
+                break
+            now = time.time()
+            workers = self._topology_state.get("workers", {})
+            stale = [
+                wid for wid, info in list(workers.items())
+                if wid != self.worker_id
+                and now - info.get("last_status_at", 0) > prune_after
+            ]
+            for wid in stale:
+                workers.pop(wid, None)
+                self._emit_audit_safe(
+                    "WORKER_REMOVED",
+                    {"worker_id": wid, "reason": "stale_status"},
+                )
+            if stale:
+                self._topology_state["updated_at"] = now
+                self._persist_if_changed()
+
+    def _snapshot_topology(self) -> Dict[str, Any]:
+        """Build the public topology payload + failover chain order."""
+        workers = self._topology_state.get("workers", {})
+        # Chain order: oldest started_at first (= primary leader candidate after current)
+        chain = sorted(
+            workers.values(),
+            key=lambda w: w.get("started_at", float("inf")),
+        )
+        return {
+            "leader": self._topology_state.get("leader"),
+            "updated_at": self._topology_state.get("updated_at"),
+            "workers": workers,
+            "chain": [w.get("worker_id") for w in chain],
+        }
+
+    async def _broadcast_topology_to_ws(self, payload: Dict[str, Any]) -> None:
+        """Best-effort: push topology snapshot to WS clients via app.ws_broadcast_all."""
+        try:
+            from toolboxv2 import get_app
+            app = get_app()
+        except Exception:
+            return
+        broadcast = getattr(app, "ws_broadcast_all", None)
+        if broadcast is None:
+            return
+        try:
+            await broadcast({"type": "sys.topology", "data": payload})
+        except Exception as e:
+            logger.debug(f"[P2P] ws_broadcast_all topology failed: {e}")
+
+    # --- Persistence (BlobFile) + Audit ---
+
+    def _topology_signature(self) -> str:
+        """Stable hash over the *meaningful* topology shape — ignores timestamps
+        so heartbeat-driven updates don't trigger blob writes."""
+        workers = self._topology_state.get("workers", {})
+        # Project each worker entry onto fields that matter for "did anything change"
+        projected = {}
+        for wid, info in workers.items():
+            projected[wid] = {
+                "worker_type": info.get("worker_type"),
+                "pid": info.get("pid"),
+                "started_at": info.get("started_at"),
+                "connections": info.get("connections"),
+                "routes": sorted(info.get("routes", []) or []),
+            }
+        sig_input = {
+            "leader": self._topology_state.get("leader"),
+            "workers": projected,
+        }
+        raw = json.dumps(sig_input, sort_keys=True, default=str).encode("utf-8")
+        return hashlib.sha1(raw).hexdigest()
+
+    def _persist_if_changed(self) -> None:
+        """Schedule blob write only if topology signature changed since last write."""
+        sig = self._topology_signature()
+        if sig == self._last_persisted_sig:
+            return
+        self._last_persisted_sig = sig
+        asyncio.create_task(self._persist_topology())
+
+    async def _persist_topology(self) -> None:
+        try:
+            await asyncio.to_thread(self._write_topology_blob, dict(self._topology_state))
+        except Exception as e:
+            logger.warning(f"[P2P] Topology persist failed: {e}")
+
+    def _write_topology_blob(self, state: Dict[str, Any]) -> None:
+        try:
+            from toolboxv2.utils.extras.blobs import BlobFile
+            with BlobFile("system/topology_state.json", mode="w") as f:
+                f.write_json(state)
+        except Exception as e:
+            logger.warning(f"[P2P] BlobFile write failed: {e}")
+
+    async def _restore_topology(self) -> None:
+        try:
+            restored = await asyncio.to_thread(self._read_topology_blob)
+        except Exception as e:
+            logger.warning(f"[P2P] Topology restore failed: {e}")
+            return
+        if restored and isinstance(restored, dict):
+            self._topology_state = restored
+            logger.info(
+                f"[P2P] Restored topology with {len(restored.get('workers', {}))} workers"
+            )
+
+    def _read_topology_blob(self) -> Dict[str, Any]:
+        try:
+            from toolboxv2.utils.extras.blobs import BlobFile
+            with BlobFile("system/topology_state.json", mode="r") as f:
+                if f.exists():
+                    data = f.read_json()
+                    if isinstance(data, dict):
+                        return data
+        except Exception as e:
+            logger.debug(f"[P2P] BlobFile read failed: {e}")
+        return {}
+
+    def _emit_audit_safe(self, action: str, details: Optional[Dict[str, Any]] = None) -> None:
+        """Best-effort audit log emit; never raises."""
+        try:
+            from toolboxv2 import get_app
+            app = get_app()
+            audit = getattr(app, "audit_logger", None)
+            if audit is None:
+                return
+            audit.log_action(
+                user_id="system",
+                action=action,
+                resource="cluster",
+                status="SUCCESS",
+                details=details or {},
+            )
+        except Exception as e:
+            logger.debug(f"[P2P] Audit emit skipped: {e}")
+
+    def get_topology_snapshot(self) -> Dict[str, Any]:
+        """Public accessor for current topology state (used by /live route)."""
+        return self._snapshot_topology()
 
     async def rpc_call(
         self,
@@ -861,9 +1388,14 @@ async def run_broker(config):
         req_endpoint=zmq_config.req_endpoint,
         rep_endpoint=zmq_config.rep_endpoint,
         http_to_ws_endpoint=zmq_config.http_to_ws_endpoint,
-        is_broker=True,
         hwm_send=zmq_config.hwm_send,
         hwm_recv=zmq_config.hwm_recv,
+        cluster_secret=getattr(zmq_config, "cluster_secret", ""),
+        heartbeat_period_s=getattr(zmq_config, "heartbeat_period_s", 1.0),
+        heartbeat_timeout_s=getattr(zmq_config, "heartbeat_timeout_s", 3.0),
+        takeover_jitter_max_s=getattr(zmq_config, "takeover_jitter_max_s", 0.5),
+        status_period_s=getattr(zmq_config, "status_period_s", 5.0),
+        topology_broadcast_period_s=getattr(zmq_config, "topology_broadcast_period_s", 2.0),
     )
 
     await broker.start()

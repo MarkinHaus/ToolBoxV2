@@ -2078,9 +2078,38 @@ def format_status(status: str, message: str) -> HTML:
     icon = icons.get(status, '•')
     return HTML(f'<{status}>{icon} {message}</{status}>')
 
+def _fmt_result(result: Any) -> str:
+    """
+    Convert a Result object to full display string without __str__ truncation.
+    Falls back to str() for non-Result objects.
+    """
+    if result is None:
+        return "<no result>"
+    # Try structured extraction first
+    try:
+        if hasattr(result, "get_error") and callable(result.get_error):
+            err = result.get_error()
+            if err:
+                return str(err)
+        data = result.get() if hasattr(result, "get") and callable(result.get) else None
+        if data is not None:
+            if isinstance(data, dict):
+                import json
+                try:
+                    return json.dumps(data, indent=2, default=str, ensure_ascii=False)
+                except Exception:
+                    pass
+            return str(data)
+        # Try info attribute
+        info = getattr(result, "info", None)
+        if info:
+            return str(info)
+    except Exception:
+        pass
+    return str(result)
 
 async def show_message(title: str, text: str, style: str = "info"):
-    """Show a message dialog."""
+    """Show a message dialog. Falls back to scrollable terminal output for long content."""
     icons = {
         'success': '✓',
         'error': '✗',
@@ -2088,6 +2117,40 @@ async def show_message(title: str, text: str, style: str = "info"):
         'info': 'ℹ'
     }
     icon = icons.get(style, 'ℹ')
+
+    # message_dialog clips long content — bypass to terminal for anything substantial
+    line_count = text.count('\n') + 1
+    if line_count > 15 or len(text) > 800:
+        print('\033[2J\033[H')
+        print_formatted_text(
+            HTML(f'<menu-border>{"═" * 70}</menu-border>\n'
+                 f'<{style}>  {icon} {title}</{style}>\n'
+                 f'<menu-border>{"═" * 70}</menu-border>'),
+            style=MODERN_STYLE,
+        )
+        # Plain print to avoid HTML-escaping issues in arbitrary content (dicts, tracebacks)
+        print(text)
+        print_formatted_text(
+            HTML(f'\n<menu-border>{"─" * 70}</menu-border>\n'
+                 f'<footer>  Press Enter to continue…</footer>'),
+            style=MODERN_STYLE,
+        )
+
+        kb = KeyBindings()
+
+        @kb.add('enter')
+        @kb.add('escape')
+        @kb.add('q')
+        @kb.add('space')
+        def _continue(event):
+            event.app.exit()
+
+        await Application(
+            layout=Layout(Window(FormattedTextControl(''))),
+            key_bindings=kb,
+            full_screen=False,
+        ).run_async()
+        return
 
     await message_dialog(
         title=f"{icon} {title}",
@@ -2446,7 +2509,7 @@ class ModernMenuManager:
         result = await installer(self.app_instance, module_name)
 
         if result.is_error:
-            await show_message("Installation Failed", f"Error: {result}", "error")
+            await show_message("Installation Failed", f"Error: {_fmt_result(result)}", "error")
         else:
             await show_message("Success", f"Module '{module_name}' installed successfully!", "success")
 
@@ -2465,7 +2528,7 @@ class ModernMenuManager:
         result = uninstaller(self.app_instance, module_name)
 
         if result.is_error:
-            await show_message("Uninstall Failed", f"Error: {result}", "error")
+            await show_message("Uninstall Failed", f"Error: {_fmt_result(result)}", "error")
         else:
             await show_message("Success", f"Module '{module_name}' uninstalled successfully!", "success")
 
@@ -2483,7 +2546,7 @@ class ModernMenuManager:
         result = await make_installer(self.app_instance, module_name, upload=upload)
 
         if result.is_error:
-            await show_message("Build Failed", f"Error: {result}", "error")
+            await show_message("Build Failed", f"Error: {_fmt_result(result)}", "error")
         else:
             msg = f"Installer built successfully!"
             if upload:
@@ -2502,7 +2565,7 @@ class ModernMenuManager:
         result = await upload(self.app_instance, module_name)
 
         if result.is_error:
-            await show_message("Upload Failed", f"Error: {result}", "error")
+            await show_message("Upload Failed", f"Error: {_fmt_result(result)}", "error")
         else:
             await show_message("Success", f"Module '{module_name}' uploaded successfully!", "success")
 
@@ -2518,10 +2581,46 @@ class ModernMenuManager:
 
         result = await update_all_mods(self.app_instance)
 
-        if result.is_error:
-            await show_message("Update Completed", f"Completed with errors:\n\n{result}", "warning")
-        else:
-            await show_message("Success", "All modules updated successfully!", "success")
+        # Never use str(result) — Result.__str__ truncates Data_dict preview.
+        # Extract structured data directly.
+        data = result.get() if hasattr(result, "get") else {}
+        if not isinstance(data, dict):
+            data = {}
+        summary = data.get("summary", {}) or {}
+        details = data.get("details", {}) or {}
+
+        lines = [
+            f"Total:      {summary.get('total', 0)}",
+            f"Updated:    {summary.get('updated', 0)}",
+            f"Up to date: {summary.get('up_to_date', 0)}",
+            f"Failed:     {summary.get('failed', 0)}",
+        ]
+
+        updated = details.get("updated") or []
+        if updated:
+            lines.append("\nUpdated:")
+            for u in updated:
+                lines.append(f"  ✓ {u.get('module')} → {u.get('version')}")
+
+        failed = details.get("failed") or []
+        if failed:
+            lines.append("\nFailed:")
+            for f in failed:
+                lines.append(f"  ✗ {f.get('module')}: {f.get('reason')}")
+
+        up_to_date = details.get("up_to_date") or []
+        if up_to_date:
+            lines.append("\nUp to date:")
+            for name in up_to_date:
+                lines.append(f"  • {name}")
+
+        body = "\n".join(lines)
+        has_failures = summary.get("failed", 0) > 0
+        await show_message(
+            "Update Completed (with errors)" if has_failures else "Success",
+            body,
+            "warning" if has_failures else "success",
+        )
 
     async def _build_all(self):
         """Build all modules."""
@@ -2538,7 +2637,7 @@ class ModernMenuManager:
         result = await build_all_mods(self.app_instance, upload=upload)
 
         if result.is_error:
-            await show_message("Build Completed", f"Completed with errors:\n\n{result}", "warning")
+            await show_message("Build Completed", f"Completed with errors:\n\n{_fmt_result(result)}", "warning")
         else:
             msg = "All modules built successfully!"
             if upload:
@@ -2557,7 +2656,7 @@ class ModernMenuManager:
         result = await get_mod_info(self.app_instance, module_name)
 
         if result.is_error:
-            await show_message("Error", f"Could not get module info:\n\n{result}", "error")
+            await show_message("Error", f"Could not get module info:\n\n{_fmt_result(result)}", "error")
         else:
             info_text = yaml.dump(result.get(), default_flow_style=False, allow_unicode=True)
             await show_message(f"Module Info: {module_name}", info_text, "info")
@@ -2697,7 +2796,7 @@ class ModernMenuManager:
         )
 
         if result.is_error:
-            await show_message("Completed", f"Generation completed with errors:\n\n{result}", "warning")
+            await show_message("Completed", f"Generation completed with errors:\n\n{_fmt_result(result)}", "warning")
         else:
             await show_message("Success", "Config generation completed successfully!", "success")
 
@@ -2754,7 +2853,7 @@ class ModernMenuManager:
         )
 
         if result.is_error:
-            await show_message("Error", f"Generation failed:\n\n{result}", "error")
+            await show_message("Error", f"Generation failed:\n\n{_fmt_result(result)}", "error")
         else:
             await show_message("Success", f"Config generated for '{module_name}'!", "success")
 
@@ -2787,7 +2886,7 @@ class ModernMenuManager:
         )
 
         if result.is_error:
-            await show_message("Error", f"Build failed:\n\n{result}", "error")
+            await show_message("Error", f"Build failed:\n\n{_fmt_result(result)}", "error")
         else:
             await show_message("Success", f"Platform-specific installer built!", "success")
 
@@ -2814,7 +2913,7 @@ class ModernMenuManager:
         result = await installer(self.app_instance, module_name, platform=platform)
 
         if result.is_error:
-            await show_message("Error", f"Installation failed:\n\n{result}", "error")
+            await show_message("Error", f"Installation failed:\n\n{_fmt_result(result)}", "error")
         else:
             await show_message("Success", "Module installed successfully!", "success")
 
@@ -2867,7 +2966,7 @@ class ModernMenuManager:
         )
 
         if result.is_error:
-            await show_message("Error", f"Module creation failed:\n\n{result}", "error")
+            await show_message("Error", f"Module creation failed:\n\n{_fmt_result(result)}", "error")
         else:
             await show_message(
                 "Success",
@@ -2904,7 +3003,7 @@ class ModernMenuManager:
         result = await search_registry(self.app_instance, query)
 
         if result.is_error:
-            await show_message("Search Failed", f"Error: {result}", "error")
+            await show_message("Search Failed", f"Error: {_fmt_result(result)}", "error")
             return
 
         data = result.get()
@@ -2949,7 +3048,7 @@ class ModernMenuManager:
         )
 
         if result.is_error:
-            await show_message("Installation Failed", f"Error: {result}", "error")
+            await show_message("Installation Failed", f"Error: {_fmt_result(result)}", "error")
         else:
             data = result.get()
             await show_message(
@@ -3003,7 +3102,7 @@ class ModernMenuManager:
         result = await publish_to_registry(self.app_instance, module_name)
 
         if result.is_error:
-            await show_message("Publish Failed", f"Error: {result}", "error")
+            await show_message("Publish Failed", f"Error: {_fmt_result(result)}", "error")
         else:
             data = result.get()
             await show_message(
@@ -3044,7 +3143,7 @@ class ModernMenuManager:
         result = await update_from_registry(self.app_instance, package_name)
 
         if result.is_error:
-            await show_message("Update Failed", f"Error: {result}", "error")
+            await show_message("Update Failed", f"Error: {_fmt_result(result)}", "error")
         else:
             data = result.get()
             updated = data.get("updated", [])
@@ -3067,7 +3166,7 @@ class ModernMenuManager:
         result = await list_installed_packages(self.app_instance)
 
         if result.is_error:
-            await show_message("Error", f"Failed to list packages: {result}", "error")
+            await show_message("Error", f"Failed to list packages: {_fmt_result(result)}", "error")
             return
 
         data = result.get()
@@ -3104,7 +3203,7 @@ class ModernMenuManager:
         result = await get_registry_info(self.app_instance, package_name)
 
         if result.is_error:
-            await show_message("Error", f"Failed to get info: {result}", "error")
+            await show_message("Error", f"Failed to get info: {_fmt_result(result)}", "error")
             return
 
         data = result.get()
@@ -4176,9 +4275,9 @@ async def run(app: App, app_args: AppArgs):
     app.print("Step 3: Processing results...")
     for idx, result in enumerate(results, 1):
         if isinstance(result, Exception):
-            app.logger.error(f"Task {idx} failed: {result}")
+            app.logger.error(f"Task {idx} failed: {_fmt_result(result)}")
         else:
-            app.print(f"Task {idx} completed: {result}")
+            app.print(f"Task {idx} completed: {_fmt_result(result)}")
 
     app.print(f"{Name} workflow completed")
 

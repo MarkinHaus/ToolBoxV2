@@ -4062,65 +4062,69 @@ BEISPIELE:
         Verschiebt den aktuellen Arbeitsfortschritt in die Permanent History
         und leert die Working History für einen frischen Start.
         """
-        session = await self.agent.session_manager.get_or_create(ctx.session_id)
+        try:
+            session = await self.agent.session_manager.get_or_create(ctx.session_id)
 
-        # 1. Erzeuge automatische Zusammenfassung der bisherigen Tool-Calls
-        auto_summary = HistoryCompressor.compress_to_summary(
-            ctx.working_history, ctx.run_id
-        )
+            # 1. Erzeuge automatische Zusammenfassung der bisherigen Tool-Calls
+            auto_summary = HistoryCompressor.compress_to_summary(
+                ctx.working_history, ctx.run_id
+            )
 
-        # 2. Kombiniere automatische Summary mit der manuellen des Agenten
-        combined_content = (
-            f"--- FOKUS-WECHSEL / MEILENSTEIN ---\n"
-            f"ERGEBNISSE: {summary_of_achievements}\n\n"
-            f"TECHNISCHES PROTOKOLL:\n{auto_summary['content'] if auto_summary else 'Keine Tools genutzt.'}"
-        )
+            # 2. Kombiniere automatische Summary mit der manuellen des Agenten
+            combined_content = (
+                f"--- FOKUS-WECHSEL / MEILENSTEIN ---\n"
+                f"ERGEBNISSE: {summary_of_achievements}\n\n"
+                f"TECHNISCHES PROTOKOLL:\n{auto_summary['content'] if auto_summary else 'Keine Tools genutzt.'}"
+            )
 
-        # 3. Permanent Speichern (RAG & History)
-        await session.add_message(
-            {"role": "system", "content": combined_content},
-            direct=True,
-            type="milestone_summary",
-            run_id=ctx.run_id,
-        )
+            # 3. Permanent Speichern (RAG & History)
+            await session.add_message(
+                {"role": "system", "content": combined_content},
+                direct=True,
+                type="milestone_summary",
+                run_id=ctx.run_id,
+            )
 
-        # 4. Working History RESET
-        # Wir behalten den ursprünglichen System-Prompt (Index 0)
-        system_prompt = (
-            ctx.working_history[0]
-            if ctx.working_history
-            else {"role": "system", "content": self.agent.amd.system_message}
-        )
-        ctx.working_history = [
-            system_prompt,
-            {
-                "role": "system",
-                "content": f"Vorheriger Abschnitt abgeschlossen. Stand: {summary_of_achievements}",
-            },
-            {"role": "user", "content": f"Neues Ziel: {next_objective}. Fahre fort."},
-        ]
+            # 4. Working History RESET
+            # Wir behalten den ursprünglichen System-Prompt (Index 0)
+            system_prompt = (
+                ctx.working_history[0]
+                if ctx.working_history
+                else {"role": "system", "content": self.agent.amd.system_message}
+            )
+            ctx.working_history = [
+                system_prompt,
+                {
+                    "role": "system",
+                    "content": f"Vorheriger Abschnitt abgeschlossen. Stand: {summary_of_achievements}",
+                },
+                {"role": "user", "content": f"Neues Ziel: {next_objective}. Fahre fort."},
+            ]
 
-        # 5. Trackers zurücksetzen für neue Phase
-        ctx.loop_detector.reset()
-        ctx.loop_warning_given = False
-        # 1. Begrenze, wie oft ein Agent den Fokus shiften darf (Sicherung gegen Loops)
-        if not hasattr(ctx, "focus_shifts_count"):
-            ctx.focus_shifts_count = 0
+            # 5. Trackers zurücksetzen für neue Phase
+            ctx.loop_detector.reset()
+            ctx.loop_warning_given = False
+            # 1. Begrenze, wie oft ein Agent den Fokus shiften darf (Sicherung gegen Loops)
+            if not hasattr(ctx, "focus_shifts_count"):
+                ctx.focus_shifts_count = 0
 
-        if ctx.focus_shifts_count >= 3:  # Maximal 3 Resets pro Run
-            return "Fehler: Maximale Anzahl an Fokus-Wechseln erreicht. Bitte schließe die Aufgabe jetzt ab."
+            if ctx.focus_shifts_count >= 3:  # Maximal 3 Resets pro Run
+                return "Fehler: Maximale Anzahl an Fokus-Wechseln erreicht. Bitte schließe die Aufgabe jetzt ab."
 
-        ctx.focus_shifts_count += 1
+            ctx.focus_shifts_count += 1
 
-        # 2. Iterations-Bonus statt komplettem Reset
-        # Wir setzen nicht auf 1, sondern geben ihm z.B. 10 neue Versuche,
-        # aber überschreiten niemals das ursprüngliche Limit.
-        ctx.max_iterations += 10
+            # 2. Iterations-Bonus statt komplettem Reset
+            # Wir setzen nicht auf 1, sondern geben ihm z.B. 10 neue Versuche,
+            # aber überschreiten niemals das ursprüngliche Limit.
+            ctx.max_iterations += 10
 
-        # Optional: Tool-Relevanz für neues Ziel neu berechnen
-        self._calculate_tool_relevance(ctx, next_objective)
+            # Optional: Tool-Relevanz für neues Ziel neu berechnen
+            self._calculate_tool_relevance(ctx, next_objective)
 
-        return f"Fokus erfolgreich gewechselt. Dein Gedächtnis wurde bereinigt. Nächstes Ziel: {next_objective}"
+            return f"Fokus erfolgreich gewechselt. Dein Gedächtnis wurde bereinigt. Nächstes Ziel: {next_objective}"
+        except Exception as e:
+            import traceback
+            return f"Fehler: {e} + {traceback.format_exc()}"
 
     async def _tool_load_tools(
         self, ctx: ExecutionContext, tools_input: Union[str, List[str]]
@@ -4290,7 +4294,7 @@ BEISPIELE:
     # 3-step loop: 1) collect data  2) one-shot LLM generation  3) validate
     # =========================================================================
 
-    _CODING_MODEL = os.environ.get("CODING_MODEL", None)  # explicit override
+    _CODING_MODEL = os.getenv("CODING_MODEL", None)  # explicit override
 
     def _get_coding_model_kwargs(self) -> dict:
         """Get model kwargs for coding LLM calls."""
@@ -4944,13 +4948,6 @@ BEISPIELE:
                 "  → If a sub-agent hits max_iterations but made progress, resume it with more iterations",
             ]))
 
-        # OODA, zero-guessing, tool-loading, tool-table, parallel-calling, think-hint
-        # (alle bisherigen STATIC blöcke, inhaltlich unverändert)
-        static_parts.append("MANDATORY WORKFLOW — OODA LOOP (run for EVERY action cycle until objective met): ...")
-        static_parts.append("STRICT ZERO-GUESSING POLICY: ...")
-        static_parts.append("\n## Tool Loading Protocol (STRICT)\n...")
-        static_parts.append("""\n  Statisch verfügbar (kein load_tools nötig): ...""")
-        static_parts.append("\n## Parallel Tool Calling\n...")
         static_parts.append(
             "\nIf the task has exceeded 10 iterations and prior summaries exist in the history, "
             "use your second-to-last tool call to invoke `think` — assess your progress so far, "

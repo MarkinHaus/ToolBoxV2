@@ -21,8 +21,6 @@ import sys
 import threading
 from pathlib import Path
 
-import uvicorn
-
 try:
     from a2wsgi import WSGIMiddleware
     IS_A2WSGI = True
@@ -175,7 +173,7 @@ def run_debug_server(dist_path: str, port: int):
             req_endpoint=config.zmq.req_endpoint,
             rep_endpoint=config.zmq.rep_endpoint,
             http_to_ws_endpoint=config.zmq.http_to_ws_endpoint,
-            is_broker=True,
+            cluster_secret=getattr(config.zmq, "cluster_secret", ""),
         )
         loop.run_until_complete(broker.start())
 
@@ -216,6 +214,8 @@ def run_debug_server(dist_path: str, port: int):
 
     # 4. Kombinierten ASGI Server generieren
     # a2wsgi packt den WSGI Worker in eine ASGI konforme Klasse ein, bewahrt aber alle ENV-Pfade!
+    if WSGIMiddleware is None:
+        raise ImportError("a2wsgi use pip install a2wsgi")
     api_asgi_app = WSGIMiddleware(http_worker.wsgi_app)
     debug_app = DebugASGIDispatcher(api_asgi_app, dist_path)
 
@@ -225,7 +225,8 @@ def run_debug_server(dist_path: str, port: int):
     logger.info(f"Web Interface: http://localhost:{port}")
     logger.info(f"========================================")
 
-    uvicorn.run(debug_app, host="0.0.0.0", port=port, log_level="info")
+    from waitress import serve
+    serve(debug_app, host="0.0.0.0", port=port, log_level="info")
 
 def main():
     parser = argparse.ArgumentParser(description="ToolBoxV2 Unified Debug Server (Uvicorn)")
@@ -244,4 +245,4 @@ def main():
 
 
 if __name__ == "__main__":
-    mein()
+    main()

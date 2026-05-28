@@ -8,8 +8,8 @@ performance metrics, anomaly detection.
 All results are persisted via BlobFile for cross-session access.
 
 Usage (CLI):
-    tb o2_intel                          # auto-config from manifest
-    tb o2_intel --endpoint http://... --org default --user x --pass y
+    tb -m o2_intel                          # auto-config from manifest
+    tb -m o2_intel --endpoint http://... --org default --user x --pass y
 
 Usage (Agent):
     # registered as cli_tool, other agents call via:
@@ -863,15 +863,15 @@ def create_o2_intel_agent(
 # TB Flow Entry Point
 # ═══════════════════════════════════════════════════════════════════════════
 
-async def run(app, args_namespace=None, help=False):
+async def run(app, _, report="full", hours = 24.0, stream_type="logs", help=False, **k):
     """
     TB Flow entry point.
 
     CLI usage:
-        tb o2_intel                                  # full report, 24h
-        tb o2_intel --kwargs report=errors hours=6   # error report, 6h
-        tb o2_intel --kwargs report=agent             # FlowAgent mode
-        tb o2_intel --kwargs report=discover stream_type=metrics
+        tb -m o2_intel                                  # full report, 24h
+        tb -m o2_intel --kwargs report=errors hours=6   # error report, 6h
+        tb -m o2_intel --kwargs report=agent             # FlowAgent mode
+        tb -m o2_intel --kwargs report=discover stream_type=metrics
     """
     if help:
         HELP_STRING = """
@@ -914,22 +914,10 @@ async def run(app, args_namespace=None, help=False):
         """
         print(HELP_STRING)
     # ── Parse kwargs from TB Namespace ──
-    raw_kwargs = {}
-    if args_namespace is not None:
-        kw_list = getattr(args_namespace, "kwargs", None) or []
-        for item in kw_list:
-            if isinstance(item, dict):
-                raw_kwargs.update(item)
-            elif isinstance(item, str) and "=" in item:
-                k, v = item.split("=", 1)
-                raw_kwargs[k.strip()] = v.strip()
-
-    report = raw_kwargs.get("report", "full")
     try:
-        hours = float(raw_kwargs.get("hours", 24))
+        hours = float(hours)
     except (ValueError, TypeError):
         hours = 24.0
-    stream_type = raw_kwargs.get("stream_type", "logs")
 
     app.print(f"[o2_intel] Starting {report} report (last {hours}h)...")
 

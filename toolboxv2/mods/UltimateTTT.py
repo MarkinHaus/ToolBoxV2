@@ -1338,9 +1338,10 @@ def minimax(
         if initial_call: return min_eval, best_move_for_this_level  # Should not be the primary path for NPC move
         return min_eval
 
-
-import numpy as np  # Add this at the top of your file
-
+try:
+    import numpy as np  # Add this at the top of your file
+except ImportError:
+    np = object
 # --- Constants for NumPy representation ---
 EMPTY_INT = 0
 # We'll determine NPC_INT and OPPONENT_INT dynamically based on player symbols

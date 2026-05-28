@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html data-theme="dark" data-style="default" lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ISAA</title>
+  <link rel="stylesheet" href="/static/isaa.css">
+</head>
+<body class="isaa-body">
+  <!-- Sidebar -->
+  <aside id="sidebar" class="isaa-sidebar" data-expanded="false">
+    <nav class="sb-icons">
+      <button class="sb-icon" data-action="new-chat" title="Neuer Chat">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+      </button>
+      <button class="sb-icon" data-panel="chats" title="Chats">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+      </button>
+      <button class="sb-icon" data-panel="vfs" title="VFS">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+      </button>
+      <button class="sb-icon" data-panel="agent" title="Agent Config">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+      <button class="sb-icon" data-panel="skills" title="Skills">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        </svg>
+      </button>
+      <button class="sb-icon" data-panel="tools" title="Tools">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+        </svg>
+      </button>
+    </nav>
+    <div id="sb-panel" class="sb-panel"></div>
+  </aside>
+
+  <!-- Main -->
+  <main id="main" class="isaa-main">
+    <!-- View slot: filled by app.js (welcome or chat) -->
+    <div id="view" class="isaa-view"></div>
+    <!-- Input bubble (always at bottom for chat, centered for welcome) -->
+    <div id="input-bar" class="isaa-input-bar">
+      <div class="bubble" id="bubble">
+        <textarea id="prompt" placeholder="Frag oder mach…" rows="1"></textarea>
+        <div class="bubble-actions">
+          <span class="attachments" id="attachments"></span>
+          <button class="btn-icon" id="btn-cancel" title="Abbrechen" hidden>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="6" y="6" width="12" height="12"/></svg>
+          </button>
+          <button class="btn-icon btn-send" id="btn-send" title="Senden">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Running footer (sub-agents + parallel chats) -->
+  <div id="running-footer" class="running-footer" hidden></div>
+
+  <!-- Mobile bottom-nav (hidden on desktop via CSS) -->
+  <nav id="mobile-nav" class="mobile-nav">
+    <button class="mn-btn" data-action="new-chat" title="Neu">+</button>
+    <button class="mn-btn" data-panel="chats" title="Chats">💬</button>
+    <button class="mn-btn" data-panel="vfs" title="VFS">📁</button>
+    <button class="mn-btn" data-panel="agent" title="Agent">⚙</button>
+    <button class="mn-btn" data-panel="skills" title="Skills">✦</button>
+    <button class="mn-btn" data-panel="tools" title="Tools">🔧</button>
+  </nav>
+
+  <!-- ISA logo template, cloned by app.js -->
+  <template id="tpl-logo">
+    <svg class="isa-logo" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <!-- 8-point smooth star -->
+      <g class="isa-spikes" fill="currentColor">
+        <path class="sp" d="M32 4 C 34 22, 34 22, 32 32 C 30 22, 30 22, 32 4 Z"/>
+        <path class="sp" d="M52 12 C 38 26, 38 26, 32 32 C 38 26, 38 26, 52 12 Z" transform="rotate(45 32 32)"/>
+        <path class="sp" d="M32 4 C 34 22, 34 22, 32 32 C 30 22, 30 22, 32 4 Z" transform="rotate(90 32 32)"/>
+        <path class="sp" d="M52 12 C 38 26, 38 26, 32 32 C 38 26, 38 26, 52 12 Z" transform="rotate(135 32 32)"/>
+        <path class="sp" d="M32 4 C 34 22, 34 22, 32 32 C 30 22, 30 22, 32 4 Z" transform="rotate(180 32 32)"/>
+        <path class="sp" d="M52 12 C 38 26, 38 26, 32 32 C 38 26, 38 26, 52 12 Z" transform="rotate(225 32 32)"/>
+        <path class="sp" d="M32 4 C 34 22, 34 22, 32 32 C 30 22, 30 22, 32 4 Z" transform="rotate(270 32 32)"/>
+        <path class="sp" d="M52 12 C 38 26, 38 26, 32 32 C 38 26, 38 26, 52 12 Z" transform="rotate(315 32 32)"/>
+      </g>
+    </svg>
+  </template>
+
+  <script src="/static/store.js"></script>
+  <script src="/static/ui.js"></script>
+  <script src="/static/ws.js"></script>
+  <script src="/static/chat.js"></script>
+  <script src="/static/sidebar.js"></script>
+  <script src="/static/widgets.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

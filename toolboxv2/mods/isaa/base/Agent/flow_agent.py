@@ -469,10 +469,10 @@ class FlowAgent:
                 "C:/Users/Markin/Workspace/ToolBoxV2/dist/toolboxv2-0.1.24-py2.py3-none-any.whl",
             ),
 
-            enable_web=self.amd.web_config.enable_web if self.amd.web_config else None,
-            web_headless=self.amd.web_config.web_headless if self.amd.web_config else None,
-            web_single_site=self.amd.web_config.web_single_site if self.amd.web_config else None,
-            web_trusted_sites=self.amd.web_config.web_trusted_sites if self.amd.web_config else None,
+            enable_web=self.amd.web_config.enable_web,
+            web_headless=self.amd.web_config.web_headless,
+            web_single_site=self.amd.web_config.web_single_site,
+            web_trusted_sites=self.amd.web_config.web_trusted_sites,
         )
 
         self.tool_manager = ToolManager()
@@ -2547,16 +2547,14 @@ class FlowAgent:
 
         # ── Web Shell (optional) ──────────────────────────────────────────
         web_shell_fn = None
-        if session._web_enabled:
+        if self.amd.web_config.enable_web:
             from toolboxv2.mods.isaa.base.patch.web_shell_tool import make_web_shell
             web_shell_fn = make_web_shell(
                 session,
-                headless=session._web_config["headless"],
-                single_site=session._web_config.get("single_site"),
-                trusted_sites=session._web_config.get("trusted_sites"),
+                headless=self.amd.web_config.web_headless,
+                single_site=self.amd.web_config.web_single_site,
+                trusted_sites=self.amd.web_config.web_trusted_sites,
                 enable_ocr=True,
-                ocr_default_tier=session._web_config.get("ocr_default_tier", "fast"),
-                searxng_url=session._web_config.get("searxng_url", ""),
             )
             session._web_shell_fn = web_shell_fn
 
@@ -3365,20 +3363,20 @@ class FlowAgent:
                  ),
              },
         ]
-
-        tools.append({
-            "tool_func": web_shell_fn,
-            "name": "web_shell",
-            "category": ["web", "browser", "scraping"],
-            "is_async": True,
-            "description": (
-                "Unix-like shell for web interaction. Commands: "
-                "goto click type fill extract screenshot ocr eval search wait scroll "
-                "back refresh login status save_template save_flow run_flow list_flows. "
-                "Auto-learns site selectors (Layer 1) and supports saved multi-step flows (Layer 2). "
-                "Returns {success, stdout, stderr, returncode}."
-            ),
-        }) if web_shell_fn else None
+        if self.amd.web_config.enable_web:
+            tools.append({
+                "tool_func": web_shell_fn,
+                "name": "web_shell",
+                "category": ["web", "browser", "scraping"],
+                "is_async": True,
+                "description": (
+                    "Unix-like shell for web interaction. Commands: "
+                    "goto click type fill extract screenshot ocr eval search wait scroll "
+                    "back refresh login status save_template save_flow run_flow list_flows. "
+                    "Auto-learns site selectors (Layer 1) and supports saved multi-step flows (Layer 2). "
+                    "Returns {success, stdout, stderr, returncode}."
+                ),
+            })
 
         # ── Optional: Google Tools ────────────────────────────────────────
         if os.getenv("WITH_GOOGLE_TOOLS", "false") == "true":

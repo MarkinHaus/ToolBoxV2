@@ -216,7 +216,7 @@ async def _cli_login_invite(app: App) -> Result:
     """CLI login via device invite code."""
     print_box_header("Device Invite Login", "*")
     print()
-    print("  Ask a logged-in user to generate an invite code")
+    print("  generate an invite code")
     print("  (from Web Dashboard or another CLI session)")
     print()
 

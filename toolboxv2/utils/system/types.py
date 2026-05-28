@@ -1979,6 +1979,9 @@ class AppType:
     async def _initialize_network(self):
         """Logik für initialen Start und Thread-Management."""
         # Immer einmal IP und Location holen
+        if not self.alive:
+            return
+
         await self._fetch_ip_and_location()
 
         if self._ping_interval == 0:

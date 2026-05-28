@@ -971,11 +971,10 @@ def setup_logging(
     _app_id = app_name
 
     # ---- Log file rotation (unchanged logic) ----
-
     if not os.path.exists(logs_directory):
         os.makedirs(logs_directory, exist_ok=True)
-    if not os.path.exists(logs_directory + "/Logs.info"):
-        open(f"{logs_directory}/Logs.info", "a").close()
+    if not os.path.exists(os.path.join(logs_directory , "Logs.info")):
+        open(os.path.join(f"{logs_directory}","Logs.info"), "a").close()
 
     available_log_levels = [
         logging.CRITICAL, logging.FATAL, logging.ERROR, logging.WARNING,
@@ -990,11 +989,11 @@ def setup_logging(
     log_level_index = log_levels_names.index(logging.getLevelName(level))
 
     filename = f"Logs-{name}-{log_date}-{log_levels_names[log_level_index]}"
-    log_filename = f"{logs_directory}/{filename}.log"
+    log_filename = os.path.join(f"{logs_directory}",f"{filename}.log")
 
     log_info_data: Dict[str, Any] = {filename: 0, "H": "localhost", "P": 62435}
 
-    with open(f"{logs_directory}/Logs.info") as li:
+    with open(os.path.join(f"{logs_directory}","Logs.info")) as li:
         log_info_data_str = li.read()
         try:
             log_info_data = eval(log_info_data_str)
@@ -1008,14 +1007,13 @@ def setup_logging(
             log_info_data[filename] = 0
         if os.path.exists(log_filename):
             log_info_data[filename] += 1
-            while os.path.exists(f"{logs_directory}/{filename}#{log_info_data[filename]}.log"):
+            while os.path.exists(os.path.join(f"{logs_directory}",f"{filename}#{log_info_data[filename]}.log")):
                 log_info_data[filename] += 1
             try:
-                os.rename(log_filename, f"{logs_directory}/{filename}#{log_info_data[filename]}.log")
+                os.rename(log_filename, os.path.join(f"{logs_directory}",f"{filename}#{log_info_data[filename]}.log"))
             except PermissionError:
                 pass
-
-    with open(f"{logs_directory}/Logs.info", "w") as li:
+    with open(os.path.join(f"{logs_directory}","Logs.info"), "w") as li:
         if len(log_info_data.keys()) >= 7:
             log_info_data = {
                 filename: log_info_data[filename],
@@ -1028,7 +1026,7 @@ def setup_logging(
         with open(log_filename, "a"):
             pass
     except OSError:
-        log_filename = f"{logs_directory}/Logs-Test-{log_date}-{log_levels_names[log_level_index]}.log"
+        log_filename = os.path.join(f"{logs_directory}",f"Logs-Test-{log_date}-{log_levels_names[log_level_index]}.log")
         with open(log_filename, "a"):
             pass
 
@@ -1213,14 +1211,14 @@ def _edit_many_log_files(name, date, level, log_file_number, max_number, do):
     log_levels = ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"]
     log_level_index = log_levels.index(logging.getLevelName(level))
     filename = f"Logs-{name}-{date}-{log_levels[log_level_index]}"
-    if not log_file_number and os.path.exists(f"logs/{filename}.log"):
+    if not log_file_number and os.path.exists(os.path.join(f"logs",f"{filename}.log")):
         print(f"editing {filename}.log")
-        do(f"logs/{filename}.log")
+        do(os.path.join(f"logs",f"{filename}.log"))
     if not log_file_number:
         log_file_number += 1
-    while os.path.exists(f"logs/{filename}#{log_file_number}.log"):
+    while os.path.exists(os.path.join(f"logs",f"{filename}#{log_file_number}.log")):
         if log_file_number >= max_number:
             break
         print(f"editing {filename}#{log_file_number}.log")
-        do(f"logs/{filename}#{log_file_number}.log")
+        do(os.path.join(f"logs",f"{filename}#{log_file_number}.log"))
         log_file_number += 1

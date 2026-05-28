@@ -29,11 +29,23 @@ from toolboxv2.utils.extras.blobs import (
 # ---------------------------------------------------------------------------
 
 def _minio_reachable(host="127.0.0.1", port=9000, timeout=1) -> bool:
+    """Socket reachability AND real MinIO auth/list. Both must pass."""
     try:
         s = socket.create_connection((host, port), timeout=timeout)
         s.close()
-        return True
     except (socket.timeout, ConnectionRefusedError, OSError):
+        return False
+    try:
+        from minio import Minio
+        client = Minio(
+            f"{host}:{port}",
+            access_key=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
+            secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
+            secure=False,
+        )
+        list(client.list_buckets())
+        return True
+    except Exception:
         return False
 
 

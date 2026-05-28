@@ -42,6 +42,18 @@ class MiniMaxAdapter(OpenAICompatAdapter):
         """Case-insensitive model name mapping."""
         return self.MODEL_MAP.get(model.lower(), model)
 
+    def normalize_response_format(self, rf):
+        if rf is None:
+            return None
+        if isinstance(rf, dict):
+            # MiniMax doesn't support json_schema — downgrade
+            if rf.get("type") == "json_schema":
+                return {"type": "json_object"}
+            return rf
+        if isinstance(rf, type) and hasattr(rf, "model_json_schema"):
+            return {"type": "json_object"}
+        return rf
+
     def build_payload(self, model: str, messages: list,
                       tools: list | None, **kwargs) -> dict:
         mapped = self._map_model(model)

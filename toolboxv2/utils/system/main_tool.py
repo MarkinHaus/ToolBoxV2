@@ -22,7 +22,7 @@ def get_version_from_pyproject(pyproject_path='../pyproject.toml'):
         from toolboxv2 import tb_root_dir
         pyproject_path = str(tb_root_dir.parent / "pyproject.toml")
 
-    try:
+    if os.path.exists(pyproject_path):
         from ..system.ci.ci_version import read_version
         version = read_version()
 
@@ -30,9 +30,12 @@ def get_version_from_pyproject(pyproject_path='../pyproject.toml'):
             raise ValueError(f"Version not found in {pyproject_path}")
 
         return version
-    except Exception as e:
-        print(f"Error reading version: {e}")
-        return "x.x.x"
+    else:
+        from ..manifest.loader import ManifestLoader
+        try:
+            return ManifestLoader().load().app.version
+        except FileNotFoundError:
+            return "x.x.x"
 
 
 class MainTool:

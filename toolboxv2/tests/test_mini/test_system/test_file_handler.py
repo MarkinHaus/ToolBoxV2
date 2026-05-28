@@ -20,39 +20,29 @@ from toolboxv2.utils.system.file_handler import (
 
 class TestFileHandler(unittest.TestCase):
     def setUp(self):
-        # Create a temporary directory for test files
         setup_logging(10)
         self.test_dir = tempfile.mkdtemp()
 
-        # Patch the file prefix to use the temp directory
-        self.patcher = patch.object(FileHandler, 'file_handler_file_prefix',
-                                    f"{self.test_dir}/.test/")
-        #self.mock_prefix = self.patcher.start()
-
     def tearDown(self):
-        # Stop the patcher
-        self.patcher.stop()
+        import shutil
+        shutil.rmtree(self.test_dir, ignore_errors=True)
 
-        # Clean up temporary directory
-        for root, dirs, files in os.walk(self.test_dir, topdown=False):
-            for name in files:
-                os.remove(os.path.join(root, name))
-            for name in dirs:
-                os.rmdir(os.path.join(root, name))
-        os.rmdir(self.test_dir)
+    def _fh(self, name='test.config', **kwargs):
+        from pathlib import Path
+        return FileHandler(name, base_path=Path(self.test_dir), **kwargs)
 
     def test_initialization(self):
         # Test valid filename extensions
-        FileHandler('test.config')
-        FileHandler('test.data')
+        self._fh('test.config')
+        self._fh('test.data')
 
         # Test invalid filename extension
         with self.assertRaises(ValueError):
-            FileHandler('test.txt')
+            self._fh('test.txt')
 
     def test_add_and_get_file_handler(self):
-        # Create FileHandler instance
-        file_handler = FileHandler('test.config')
+        # Create self._fh instance
+        file_handler = self._fh('test.config')
 
         # Add items to save
         self.assertTrue(file_handler.add_to_save_file_handler('1234567890', 'test_value'))
@@ -63,7 +53,7 @@ class TestFileHandler(unittest.TestCase):
 
         # Save and reload
         file_handler.save_file_handler()
-        reloaded_handler = FileHandler('test.config')
+        reloaded_handler = self._fh('test.config')
         reloaded_handler.load_file_handler()
 
         # Retrieve and verify values
@@ -81,7 +71,7 @@ class TestFileHandler(unittest.TestCase):
             'test_key2': 'default_value2'
         }
 
-        file_handler = FileHandler('test.config', keys=keys, defaults=defaults)
+        file_handler = self._fh('test.config', keys=keys, defaults=defaults)
         # file_handler.set_defaults_keys_file_handler(keys, defaults)
 
         # Verify default values
@@ -99,7 +89,7 @@ class TestFileHandler(unittest.TestCase):
             'short_key2': 'value2'
         }
 
-        file_handler = FileHandler('test.config')
+        file_handler = self._fh('test.config')
         file_handler.set_defaults_keys_file_handler(keys, defaults)
 
         # Add values using mapped keys
@@ -113,8 +103,8 @@ class TestFileHandler(unittest.TestCase):
         self.assertEqual(file_handler.get_file_handler('1234567890'), 'mapped_value1')
 
     def test_remove_key(self):
-        # Create FileHandler and add some keys
-        file_handler = FileHandler('test.config')
+        # Create self._fh and add some keys
+        file_handler = self._fh('test.config')
         file_handler.add_to_save_file_handler('1234567890', 'test_value')
         file_handler.add_to_save_file_handler('0987654321', 'another_value')
 
@@ -125,8 +115,8 @@ class TestFileHandler(unittest.TestCase):
         self.assertIsNone(file_handler.get_file_handler('1234567890'))
 
     def test_delete_file(self):
-        # Create FileHandler and add some data
-        file_handler = FileHandler('test.config')
+        # Create self._fh and add some data
+        file_handler = self._fh('test.config')
         file_handler.add_to_save_file_handler('1234567890', 'test_value')
         file_handler.save_file_handler()
 
@@ -140,14 +130,14 @@ class TestFileHandler(unittest.TestCase):
 
     def test_file_handler_error_handling(self):
         # Test various error scenarios
-        file_handler = FileHandler('test.config')
+        file_handler = self._fh('test.config')
 
         # Add a complex value that might cause evaluation issues
         file_handler.add_to_save_file_handler('1234567890', {"key": "value"})
         file_handler.save_file_handler()
 
         # Reload and verify
-        reloaded_handler = FileHandler('test.config')
+        reloaded_handler = self._fh('test.config')
         reloaded_handler.load_file_handler()
 
         # Check retrieval of complex value
@@ -156,7 +146,7 @@ class TestFileHandler(unittest.TestCase):
 
     def test_multiple_file_operations(self):
         # Simulate multiple file operations
-        file_handler = FileHandler('test.config')
+        file_handler = self._fh('test.config')
 
         # Add initial data
         file_handler.add_to_save_file_handler('1234567890', 'initial_value')
@@ -168,7 +158,7 @@ class TestFileHandler(unittest.TestCase):
         file_handler.save_file_handler()
 
         # Reload and verify
-        reloaded_handler = FileHandler('test.config')
+        reloaded_handler = self._fh('test.config')
         reloaded_handler.load_file_handler()
 
         self.assertEqual(reloaded_handler.get_file_handler('1234567890'), 'updated_value')

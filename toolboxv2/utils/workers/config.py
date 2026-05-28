@@ -83,6 +83,13 @@ class ZMQConfig:
     hwm_recv: int = 10000
     reconnect_interval: int = 1000
     heartbeat_interval: int = 5000
+    # P2P cluster settings
+    cluster_secret: str = ""  # Anti-spoofing token; empty disables check
+    heartbeat_period_s: float = 1.0  # Leader emits SYS_HEARTBEAT every Ns
+    heartbeat_timeout_s: float = 3.0  # Follower triggers takeover after Ns silence
+    takeover_jitter_max_s: float = 0.5  # Random jitter upper bound to prevent thundering herd
+    status_period_s: float = 5.0  # Follower emits WORKER_STATUS every Ns
+    topology_broadcast_period_s: float = 2.0  # Leader broadcasts SYS_TOPOLOGY every Ns
 
 
 @dataclass
@@ -177,6 +184,7 @@ class ManagerConfig:
     restart_delay: int = 2
     max_restart_attempts: int = 5
     rolling_update_delay: int = 5
+    live_dashboard_key: str = ""  # /live dashboard auth key; empty disables route
 
 
 @dataclass
@@ -338,6 +346,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
         "TB_NGINX_SERVER_NAME": ["nginx", "server_name"],
         "TB_STATIC_ROOT": ["nginx", "static_root"],
         "TB_OPEN_MODULES": ["toolbox", "open_modules"],
+        "TB_CLUSTER_SECRET": ["zmq", "cluster_secret"],
+        "LIVE_DASHBOARD_KEY": ["manager", "live_dashboard_key"],
     }
 
     for env_var, path in env_mapping.items():

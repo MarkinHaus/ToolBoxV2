@@ -30,7 +30,7 @@ class AnthropicAdapter(ProviderAdapter):
 
     ALLOWED_PARAMS: frozenset = frozenset({
         'temperature', 'top_p', 'max_tokens', 'stop_sequences',
-        'tools', 'tool_choice', 'metadata',
+        'tools', 'tool_choice', 'metadata', 'response_format',
     })
 
     def __init__(self, base_url: str = "https://api.anthropic.com", **kw):
@@ -54,10 +54,23 @@ class AnthropicAdapter(ProviderAdapter):
             payload["system"] = system_parts
 
         filtered = self.filter_params(kwargs)
-        if tools:
-            payload["tools"] = self._convert_tools(tools)
+
+        # response_format → forced tool_use (Anthropic has no native response_format)
+        rf_tool = self._response_format_to_tool(filtered.pop("response_format", None))
+
+        merged_tools = list(tools) if tools else []
+        forced_tool_name = None
+        if rf_tool is not None:
+            merged_tools.append(rf_tool)
+            forced_tool_name = rf_tool["name"]
+
+        if merged_tools:
+            payload["tools"] = self._convert_tools(merged_tools) \
+                if not rf_tool else self._convert_tools(tools or []) + [rf_tool]
             tc = filtered.pop("tool_choice", None)
-            if tc is not None:
+            if forced_tool_name:
+                payload["tool_choice"] = {"type": "tool", "name": forced_tool_name}
+            elif tc is not None:
                 payload["tool_choice"] = self._convert_tool_choice(tc)
         filtered.pop("tools", None)
         filtered.pop("tool_choice", None)
@@ -67,6 +80,33 @@ class AnthropicAdapter(ProviderAdapter):
             filtered["max_tokens"] = 4096
         payload.update(filtered)
         return payload
+
+    def _response_format_to_tool(self, rf) -> dict | None:
+        """Convert response_format (Pydantic class or json_schema dict) to an
+        Anthropic tool entry. Returns None if rf is empty or json_object only."""
+        if rf is None:
+            return None
+        # Pydantic v2 class
+        if isinstance(rf, type) and hasattr(rf, "model_json_schema"):
+            return {
+                "name": rf.__name__,
+                "description": f"Return result as a {rf.__name__} object.",
+                "input_schema": rf.model_json_schema(),
+            }
+        if isinstance(rf, dict):
+            t = rf.get("type")
+            if t == "json_schema":
+                js = rf.get("json_schema", {})
+                return {
+                    "name": js.get("name", "structured_output"),
+                    "description": js.get("description",
+                                          "Return result as structured output."),
+                    "input_schema": js.get("schema",
+                                           {"type": "object", "properties": {}}),
+                }
+            # json_object without schema → can't force a tool, skip
+            return None
+        return None
 
     # --- Message conversion ---
 

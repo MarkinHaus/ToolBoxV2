@@ -50,10 +50,34 @@ class ProviderAdapter(ABC):
         """Default: OpenAI format. Subclass overrides for Anthropic etc."""
         payload = {"model": model, "messages": messages}
         filtered = self.filter_params(kwargs)
+        if 'response_format' in filtered:
+            filtered['response_format'] = self.normalize_response_format(
+                filtered['response_format']
+            )
         if tools:
             filtered['tools'] = tools
         payload.update(filtered)
         return payload
+
+    def normalize_response_format(self, rf):
+        """Pydantic class → OpenAI json_schema dict. Override per provider if needed."""
+        if rf is None:
+            return None
+        # Already a dict (e.g. {"type":"json_object"} or pre-built json_schema)
+        if isinstance(rf, dict):
+            return rf
+        # Pydantic v2 BaseModel subclass
+        if isinstance(rf, type) and hasattr(rf, "model_json_schema"):
+            schema = rf.model_json_schema()
+            return {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": rf.__name__,
+                    "schema": schema,
+                    "strict": True,
+                },
+            }
+        return rf
 
     @abstractmethod
     async def complete(self, session: 'aiohttp.ClientSession', api_key: str,

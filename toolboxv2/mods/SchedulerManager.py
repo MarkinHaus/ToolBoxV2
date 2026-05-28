@@ -2,6 +2,7 @@ import os
 import pickle
 from collections import deque
 from collections.abc import Callable
+from typing import Any
 
 try:
     import dill
@@ -12,7 +13,15 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-import schedule
+try:
+    import schedule
+except ImportError:
+    schedule = lambda x: x
+
+    schedule.cancel_job = lambda x: x
+    schedule.every = lambda x: x
+    schedule.Job = Any
+    schedule.run_pending = lambda : None
 
 from toolboxv2 import MainTool, Result, get_app
 

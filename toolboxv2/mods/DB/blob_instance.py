@@ -455,6 +455,8 @@ class BlobDB(DB):
 
         except Exception as e:
             get_logger().error(f"BlobDB initialization failed: {e}")
+            import traceback
+            traceback.print_exc()
             return Result.default_internal_error(
                 data=str(e),
                 info="Initialization failed"

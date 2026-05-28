@@ -4,8 +4,10 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch, PropertyMock
 
+from toolboxv2.tests.a_util import IsolatedTestCase
 
-class TestMinIOClientFactory(unittest.TestCase):
+
+class TestMinIOClientFactory(IsolatedTestCase):
     def test_create_client(self):
         from toolboxv2.mods.CloudM.LiveSync.minio_helper import create_minio_client
         creds = {
@@ -14,6 +16,8 @@ class TestMinIOClientFactory(unittest.TestCase):
             "secret_key": "testsecret",
             "secure": False,
         }
+        from toolboxv2.mods.CloudM.LiveSync import minio_helper
+        minio_helper.MINIO_AVAILABLE = True
         with patch("toolboxv2.mods.CloudM.LiveSync.minio_helper.Minio") as MockMinio:
             client = create_minio_client(creds)
             MockMinio.assert_called_once_with(

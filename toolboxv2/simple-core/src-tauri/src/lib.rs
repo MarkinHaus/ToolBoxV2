@@ -447,6 +447,8 @@ fn setup_system_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
     let open_app = MenuItem::with_id(app, "open_app", "🚀 Open App", true, None::<&str>)?;
     let app_mode = MenuItem::with_id(app, "app_mode", "📺 App Mode", true, None::<&str>)?;
     let hud_mode = MenuItem::with_id(app, "hud_mode", "🎯 HUD Mode", true, None::<&str>)?;
+    let open_cli = MenuItem::with_id(app, "open_cli", "💻 Terminal CLI", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open_app, &app_mode, &hud_mode, &open_cli, &separator, &quit])?;
     let separator = MenuItem::with_id(app, "sep", "─────────", false, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "❌ Quit", true, None::<&str>)?;
 
@@ -546,6 +548,16 @@ fn setup_system_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
                         }
                     });
                 }
+                "open_cli" => {
+                    #[cfg(target_os = "windows")]
+                    let _ = std::process::Command::new("cmd").args(["/C","start","cmd","/K","tb local-cli"]).spawn();
+                    #[cfg(target_os = "macos")]
+                    let _ = std::process::Command::new("osascript")
+                        .args(["-e","tell app \"Terminal\" to do script \"tb local-cli\""]).spawn();
+                    #[cfg(target_os = "linux")]
+                    let _ = std::process::Command::new("x-terminal-emulator")
+                        .args(["-e","tb","local-cli"]).spawn();
+                }
                 "hud_mode" => {
                     log::info!("[Tray] HUD mode requested");
                     let app_handle = app.clone();
@@ -617,6 +629,127 @@ fn setup_system_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
 
     log::info!("[Tray] System tray initialized");
     Ok(())
+}
+
+/// Subscribe to /tray/events (SSE) from the Python sidecar.
+/// Updates tray tooltip on status events, navigates window on open_url events.
+fn subscribe_tray_events(app: tauri::AppHandle) {
+    use futures_util::StreamExt;
+    use std::time::Duration;
+
+    tauri::async_runtime::spawn(async move {
+        let base = "http://127.0.0.1:5000";
+        loop {
+            let client = match reqwest::Client::builder()
+                .timeout(Duration::from_secs(0))
+                .build()
+            {
+                Ok(c) => c,
+                Err(_) => { tokio::time::sleep(Duration::from_secs(3)).await; continue; }
+            };
+
+            match client.get(format!("{}/tray/events", base)).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    let mut stream = resp.bytes_stream();
+                    let mut buf = String::new();
+                    while let Some(chunk) = stream.next().await {
+                        let Ok(bytes) = chunk else { break; };
+                        let Ok(text) = std::str::from_utf8(&bytes) else { continue; };
+                        buf.push_str(text);
+
+                        // SSE frames are separated by "\n\n"
+                        while let Some(idx) = buf.find("\n\n") {
+                            let frame = buf[..idx].to_string();
+                            buf.drain(..idx + 2);
+                            apply_sse_frame(&app, &frame).await;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    });
+}
+
+async fn apply_sse_frame(app: &tauri::AppHandle, frame: &str) {
+    let data_line = match frame.lines().find_map(|l| l.strip_prefix("data: ")) {
+        Some(s) => s,
+        None => return,
+    };
+    let payload: serde_json::Value = match serde_json::from_str(data_line) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    // 1) open_url event — navigate or create the target window
+    if payload.get("type").and_then(|t| t.as_str()) == Some("open_url") {
+        let url = match payload.get("url").and_then(|u| u.as_str()) {
+            Some(u) => u.to_string(),
+            None => return,
+        };
+        let target = payload.get("target").and_then(|t| t.as_str()).unwrap_or("main").to_string();
+        let app_handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            navigate_or_create_window(&app_handle, &target, &url);
+        });
+        return;
+    }
+
+    // 2) anything else — refresh the tray tooltip from the summary
+    let tooltip = if let Some(tip) = payload.get("summary")
+        .and_then(|s| s.get("tooltip")).and_then(|t| t.as_str())
+    {
+        tip.to_string()
+    } else {
+        match reqwest::get("http://127.0.0.1:5000/tray/state").await {
+            Ok(r) => match r.json::<serde_json::Value>().await {
+                Ok(v) => v.get("summary").and_then(|s| s.get("tooltip"))
+                    .and_then(|t| t.as_str()).map(String::from).unwrap_or_default(),
+                Err(_) => return,
+            },
+            Err(_) => return,
+        }
+    };
+
+    if !tooltip.is_empty() {
+        if let Some(tray) = app.tray_by_id("main") {
+            let _ = tray.set_tooltip(Some(&tooltip));
+        }
+    }
+}
+
+fn navigate_or_create_window(app: &tauri::AppHandle, target: &str, url: &str) {
+    use tauri::{WebviewUrl, WebviewWindowBuilder, Manager};
+
+    // If the window already exists, navigate it. Otherwise create one with the URL.
+    if let Some(window) = app.get_webview_window(target) {
+        // Use eval to set window.location — works for external URLs
+        let safe = url.replace('"', "\\\"");
+        let _ = window.eval(&format!("window.location.href = \"{}\";", safe));
+        let _ = window.show();
+        let _ = window.set_focus();
+        log::info!("[Tray] navigated '{}' -> {}", target, url);
+    } else {
+        match url::Url::parse(url) {
+            Ok(parsed) => {
+                let builder = WebviewWindowBuilder::new(
+                    app, target, WebviewUrl::External(parsed),
+                )
+                    .title("SimpleCore — ToolBox")
+                    .inner_size(1200.0, 800.0)
+                    .min_inner_size(800.0, 600.0)
+                    .center()
+                    .decorations(true)
+                    .resizable(true);
+                match builder.build() {
+                    Ok(_) => log::info!("[Tray] created window '{}' -> {}", target, url),
+                    Err(e) => log::error!("[Tray] window create failed: {}", e),
+                }
+            }
+            Err(e) => log::error!("[Tray] invalid URL '{}': {}", url, e),
+        }
+    }
 }
 
 // ============================================================================
@@ -850,6 +983,8 @@ pub fn run() {
                     log::warn!("[Setup] Failed to auto-start worker: {} (will use remote)", e);
                 }
                 drop(manager);
+                // subscribe to live tray events from the sidecar
+                subscribe_tray_events(app.handle().clone());
             }
 
             #[cfg(any(target_os = "android", target_os = "ios"))]

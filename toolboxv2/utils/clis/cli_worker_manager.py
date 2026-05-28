@@ -1203,6 +1203,12 @@ class WorkerManager:
         return None
 
     def start_broker(self) -> bool:
+        """Start dedicated broker process.
+
+        P2P-mode: if a broker is already bound to the configured ports (e.g. a
+        previous run, or a worker has assumed leader), the dedicated process
+        will exit. That is fine — workers self-elect via the bind mutex.
+        """
         if self._broker_process and self._broker_process.is_alive():
             return True
         self._broker_process = Process(target=_run_broker_process, args=(self.config.to_dict(),), name="zmq_broker")
@@ -1211,7 +1217,11 @@ class WorkerManager:
         if self._broker_process.is_alive():
             logger.info(f"ZMQ broker started (PID: {self._broker_process.pid})")
             return True
-        return False
+        # Broker exited fast — likely EADDRINUSE. In P2P-mode this is non-fatal:
+        # the first HTTP/WS worker will become leader instead.
+        logger.info("Dedicated broker process did not stay alive — P2P workers will self-elect leader")
+        self._broker_process = None
+        return True
 
     def stop_broker(self):
         self._metrics_collector.stop()
@@ -1372,15 +1382,46 @@ class WorkerManager:
         logger.info("All services stopped")
 
     def get_status(self) -> Dict[str, Any]:
+        broker_alive = bool(self._broker_process and self._broker_process.is_alive())
+        leader_id, topology = self._probe_p2p_topology()
         return {
             "running": self._running,
             "platform": SYSTEM,
             "platform_warning": self._nginx.platform_warning,
-            "broker_alive": self._broker_process.is_alive() if self._broker_process else False,
+            "broker_alive": broker_alive,
+            "p2p": {
+                "leader": leader_id,
+                "topology_workers": len(topology.get("workers", {})) if topology else 0,
+            },
             "workers": {wid: w.to_dict() for wid, w in self._workers.items()},
             "nginx": {"installed": self._nginx.is_installed(), "ssl_available": self._nginx.ssl_available, "version": self._nginx.get_version()},
             "cluster": {"nodes": len(self._cluster.nodes), "healthy_nodes": sum(1 for n in self._cluster.nodes.values() if n.healthy)},
         }
+
+    def _probe_p2p_topology(self) -> tuple:
+        """Query a local HTTP worker for the topology snapshot via /live/snapshot.
+
+        Returns (leader_id, snapshot_dict). Both may be None on failure.
+        Best-effort — never raises.
+        """
+        key = os.environ.get("LIVE_DASHBOARD_KEY") or getattr(self.config.manager, "live_dashboard_key", "")
+        if not key:
+            return None, {}
+        for w in self._workers.values():
+            if w.worker_type != WorkerType.HTTP or not w.port:
+                continue
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", w.port, timeout=1)
+                conn.request("GET", f"/live/snapshot?key={key}")
+                resp = conn.getresponse()
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    conn.close()
+                    return data.get("leader"), data
+                conn.close()
+            except Exception:
+                continue
+        return None, {}
 
     def get_workers(self) -> List[Dict]:
         local = [w.to_dict() for w in self._workers.values()]
@@ -1402,9 +1443,14 @@ class WorkerManager:
         }
 
     def get_health(self) -> Dict[str, Any]:
+        broker_alive = bool(self._broker_process and self._broker_process.is_alive())
+        leader_id, _ = self._probe_p2p_topology()
+        workers_healthy = all(w.healthy for w in self._workers.values()) if self._workers else False
+        # P2P: cluster is healthy if workers are up AND a leader exists (either dedicated broker or elected worker)
+        healthy = workers_healthy and (broker_alive or leader_id is not None)
         return {
-            "healthy": all(w.healthy for w in self._workers.values()) and (self._broker_process and self._broker_process.is_alive()),
-            "broker": {"alive": self._broker_process.is_alive() if self._broker_process else False},
+            "healthy": healthy,
+            "broker": {"alive": broker_alive, "leader_id": leader_id},
             "workers": {wid: {"healthy": w.healthy, "state": w.state.value, "latency_ms": w.health_latency_ms} for wid, w in self._workers.items()},
             "nginx": {"installed": self._nginx.is_installed(), "ssl": self._nginx.ssl_available},
         }
@@ -1566,68 +1612,103 @@ class ManagerWebUI(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(data, default=str).encode())
 
     def _serve_dashboard(self):
-        html = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Worker Manager</title>
-<style>:root{--bg:#0f172a;--card:#1e293b;--accent:#3b82f6;--ok:#22c55e;--err:#ef4444;--txt:#f1f5f9;--muted:#94a3b8}
-*{box-sizing:border-box;margin:0;padding:0}body{font-family:system-ui;background:var(--bg);color:var(--txt);padding:20px}
-.h{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #475569}
-.badge{padding:4px 12px;border-radius:99px;font-size:.875rem}.ok{background:rgba(34,197,94,.2);color:var(--ok)}
-.err{background:rgba(239,68,68,.2);color:var(--err)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px;margin-bottom:20px}
-.card{background:var(--card);border-radius:12px;padding:20px;border:1px solid #475569}.title{font-size:.75rem;color:var(--muted);text-transform:uppercase;margin-bottom:12px}
-.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.m{background:#334155;padding:12px;border-radius:8px}
-.m-v{font-size:1.5rem;font-weight:700;color:var(--accent)}.m-l{font-size:.75rem;color:var(--muted)}
-.btn{padding:8px 16px;border-radius:6px;border:none;font-size:.875rem;cursor:pointer;margin-right:8px;margin-bottom:8px}
-.btn-p{background:var(--accent);color:#fff}.btn-d{background:rgba(239,68,68,.2);color:var(--err)}
-.btn-s{background:#334155;color:var(--txt)}.wl{display:flex;flex-direction:column;gap:12px;max-height:400px;overflow-y:auto}
-.wi{background:#334155;padding:16px;border-radius:8px;display:flex;justify-content:space-between;align-items:center}
-.wi-id{font-family:monospace;color:var(--accent)}.wi-m{font-size:.75rem;color:var(--muted)}
-.dot{width:8px;height:8px;border-radius:50%;margin-right:12px;display:inline-block}.dot.running{background:var(--ok)}.dot.stopped{background:var(--err)}
+        http_port = getattr(self.manager.config.http_worker, "port", 5000)
+        mgr_port = self.server.server_address[1]
+        html = '''<!doctype html><html lang="en" data-theme="dark"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Worker Manager → /live</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --primary: oklch(55% 0.18 230);
+  --text-main: rgba(255,255,255,0.85); --text-label: rgba(255,255,255,0.4); --text-muted: rgba(255,255,255,0.25);
+  --glass-bg: rgba(255,255,255,0.02); --glass-border: rgba(255,255,255,0.05);
+  --bg-elevated: rgba(15,15,25,0.9);
+}
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  color: var(--text-main);
+  background:
+    radial-gradient(ellipse at 20% 10%, color-mix(in oklch, var(--primary) 8%, transparent), transparent 60%),
+    #08080d;
+  display: grid; place-items: center;
+}
+body::before {
+  content: ''; position: fixed; inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
+  background-size: 32px 32px; z-index: -1;
+}
+.card {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-radius: 12px;
+  padding: 2.5rem 3rem;
+  max-width: 480px;
+  text-align: center;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 2px 4px rgba(0,0,0,0.5);
+}
+h6 {
+  font-family: 'IBM Plex Mono', monospace; font-size: 9px;
+  text-transform: uppercase; letter-spacing: 2.5px;
+  color: var(--text-label); margin: 0 0 0.5rem;
+}
+h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 1rem; }
+p { color: var(--text-muted); line-height: 1.6; margin: 0 0 1.5rem; font-size: 0.875rem; }
+code {
+  font-family: 'IBM Plex Mono', monospace; font-size: 0.75rem;
+  background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 2px;
+  color: var(--text-main);
+}
+.cta {
+  display: inline-block; padding: 0.5rem 1.25rem;
+  font-family: 'IBM Plex Mono', monospace; font-size: 0.75rem;
+  text-transform: uppercase; letter-spacing: 1.5px;
+  background: color-mix(in oklch, var(--primary) 15%, transparent);
+  border: 1px solid color-mix(in oklch, var(--primary) 30%, transparent);
+  border-radius: 2px; color: var(--text-main); text-decoration: none;
+  transition: background 200ms, border-color 200ms;
+}
+.cta:hover { background: color-mix(in oklch, var(--primary) 25%, transparent); border-color: color-mix(in oklch, var(--primary) 50%, transparent); }
+.api-list { text-align: left; margin: 1.5rem 0 0; font-size: 0.75rem; }
+.api-list h6 { margin-top: 1rem; }
+.api-list code { display: block; padding: 4px 8px; margin: 2px 0; }
 </style></head><body>
-<div class="h"><h1>⚡ Worker Manager</h1><span class="badge" id="status">Loading...</span></div>
-<div style="margin-bottom:20px">
-<button class="btn btn-p" onclick="start('http')">+ HTTP</button>
-<button class="btn btn-p" onclick="start('ws')">+ WS</button>
-<button class="btn btn-s" onclick="update()">Rolling Update</button>
-<button class="btn btn-s" onclick="reload()">Reload Nginx</button>
-<button class="btn btn-d" onclick="shutdown()">Shutdown</button>
+<div class="card">
+  <h6>SimpleCore</h6>
+  <h1>Worker Manager</h1>
+  <p>This dashboard has moved.<br>
+  Cluster topology, metrics, and controls now live in <code>/live</code>.</p>
+  <a class="cta" href="/live" id="live-link">open /live</a>
+  <div class="api-list">
+    <h6>API endpoints (still active)</h6>
+    <code>GET  /api/status</code>
+    <code>GET  /api/workers</code>
+    <code>GET  /api/metrics</code>
+    <code>GET  /api/health</code>
+    <code>POST /api/scale</code>
+    <code>POST /api/workers/restart</code>
+    <code>POST /api/rolling-update</code>
+    <code>POST /api/nginx/reload</code>
+  </div>
 </div>
-<div class="grid">
-<div class="card"><div class="title">Metrics</div><div class="metrics">
-<div class="m"><div class="m-v" id="reqs">0</div><div class="m-l">Requests</div></div>
-<div class="m"><div class="m-v" id="conns">0</div><div class="m-l">Connections</div></div>
-<div class="m"><div class="m-v" id="http">0</div><div class="m-l">HTTP Workers</div></div>
-<div class="m"><div class="m-v" id="ws">0</div><div class="m-l">WS Workers</div></div>
-</div></div>
-<div class="card"><div class="title">System</div><div class="metrics">
-<div class="m"><div class="m-v" id="nginx">-</div><div class="m-l">Nginx</div></div>
-<div class="m"><div class="m-v" id="broker">-</div><div class="m-l">Broker</div></div>
-<div class="m"><div class="m-v" id="platform">-</div><div class="m-l">Platform</div></div>
-<div class="m"><div class="m-v" id="cluster">0</div><div class="m-l">Cluster</div></div>
-</div></div>
-</div>
-<div class="card"><div class="title">Workers</div><div class="wl" id="workers"></div></div>
 <script>
-async function fetch_data(){try{
-const[s,m,w]=await Promise.all([fetch('/admin/manager/api/status').then(r=>r.json()),fetch('/admin/manager/api/metrics').then(r=>r.json()),fetch('/admin/manager/api/workers').then(r=>r.json())]);
-document.getElementById('status').className='badge '+(s.running?'ok':'err');
-document.getElementById('status').textContent=s.running?'Running':'Stopped';
-document.getElementById('reqs').textContent=m.total_requests;
-document.getElementById('conns').textContent=m.total_connections;
-document.getElementById('http').textContent=m.http_workers;
-document.getElementById('ws').textContent=m.ws_workers;
-document.getElementById('nginx').textContent=s.nginx.installed?'OK':'No';
-document.getElementById('broker').textContent=s.broker_alive?'OK':'Down';
-document.getElementById('platform').textContent=s.platform;
-document.getElementById('cluster').textContent=s.cluster.healthy_nodes;
-document.getElementById('workers').innerHTML=w.map(x=>`<div class="wi"><div><span class="dot ${x.state}"></span><span class="wi-id">${x.worker_id}</span><div class="wi-m">${x.worker_type} | Port ${x.port} | ${x.node||'local'}</div></div><div><button class="btn btn-s" onclick="restart('${x.worker_id}')">Restart</button><button class="btn btn-d" onclick="stop('${x.worker_id}')">Stop</button></div></div>`).join('');
-}catch(e){}}
-async function start(t){await fetch('/admin/manager/api/workers/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:t,count:1})});fetch_data()}
-async function stop(id){await fetch('/admin/manager/api/workers/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({worker_id:id})});fetch_data()}
-async function restart(id){await fetch('/admin/manager/api/workers/restart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({worker_id:id})});fetch_data()}
-async function update(){await fetch('/admin/manager/api/rolling-update',{method:'POST'})}
-async function reload(){await fetch('/admin/manager/api/nginx/reload',{method:'POST'})}
-async function shutdown(){if(confirm('Shutdown?'))await fetch('/admin/manager/api/shutdown',{method:'POST'})}
-fetch_data();setInterval(fetch_data,2000);
-</script></body></html>'''
+// Build the correct /live URL. The manager UI runs on a different port than
+// the HTTP worker that serves /live — swap the port only when we're actually
+// hitting the manager port directly (so this stays correct behind nginx too).
+const HTTP_PORT = "__HTTP_PORT__";
+const MGR_PORT  = "__MGR_PORT__";
+const url = new URL(location.href);
+if (url.port === MGR_PORT) { url.port = HTTP_PORT; }
+url.pathname = "/live";
+const k = new URLSearchParams(location.search).get("key");
+url.search = k ? ("?key=" + encodeURIComponent(k)) : "";
+document.getElementById("live-link").href = url.toString();
+</script>
+</body></html>'''
+        html = html.replace("__HTTP_PORT__", str(http_port)).replace("__MGR_PORT__", str(mgr_port))
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.end_headers()
@@ -1679,6 +1760,9 @@ tb workers worker-stop -w <id>    Stoppt Worker by ID
 
 tb workers cluster-join --host H --port P --secret S
 
+tb workers live              Zeigt /live Dashboard URL + öffnet Browser
+                             (env LIVE_DASHBOARD_KEY oder manager.live_dashboard_key nötig)
+
 tb workers debug             Startet Debug-Server auf dist/""")
     )
     parser.add_argument(
@@ -1698,6 +1782,7 @@ tb workers debug             Startet Debug-Server auf dist/""")
             "worker-start",
             "worker-stop",
             "cluster-join",
+            "live",
             "debug",
         ],
     )
@@ -1889,6 +1974,35 @@ tb workers debug             Startet Debug-Server auf dist/""")
             sys.exit(1)
 
     # -------------------------------------------------------------------------
+    elif args.command == "live":
+        key = os.environ.get("LIVE_DASHBOARD_KEY") or getattr(manager.config.manager, "live_dashboard_key", "")
+        if not key:
+            print("✗ /live is disabled — set LIVE_DASHBOARD_KEY env var or manager.live_dashboard_key in config")
+            sys.exit(1)
+        # Find first running HTTP worker port
+        http_port = None
+        for w in manager._workers.values():
+            if w.worker_type == WorkerType.HTTP and w.port and w.healthy:
+                http_port = w.port
+                break
+        if http_port is None:
+            http_port = getattr(manager.config.http_worker, "port", 5000)
+        url = f"http://127.0.0.1:{http_port}/live?key={key}"
+        print(f"  /live dashboard: {url}")
+        leader, snap = manager._probe_p2p_topology()
+        if leader:
+            print(f"  current leader: {leader}")
+            print(f"  workers in topology: {len(snap.get('workers', {}))}")
+        else:
+            print("  (no topology snapshot available yet — workers may still be starting)")
+        if not args.no_ui:
+            try:
+                import webbrowser
+                webbrowser.open(url)
+            except Exception:
+                pass
+
+    # -------------------------------------------------------------------------
     elif args.command == "debug":
         path = tb_root_dir / "dist"
         if not path.exists():
@@ -1924,12 +2038,10 @@ tb workers worker-stop -w <id>    Stoppt Worker by ID
 
 tb workers cluster-join --host H --port P --secret S
 
+tb workers live              Zeigt /live Dashboard URL + öffnet Browser
+
 tb workers debug             Startet Debug-Server auf dist/
 
 certbot install --cert-name simplecore.app
 
 """
-
-
-if __name__ == "__main__":
-    main()

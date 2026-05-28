@@ -1,5 +1,5 @@
 name: tauri
-version: "0.1.25"
+version: "0.1.26"
 enabled: true
 immutable: false
 description: "Tauri desktop integration — native window, tray, UI widgets"
@@ -26,4 +26,4 @@ dependencies:
 requires:
   - "core"
 commands:
-  - "tauri"
+  - "tb gui"

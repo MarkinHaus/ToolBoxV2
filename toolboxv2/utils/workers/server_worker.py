@@ -1595,7 +1595,19 @@ class HTTPWorker:
             req_endpoint=self.config.zmq.req_endpoint,
             rep_endpoint=self.config.zmq.rep_endpoint,
             http_to_ws_endpoint=self.config.zmq.http_to_ws_endpoint,
-            is_broker=False,
+            cluster_secret=getattr(self.config.zmq, "cluster_secret", ""),
+            heartbeat_period_s=getattr(self.config.zmq, "heartbeat_period_s", 1.0),
+            heartbeat_timeout_s=getattr(self.config.zmq, "heartbeat_timeout_s", 3.0),
+            takeover_jitter_max_s=getattr(self.config.zmq, "takeover_jitter_max_s", 0.5),
+            status_period_s=getattr(self.config.zmq, "status_period_s", 5.0),
+            topology_broadcast_period_s=getattr(
+                self.config.zmq, "topology_broadcast_period_s", 2.0
+            ),
+        )
+        # Provide HTTP-side status info before start() so first WORKER_STATUS is complete
+        self._event_manager.set_status_providers(
+            worker_type="HTTP",
+            route_provider=self._list_http_routes,
         )
         await self._event_manager.start()
 
@@ -1751,6 +1763,12 @@ class HTTPWorker:
                 status, headers, body = self._handle_health()
             elif request.path == "/metrics":
                 status, headers, body = self._handle_metrics()
+            elif request.path == "/live" or request.path == "/live/":
+                status, headers, body = self._handle_live(request)
+            elif request.path == "/live/snapshot":
+                status, headers, body = self._handle_live_snapshot(request)
+            elif request.path.startswith("/live/mgr/"):
+                status, headers, body = self._handle_live_mgr(request)
             elif request.path == "/api/ip":
                 status, headers, body = self._handle_ip_request(request)
             elif request.path == "/api/ping":
@@ -1871,6 +1889,1020 @@ class HTTPWorker:
                 yield chunk
         finally:
             file_obj.close()
+
+    def _list_http_routes(self) -> List[str]:
+        """Return the list of routes this HTTP worker handles (for WORKER_STATUS payload)."""
+        base = [
+            "/health", "/metrics", "/live", "/live/snapshot",
+            "/api/ip", "/api/ping", "/api/geo", "/api/client-logs",
+        ]
+        auth_routes = [
+            "/api/login", "/api/logout", "/api/register",
+            "/auth/", "/validateSession", "/IsValidSession",
+            "/web/logoutS", "/api_user_data",
+        ]
+        api_prefix = getattr(self.config.toolbox, "api_prefix", "/api")
+        return base + auth_routes + [f"{api_prefix}/*"]
+
+    def _live_dashboard_key(self) -> str:
+        """Resolve /live auth key: env > config.manager.live_dashboard_key."""
+        env_key = os.environ.get("LIVE_DASHBOARD_KEY", "")
+        if env_key:
+            return env_key
+        return getattr(self.config.manager, "live_dashboard_key", "") or ""
+
+    def _is_live_authorized(self, request) -> bool:
+        configured = self._live_dashboard_key()
+        if not configured:
+            return False  # Route disabled when no key configured
+        provided = None
+        if getattr(request, "query_params", None):
+            provided = request.query_params.get("key", [None])[0]
+        if not provided and getattr(request, "headers", None):
+            provided = request.headers.get("X-Live-Key")
+        return provided == configured
+
+    def _handle_live(self, request) -> Tuple:
+        """Serve the /live dashboard HTML (TBJS Glass v3.0 style)."""
+        if not self._live_dashboard_key():
+            return error_response("Live dashboard disabled", 404, "Disabled")
+        if not self._is_live_authorized(request):
+            return error_response("Unauthorized", 401, "Unauthorized")
+        html = self._LIVE_DASHBOARD_HTML
+        return 200, {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store"}, html.encode("utf-8")
+
+    def _handle_live_snapshot(self, request) -> Tuple:
+        """Return current topology snapshot as JSON (auth-gated)."""
+        if not self._is_live_authorized(request):
+            return error_response("Unauthorized", 401, "Unauthorized")
+        em = self._event_manager
+        if em is None:
+            return json_response({"leader": None, "workers": {}, "chain": []})
+        return json_response(em.get_topology_snapshot())
+
+    # ---- Manager UI integration (proxies to cli_worker_manager) ----
+
+    # Map external /live/mgr/<sub> -> internal manager /api/<sub>
+    _LIVE_MGR_GET_MAP = {
+        "status": "/api/status",
+        "workers": "/api/workers",
+        "metrics": "/api/metrics",
+        "health": "/api/health",
+    }
+    _LIVE_MGR_POST_MAP = {
+        "scale": "/api/scale",
+        "rolling-update": "/api/rolling-update",
+        "shutdown": "/api/shutdown",
+        "nginx/reload": "/api/nginx/reload",
+        "workers/start": "/api/workers/start",
+        "workers/stop": "/api/workers/stop",
+        "workers/restart": "/api/workers/restart",
+    }
+
+    # Cached manager port — discovered at first successful request (run_web_ui
+    # auto-increments the port on collision, so the live config value may be wrong).
+    _mgr_port_cached: Optional[int] = None
+
+    def _handle_live_mgr(self, request) -> Tuple:
+        if not self._is_live_authorized(request):
+            return error_response("Unauthorized", 401, "Unauthorized")
+        # Strip /live/mgr/ prefix
+        sub = request.path[len("/live/mgr/"):].rstrip("/")
+        method = (getattr(request, "method", "GET") or "GET").upper()
+
+        if method == "GET":
+            target = self._LIVE_MGR_GET_MAP.get(sub)
+        elif method == "POST":
+            target = self._LIVE_MGR_POST_MAP.get(sub)
+        else:
+            target = None
+        if target is None:
+            return error_response(f"Unknown manager endpoint: {sub}", 404, "Not Found")
+
+        # Read body for POST
+        body_bytes = b""
+        if method == "POST":
+            body = getattr(request, "body", None)
+            if isinstance(body, (bytes, bytearray)):
+                body_bytes = bytes(body)
+            elif isinstance(body, str):
+                body_bytes = body.encode("utf-8")
+            elif isinstance(body, dict):
+                body_bytes = json.dumps(body).encode("utf-8")
+
+        base_port = int(getattr(self.config.manager, "web_ui_port", 9005))
+        mgr_host = getattr(self.config.manager, "web_ui_host", "127.0.0.1") or "127.0.0.1"
+        # Force IPv4 numeric host on Windows (localhost resolves to ::1 there)
+        if mgr_host in ("localhost", ""):
+            mgr_host = "127.0.0.1"
+
+        # Try cached port first, then base..base+4 (matches run_web_ui's retry range)
+        candidate_ports = []
+        if self._mgr_port_cached is not None:
+            candidate_ports.append(self._mgr_port_cached)
+        for p in range(base_port, base_port + 5):
+            if p not in candidate_ports:
+                candidate_ports.append(p)
+
+        import http.client as _hc
+        last_err = None
+        for port in candidate_ports:
+            try:
+                conn = _hc.HTTPConnection(mgr_host, port, timeout=3)
+                headers = {"Content-Type": "application/json"} if method == "POST" else {}
+                conn.request(method, target, body=body_bytes if method == "POST" else None, headers=headers)
+                resp = conn.getresponse()
+                data = resp.read()
+                content_type = resp.getheader("Content-Type", "application/json")
+                status_code = resp.status
+                conn.close()
+                # Cache the working port for next time
+                HTTPWorker._mgr_port_cached = port
+                return status_code, {"Content-Type": content_type, "Cache-Control": "no-store"}, data
+            except (ConnectionRefusedError, OSError) as e:
+                last_err = e
+                # On Windows EADDRNOTAVAIL/refused: try next port; the cached port may be stale
+                if port == self._mgr_port_cached:
+                    HTTPWorker._mgr_port_cached = None
+                continue
+            except Exception as e:
+                last_err = e
+                break
+
+        logger.warning(
+            f"/live/mgr proxy {method} {target} -> {mgr_host}:{candidate_ports} all failed: {last_err}"
+        )
+        return error_response(
+            f"Manager API unreachable at {mgr_host}:{base_port}{target}: {last_err}",
+            502, "Bad Gateway",
+        )
+
+    _LIVE_DASHBOARD_HTML = r"""<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SimpleCore · /live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --raw-primary: 55% 0.18 230;
+  --raw-success: 65% 0.2 145;
+  --raw-warning: 75% 0.18 85;
+  --raw-error: 55% 0.22 25;
+  --primary: oklch(var(--raw-primary));
+  --success: oklch(var(--raw-success));
+  --warning: oklch(var(--raw-warning));
+  --error: oklch(var(--raw-error));
+  --bg-base: #08080d;
+  --bg-surface: rgba(10,10,18,0.8);
+  --bg-elevated: rgba(15,15,25,0.9);
+  --bg-sunken: rgba(0,0,0,0.3);
+  --glass-bg: rgba(255,255,255,0.02);
+  --glass-border: rgba(255,255,255,0.05);
+  --glass-blur: 12px;
+  --border-subtle: rgba(255,255,255,0.08);
+  --text-main: rgba(255,255,255,0.85);
+  --text-label: rgba(255,255,255,0.4);
+  --text-muted: rgba(255,255,255,0.25);
+  --surface-badge: color-mix(in oklch, var(--primary) 15%, transparent);
+  --surface-hover: color-mix(in oklch, var(--primary) 5%, transparent);
+  --surface-active: color-mix(in oklch, var(--primary) 10%, transparent);
+  --border-active: color-mix(in oklch, var(--primary) 30%, transparent);
+  --highlight-inset: inset 0 1px 0 rgba(255,255,255,0.05);
+  --shadow-micro: 0 2px 4px rgba(0,0,0,0.5);
+  --radius-sm: 2px;
+  --radius-md: 6px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+  --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem;
+  --space-5: 1.5rem; --space-6: 2rem; --space-8: 3rem;
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+  --text-base: 13px; --text-sm: 11px; --text-xs: 9px;
+  --duration-fast: 120ms; --duration-normal: 200ms; --duration-slow: 400ms;
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  color: var(--text-main);
+  background:
+    radial-gradient(ellipse at 20% 10%, color-mix(in oklch, var(--primary) 8%, transparent), transparent 60%),
+    radial-gradient(ellipse at 80% 90%, color-mix(in oklch, oklch(60% 0.15 280) 6%, transparent), transparent 55%),
+    var(--bg-base);
+  overflow: hidden;
+}
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
+  background-size: 32px 32px;
+  pointer-events: none;
+  z-index: -1;
+  animation: bgdrift 60s linear infinite;
+}
+@keyframes bgdrift { from { background-position: 0 0, 0 0; } to { background-position: 32px 32px, 32px 32px; } }
+
+.label, h6 {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 2.5px;
+  color: var(--text-label);
+  margin: 0;
+  user-select: none;
+}
+
+header.bar {
+  position: fixed; top: var(--space-4); left: var(--space-4); right: var(--space-4);
+  z-index: 100;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--space-5);
+  align-items: center;
+  padding: var(--space-3) var(--space-5);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-radius: var(--radius-lg);
+  box-shadow: var(--highlight-inset), var(--shadow-micro);
+}
+.brand { display: flex; align-items: center; gap: var(--space-3); }
+.brand .dot {
+  width: 10px; height: 10px; border-radius: var(--radius-full);
+  background: var(--success);
+  box-shadow: 0 0 8px color-mix(in oklch, var(--success) 60%, transparent);
+  animation: heartbeat 1s ease-in-out infinite;
+}
+.brand .dot.stale { background: var(--error); box-shadow: 0 0 8px color-mix(in oklch, var(--error) 60%, transparent); }
+.brand h1 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: -0.02em; }
+.brand small { color: var(--text-muted); font-family: var(--font-mono); font-size: var(--text-xs); }
+
+.kpis { display: flex; gap: var(--space-5); justify-content: center; }
+.kpi { display: flex; flex-direction: column; gap: 2px; align-items: center; }
+.kpi .v { font-family: var(--font-mono); font-size: 14px; font-weight: 600; color: var(--text-main); }
+.kpi.warn .v { color: var(--warning); }
+.kpi.err .v { color: var(--error); }
+
+.controls { display: flex; gap: var(--space-2); align-items: center; }
+.led-bars { display: inline-flex; gap: 3px; align-items: flex-end; height: 16px; }
+.led-bars span { width: 3px; background: var(--border-subtle); border-radius: 1px; transition: background var(--duration-normal); }
+.led-bars span:nth-child(1) { height: 30%; } .led-bars span:nth-child(2) { height: 50%; }
+.led-bars span:nth-child(3) { height: 70%; } .led-bars span:nth-child(4) { height: 90%; } .led-bars span:nth-child(5) { height: 100%; }
+.led-bars.health-3 span:nth-child(-n+5) { background: var(--success); }
+.led-bars.health-2 span:nth-child(-n+4) { background: var(--warning); }
+.led-bars.health-1 span:nth-child(-n+3) { background: var(--warning); }
+.led-bars.health-0 span:nth-child(-n+1) { background: var(--error); }
+
+main {
+  position: fixed;
+  inset: 80px var(--space-4) var(--space-4);
+  display: grid;
+  grid-template-columns: 1fr 340px 320px;
+  gap: var(--space-4);
+}
+@media (max-width: 1280px) {
+  main { grid-template-columns: 1fr 320px; }
+  #manager-panel { display: none; }
+}
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; inset: 80px var(--space-2) var(--space-2); }
+  #detail-panel, #manager-panel { max-height: 40vh; }
+}
+
+.panel {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-radius: var(--radius-lg);
+  box-shadow: var(--highlight-inset), var(--shadow-micro);
+  overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.panel .head {
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.panel .body { flex: 1; overflow: hidden; position: relative; }
+.panel .body.scroll { overflow: auto; padding: var(--space-4) var(--space-5); }
+
+#graph { width: 100%; height: 100%; display: block; }
+#graph .edge { stroke: color-mix(in oklch, var(--primary) 25%, transparent); stroke-width: 1; }
+#graph .edge.chain-next { stroke: color-mix(in oklch, var(--primary) 60%, transparent); stroke-width: 1.5; stroke-dasharray: 3 3; animation: dashflow 1.5s linear infinite; }
+@keyframes dashflow { to { stroke-dashoffset: -12; } }
+#graph .node circle.halo { fill: none; stroke: color-mix(in oklch, var(--primary) 40%, transparent); stroke-width: 1; opacity: 0; }
+#graph .node.leader circle.halo { opacity: 1; animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse {
+  0% { r: 24; opacity: 0.6; }
+  100% { r: 42; opacity: 0; }
+}
+#graph .node circle.core {
+  fill: var(--bg-elevated);
+  stroke: var(--border-subtle); stroke-width: 1.5;
+  transition: stroke var(--duration-normal), fill var(--duration-normal);
+}
+#graph .node.leader circle.core { stroke: var(--primary); fill: color-mix(in oklch, var(--primary) 18%, var(--bg-elevated)); }
+#graph .node.follower circle.core { stroke: color-mix(in oklch, var(--success) 50%, transparent); }
+#graph .node.stale circle.core { stroke: var(--error); fill: color-mix(in oklch, var(--error) 12%, var(--bg-elevated)); }
+#graph .node.selected circle.core { stroke-width: 2.5; filter: drop-shadow(0 0 6px color-mix(in oklch, var(--primary) 60%, transparent)); }
+#graph .node text.id { font-family: var(--font-mono); font-size: 9px; fill: var(--text-main); text-anchor: middle; pointer-events: none; }
+#graph .node text.kind { font-family: var(--font-mono); font-size: 8px; text-transform: uppercase; letter-spacing: 1px; fill: var(--text-label); text-anchor: middle; pointer-events: none; }
+#graph .node { cursor: pointer; }
+@keyframes heartbeat {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(1.25); opacity: 1; }
+}
+
+#detail h2 { font-size: 14px; font-weight: 700; margin: 0 0 var(--space-1); letter-spacing: -0.02em; }
+#detail .sub { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-4); display: flex; gap: var(--space-2); flex-wrap: wrap; }
+#detail .chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: var(--radius-sm);
+  background: var(--surface-badge);
+  font-family: var(--font-mono); font-size: var(--text-xs);
+  text-transform: uppercase; letter-spacing: 1.5px;
+  color: var(--text-main);
+}
+#detail .chip.leader { background: color-mix(in oklch, var(--primary) 25%, transparent); }
+#detail .chip.stale { background: color-mix(in oklch, var(--error) 25%, transparent); }
+#detail .placeholder { color: var(--text-muted); font-style: italic; padding: var(--space-5) 0; text-align: center; }
+#detail details {
+  border-top: 1px solid var(--border-subtle);
+  padding: var(--space-3) 0;
+}
+#detail details:first-of-type { border-top: none; padding-top: 0; }
+#detail summary {
+  list-style: none;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--text-label);
+  display: flex; justify-content: space-between; align-items: center;
+  padding: var(--space-1) 0;
+  user-select: none;
+  transition: color var(--duration-fast);
+}
+#detail summary:hover { color: var(--text-main); }
+#detail summary::-webkit-details-marker { display: none; }
+#detail summary::after { content: '▸'; transition: transform var(--duration-normal) var(--ease-default); color: var(--text-muted); }
+#detail details[open] > summary::after { transform: rotate(90deg); }
+#detail .kv {
+  display: grid; grid-template-columns: minmax(80px, max-content) 1fr;
+  gap: 4px var(--space-3); margin-top: var(--space-2);
+  font-family: var(--font-mono); font-size: var(--text-sm);
+}
+#detail .kv dt { color: var(--text-label); }
+#detail .kv dd { margin: 0; color: var(--text-main); word-break: break-all; }
+#detail ul.routes, #detail ul.chain { list-style: none; padding: 0; margin: var(--space-2) 0 0; font-family: var(--font-mono); font-size: var(--text-sm); }
+#detail ul.routes li, #detail ul.chain li {
+  padding: 3px 8px; border-radius: var(--radius-sm); background: var(--bg-sunken);
+  color: var(--text-main); margin-bottom: 3px; word-break: break-all;
+}
+#detail ul.chain li.current { background: var(--surface-badge); color: var(--text-main); border-left: 2px solid var(--primary); }
+
+/* Action buttons (inspector + manager) */
+.act-row { display: flex; gap: var(--space-2); margin-top: var(--space-2); flex-wrap: wrap; }
+.act-btn {
+  flex: 1 1 auto;
+  min-width: 80px;
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-main);
+  background: var(--surface-hover);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--duration-fast), border-color var(--duration-fast), color var(--duration-fast);
+}
+.act-btn:hover { background: var(--surface-active); border-color: var(--border-active); }
+.act-btn:active { transform: scale(0.98); }
+.act-btn:disabled, .act-btn.loading { opacity: 0.5; cursor: wait; }
+.act-btn.warn { color: var(--warning); }
+.act-btn.warn:hover { background: color-mix(in oklch, var(--warning) 10%, transparent); border-color: color-mix(in oklch, var(--warning) 40%, transparent); }
+.act-btn.sm { min-width: 32px; padding: 4px 8px; flex: 0 0 auto; }
+.scale-row {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-family: var(--font-mono); font-size: var(--text-sm);
+}
+.scale-row .lbl { color: var(--text-label); text-transform: uppercase; letter-spacing: 1.5px; font-size: var(--text-xs); min-width: 40px; }
+.scale-row .count { min-width: 24px; text-align: center; color: var(--text-main); }
+code { font-family: var(--font-mono); font-size: var(--text-xs); background: var(--bg-sunken); padding: 1px 4px; border-radius: var(--radius-sm); }
+
+#banner {
+  position: fixed; bottom: var(--space-4); left: 50%;
+  transform: translateX(-50%) translateY(40px);
+  padding: var(--space-2) var(--space-4);
+  background: var(--bg-elevated);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  backdrop-filter: blur(var(--glass-blur));
+  box-shadow: var(--highlight-inset), var(--shadow-micro);
+  font-family: var(--font-mono); font-size: var(--text-sm);
+  color: var(--text-main);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--duration-normal), transform var(--duration-normal);
+  z-index: 200;
+}
+#banner.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#banner.warn { border-color: color-mix(in oklch, var(--warning) 30%, var(--glass-border)); }
+#banner.err { border-color: color-mix(in oklch, var(--error) 30%, var(--glass-border)); }
+
+/* utility */
+.mono { font-family: var(--font-mono); }
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <span class="dot" id="health-dot"></span>
+    <div>
+      <h1>SimpleCore · <span class="mono" style="color: var(--text-label); font-weight: 500;">/live</span></h1>
+      <small>leader: <span id="leader-id">—</span></small>
+    </div>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><h6>workers</h6><span class="v" id="kpi-workers">0</span></div>
+    <div class="kpi"><h6>conn</h6><span class="v" id="kpi-conn">0</span></div>
+    <div class="kpi"><h6>req</h6><span class="v mono" id="kpi-req">—</span></div>
+    <div class="kpi"><h6>latency</h6><span class="v mono" id="kpi-lat">—</span></div>
+    <div class="kpi"><h6>routes</h6><span class="v" id="kpi-routes">0</span></div>
+    <div class="kpi"><h6>updated</h6><span class="v mono" id="kpi-updated">—</span></div>
+  </div>
+  <div class="controls">
+    <span class="led-bars" id="health-bars" aria-label="cluster health">
+      <span></span><span></span><span></span><span></span><span></span>
+    </span>
+  </div>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="head">
+      <h6>topology</h6>
+      <h6 id="conn-state">connecting…</h6>
+    </div>
+    <div class="body">
+      <svg id="graph" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+  </section>
+
+  <section class="panel" id="detail-panel">
+    <div class="head">
+      <h6>inspector</h6>
+      <h6 id="selected-hint">click a node</h6>
+    </div>
+    <div class="body scroll" id="detail">
+      <p class="placeholder">No node selected.<br><small style="color: var(--text-muted);">Click any worker in the topology graph.</small></p>
+    </div>
+  </section>
+
+  <section class="panel" id="manager-panel">
+    <div class="head">
+      <h6>manager</h6>
+      <h6 id="mgr-hint">cluster</h6>
+    </div>
+    <div class="body scroll" id="mgr">
+      <p class="placeholder">Loading…</p>
+    </div>
+  </section>
+</main>
+
+<div id="banner"></div>
+
+<script>
+(function(){
+  const KEY = new URLSearchParams(location.search).get('key') || '';
+  const STORE_KEY = 'live.state.v1';
+  const RECONNECT_MS = 2000;
+
+  const $graph = document.getElementById('graph');
+  const $detail = document.getElementById('detail');
+  const $selHint = document.getElementById('selected-hint');
+  const $banner = document.getElementById('banner');
+  const $dot = document.getElementById('health-dot');
+  const $leader = document.getElementById('leader-id');
+  const $kw = document.getElementById('kpi-workers');
+  const $kc = document.getElementById('kpi-conn');
+  const $kr = document.getElementById('kpi-routes');
+  const $kreq = document.getElementById('kpi-req');
+  const $klat = document.getElementById('kpi-lat');
+  const $ku = document.getElementById('kpi-updated');
+  const $bars = document.getElementById('health-bars');
+  const $cstate = document.getElementById('conn-state');
+  const $mgr = document.getElementById('mgr');
+
+  let state = restoreState() || { leader: null, workers: {}, chain: [], updated_at: 0 };
+  let mgrState = restoreMgrState() || { workers: [], metrics: {}, health: {}, nginx: {} };
+  let connFailCount = 0;
+  let reconnectInFlight = false;
+  const CONN_FAIL_THRESHOLD = 3;
+  let selectedId = sessionStorage.getItem('live.selected') || null;
+  let nodes = new Map();  // worker_id -> {x, y, vx, vy}
+  let lastDraw = 0;
+
+  function saveState() {
+    try { sessionStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch(e){}
+  }
+  function restoreState() {
+    try { const s = sessionStorage.getItem(STORE_KEY); return s ? JSON.parse(s) : null; } catch(e){ return null; }
+  }
+  const MGR_STORE_KEY = 'live.mgrState.v1';
+  function saveMgrState() { try { sessionStorage.setItem(MGR_STORE_KEY, JSON.stringify(mgrState)); } catch(e){} }
+  function restoreMgrState() {
+    try { const s = sessionStorage.getItem(MGR_STORE_KEY); return s ? JSON.parse(s) : null; } catch(e){ return null; }
+  }
+  // True if the given worker_id is the worker currently serving this page.
+  function isSelf(workerId) {
+    if (!workerId || !mgrState.workers) return false;
+    const myPort = location.port || (location.protocol === 'https:' ? '443' : '80');
+    const w = mgrState.workers.find(x => x.worker_id === workerId);
+    return !!(w && w.port && String(w.port) === String(myPort));
+  }
+  // Try to redirect this page to another healthy HTTP worker's port when our
+  // own worker has died. Returns true if a reconnect was scheduled.
+  function maybeReconnectToOtherWorker() {
+    if (reconnectInFlight) return true;
+    const workers = (mgrState && mgrState.workers) || [];
+    const myPort = location.port || (location.protocol === 'https:' ? '443' : '80');
+    const others = workers.filter(w =>
+      w.worker_type === 'http' && w.port && String(w.port) !== String(myPort)
+      && (!w.state || w.state === 'running')
+    );
+    if (!others.length) return false;
+    reconnectInFlight = true;
+    const target = others[0];
+    const url = new URL(location.href);
+    url.port = String(target.port);
+    banner('Worker on :' + myPort + ' down — reconnecting to :' + target.port + '…', 'warn');
+    setTimeout(() => { location.href = url.toString(); }, 1500);
+    return true;
+  }
+
+  function banner(msg, kind) {
+    $banner.className = kind || '';
+    $banner.classList.add('show');
+    $banner.textContent = msg;
+    clearTimeout(banner._t);
+    banner._t = setTimeout(()=>$banner.classList.remove('show'), 3500);
+  }
+
+  function fmtAgo(ts) {
+    if (!ts) return '—';
+    const dt = Math.max(0, Date.now()/1000 - ts);
+    if (dt < 2) return 'now';
+    if (dt < 60) return Math.round(dt) + 's';
+    if (dt < 3600) return Math.round(dt/60) + 'm';
+    return Math.round(dt/3600) + 'h';
+  }
+  function fmtUptime(ts) {
+    if (!ts) return '—';
+    const s = Math.max(0, Date.now()/1000 - ts);
+    const d = Math.floor(s/86400), h = Math.floor((s%86400)/3600), m = Math.floor((s%3600)/60);
+    return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+  }
+
+  function renderKPIs() {
+    const wids = Object.keys(state.workers||{});
+    $kw.textContent = wids.length;
+    const m = mgrState.metrics || {};
+    const fallbackConn = wids.reduce((a,k)=>a+(state.workers[k].connections||0),0);
+    const fallbackRoutes = new Set(wids.flatMap(k=>state.workers[k].routes||[])).size;
+    $kc.textContent = (m.total_connections != null) ? m.total_connections : fallbackConn;
+    $kr.textContent = fallbackRoutes;
+    if ($kreq) $kreq.textContent = m.total_requests != null ? m.total_requests : '—';
+    if ($klat) $klat.textContent = m.avg_latency_ms != null ? (m.avg_latency_ms.toFixed(1) + 'ms') : '—';
+    $ku.textContent = fmtAgo(state.updated_at);
+    $leader.textContent = state.leader || '—';
+    const now = Date.now()/1000;
+    const stale = wids.filter(k => now - (state.workers[k].last_status_at||0) > 15).length;
+    $dot.classList.toggle('stale', stale > 0 || !state.leader);
+    const health = !state.leader ? 0 : stale === 0 ? 3 : stale < wids.length/2 ? 2 : 1;
+    $bars.className = 'led-bars health-' + health;
+  }
+
+  // ---- simple force layout ----
+  function tick() {
+    const W = $graph.clientWidth, H = $graph.clientHeight;
+    const cx = W/2, cy = H/2;
+    const wids = Object.keys(state.workers||{});
+    // Add missing nodes; remove gone ones
+    for (const k of wids) {
+      if (!nodes.has(k)) {
+        const angle = Math.random() * Math.PI * 2;
+        nodes.set(k, { x: cx + Math.cos(angle)*120, y: cy + Math.sin(angle)*120, vx: 0, vy: 0 });
+      }
+    }
+    for (const k of [...nodes.keys()]) if (!wids.includes(k)) nodes.delete(k);
+
+    const arr = [...nodes.entries()];
+    // Repulsion
+    for (let i = 0; i < arr.length; i++) {
+      for (let j = i+1; j < arr.length; j++) {
+        const [, a] = arr[i]; const [, b] = arr[j];
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const d2 = dx*dx + dy*dy + 0.01;
+        const f = 8000 / d2;
+        const d = Math.sqrt(d2);
+        const fx = (dx/d)*f, fy = (dy/d)*f;
+        a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+      }
+    }
+    // Attraction to center + to leader
+    const leaderNode = nodes.get(state.leader);
+    for (const [k, n] of arr) {
+      n.vx += (cx - n.x) * 0.012;
+      n.vy += (cy - n.y) * 0.012;
+      if (leaderNode && k !== state.leader) {
+        n.vx += (leaderNode.x - n.x) * 0.008;
+        n.vy += (leaderNode.y - n.y) * 0.008;
+      }
+    }
+    // Integrate with damping
+    for (const [, n] of arr) {
+      n.vx *= 0.82; n.vy *= 0.82;
+      n.x += n.vx; n.y += n.vy;
+      n.x = Math.max(40, Math.min(W-40, n.x));
+      n.y = Math.max(40, Math.min(H-40, n.y));
+    }
+  }
+
+  function draw() {
+    const W = $graph.clientWidth, H = $graph.clientHeight;
+    $graph.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    const wids = Object.keys(state.workers||{});
+    const chain = state.chain || [];
+    const now = Date.now()/1000;
+    // edges (leader -> followers + chain hops)
+    let svg = '';
+    const leaderNode = nodes.get(state.leader);
+    if (leaderNode) {
+      for (const k of wids) {
+        if (k === state.leader) continue;
+        const n = nodes.get(k); if (!n) continue;
+        svg += `<line class="edge" x1="${leaderNode.x}" y1="${leaderNode.y}" x2="${n.x}" y2="${n.y}"/>`;
+      }
+    }
+    // chain hop overlay
+    for (let i = 0; i < chain.length - 1; i++) {
+      const a = nodes.get(chain[i]); const b = nodes.get(chain[i+1]);
+      if (a && b) svg += `<line class="edge chain-next" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/>`;
+    }
+    // nodes
+    for (const k of wids) {
+      const n = nodes.get(k); if (!n) continue;
+      const w = state.workers[k];
+      const isLeader = k === state.leader;
+      const stale = now - (w.last_status_at||0) > 15;
+      const cls = 'node ' + (isLeader ? 'leader' : 'follower') + (stale ? ' stale' : '') + (k === selectedId ? ' selected' : '');
+      const short = (k.length > 16 ? k.slice(0,14)+'…' : k);
+      svg += `<g class="${cls}" data-id="${k}" transform="translate(${n.x},${n.y})">
+        <circle class="halo" r="28"/>
+        <circle class="core" r="22"/>
+        <text class="kind" y="-4">${w.worker_type||'?'}</text>
+        <text class="id" y="9">${short}</text>
+      </g>`;
+    }
+    $graph.innerHTML = svg;
+  }
+
+  // Persist open/closed state of <details data-key="…"> across re-renders.
+  // sessionStorage so it also survives reloads.
+  const OPEN_STORE_KEY = 'live.openSections.v1';
+  function loadOpenSet() {
+    try {
+      const raw = sessionStorage.getItem(OPEN_STORE_KEY);
+      if (raw) return new Set(JSON.parse(raw));
+    } catch(e){}
+    // sensible defaults on first load
+    return new Set(['process', 'mgr-overview']);
+  }
+  function saveOpenSet(set) {
+    try { sessionStorage.setItem(OPEN_STORE_KEY, JSON.stringify([...set])); } catch(e){}
+  }
+  let openSections = loadOpenSet();
+  function applyOpenStateTo(container) {
+    container.querySelectorAll('details[data-key]').forEach(d => {
+      d.open = openSections.has(d.dataset.key);
+      // sync changes back to the set + storage
+      d.addEventListener('toggle', () => {
+        if (d.open) openSections.add(d.dataset.key);
+        else openSections.delete(d.dataset.key);
+        saveOpenSet(openSections);
+      });
+    });
+  }
+
+  function renderDetail() {
+    if (!selectedId || !state.workers[selectedId]) {
+      $selHint.textContent = 'click a node';
+      $detail.innerHTML = '<p class="placeholder">No node selected.<br><small style="color: var(--text-muted);">Click any worker in the topology graph.</small></p>';
+      return;
+    }
+    const w = state.workers[selectedId];
+    const isLeader = selectedId === state.leader;
+    const now = Date.now()/1000;
+    const stale = now - (w.last_status_at||0) > 15;
+    const chain = state.chain || [];
+    const myChainIdx = chain.indexOf(selectedId);
+    $selHint.textContent = selectedId.slice(0, 24);
+
+    const chips = [
+      isLeader ? '<span class="chip leader">LEADER</span>' : '<span class="chip">FOLLOWER</span>',
+      stale ? '<span class="chip stale">STALE</span>' : '',
+      `<span class="chip">${w.worker_type||'?'}</span>`,
+      isSelf(selectedId) ? '<span class="chip" style="background: color-mix(in oklch, var(--warning) 25%, transparent);">SELF</span>' : '',
+      myChainIdx >= 0 ? `<span class="chip">#${myChainIdx+1} / ${chain.length}</span>` : '',
+    ].filter(Boolean).join('');
+
+    let html = `<h2>${selectedId}</h2><div class="sub">${chips}</div>`;
+
+    html += `<details data-key="process"><summary>process</summary><dl class="kv">
+      <dt>pid</dt><dd>${w.pid ?? '—'}</dd>
+      <dt>uptime</dt><dd>${fmtUptime(w.started_at)}</dd>
+      <dt>cpu</dt><dd>${(w.cpu_percent ?? 0).toFixed(1)}%</dd>
+      <dt>memory</dt><dd>${(w.memory_mb ?? 0).toFixed(1)} MB</dd>
+      <dt>seen</dt><dd>${fmtAgo(w.last_status_at)} ago</dd>
+    </dl></details>`;
+
+    // Per-worker live metrics (from manager — keyed by worker_id)
+    const wm = (mgrState.workers || []).find(x => x.worker_id === selectedId);
+    if (wm && wm.metrics) {
+      html += `<details data-key="metrics"><summary>metrics</summary><dl class="kv">
+        <dt>requests</dt><dd>${wm.metrics.requests ?? 0}</dd>
+        <dt>connections</dt><dd>${wm.metrics.connections ?? 0}</dd>
+        <dt>errors</dt><dd>${wm.metrics.errors ?? 0}</dd>
+        <dt>avg latency</dt><dd>${(wm.metrics.avg_latency_ms ?? 0).toFixed(2)} ms</dd>
+      </dl></details>`;
+    }
+
+    if (w.routes && w.routes.length) {
+      html += `<details data-key="routes"><summary>routes <span style="color: var(--text-muted);">${w.routes.length}</span></summary>
+        <ul class="routes">${w.routes.map(r=>`<li>${r}</li>`).join('')}</ul></details>`;
+    }
+
+    html += `<details data-key="websocket"><summary>websocket</summary><dl class="kv">
+      <dt>connections</dt><dd>${w.connections ?? 0}</dd>
+    </dl></details>`;
+
+    if (chain.length) {
+      html += `<details data-key="chain"><summary>failover chain</summary><ul class="chain">${
+        chain.map((k,i)=>`<li class="${k===selectedId?'current':''}"><span style="color: var(--text-muted);">#${i+1}</span> ${k}${k===state.leader?' <span class="chip leader" style="margin-left: var(--space-2);">L</span>':''}</li>`).join('')
+      }</ul></details>`;
+    }
+
+    // Worker actions (proxied to manager)
+    const selfWarn = isSelf(selectedId);
+    html += `<details data-key="actions"><summary>actions</summary>
+      <div class="act-row">
+        <button class="act-btn" data-act="restart">restart</button>
+        <button class="act-btn warn" data-act="stop"${selfWarn ? ' title="stops the worker serving this page"' : ''}>stop${selfWarn ? ' (self)' : ''}</button>
+      </div>
+    </details>`;
+
+    html += `<details data-key="raw"><summary>raw</summary><pre style="font-size: var(--text-xs); color: var(--text-muted); white-space: pre-wrap; word-break: break-all; margin: var(--space-2) 0 0;">${JSON.stringify(w, null, 2)}</pre></details>`;
+
+    $detail.innerHTML = html;
+    applyOpenStateTo($detail);
+    // bind worker-action buttons
+    $detail.querySelectorAll('.act-btn').forEach(b => {
+      b.addEventListener('click', () => workerAction(selectedId, b.dataset.act, b));
+    });
+  }
+
+  function applySnapshot(snap) {
+    if (!snap) return;
+    const prevLeader = state.leader;
+    state = snap;
+    saveState();
+    renderKPIs();
+    renderDetail();
+    if (prevLeader && prevLeader !== snap.leader) {
+      banner('Leader changed: ' + prevLeader + ' → ' + (snap.leader || '∅'), 'warn');
+    }
+  }
+
+  // initial fetch via REST
+  function fetchSnapshot() {
+    fetch('/live/snapshot' + (KEY ? '?key=' + encodeURIComponent(KEY) : ''))
+      .then(r => { if (r.status === 401) { banner('Unauthorized — append ?key=…', 'err'); throw 0; } return r.json(); })
+      .then(snap => { connFailCount = 0; applySnapshot(snap); })
+      .catch(() => {
+        connFailCount++;
+        if (connFailCount >= CONN_FAIL_THRESHOLD) maybeReconnectToOtherWorker();
+      });
+  }
+
+  // Manager (cluster-control) state — proxied through /live/mgr/*
+  function fetchMgr() {
+    const k = KEY ? ('?key=' + encodeURIComponent(KEY)) : '';
+    Promise.all([
+      fetch('/live/mgr/workers' + k).then(r => r.ok ? r.json() : null).catch(()=>null),
+      fetch('/live/mgr/metrics' + k).then(r => r.ok ? r.json() : null).catch(()=>null),
+      fetch('/live/mgr/health'  + k).then(r => r.ok ? r.json() : null).catch(()=>null),
+      fetch('/live/mgr/status'  + k).then(r => r.ok ? r.json() : null).catch(()=>null),
+    ]).then(([workers, metrics, health, status]) => {
+      const ok = !!(workers || metrics || status);
+      mgrState.available = ok;
+      if (workers) mgrState.workers = workers;
+      if (metrics) mgrState.metrics = metrics;
+      if (health) mgrState.health = health;
+      if (status) {
+        mgrState.status = status;
+        mgrState.nginx = status.nginx || {};
+      }
+      if (ok) { connFailCount = 0; saveMgrState(); }
+      else    { connFailCount++; if (connFailCount >= CONN_FAIL_THRESHOLD) maybeReconnectToOtherWorker(); }
+      renderMgr();
+      renderDetail();
+    });
+  }
+
+  function mgrPost(path, body, btnEl) {
+    const k = KEY ? ('?key=' + encodeURIComponent(KEY)) : '';
+    if (btnEl) { btnEl.disabled = true; btnEl.classList.add('loading'); }
+    return fetch('/live/mgr' + path + k, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body || {})
+    }).then(r => r.json().catch(()=>({status:'error'})))
+      .then(j => {
+        if (j.status === 'ok') banner('✓ ' + path, null);
+        else banner('✗ ' + path + ': ' + (j.message || 'error'), 'err');
+        fetchMgr();
+        return j;
+      })
+      .catch(e => { banner('✗ ' + path + ': ' + e, 'err'); })
+      .finally(() => { if (btnEl) { btnEl.disabled = false; btnEl.classList.remove('loading'); } });
+  }
+
+  function workerAction(workerId, act, btnEl) {
+    if (act === 'stop' && isSelf(workerId)) {
+      if (!confirm('This worker is currently serving this page. Stopping it will disconnect you — the UI will auto-reconnect to another worker if available. Continue?')) return;
+    }
+    if (act === 'restart') return mgrPost('/workers/restart', {worker_id: workerId}, btnEl);
+    if (act === 'stop')    return mgrPost('/workers/stop',    {worker_id: workerId, graceful: true}, btnEl);
+  }
+
+  // Render the global manager panel (stats + actions)
+  function renderMgr() {
+    if (!$mgr) return;
+    if (!mgrState.available) {
+      $mgr.innerHTML = '<p class="placeholder">Manager API not reachable.<br><small style="color: var(--text-muted);">Make sure <code>tb workers start</code> is running.</small></p>';
+      return;
+    }
+    const m = mgrState.metrics || {};
+    const h = mgrState.health || {};
+    const s = mgrState.status || {};
+    const httpCount = (mgrState.workers || []).filter(w => w.worker_type === 'http').length;
+    const wsCount   = (mgrState.workers || []).filter(w => w.worker_type === 'ws').length;
+    const healthy   = h.healthy ? '<span class="chip" style="background: color-mix(in oklch, var(--success) 25%, transparent);">healthy</span>'
+                                : '<span class="chip stale">degraded</span>';
+
+    let html = `<details data-key="mgr-overview" open><summary>overview</summary><dl class="kv">
+      <dt>healthy</dt><dd>${healthy}</dd>
+      <dt>broker</dt><dd>${(h.broker && h.broker.alive) ? 'process' : (h.broker && h.broker.leader_id) ? 'p2p:' + h.broker.leader_id.slice(0,12) : 'none'}</dd>
+      <dt>http workers</dt><dd>${httpCount}</dd>
+      <dt>ws workers</dt><dd>${wsCount}</dd>
+      <dt>requests</dt><dd>${m.total_requests ?? 0}</dd>
+      <dt>connections</dt><dd>${m.total_connections ?? 0}</dd>
+      <dt>errors</dt><dd>${m.total_errors ?? 0}</dd>
+      <dt>avg latency</dt><dd>${(m.avg_latency_ms ?? 0).toFixed(2)} ms</dd>
+      <dt>nginx</dt><dd>${(mgrState.nginx && mgrState.nginx.installed) ? 'installed' : '—'}</dd>
+    </dl></details>`;
+
+    html += `<details data-key="mgr-scale"><summary>scale</summary>
+      <div class="scale-row"><span class="lbl">http</span>
+        <button class="act-btn sm" data-scale="http" data-delta="-1">−</button>
+        <span class="count">${httpCount}</span>
+        <button class="act-btn sm" data-scale="http" data-delta="+1">+</button>
+      </div>
+      <div class="scale-row"><span class="lbl">ws</span>
+        <button class="act-btn sm" data-scale="ws" data-delta="-1">−</button>
+        <span class="count">${wsCount}</span>
+        <button class="act-btn sm" data-scale="ws" data-delta="+1">+</button>
+      </div>
+    </details>`;
+
+    html += `<details data-key="mgr-actions"><summary>actions</summary>
+      <div class="act-row">
+        <button class="act-btn" data-act="rolling">rolling update</button>
+        <button class="act-btn" data-act="nginx">nginx reload</button>
+      </div>
+      <div class="act-row" style="margin-top: var(--space-2);">
+        <button class="act-btn warn" data-act="shutdown">shutdown all</button>
+      </div>
+    </details>`;
+
+    if (mgrState.workers && mgrState.workers.length) {
+      html += `<details data-key="mgr-workers"><summary>workers <span style="color: var(--text-muted);">${mgrState.workers.length}</span></summary>
+        <ul class="routes">${mgrState.workers.map(w => `<li><span style="color: var(--text-muted);">${w.worker_type}</span> ${w.worker_id} <span style="color: var(--text-muted);">:${w.port || '—'}</span></li>`).join('')}</ul>
+      </details>`;
+    }
+
+    $mgr.innerHTML = html;
+    applyOpenStateTo($mgr);
+    // Bind scale +/-
+    $mgr.querySelectorAll('[data-scale]').forEach(b => {
+      b.addEventListener('click', () => {
+        const t = b.dataset.scale;
+        const delta = parseInt(b.dataset.delta);
+        const current = t === 'http' ? httpCount : wsCount;
+        const target = Math.max(0, current + delta);
+        mgrPost('/scale', {type: t, count: target}, b);
+      });
+    });
+    // Bind global actions
+    $mgr.querySelectorAll('[data-act]').forEach(b => {
+      b.addEventListener('click', () => {
+        const a = b.dataset.act;
+        if (a === 'rolling')   return mgrPost('/rolling-update', {}, b);
+        if (a === 'nginx')     return mgrPost('/nginx/reload',   {}, b);
+        if (a === 'shutdown')  { if (confirm('Shut down all workers?')) mgrPost('/shutdown', {}, b); }
+      });
+    });
+  }
+
+  // WS subscribe — channel "sys.topology"
+  let ws = null;
+  function connectWS() {
+    $cstate.textContent = 'connecting…';
+    try {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      // WS worker default port 8100; allow override via ?ws=host:port
+      const wsTarget = new URLSearchParams(location.search).get('ws')
+        || (location.hostname + ':8100');
+      ws = new WebSocket(`${proto}//${wsTarget}/ws?channel=sys.topology`);
+      ws.onopen = () => { $cstate.textContent = 'live'; banner('Connected', null); };
+      ws.onmessage = (ev) => {
+        try {
+          const m = JSON.parse(ev.data);
+          if (m && m.type === 'sys.topology' && m.data) applySnapshot(m.data);
+        } catch(e){}
+      };
+      ws.onclose = () => { $cstate.textContent = 'reconnecting…'; setTimeout(connectWS, RECONNECT_MS); };
+      ws.onerror = () => { try { ws.close(); } catch(e){} };
+    } catch(e) {
+      $cstate.textContent = 'offline';
+      setTimeout(connectWS, RECONNECT_MS);
+    }
+  }
+
+  // render loop
+  function loop() {
+    tick();
+    const now = performance.now();
+    if (now - lastDraw > 16) { draw(); lastDraw = now; }
+    requestAnimationFrame(loop);
+  }
+
+  // keep KPI updated_at fresh
+  setInterval(renderKPIs, 1000);
+  // refresh snapshot via REST every 5s as fallback
+  setInterval(fetchSnapshot, 5000);
+  // refresh manager state every 3s
+  setInterval(fetchMgr, 3000);
+
+  renderKPIs();
+  renderDetail();
+  renderMgr();
+  fetchMgr();
+  // Delegated pointer handler — bound once on the SVG parent. Uses pointerdown
+  // (not click) because nodes move every frame; click requires down+up on the
+  // same element, which fails on a moving target.
+  $graph.addEventListener('pointerdown', (e) => {
+    const node = e.target.closest('.node');
+    if (!node) return;
+    e.preventDefault();
+    selectedId = node.dataset.id;
+    sessionStorage.setItem('live.selected', selectedId);
+    renderDetail();
+    draw();
+  });
+  fetchSnapshot();
+  connectWS();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
+"""
 
     def _handle_health(self) -> Tuple:
         """Health check endpoint."""

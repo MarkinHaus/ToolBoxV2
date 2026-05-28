@@ -84,7 +84,7 @@ async def verify_magic_link(app: App = None, token: str = None, data: dict = Non
         except Exception: pass
         return Result.default_user_error("Link expired")
 
-    email = ml_data["email"]
+    email = ml_data.get("email")
     user = await _find_user_by_email(app, email)
     if not user:
         username = email.split("@")[0]

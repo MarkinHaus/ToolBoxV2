@@ -361,7 +361,7 @@ def ingest_chunk(tv: TaskView, chunk: dict) -> None:
         tv.phase = "tool_done"
         if iv:
             iv.tools.append((name, success, elapsed, info))
-            iv.pending_tools.pop(name, None)
+            iv.pending_tools.pop(f_id, None)
             iv._in_reasoning = False
             # Rohdaten für späteren Drill-Down sichern
             raw_result = chunk.get("result", "")
@@ -630,109 +630,63 @@ def _append_task_line(out: list, tv: TaskView, focused: bool, pad: str = " " * 1
     out.append((bg + fg_dim, pad))
 # ── B: Fullscreen overlay ─────────────────────────────────────────────────────
 
+
+
 class TaskOverlay:
-    """
-    Fullscreen detail view. Shared reference to task_views — no copy, no queue.
-    ingest_chunk() writes directly; invalidate() redraws.
-    """
+    """Fullscreen task viewer. Exactly 2 views: 'overview' + 'detail'.
+    Navigation: arrow keys + Enter + Backspace + Esc only."""
 
     def __init__(self, task_views: dict[str, TaskView]):
         self._views = task_views
-        self._selected: str = ""  # aktuell gewählte task_id
-        self._selected_sub: str = ""  # gewählte sub-agent id ("" = task selbst)
-        self._focus: str = "left"  # "left" | "right"
-        self._left_scroll: int = 0  # scroll in linker Liste (für viele tasks)
-        self._right_scroll: int = 0  # scroll im rechten Panel
-        self._input_scroll: int = 0  # Scroll-Position für Input
-        self._scroll_focus: str = "result"  # Fokus ("input" oder "result")
-        self._iter_scroll_focus: str = "iter"
-        self._selected_iter: Optional[int] = None  # None = liste; int = drill-down
-        self._right_iter_cursor: int = 0  # Index in reversed(tv.iterations) — welche Iter ist im Cursor
-        self._selected_tool_idx: int = 0  # Welches Tool ist im Drill-Down ausgewählt
-        self._tool_view: str = "list"  # "list" | "detail" — detail zeigt raw args+result
-        self._jump_buffer = ""
-        self._last_jump_time = 0.0
+        self._selected: str = ""
+        self._focus: str = "left"            # "left" | "right"
+        self._mode: str = "overview"         # "overview" | "detail"
+        self._selected_iter_n: Optional[int] = None
+        self._iter_cursor: int = 0           # cursor in iter list (overview)
+        self._overview_scroll: int = 0
+        self._detail_scroll: int = 0
         self._app: Optional[Application] = None
-        self._last_content_lines: int = 0
-        self._last_final_lines: int = 0
-        self._final_scroll: int = 0
-        self._visible_height: int = 20
+        self._viewport: int = 30             # rough visible lines for clamping
 
-    def _max_scroll(self, total_lines: int, visible: int = 20) -> int:
-        """Verhindert Scrollen über das Content-Ende hinaus."""
-        return max(0, total_lines - visible)
-
-    def _left_items(self) -> list[tuple[str, str]]:
-        """Returns list of (task_id, sub_name). sub_name == "" für direkte TaskViews."""
-        items: list[tuple[str, str]] = []
-        seen_tids: set[str] = set()
-
+    # ── data helpers ────────────────────────────────────────────────────
+    def _left_items(self) -> list[str]:
+        """Top-level task_ids in display order (parents + swarm-subs flat)."""
+        items: list[str] = []
+        seen: set[str] = set()
         for tid, tv in self._views.items():
-            if tid in seen_tids:
+            if tid in seen:
                 continue
-
-            # Legacy nested subs (durch _ingest_chunk erzeugt) überspringen
             if "__sub__" in tid and not tv.is_swarm_sub:
                 continue
-
-            # Swarm-Subs werden direkt nach ihrem Parent eingefügt — skip hier
             if tv.is_swarm_sub:
                 continue
-
-            # Reguläre TaskView oder Swarm-Summary als Top-Level-Eintrag
-            items.append((tid, ""))
-            seen_tids.add(tid)
-
-            # ── Swarm-Summary: direkt darunter seine Swarm-Subs ──
+            items.append(tid)
+            seen.add(tid)
             if tv.is_swarm_summary:
-                for sub_name, sub_tid in tv.sub_task_ids.items():
-                    if sub_tid in self._views and sub_tid not in seen_tids:
-                        # Als eigenen Eintrag mit sub_name markieren
-                        items.append((sub_tid, ""))
-                        seen_tids.add(sub_tid)
-
-            # ── Non-Swarm mit nested subs (legacy): als (parent_tid, sub_name) ──
-            elif tv.sub_agents:
-                for sub in tv.sub_agents:
-                    items.append((tid, sub))
-
+                for sub_tid in tv.sub_task_ids.values():
+                    if sub_tid in self._views and sub_tid not in seen:
+                        items.append(sub_tid)
+                        seen.add(sub_tid)
         return items
 
     def _effective_view(self) -> Optional[TaskView]:
-        if self._selected_sub:
-            parent_tv = self._views.get(self._selected)
-            if parent_tv:
-                sub_task_id = parent_tv.sub_task_ids.get(self._selected_sub)
-                if sub_task_id and sub_task_id in self._views:
-                    return self._views[sub_task_id]
-            # Fallback: Agent-Name oder Task-ID passt direkt
-            for tv in self._views.values():
-                if tv.agent_name == self._selected_sub or tv.task_id == self._selected_sub:
-                    return tv
         return self._views.get(self._selected)
 
+    # ── lifecycle ───────────────────────────────────────────────────────
     async def run(self, on_exit) -> None:
         items = self._left_items()
-        # Erstes laufendes Item vorauswählen
-        for tid, sub in items:
+        for tid in items:
             tv = self._views.get(tid)
             if tv and tv.status == "running":
                 self._selected = tid
-                self._selected_sub = sub
                 break
         else:
             if items:
-                self._selected, self._selected_sub = items[0]
-
-        def _left_style():
-            return "bg:ansiblack" if self._focus == "right" else "bg:#0a0f1a"
-
-        def _right_style():
-            return "bg:ansiblack" if self._focus == "left" else "bg:#0a0f1a"
+                self._selected = items[0]
 
         left = Window(
             FormattedTextControl(self._render_left, focusable=False),
-            width=Dimension(min=28, max=32),
+            width=Dimension(min=28, max=34),
             style="bg:ansiblack",
         )
         right = Window(
@@ -740,14 +694,14 @@ class TaskOverlay:
             style="bg:ansiblack",
         )
         divider = Window(width=1, char="│", style="fg:#374151 bg:ansiblack")
-        footer_win = Window(
+        footer = Window(
             FormattedTextControl(self._render_footer, focusable=False),
             height=1,
             style="bg:#111827",
         )
 
         self._app = Application(
-            layout=Layout(HSplit([VSplit([left, divider, right]), footer_win])),
+            layout=Layout(HSplit([VSplit([left, divider, right]), footer])),
             key_bindings=self._build_keys(on_exit),
             full_screen=True,
             mouse_support=False,
@@ -758,474 +712,432 @@ class TaskOverlay:
         if self._app:
             self._app.invalidate()
 
-    # ── renderers ────────────────────────────────────────────────────────────
+    # ── render helpers ──────────────────────────────────────────────────
+    def _wrap_fragments(self, text: str, style: str, indent: str = "",
+                        width: int = 90) -> list[tuple[str, str]]:
+        """Wrap text to width but never truncate. Newlines preserved."""
+        frags: list[tuple[str, str]] = []
 
+        import textwrap
+        if not text:
+            return frags
+        for raw_line in str(text).split("\n"):
+            if not raw_line.strip():
+                frags.append((style, "\n"))
+                continue
+            wrapped = textwrap.wrap(raw_line, width=width,
+                                    break_long_words=True,
+                                    break_on_hyphens=False) or [raw_line]
+            for w in wrapped:
+                frags.append((style, f"{indent}{w}\n"))
+        return frags
+
+    def _try_parse_struct(self, text: str):
+        """Parse als JSON oder Python-literal. None wenn nicht parsebar."""
+        if not text or not text.strip():
+            return None
+        s = text.strip()
+        if not (s.startswith("{") or s.startswith("[")):
+            return None
+        try:
+            import json as _json
+            return _json.loads(s)
+        except Exception:
+            pass
+        try:
+            import ast as _ast
+            return _ast.literal_eval(s)
+        except Exception:
+            pass
+        return None
+
+    def _format_struct(self, val, indent: int = 0) -> list[tuple[str, str]]:
+        """Parsed object → farbige, eingerückte Fragmente."""
+        bg = "bg:ansiblack "
+        pad = "  " * indent
+        pad_inner = "  " * (indent + 1)
+        out: list[tuple[str, str]] = []
+
+        if isinstance(val, dict):
+            if not val:
+                out.append((bg + "fg:#6b7280", "{}"))
+                return out
+            out.append((bg + "fg:#6b7280", "{\n"))
+            items = list(val.items())
+            for i, (k, v) in enumerate(items):
+                out.append((bg + "fg:#67e8f9", f"{pad_inner}{k}"))
+                out.append((bg + "fg:#6b7280", ": "))
+                out.extend(self._format_struct(v, indent + 1))
+                if i < len(items) - 1:
+                    out.append((bg + "fg:#6b7280", ","))
+                out.append((bg, "\n"))
+            out.append((bg + "fg:#6b7280", f"{pad}}}"))
+        elif isinstance(val, list):
+            if not val:
+                out.append((bg + "fg:#6b7280", "[]"))
+                return out
+            out.append((bg + "fg:#6b7280", "[\n"))
+            for i, item in enumerate(val):
+                out.append((bg, pad_inner))
+                out.extend(self._format_struct(item, indent + 1))
+                if i < len(val) - 1:
+                    out.append((bg + "fg:#6b7280", ","))
+                out.append((bg, "\n"))
+            out.append((bg + "fg:#6b7280", f"{pad}]"))
+        elif isinstance(val, bool):
+            out.append((bg + "fg:#a78bfa", str(val)))
+        elif val is None:
+            out.append((bg + "fg:#a78bfa", "null"))
+        elif isinstance(val, (int, float)):
+            out.append((bg + "fg:#fbbf24", str(val)))
+        elif isinstance(val, str):
+            if "\n" in val:
+                lines = val.split("\n")
+                out.append((bg + "fg:#4ade80", "\""))
+                for i, line in enumerate(lines):
+                    if i == 0:
+                        out.append((bg + "fg:#4ade80", line))
+                    else:
+                        out.append((bg + "fg:#4ade80", f"\n{pad_inner}{line}"))
+                out.append((bg + "fg:#4ade80", "\""))
+            else:
+                out.append((bg + "fg:#4ade80", f"\"{val}\""))
+        else:
+            out.append((bg + "fg:#e5e7eb", str(val)))
+        return out
+
+    def _render_io(self, text: str, default_style: str,
+                   indent_str: str = "         ") -> list[tuple[str, str]]:
+        """Tool-I/O: pretty wenn parsebar, sonst plain wrap."""
+        if not text:
+            return []
+        obj = self._try_parse_struct(text)
+        if obj is None:
+            return self._wrap_fragments(text, default_style,
+                                        indent=indent_str, width=84)
+        bg = "bg:ansiblack "
+        raw = self._format_struct(obj, indent=0)
+        out: list[tuple[str, str]] = [(bg, indent_str)]
+        for style, frag_text in raw:
+            if "\n" not in frag_text:
+                out.append((style, frag_text))
+                continue
+            parts = frag_text.split("\n")
+            for i, part in enumerate(parts):
+                if i > 0:
+                    out.append((bg, "\n" + indent_str))
+                if part:
+                    out.append((style, part))
+        out.append((bg, "\n"))
+        return out
+
+    def _render_stats(self, tv: TaskView) -> list[tuple[str, str]]:
+        """Full stats block — nothing truncated. Used in both modes."""
+        bg = "bg:ansiblack "
+        out: list[tuple[str, str]] = []
+        sym, col = STATUS_SYM.get(tv.status, ("◯", "cyan"))
+
+        header = f" {sym} {tv.agent_name}"
+        if tv.is_swarm_summary:
+            header += f"   🐝 swarm summary ({tv.swarm_phase or 'init'})"
+        elif tv.is_swarm_sub:
+            header += "   🐝 swarm-sub"
+        out.append((bg + f"fg:{C[col]} bold", header + "\n"))
+
+        meta = [f"status: {tv.status}"]
+        if tv.persona and tv.persona != "default":
+            meta.append(f"persona: {tv.persona}")
+        if tv.max_iter:
+            meta.append(f"iter: {tv.iteration}/{tv.max_iter}")
+        if tv.tokens_max:
+            pct = min(100, int(100 * tv.tokens_used / tv.tokens_max))
+            meta.append(f"tokens: {tv.tokens_used:,}/{tv.tokens_max:,} ({pct}%)")
+        elapsed = (tv.completed_at or time.time()) - tv.started_at
+        meta.append(f"elapsed: {_fmt_elapsed(elapsed)}")
+        out.append((bg + "fg:#9ca3af", " " + " · ".join(meta) + "\n"))
+
+        if tv.query:
+            out.append((bg + "fg:#6b7280", " Query:\n"))
+            out.extend(self._wrap_fragments(tv.query,
+                                            bg + "fg:#e5e7eb", indent="   "))
+
+        if tv.narrator_msg:
+            out.append((bg + "fg:#6b7280", " Narrator:\n"))
+            out.extend(self._wrap_fragments(tv.narrator_msg,
+                                            bg + "fg:#89c9c0", indent="   "))
+
+        if tv.narrator_plan:
+            out.append((bg + "fg:#6b7280", " Plan:\n"))
+            out.extend(self._wrap_fragments(tv.narrator_plan,
+                                            bg + "fg:#fbbf24", indent="   "))
+
+        if tv.status_msg:
+            out.append((bg + "fg:#6b7280", " Status:\n"))
+            out.extend(self._wrap_fragments(tv.status_msg,
+                                            bg + "fg:#fbbf24", indent="   "))
+
+        if tv.skills:
+            out.append((bg + "fg:#6b7280", " Skills:\n"))
+            out.extend(self._wrap_fragments(" ".join(tv.skills),
+                                            bg + "fg:#60a5fa", indent="   "))
+
+        if tv.is_swarm_summary and tv.sub_agents:
+            done = sum(1 for s in tv.sub_agents.values() if s == 1)
+            running = sum(1 for s in tv.sub_agents.values() if s == 0)
+            err = sum(1 for s in tv.sub_agents.values() if s == 2)
+            out.append((bg + "fg:#f472b6",
+                        f" Swarm: {done}/{len(tv.sub_agents)} done"
+                        f"  ⟳{running} running  ✗{err} err\n"))
+        elif tv.sub_agents:
+            out.append((bg + "fg:#f472b6",
+                        f" Sub-Agents: {len(tv.sub_agents)}\n"))
+
+        out.append((bg + "fg:#374151", " " + "─" * 80 + "\n"))
+        return out
+
+    # ── left panel (task tree) ──────────────────────────────────────────
     def _render_left(self) -> FormattedText:
         bg = "bg:ansiblack "
-        focus_bg = "bg:#1a2035 "
+        sel_bg = "bg:#1a2035 "
         out: list[tuple[str, str]] = [
             (bg + "fg:#67e8f9 bold", " ◯ Tasks\n"),
-            (bg + "fg:#374151", " " + "─" * 28 + "\n"),
+            (bg + "fg:#374151", " " + "─" * 30 + "\n"),
         ]
 
-        for tid, tv in self._views.items():
-            # Legacy nested subs überspringen
-            if "__sub__" in tid and not tv.is_swarm_sub:
+        for tid in self._left_items():
+            tv = self._views.get(tid)
+            if not tv:
                 continue
-            # Swarm-Subs werden zusammen mit ihrem Parent gerendert
-            if tv.is_swarm_sub:
-                continue
-
-            task_sel = (tid == self._selected and self._selected_sub == "")
-            row_bg = focus_bg if task_sel else bg
+            is_sel = (tid == self._selected)
+            row_bg = sel_bg if is_sel else bg
             sym, col = STATUS_SYM.get(tv.status, ("◯", "cyan"))
-            focus_arrow = "▸ " if (self._focus == "left" and task_sel) else "  "
+            arrow = "▸ " if (self._focus == "left" and is_sel) else "  "
 
-            # Summary-Entry hat 🐝-Prefix
             name = tv.agent_name
+            indent = ""
             if tv.is_swarm_summary:
                 name = f"🐝 {name}"
+            elif tv.is_swarm_sub:
+                parts = name.split("_")
+                name = parts[0] if len(parts) > 1 else name
+                indent = "  "
 
-            out.append((row_bg + f"fg:{C[col]}", f" {focus_arrow}{sym} "))
-            out.append((row_bg + ("fg:#ffffff bold" if task_sel else "fg:#e5e7eb"),
-                        _short(name, 18) + "\n"))
+            display = (indent + name)[:26]
+            out.append((row_bg + f"fg:{C[col]}", f" {arrow}{sym} "))
+            out.append((row_bg + ("fg:#ffffff bold" if is_sel
+                                  else "fg:#e5e7eb"), f"{display}\n"))
+            if tv.iteration or tv.max_iter:
+                out.append((row_bg + "fg:#6b7280",
+                            f"      {tv.iteration}/{tv.max_iter} iter\n"))
 
-            # Phase + Sub-Counter unter Summary
-            if tv.is_swarm_summary:
-                phase = tv.swarm_phase or "init"
-                out.append((row_bg + "fg:#fbbf24",
-                            f"     {phase.upper()}"))
-                if tv.sub_agents:
-                    done = sum(1 for s in tv.sub_agents.values() if s == 1)
-                    total = len(tv.sub_agents)
-                    out.append((row_bg + "fg:#f472b6", f"  {done}/{total}"))
-                out.append((row_bg, "\n"))
-
-                # ── Swarm-Subs direkt darunter als navigierbare Top-Level-Items ──
-                for sub_name, sub_tid in tv.sub_task_ids.items():
-                    sub_tv = self._views.get(sub_tid)
-                    if not sub_tv:
-                        continue
-
-                    sub_sel = (sub_tid == self._selected and self._selected_sub == "")
-                    sub_bg = focus_bg if sub_sel else bg
-                    sub_arrow = "  ▸" if (self._focus == "left" and sub_sel) else "   "
-
-                    sub_sym, sub_col = STATUS_SYM.get(sub_tv.status, ("✦", "purple"))
-                    # Kategorie-Name (planner_abc → planner)
-                    display_name = sub_name.split("_")[0]
-
-                    out.append((sub_bg + f"fg:{C.get(sub_col, '#f472b6')}",
-                                f"{sub_arrow} {sub_sym} "))
-                    out.append((sub_bg + ("fg:#ffffff bold" if sub_sel else "fg:#d1a8f0"),
-                                _short(display_name, 14) + "\n"))
-
-                    # Iter-Anzeige unter Swarm-Sub
-                    if sub_sel:
-                        if sub_tv.iteration or sub_tv.max_iter:
-                            out.append((sub_bg + "fg:#6b7280",
-                                        f"       iter {sub_tv.iteration}/{sub_tv.max_iter}\n"))
-                        if sub_tv.last_tool:
-                            out.append((sub_bg + "fg:#60a5fa",
-                                        f"       ◇ {_short(sub_tv.last_tool, 14)}\n"))
-                continue  # ← wichtig: nicht auch noch als normalen Eintrag rendern
-
-            # ── Legacy: expanded nested subs (non-swarm) ──
-            for sub in tv.sub_agents:
-                sub_sel = (tid == self._selected and self._selected_sub == sub)
-                sub_bg = "bg:#1f2937 " if sub_sel else bg
-                sub_arrow = "  ▸" if (self._focus == "left" and sub_sel) else "   "
-
-                sub_task_id = tv.sub_task_ids.get(sub)
-                sub_tv = self._views.get(sub_task_id) if sub_task_id else None
-                if not sub_tv:
-                    sub_tv = next(
-                        (v for v in self._views.values()
-                         if v.agent_name == sub or v.task_id == sub), None
-                    )
-
-                sub_sym, sub_col = STATUS_SYM.get(
-                    sub_tv.status if sub_tv else "running", ("✦", "purple")
-                )
-                out.append((sub_bg + f"fg:{C.get(sub_col, '#f472b6')}",
-                            f"{sub_arrow} {sub_sym} "))
-                out.append((sub_bg + ("fg:#ffffff bold" if sub_sel else "fg:#d1a8f0"),
-                            _short(sub, 16) + "\n"))
-
-                if sub_sel and sub_tv:
-                    if sub_tv.persona and sub_tv.persona != "default":
-                        out.append((sub_bg + "fg:#a78bfa",
-                                    f"       ✦ {_short(sub_tv.persona, 14)}\n"))
-                    if sub_tv.skills:
-                        skills_str = " ".join(sub_tv.skills[:3])
-                        out.append((sub_bg + "fg:#60a5fa",
-                                    f"       {_short(skills_str, 18)}\n"))
-                    out.append((sub_bg + "fg:#6b7280",
-                                f"       iter {sub_tv.iteration}/{sub_tv.max_iter}\n"))
-
-        out.append((bg + "fg:#374151", " " + "─" * 28 + "\n"))
+        out.append((bg + "fg:#374151", " " + "─" * 30 + "\n"))
         if self._focus == "left":
-            out.append((bg + "fg:#6b7280", " ↑↓=nav  →/Enter=right\n"))
+            out.append((bg + "fg:#6b7280", " ↑↓ nav  → right\n"))
+            out.append((bg + "fg:#6b7280", " ← / Esc close\n"))
         else:
-            out.append((bg + "fg:#6b7280", " ←=focus left\n"))
+            out.append((bg + "fg:#6b7280", " ← back to tasks\n"))
         return FormattedText(out)
 
+    # ── right panel router ─────────────────────────────────────────────
     def _render_right(self) -> FormattedText:
-        bg = "bg:ansiblack "
-        sel_bg = "bg:#1a2035 "
-        out: list[tuple[str, str]] = []
         tv = self._effective_view()
         if not tv:
-            out.append((bg + "fg:#6b7280", " No task selected\n"))
-            return FormattedText(out)
+            return FormattedText([
+                ("bg:ansiblack fg:#6b7280", " No task selected\n")
+            ])
+        if self._mode == "detail" and self._selected_iter_n is not None:
+            return self._render_detail(tv)
+        return self._render_overview(tv)
 
-        # ── Header ──────────────────────────────────────────────────────────
-        # ── Header ──────────────────────────────────────────────────────────
-        sym, col = STATUS_SYM.get(tv.status, ("◯", "cyan"))
-        out.append((bg + f"fg:{C[col]} bold", f" {sym} {tv.agent_name}"))
+    # ── view 1: overview (stats + iter mini-list) ──────────────────────
+    def _render_overview(self, tv: TaskView) -> FormattedText:
+        bg = "bg:ansiblack "
+        sel_bg = "bg:#1a2035 "
+        frags = self._render_stats(tv)
 
-        if tv.is_swarm_sub:
-            out.append((bg + "fg:#f472b6", "  🐝 swarm-sub"))
-        elif tv.is_swarm_summary:
-            out.append((bg + "fg:#fbbf24", f"  🐝 swarm summary ({tv.swarm_phase or 'init'})"))
-        elif self._selected_sub:
-            out.append((bg + "fg:#f472b6", "  ✦ sub-agent"))
-
-        out.append((bg + "fg:#6b7280", f"  {_short(tv.query, 52)}\n"))
-        out.append((bg + "fg:#89c9c0", f"{_short(tv.narrator_msg, 252)}\n"))
-
-        if tv.persona and tv.persona != "default":
-            out.append((bg + "fg:#a78bfa", f"   Persona: {tv.persona}"))
-            if tv.skills:
-                out.append((bg + "fg:#6b7280", "  Skills: "))
-                out.append((bg + "fg:#60a5fa", " ".join(tv.skills[:8])))
-            out.append((bg, "\n"))
-
-        if tv.tokens_max > 0:
-            pct = min(100, int(100 * tv.tokens_used / tv.tokens_max))
-            filled = int(20 * pct / 100)
-            bar = "█" * filled + "░" * (20 - filled)
-            tc = C["green"] if pct < 50 else (C["amber"] if pct < 80 else C["red"])
-            out.append((bg + "fg:#6b7280", "   Tokens: "))
-            out.append((bg + f"fg:{tc}", f"[{bar}] {pct}%"))
-            out.append((bg + "fg:#6b7280", f"  {tv.tokens_used:,}/{tv.tokens_max:,}\n"))
-
-        bar_s = _bar(tv.iteration, tv.max_iter, 20)
-        out.append((bg + "fg:#67e8f9", f"   {bar_s}"))
-        out.append((bg + "fg:#6b7280", f"  iter {tv.iteration}/{tv.max_iter}\n"))
-        out.append((bg + "fg:#374151", "   " + "─" * 64 + "\n"))
-
-        # ── Drill-Down: eine Iteration im Detail ─────────────────────────────
-        if self._selected_iter is not None:
-            iv = tv._iter_map.get(self._selected_iter)
-            if not iv:
-                out.append((bg + "fg:#f87171", f"   Iter {self._selected_iter} not found\n"))
-                return FormattedText(out)
-
-            is_cur = iv.n == tv.iteration and tv.status == "running"
-            hint = " ▸ running" if is_cur else " ● done"
-            out.append((bg + "fg:#fbbf24 bold",
-                        f"   ── Iter {iv.n}{hint} " + "─" * 40 + "\n"))
-
-            # ── Tool-Detail-Ansicht ──────────────────────────────────────────
-            if self._tool_view == "detail" and iv.tools:
-                idx = min(self._selected_tool_idx, len(iv.tools) - 1)
-                tname, tok, elapsed, info = iv.tools[idx]
-                raw_result = iv.tools_raw[idx][1] if idx < len(iv.tools_raw) else ""
-                raw_input  = iv.tools_raw[idx][2] if idx < len(iv.tools_raw) else ""
-                ok_col = C["green"] if tok else C["red"]
-                ok_sym = SYM["ok"] if tok else SYM["fail"]
-
-                out.append((bg + "fg:#60a5fa bold",
-                            f"   ◇ Tool {idx + 1}/{len(iv.tools)}: {tname}\n"))
-                out.append((bg + f"fg:{ok_col}", f"   {ok_sym}  {elapsed:.3f}s\n"))
-                out.append((bg + "fg:#374151", "   " + "─" * 64 + "\n"))
-
-                if raw_input:
-                    import textwrap as _tw
-                    marker = " [Fokus]" if self._scroll_focus == "input" else ""
-                    out.append((bg + "fg:#a78bfa bold", f"   → Input / Arguments{marker}:\n"))
-
-                    # Im raw_input Block:
-                    display_lines = []
-                    for line in raw_input.split("\n"):
-                        display_lines.extend(_tw.wrap(line, width=72) or [""])
-
-                    max_input = len(display_lines)
-                    self._max_input_scroll = max_input
-
-                    if self._scroll_focus == "input":
-                        self._input_scroll = min(self._input_scroll, max_input)
-
-                    skip = self._input_scroll
-                    visible_lines = display_lines[skip: skip + 20]
-
-                    for line in visible_lines:
-                        out.append((bg + "fg:#d1d5db", f"     {line}\n"))
-
-                    if len(display_lines) > 15:
-                        current_pos = min(skip + len(visible_lines), len(display_lines))
-                        out.append((bg + "fg:#6b7280",
-                                    f"     ... ({current_pos}/{len(display_lines)} lines)\n"))
-
-                    out.append((bg + "fg:#374151", "   " + "─" * 64 + "\n"))
-
-                import textwrap as _tw
-
-                if raw_result:
-                    out.append((bg + "fg:#4ade80 bold", f"   ← Result:\n"))
-
-                    display_lines: list[str] = []
-                    for line in raw_result.split("\n"):
-                        display_lines.extend(_tw.wrap(line, width=72) or [""])
-
-                    max_result = max(0, len(display_lines) - 20)
-                    self._max_result_scroll = max_result
-
-                    if self._scroll_focus == "result":
-                        self._right_scroll = min(self._right_scroll, max_result)
-
-                    skip = self._right_scroll
-                    visible_lines = display_lines[skip: skip + 20]
-
-                    for line in visible_lines:
-                        out.append((bg + "fg:#e5e7eb", f"     {line}\n"))
-
-                    if len(display_lines) > 20:
-                        out.append((bg + "fg:#6b7280",
-                                    f"     ... ({min(skip + 20, len(display_lines))}/{len(display_lines)} lines)\n"))
-                    else:
-                        out.append((bg + "fg:#6b7280", "   (no result data)\n"))
-
-                    out.append((bg + "fg:#374151", "\n   " + "─" * 64 + "\n"))
-                    out.append((bg + "fg:#6b7280",
-                                "   ←/→=prev/next  Backspace=list  ↑/↓=scroll\n"))
-                    return FormattedText(out)
-                else:
-                    out.append((bg + "fg:#6b7280", "   (no result data)\n"))
-
-                out.append((bg + "fg:#374151", "\n   " + "─" * 64 + "\n"))
-                out.append((bg + "fg:#6b7280",
-                            "   ←/→=prev/next tool  Backspace=tool list  ↑/↓=scroll\n"))
-                return FormattedText(out)
-
-
-            # ── Tool-Liste innerhalb der Iter ────────────────────────────────
-            out.append((bg + "fg:#6b7280",
-                        "   ← Backspace=iter list   Enter=tool detail   j/k=scroll\n"))
-            out.append((bg + "fg:#374151", "   " + "─" * 64 + "\n"))
-
-            if iv.thoughts:
-                out.append((bg + "fg:#a78bfa bold", "   ◎ Thoughts:\n"))
-                # Flatten: alle Thought-Zeilen + Separator in eine Liste
-                all_lines: list[tuple[bool, str]] = []  # (is_sep, text)
-                for thought in iv.thoughts:
-                    for line in thought.split("\n"):
-                        all_lines.append((False, line))
-                    all_lines.append((True, "·"))
-
-                skip = self._right_scroll
-                visible = all_lines[skip: skip + 20]
-                for is_sep, line in visible:
-                    if is_sep:
-                        out.append((bg + "fg:#374151", "     ·\n"))
-                    else:
-                        out.append((bg + "fg:#d1d5db", f"     {line}\n"))
-                if len(all_lines) > 20:
-                    out.append((bg + "fg:#6b7280",
-                                f"     ... ({min(skip + 20, len(all_lines))}/{len(all_lines)} lines)\n"))
-
-            if iv.tools:
-                out.append((bg + "fg:#60a5fa bold", f"   ◇ Tools ({len(iv.tools)}):\n"))
-                for idx, (tname, tok, elapsed, info) in enumerate(iv.tools):
-                    is_sel = (self._focus == "right" and
-                              idx == self._selected_tool_idx % len(iv.tools))
-                    row_bg = sel_bg if is_sel else bg
-                    ok_col = C["green"] if tok else C["red"]
-                    ok_sym = SYM["ok"] if tok else SYM["fail"]
-                    cursor = "▸ " if is_sel else "  "
-                    elapsed_s = f"{elapsed:.2f}s" if elapsed > 0 else "—"
-                    out.append((row_bg + "fg:#60a5fa",
-                                f"   {cursor}◇ "))
-                    out.append((row_bg + "fg:#e5e7eb",
-                                f"{_short(tname, 20):<20} "))
-                    out.append((row_bg + f"fg:{ok_col}", f"{ok_sym}  "))
-                    out.append((row_bg + "fg:#6b7280", f"{elapsed_s:>7}  "))
-                    if info:
-                        out.append((row_bg + "fg:#9ca3af", _short(info, 36)))
-                    out.append((row_bg, "\n"))
-
-            for p_name, p_args in iv.pending_tools.items():
-                out.append((bg + "fg:#60a5fa", "   ◇ "))
-                out.append((bg + "fg:#fbbf24",
-                            f"{_short(p_name, 20):<20} ⋯ running...\n"))
-                if p_args:
-                    out.append((bg + "fg:#9ca3af",
-                                f"     args: {_short(p_args, 60)}\n"))
-
-            if not iv.thoughts and not iv.tools and not iv.pending_tools:
-                out.append((bg + "fg:#6b7280", "   (no data yet)\n"))
-
-            if tv.final_answer and iv.n == max(
-                (i.n for i in tv.iterations), default=0
-            ):
-                out.append((bg + "fg:#374151", "\n   " + "─" * 64 + "\n"))
-                out.append((bg + "fg:#4ade80 bold", "   ● Final Answer:\n\n"))
-                for line in tv.final_answer.split("\n"):
-                    out.append((bg + "fg:#e5e7eb", f"   {line}\n"))
-
-            return FormattedText(out)
-
-        # ── Iterations-Liste (kein Drill-Down) ──────────────────────────────
         iters = list(reversed(tv.iterations))
+        if not iters:
+            frags.append((bg + "fg:#6b7280",
+                          "   waiting for first iteration...\n"))
 
-        # Zwei unabhängige Scroll-Bereiche: Iterationen + Final Answer
-        # Flatten alle Iter-Zeilen in eine Liste für saubere Scroll-Berechnung
-        iter_lines_flat: list[tuple[str, str]] = []
+        for idx, iv in enumerate(iters):
+            is_cursor = (self._focus == "right" and idx == self._iter_cursor)
+            row_bg = sel_bg if is_cursor else bg
+            arrow = "▸ " if is_cursor else "  "
+            is_run = (iv.n == tv.iteration and tv.status == "running")
+            tag = " ▸ running" if is_run else ""
+            color = "fg:#ffffff bold" if is_cursor else "fg:#fbbf24 bold"
 
-        for list_idx, iv in enumerate(iters):
-            is_cur = iv.n == tv.iteration and tv.status == "running"
-            is_cursor_sel = (self._focus == "right"
-                             and self._iter_scroll_focus == "iter"
-                             and list_idx == self._right_iter_cursor)
-            hint = " ▸ running" if is_cur else ""
-            cursor_sym = "▸ " if is_cursor_sel else "  "
-            label_col = "#ffffff bold" if is_cursor_sel else "#fbbf24 bold"
-            iter_bg = sel_bg if is_cursor_sel else bg
+            frags.append((row_bg + color,
+                          f" {arrow}── Iter {iv.n}{tag} " + "─" * 30 + "\n"))
 
-            iter_lines_flat.append((iter_bg + f"fg:{label_col}",
-                                    f"   {cursor_sym}── iter {iv.n}{hint} " + "─" * 28 + "\n"))
-
+            # Thoughts: first line preview only (mini)
             for thought in iv.thoughts:
-                iter_lines_flat.append((iter_bg + "fg:#6b7280", "      ◎ "))
-                iter_lines_flat.append((iter_bg + "fg:#e5e7eb",
-                                        _short(thought.replace("\n", " "), 68) + "\n"))
+                first = thought.replace("\n", " ").strip()
+                if not first:
+                    continue
+                preview = first[:90] + "…" if len(first) > 90 else first
+                frags.append((row_bg + "fg:#6b7280", "      ◎ "))
+                frags.append((row_bg + "fg:#e5e7eb", preview + "\n"))
 
+            # Tools: display name (incl. vfs_{ls:grep}) + ok + elapsed + info
             for tname, tok, elapsed, info in iv.tools:
                 ok_col = C["green"] if tok else C["red"]
                 ok_sym = SYM["ok"] if tok else SYM["fail"]
                 elapsed_s = f"{elapsed:.2f}s" if elapsed > 0 else "     "
-                iter_lines_flat.append((iter_bg + "fg:#60a5fa", "      ◇ "))
-                iter_lines_flat.append((iter_bg + "fg:#e5e7eb", f"{_short(tname, 16):<16} "))
-                iter_lines_flat.append((iter_bg + f"fg:{ok_col}", f"{ok_sym}  "))
-                iter_lines_flat.append((iter_bg + "fg:#6b7280", f"{elapsed_s:>7}  "))
+                frags.append((row_bg + "fg:#60a5fa", "      ◇ "))
+                frags.append((row_bg + "fg:#e5e7eb", f"{tname[:28]:<28} "))
+                frags.append((row_bg + f"fg:{ok_col}", f"{ok_sym}  "))
+                frags.append((row_bg + "fg:#6b7280", f"{elapsed_s:>7}  "))
                 if info:
-                    iter_lines_flat.append((iter_bg + "fg:#9ca3af", _short(info, 36)))
-                iter_lines_flat.append((iter_bg, "\n"))
+                    frags.append((row_bg + "fg:#9ca3af", info[:50]))
+                frags.append((row_bg, "\n"))
 
-            for p_name, p_args in iv.pending_tools.items():
-                iter_lines_flat.append((iter_bg + "fg:#60a5fa", "      ◇ "))
-                iter_lines_flat.append((iter_bg + "fg:#fbbf24",
-                                        f"{_short(p_name, 16):<16} ⋯ running...\n"))
-                if p_args:
-                    iter_lines_flat.append((iter_bg + "fg:#9ca3af",
-                                            f"        args: {_short(p_args, 56)}\n"))
-        # Zähle Zeilen anhand "\n"-Vorkommen in den Text-Fragmenten
-        def _count_lines(fragments: list[tuple[str, str]]) -> int:
-            return sum(frag[1].count("\n") for frag in fragments)
+            for p_name, _p_args in iv.pending_tools.items():
+                frags.append((row_bg + "fg:#60a5fa", "      ◇ "))
+                frags.append((row_bg + "fg:#fbbf24",
+                              f"{p_name[:28]:<28} ⋯ running\n"))
 
-        iter_total_lines = _count_lines(iter_lines_flat)
-        self._last_content_lines = iter_total_lines
+            if not iv.thoughts and not iv.tools and not iv.pending_tools:
+                frags.append((row_bg + "fg:#6b7280", "      (empty)\n"))
 
-        # Auto-scroll: halte ausgewählte Iter im Blick
-        # (vereinfachte Heuristik — präzise Cursor-Verfolgung könnte man verfeinern)
-        visible = self._visible_height
-        max_iter_scroll = self._max_scroll(iter_total_lines, visible)
-        self._right_scroll = min(self._right_scroll, max_iter_scroll)
-
-        # Fragmente ausgeben mit Scroll-Offset (zeilenweise überspringen)
-        skip = self._right_scroll
-        skipped = 0
-        emitted_lines = 0
-        for style, text in iter_lines_flat:
-            if skipped < skip:
-                nl_count = text.count("\n")
-                if skipped + nl_count <= skip:
-                    skipped += nl_count
-                    continue
-                # Teilweise überspringen: finde die erste noch sichtbare Zeile
-                parts = text.split("\n")
-                remaining = skip - skipped
-                if remaining < len(parts) - 1:
-                    text = "\n".join(parts[remaining:])
-                    skipped = skip
-                else:
-                    skipped += nl_count
-                    continue
-            if emitted_lines >= visible:
-                break
-            out.append((style, text))
-            emitted_lines += text.count("\n")
-
-        # Scroll-Indikator für Iter-Bereich
-        if iter_total_lines > visible:
-            pos_s = f"{min(self._right_scroll + visible, iter_total_lines)}/{iter_total_lines}"
-            focus_marker = " [iter ◂]" if self._iter_scroll_focus == "iter" else ""
-            out.append((bg + "fg:#6b7280", f"   ── scroll {pos_s}{focus_marker}\n"))
-
-        # ── Final Answer (eigener Scroll-Bereich) ────────────────────────────
+        # Final answer — FULL, no truncation
         if tv.final_answer:
-            final_lines_all = tv.final_answer.split("\n")
-            self._last_final_lines = len(final_lines_all)
+            frags.append((bg + "fg:#374151", "\n " + "─" * 80 + "\n"))
+            frags.append((bg + "fg:#4ade80 bold", " ● Final Answer:\n\n"))
+            frags.extend(self._wrap_fragments(
+                tv.final_answer, bg + "fg:#e5e7eb", indent="   ", width=88))
 
-            out.append((bg + "fg:#374151", "\n   " + "─" * 64 + "\n"))
-            focus_marker = " [final ◂]" if self._iter_scroll_focus == "final" else ""
-            out.append((bg + "fg:#4ade80 bold", f"   ● Final Answer:{focus_marker}\n\n"))
+        return FormattedText(self._apply_scroll(frags, self._overview_scroll))
 
-            visible_final = 12
-            max_final_scroll = self._max_scroll(len(final_lines_all), visible_final)
-            # Begrenzen (für Fall dass Nachricht kürzer wird)
-            if self._iter_scroll_focus == "final":
-                pass  # scroll wird über keys gesetzt
-            final_scroll = getattr(self, "_final_scroll", 0)
-            final_scroll = min(final_scroll, max_final_scroll)
-            self._final_scroll = final_scroll
+    # ── view 2: detail (one iter, full I/O) ────────────────────────────
+    def _render_detail(self, tv: TaskView) -> FormattedText:
+        bg = "bg:ansiblack "
+        frags = self._render_stats(tv)
 
-            visible_slice = final_lines_all[final_scroll: final_scroll + visible_final]
-            for line in visible_slice:
-                out.append((bg + "fg:#e5e7eb", f"   {line}\n"))
+        iv = tv._iter_map.get(self._selected_iter_n)
+        if not iv:
+            frags.append((bg + "fg:#f87171",
+                          f"   Iter {self._selected_iter_n} not found\n"))
+            return FormattedText(self._apply_scroll(frags, self._detail_scroll))
 
-            if len(final_lines_all) > visible_final:
-                out.append((bg + "fg:#6b7280",
-                            f"   ── final {min(final_scroll + visible_final, len(final_lines_all))}/"
-                            f"{len(final_lines_all)}\n"))
+        is_run = (iv.n == tv.iteration and tv.status == "running")
+        tag = " ▸ running" if is_run else ""
+        frags.append((bg + "fg:#fbbf24 bold",
+                      f" ── Iter {iv.n}{tag} " + "─" * 60 + "\n\n"))
 
-        if not tv.iterations and not tv.final_answer:
-            out.append((bg + "fg:#6b7280", "   waiting for first iteration...\n"))
+        # Thoughts — full, wrapped
+        if iv.thoughts:
+            frags.append((bg + "fg:#a78bfa bold", " ◎ Thoughts:\n"))
+            for i, thought in enumerate(iv.thoughts, 1):
+                frags.append((bg + "fg:#6b7280", f"   [{i}]\n"))
+                frags.extend(self._wrap_fragments(
+                    thought, bg + "fg:#d1d5db", indent="   ", width=88))
+                frags.append((bg, "\n"))
 
-        return FormattedText(out)
+        # Tools — full input + full output, nothing truncated
+        if iv.tools:
+            frags.append((bg + "fg:#60a5fa bold",
+                          f" ◇ Tools ({len(iv.tools)}):\n\n"))
+            for idx, (tname, tok, elapsed, info) in enumerate(iv.tools):
+                ok_col = C["green"] if tok else C["red"]
+                ok_sym = SYM["ok"] if tok else SYM["fail"]
 
+                frags.append((bg + "fg:#60a5fa bold",
+                              f"   [{idx + 1}] ◇ {tname}"))
+                frags.append((bg + f"fg:{ok_col}", f"   {ok_sym}  "))
+                frags.append((bg + "fg:#6b7280", f"{elapsed:.3f}s\n"))
+                if info:
+                    frags.append((bg + "fg:#9ca3af",
+                                  f"       info: {info}\n"))
+
+                raw_input = raw_result = ""
+                if idx < len(iv.tools_raw):
+                    _, raw_result, raw_input = iv.tools_raw[idx]
+
+                if raw_input:
+                    frags.append((bg + "fg:#a78bfa bold",
+                                  "       → Input:\n"))
+                    frags.extend(self._render_io(
+                        raw_input, bg + "fg:#d1d5db",
+                        indent_str="         "))
+
+                if raw_result:
+                    frags.append((bg + "fg:#4ade80 bold",
+                                  "       ← Output:\n"))
+                    frags.extend(self._render_io(
+                        raw_result, bg + "fg:#e5e7eb",
+                        indent_str="         "))
+
+                frags.append((bg + "fg:#374151", "       " + "─" * 72 + "\n\n"))
+
+        # Pending tools (running)
+        for p_name, p_args in iv.pending_tools.items():
+            frags.append((bg + "fg:#fbbf24 bold",
+                          f"   ◇ {p_name} ⋯ running\n"))
+            if p_args:
+                frags.append((bg + "fg:#a78bfa bold",
+                              "       → Input (pending):\n"))
+                frags.extend(self._render_io(
+                    p_args, bg + "fg:#d1d5db",
+                    indent_str="         "))
+
+        # Final answer (only on last iter) — FULL
+        last_n = max((i.n for i in tv.iterations), default=0)
+        if tv.final_answer and iv.n == last_n:
+            frags.append((bg + "fg:#374151", "\n " + "─" * 80 + "\n"))
+            frags.append((bg + "fg:#4ade80 bold", " ● Final Answer:\n\n"))
+            frags.extend(self._wrap_fragments(
+                tv.final_answer, bg + "fg:#e5e7eb", indent="   ", width=88))
+
+        if not iv.thoughts and not iv.tools and not iv.pending_tools \
+                and not tv.final_answer:
+            frags.append((bg + "fg:#6b7280", "   (no data yet)\n"))
+
+        return FormattedText(self._apply_scroll(frags, self._detail_scroll))
+
+    # ── scroll ─────────────────────────────────────────────────────────
+    def _apply_scroll(self, frags: list[tuple[str, str]],
+                      scroll: int) -> list[tuple[str, str]]:
+        if scroll <= 0:
+            return frags
+        out: list[tuple[str, str]] = []
+        skipped = 0
+        for style, text in frags:
+            if skipped >= scroll:
+                out.append((style, text))
+                continue
+            nl = text.count("\n")
+            if skipped + nl <= scroll:
+                skipped += nl
+                continue
+            parts = text.split("\n")
+            need = scroll - skipped
+            out.append((style, "\n".join(parts[need:])))
+            skipped = scroll
+        return out
+
+    # ── footer ─────────────────────────────────────────────────────────
     def _render_footer(self) -> FormattedText:
         tv = self._effective_view()
         n_run = sum(1 for v in self._views.values() if v.status == "running")
-        iter_s = f"iter {tv.iteration}/{tv.max_iter}" if tv else ""
-        sub_s = f" ✦ {_short(self._selected_sub, 12)}" if self._selected_sub else ""
 
-        if self._selected_iter is not None and self._tool_view == "detail":
-            iv = tv._iter_map.get(self._selected_iter) if tv else None
-            n_tools = len(iv.tools) if iv else 0
-            cur_tool = min(self._selected_tool_idx, n_tools - 1) + 1 if n_tools else 0
-            hint = (f" ↑↓=scroll  ^←/^→=prev/next tool ({cur_tool}/{n_tools})  Backspace=back")
-        elif self._selected_iter is not None:
-            iv = tv._iter_map.get(self._selected_iter) if tv else None
-            n_tools = len(iv.tools) if iv else 0
-            cur_tool = self._selected_tool_idx % n_tools + 1 if n_tools else 0
-            hint = (f" ↑↓=select tool ({cur_tool}/{n_tools})  Enter=detail  Backspace=back")
+        if self._mode == "detail":
+            iter_s = f"iter {self._selected_iter_n}"
+            hint = " ↑↓ scroll   ← / Backspace back   Esc close"
         elif self._focus == "left":
-            hint = " ↑↓=navigate  →/Enter=right  Tab=switch"
+            iter_s = f"iter {tv.iteration}/{tv.max_iter}" if tv else ""
+            hint = " ↑↓ tasks   → right   ← / Esc close"
         else:
-            n_iters = len(tv.iterations) if tv else 0
-            cur_iter = self._right_iter_cursor + 1 if n_iters else 0
-            region = "iter" if self._iter_scroll_focus == "iter" else "final"
-            hint = (f" ↑↓=scroll {region} ({cur_iter}/{n_iters})  Enter=drill-in  ←=back")
+            iter_s = f"iter {tv.iteration}/{tv.max_iter}" if tv else ""
+            hint = " ↑↓ iters   → / Enter drill   ← back"
 
         return FormattedText([(
-            "bg:#111827 fg:#6b7280",
-            f"{hint} │ {n_run} running │ {iter_s}{sub_s}  Esc/F2=close "
+            "bg:#111827 fg:#9ca3af",
+            f"{hint}   │   {n_run} running   │   {iter_s}   │   Esc/F2 close "
         )])
 
-    # ── keys ────────────────────────────────────────────────────────────────
-
+    # ── keys (arrows + Enter + Backspace + Esc only) ──────────────────
     def _build_keys(self, on_exit) -> KeyBindings:
         kb = KeyBindings()
         ov = self
@@ -1236,266 +1148,106 @@ class TaskOverlay:
             event.app.exit()
             on_exit()
 
-        @kb.add("tab")
-        def _toggle_focus(event):
-            ov._focus = "right" if ov._focus == "left" else "left"
-            ov._selected_iter = None
-            ov._tool_view = "list"
-
-        # ── Enter: Drill-In ──────────────────────────────────────────────────
-        @kb.add("right")
-        @kb.add("d")
-        @kb.add("enter")
-        def _enter_or_drill(event):
-            if ov._focus == "left":
-                ov._focus = "right"
-                return
-
-            if ov._selected_iter is None:
-                # Iter-Liste → Drill into cursor-Iter
-                tv = ov._effective_view()
-                if not tv or not tv.iterations:
-                    return
-                iters_rev = list(reversed(tv.iterations))
-                idx = min(ov._right_iter_cursor, len(iters_rev) - 1)
-                ov._selected_iter = iters_rev[idx].n
-                ov._selected_tool_idx = 0
-                ov._tool_view = "list"
-                ov._right_scroll = 0
-            elif ov._tool_view == "list":
-                # Iter-Drill → Tool-Detail öffnen wenn Tool ausgewählt
-                tv = ov._effective_view()
-                iv = tv._iter_map.get(ov._selected_iter) if tv else None
-                if iv and iv.tools:
-                    ov._tool_view = "detail"
-                    ov._right_scroll = 0
-
-        # ── ← / Backspace: einen Level zurück ───────────────────────────────
-        @kb.add("left")
-        @kb.add("a")
-        @kb.add("backspace")
-        def _back(event):
-            if ov._tool_view == "detail":
-                # Tool-Detail → Tool-Liste
-                ov._tool_view = "list"
-                ov._right_scroll = 0
-            elif ov._selected_iter is not None:
-                # Iter-Drill → Iter-Liste
-                ov._selected_iter = None
-                ov._tool_view = "list"
-                ov._right_scroll = 0
-            else:
-                # Iter-Liste → Fokus nach links
-                ov._focus = "left"
-
-        # ── Tool-Navigation in Detail-Ansicht ───────────────────────────────
-        @kb.add("c-right")
-        def _next_tool(event):
-            if ov._selected_iter is not None and ov._tool_view == "detail":
-                tv = ov._effective_view()
-                iv = tv._iter_map.get(ov._selected_iter) if tv else None
-                if iv and iv.tools:
-                    ov._selected_tool_idx = (ov._selected_tool_idx + 1) % len(iv.tools)
-                    ov._right_scroll = 0
-                    ov._input_scroll = 0
-
-        @kb.add("c-left")
-        def _prev_tool(event):
-            if ov._selected_iter is not None and ov._tool_view == "detail":
-                tv = ov._effective_view()
-                iv = tv._iter_map.get(ov._selected_iter) if tv else None
-                if iv and iv.tools:
-                    ov._selected_tool_idx = (ov._selected_tool_idx - 1) % len(iv.tools)
-                    ov._right_scroll = 0
-
-        # ── ↑↓ kontextabhängig ──────────────────────────────────────────────
         @kb.add("up")
         @kb.add("w")
-        @kb.add("k")
-        def _nav_up(event):
-            if ov._focus == "right":
-                if ov._selected_iter is not None and ov._tool_view == "detail":
-                    if ov._scroll_focus == "result":
-                        if ov._right_scroll > 0:
-                            ov._right_scroll -= 1
-                        else:
-                            ov._scroll_focus = "input"
-                    else:
-                        ov._input_scroll = max(0, ov._input_scroll - 1)
-                    return
-
-                if ov._selected_iter is not None:
-                    ov._selected_tool_idx = max(0, ov._selected_tool_idx - 1)
-                    return
-
-                if ov._iter_scroll_focus == "final":
-                    if getattr(ov, "_final_scroll", 0) > 0:
-                        ov._final_scroll -= 1
-                    else:
-                        ov._iter_scroll_focus = "iter"
-                else:
-                    ov._right_iter_cursor = max(0, ov._right_iter_cursor - 1)
-                    ov._right_scroll = max(0, ov._right_scroll - 1)
+        def _up(event):
+            if ov._mode == "detail":
+                ov._detail_scroll = max(0, ov._detail_scroll - 1)
                 return
-            # (Links: Task-Nav Code bleibt hier unangetastet - kopiere den alten drunter)
+            if ov._focus == "right":
+                tv = ov._effective_view()
+                if not tv or not tv.iterations:
+                    ov._overview_scroll = max(0, ov._overview_scroll - 1)
+                    return
+                if ov._iter_cursor > 0:
+                    ov._iter_cursor -= 1
+                ov._overview_scroll = max(0, ov._overview_scroll - 2)
+                return
             items = ov._left_items()
-            if not items: return
-            cur = (ov._selected, ov._selected_sub)
-            idx = items.index(cur) if cur in items else 0
-            ov._selected, ov._selected_sub = items[(idx - 1) % len(items)]
-            ov._selected_iter = None
-            ov._tool_view = "list"
-            ov._right_scroll = 0
-            ov._right_iter_cursor = 0
-            ov._final_scroll = 0
+            if not items:
+                return
+            idx = items.index(ov._selected) if ov._selected in items else 0
+            ov._selected = items[(idx - 1) % len(items)]
+            ov._iter_cursor = 0
+            ov._overview_scroll = 0
 
         @kb.add("down")
         @kb.add("s")
-        @kb.add("j")
-        def _nav_down(event):
-            if ov._focus == "right":
-                if ov._selected_iter is not None and ov._tool_view == "detail":
-                    if ov._scroll_focus == "input":
-                        max_in = getattr(ov, "_max_input_scroll", 0)
-                        if ov._input_scroll < max_in:
-                            ov._input_scroll += 1
-                        else:
-                            ov._scroll_focus = "result"
-                    else:
-                        max_res = getattr(ov, "_max_result_scroll", 0)
-                        if ov._right_scroll < max_res:
-                            ov._right_scroll += 1
-                    return
-
-                if ov._selected_iter is not None:
-                    tv = ov._effective_view()
-                    iv = tv._iter_map.get(ov._selected_iter) if tv else None
-                    max_idx = len(iv.tools) - 1 if iv and iv.tools else 0
-                    ov._selected_tool_idx = min(max_idx, ov._selected_tool_idx + 1)
-                    return
-
-                if ov._iter_scroll_focus == "final":
-                    max_fs = ov._max_scroll(ov._last_final_lines, 12)
-                    ov._final_scroll = min(max_fs, getattr(ov, "_final_scroll", 0) + 1)
-                else:
-                    tv = ov._effective_view()
-                    n = len(tv.iterations) if tv else 0
-                    max_is = ov._max_scroll(ov._last_content_lines, ov._visible_height)
-                    if ov._right_iter_cursor < max(n - 1, 0) or ov._right_scroll < max_is:
-                        ov._right_iter_cursor = min(max(n - 1, 0), ov._right_iter_cursor + 1)
-                        ov._right_scroll = min(max_is, ov._right_scroll + 1)
-                    else:
-                        if tv and tv.final_answer:
-                            ov._iter_scroll_focus = "final"
+        def _down(event):
+            if ov._mode == "detail":
+                ov._detail_scroll += 1
                 return
-            # (Links: Task-Nav)
-            items = ov._left_items()
-            if not items: return
-            cur = (ov._selected, ov._selected_sub)
-            idx = items.index(cur) if cur in items else -1
-            ov._selected, ov._selected_sub = items[(idx + 1) % len(items)]
-            ov._selected_iter = None
-            ov._tool_view = "list"
-            ov._right_scroll = 0
-            ov._right_iter_cursor = 0
-            ov._final_scroll = 0
-
-        @kb.add("pagedown")
-        def _sd(event):
-            if ov._tool_view == "detail":
-                if ov._scroll_focus == "input":
-                    max_in = getattr(ov, "_max_input_scroll", 0)
-                    if ov._input_scroll + 5 <= max_in:
-                        ov._input_scroll += 5
-                    else:
-                        ov._input_scroll = max_in
-                        ov._scroll_focus = "result"
-                else:
-                    max_res = getattr(ov, "_max_result_scroll", 0)
-                    ov._right_scroll = min(max_res, ov._right_scroll + 5)
-            elif ov._selected_iter is None and ov._iter_scroll_focus == "final":
-                max_fs = ov._max_scroll(ov._last_final_lines, 12)
-                ov._final_scroll = min(max_fs, getattr(ov, "_final_scroll", 0) + 5)
-            else:
+            if ov._focus == "right":
                 tv = ov._effective_view()
-                n = len(tv.iterations) if tv else 0
-                max_is = ov._max_scroll(ov._last_content_lines, ov._visible_height)
-                if ov._right_iter_cursor + 5 <= max(n - 1, 0) or ov._right_scroll + 5 <= max_is:
-                    ov._right_iter_cursor = min(max(n - 1, 0), ov._right_iter_cursor + 5)
-                    ov._right_scroll = min(max_is, ov._right_scroll + 5)
-                else:
-                    ov._right_iter_cursor = max(n - 1, 0)
-                    ov._right_scroll = max_is
-                    if tv and tv.final_answer:
-                        ov._iter_scroll_focus = "final"
+                if not tv or not tv.iterations:
+                    ov._overview_scroll += 1
+                    return
+                max_cursor = len(tv.iterations) - 1
+                if ov._iter_cursor < max_cursor:
+                    ov._iter_cursor += 1
+                ov._overview_scroll += 2
+                return
+            items = ov._left_items()
+            if not items:
+                return
+            idx = items.index(ov._selected) if ov._selected in items else -1
+            ov._selected = items[(idx + 1) % len(items)]
+            ov._iter_cursor = 0
+            ov._overview_scroll = 0
+
+        @kb.add("right")
+        @kb.add("enter")
+        @kb.add("d")
+        def _right(event):
+            if ov._mode == "detail":
+                return
+            if ov._focus == "left":
+                ov._focus = "right"
+                ov._iter_cursor = 0
+                ov._overview_scroll = 0
+                return
+            tv = ov._effective_view()
+            if not tv or not tv.iterations:
+                return
+            iters_rev = list(reversed(tv.iterations))
+            idx = min(ov._iter_cursor, len(iters_rev) - 1)
+            ov._mode = "detail"
+            ov._selected_iter_n = iters_rev[idx].n
+            ov._detail_scroll = 0
+
+        @kb.add("left")
+        @kb.add("backspace")
+        @kb.add("a")
+        def _left(event):
+            if ov._mode == "detail":
+                ov._mode = "overview"
+                ov._selected_iter_n = None
+                ov._detail_scroll = 0
+                return
+            if ov._focus == "right":
+                ov._focus = "left"
+                return
+            event.app.exit()
+            on_exit()
 
         @kb.add("pageup")
-        def _su(event):
-            if ov._tool_view == "detail":
-                if ov._scroll_focus == "result":
-                    if ov._right_scroll - 5 >= 0:
-                        ov._right_scroll -= 5
-                    else:
-                        ov._right_scroll = 0
-                        ov._scroll_focus = "input"
-                else:
-                    ov._input_scroll = max(0, ov._input_scroll - 5)
-            elif ov._selected_iter is None and ov._iter_scroll_focus == "final":
-                if getattr(ov, "_final_scroll", 0) - 5 >= 0:
-                    ov._final_scroll -= 5
-                else:
-                    ov._final_scroll = 0
-                    ov._iter_scroll_focus = "iter"
-            else:
-                ov._right_iter_cursor = max(0, ov._right_iter_cursor - 5)
-                ov._right_scroll = max(0, ov._right_scroll - 5)
+        def _pup(event):
+            if ov._mode == "detail":
+                ov._detail_scroll = max(0, ov._detail_scroll - 10)
+            elif ov._focus == "right":
+                ov._iter_cursor = max(0, ov._iter_cursor - 3)
+                ov._overview_scroll = max(0, ov._overview_scroll - 10)
 
-        # ── Direkt zu Iter 1-9999 springen ─────────────────────────────────────
-        @kb.add("0")
-        @kb.add("1")
-        @kb.add("2")
-        @kb.add("3")
-        @kb.add("4")
-        @kb.add("5")
-        @kb.add("6")
-        @kb.add("7")
-        @kb.add("8")
-        @kb.add("9")
-        def _handle_digits(event):
-            import time
-            key = event.data
-            now = time.time()
-
-            # Buffer zurücksetzen, wenn die letzte Eingabe länger als 1.2s her ist
-            if now - ov._last_jump_time > 1.2:
-                ov._jump_buffer = ""
-            ov._last_jump_time = now
-
-            # ── Sonderfall: 0 zum Zurückgehen ──
-            # Nur wenn Buffer leer ist und wir gerade in einem Drill-Down sind
-            if key == "0" and not ov._jump_buffer and ov._selected_iter is not None:
-                ov._selected_iter = None
-                ov._tool_view = "list"
-                ov._right_scroll = 0
-                ov._jump_buffer = ""
-                return
-
-            # ── Normalfall: Nummer aufbauen ──
-            ov._jump_buffer = (ov._jump_buffer + key)[-4:]  # Max 4 Stellen (9999)
-
-            try:
-                target_n = int(ov._jump_buffer)
+        @kb.add("pagedown")
+        def _pdn(event):
+            if ov._mode == "detail":
+                ov._detail_scroll += 10
+            elif ov._focus == "right":
                 tv = ov._effective_view()
-                if tv and target_n in tv._iter_map:
-                    ov._selected_iter = target_n
-                    ov._selected_tool_idx = 0
-                    ov._tool_view = "list"
-                    ov._right_scroll = 0
-                    ov._focus = "right"
-                    # Wir löschen den Buffer hier NICHT, damit man z.B.
-                    # von "1" auf "11" weiter-tippen kann
-            except ValueError:
-                ov._jump_buffer = ""
+                if tv:
+                    max_c = max(0, len(tv.iterations) - 1)
+                    ov._iter_cursor = min(max_c, ov._iter_cursor + 3)
+                ov._overview_scroll += 10
 
         return kb
 

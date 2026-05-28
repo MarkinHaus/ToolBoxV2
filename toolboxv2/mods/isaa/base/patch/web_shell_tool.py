@@ -449,10 +449,25 @@ def make_web_shell(
     _started = False
 
     async def _ensure_agent():
-        nonlocal _started
-        if not _started:
+       nonlocal _started
+       if _started:
+           return True
+       try:
             await agent.start()
-            _started = True
+       except Exception as exc:
+           logger.error("WebAgent start failed: %s", exc)
+           import traceback
+           traceback.print_exc()
+           _started = False # ← Erlaubt Retry bei nächstem Aufruf
+           return False
+
+      # Validierung: Sind die Methoden tatsächlich verfügbar?
+       if not callable(getattr(agent, "goto", None)):
+           logger.error("agent.goto nicht verfügbar nach Start")
+           return False # ← Erlaubt Retry bei nächstem Aufruf
+
+       _started = True
+       return True
 
     # Write initial guide to VFS
     memory._update_guide()
@@ -545,7 +560,8 @@ def make_web_shell(
             if single_site and domain != _domain(single_site):
                 return _err(f"goto: restricted to {single_site}, cannot navigate to {domain}")
 
-            await _ensure_agent()
+            if not await _ensure_agent():
+                return _err("Browser konnte nicht starten – goto nicht möglich")
 
             # Load saved session state for this domain
             saved_state = memory.load_session_state(domain)
@@ -842,7 +858,10 @@ def make_web_shell(
             query = " ".join(rest)
 
             try:
-                await _ensure_agent()
+
+                if not await _ensure_agent():
+                    return _err("Browser konnte nicht starten – goto nicht möglich")
+
                 if site:
                     query = agent.search.build_dork(query, site=site)
                 results = await agent.search.search(query, max_results=max_results)
@@ -1044,7 +1063,10 @@ def make_web_shell(
             # Otherwise check for saved session
             state = memory.load_session_state(domain)
             if state:
-                await _ensure_agent()
+
+                if not await _ensure_agent():
+                    return _err("Browser konnte nicht starten – goto nicht möglich")
+
                 _state_path = os.path.join(agent.state_dir, f"{domain}.json")
                 with open(_state_path, 'w') as _f:
                     json.dump(state, _f)
@@ -1081,7 +1103,10 @@ def make_web_shell(
             state = memory.load_session_state(domain)
             if not state:
                 return _err(f"No saved session for {domain}")
-            await _ensure_agent()
+
+            if not await _ensure_agent():
+                return _err("Browser konnte nicht starten – goto nicht möglich")
+
             _state_path = os.path.join(agent.state_dir, f"{domain}.json")
             with open(_state_path, 'w') as _f:
                 json.dump(state, _f)

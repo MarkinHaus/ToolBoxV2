@@ -142,16 +142,15 @@ class App(AppType, metaclass=Singleton):
 
         self.print(f"Starting ToolBox as {prefix} from :", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
-        pid_file = f"{self.start_dir}\\.info\\pids\\{args.modi}-{self.REFIX}.pid"
+        pid_file = os.path.join(f"{self.start_dir}",".info","pids",f"{args.modi}-{self.REFIX}.pid")
         app_pid = str(os.getpid())
-        if not os.path.exists(f"{self.start_dir}\\.info\\pids"):
-            os.makedirs(f"{self.start_dir}\\.info\\pids", exist_ok=True)
+        if not os.path.exists(os.path.join(f"{self.start_dir}",".info","pids")):
+            os.makedirs(os.path.join(f"{self.start_dir}",".info","pids"), exist_ok=True)
         with open(pid_file, "w", encoding="utf8") as f:
             f.write(app_pid)
 
         self.manifest = None
         from toolboxv2.utils.manifest.loader import ManifestLoader
-
         loader = ManifestLoader(self.start_dir)
         if not loader.exists():
             self.print("No manifest found run tb manifest init / current using defaults")
@@ -203,7 +202,7 @@ class App(AppType, metaclass=Singleton):
 
         # Initialize the log database (encrypted, offline-first)
         self.log_db = create_mobile_db(
-            path=f"{self.data_dir}/system_logs.db",
+            path=os.path.join(f"{self.data_dir}", "system_logs.db"),
             max_size_mb=200,
         )
         # Register globally so setup_logging() picks it up automatically
@@ -211,7 +210,6 @@ class App(AppType, metaclass=Singleton):
 
         # Now call set_logger (same signature as before)
         logger_info_str, self.logger, self.logging_filename = self.set_logger(args.debug, self.logger_prefix)
-
 
         from .system.session import Session
         self.session: Session = Session(self.get_username())

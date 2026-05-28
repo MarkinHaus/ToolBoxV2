@@ -11,6 +11,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from toolboxv2.tests.a_util import IsolatedTestCase
+
 # Ensure test_fixtures is importable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -465,7 +467,7 @@ class TestE2EDecoratorFunctionGraph(unittest.TestCase):
             self.assertTrue(os.path.exists(fg_path))
 
 
-class TestE2EFunctionGraphDataIntegrity(unittest.TestCase):
+class TestE2EFunctionGraphDataIntegrity(IsolatedTestCase):
     """End-to-end: verify the full data pipeline from profile → graph → JSON."""
 
     def test_call_chain_integrity(self):

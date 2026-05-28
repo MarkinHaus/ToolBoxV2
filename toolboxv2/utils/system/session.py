@@ -477,7 +477,7 @@ class Session(metaclass=Singleton):
                 get_logger().warning(f"Client error: {e}")
                 return False
             except TimeoutError as e:
-                get_logger().warning(f"Client TimeoutError: {kwargs.get('timeout')=}{e}")
+                get_logger().warning(f"Client TimeoutError: {url=} {kwargs.get('timeout')=}{e}")
                 return False
             except Exception as e:
                 import traceback

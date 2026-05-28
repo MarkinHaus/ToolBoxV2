@@ -3,6 +3,8 @@ import os
 import tempfile
 import unittest
 
+from toolboxv2.tests.a_util import IsolatedTestCase
+
 
 class TestCryptoKeyGen(unittest.TestCase):
     def test_generate_key_length(self):
@@ -123,7 +125,8 @@ class TestEncryptDecryptFile(unittest.TestCase):
         self.assertFalse(os.path.exists(dst + ".sync-tmp"))
 
 
-class TestChecksum(unittest.TestCase):
+
+class TestChecksum(IsolatedTestCase):
     def test_checksum_deterministic(self):
         from toolboxv2.mods.CloudM.LiveSync.crypto import compute_checksum
         c1 = compute_checksum(b"hello world")

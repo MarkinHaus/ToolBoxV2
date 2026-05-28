@@ -1,12 +1,11 @@
 [project]
 name = "toolboxv2"
-version = "0.1.25"
+version = "0.1.26"
 description = "Add your description here"
 readme = "README.md"
 
 requires-python = ">=3.10"
 dependencies = [
-
     "requests>=2.31.0", # rewrite all to aiohttp
     "httpx>=0.28.1", # rewrite all to aiohttp
     "aiohttp>=3.12.15",
@@ -22,6 +21,7 @@ dependencies = [
     "aiosqlite>=0.22.1",
     "psutil",
     "prompt-toolkit>=3.0.52",
+    "minio>=7.2.20",
 ]
 
 [build-system]
@@ -71,7 +71,10 @@ toolboxv2 = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["toolboxv2*"]
+include = [
+    # ── include core mods ──
+    "toolboxv2*",
+]
 exclude = [
     # ── Exclude specific mods ──
     "toolboxv2.mods.ContainerManager*",
@@ -92,7 +95,6 @@ exclude = [
     "toolboxv2.web*",  # Nur dist/ behalten via package_data
 
     # ── Standard excludes ──
-    "tests*",
     "htmlcov*",
     "build*",
     "dist*",
@@ -105,7 +107,9 @@ exclude = [
     "node_modules*",
 
     # ── Data/Cache ──
-    "*.db",
+    "*.data",
+    "*.config",
+    "*.info",
     "*.db-*",
     "*.bak",
     "*.html",  # Alle comparison/report HTMLs

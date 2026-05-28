@@ -26,7 +26,7 @@ def webInstall_app_wrapper(self, command):
 
 
 @export(name="Version", mod_name=Name)
-def get_version(_):
+def get_version(_=None):
     print(f"Version: {version} : {system()}")
     return version
 

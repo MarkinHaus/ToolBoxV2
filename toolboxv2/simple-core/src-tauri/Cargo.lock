@@ -3714,6 +3714,7 @@ name = "simple-core"
 version = "0.1.0"
 dependencies = [
  "dirs 5.0.1",
+ "futures-util",
  "log",
  "reqwest 0.13.1",
  "serde",
@@ -3725,6 +3726,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-shell",
  "tokio",
+ "url",
 ]
 
 [[package]]
