@@ -3,15 +3,15 @@
 ToolBoxV2 CI Pipeline — Build · Test · Report · Upload
 
 Usage:
-    python ci_build.py build                    # Pack features → wheel/sdist
-    python ci_build.py test                     # Build + venv-isolated tests per feature
-    python ci_build.py upload --test            # Upload to test.pypi.org
-    python ci_build.py upload --prod            # Upload to pypi.org
-    python ci_build.py deps --analyze           # Show dependency map
-    python ci_build.py deps --update            # Check for newer versions
-    python ci_build.py deps --minimize          # Rewrite pyproject.toml base deps to mini-only
-    python ci_build.py all --test               # Full pipeline → test.pypi
-    python ci_build.py all --prod               # Full pipeline → pypi
+    tb fbuild build                    # Pack features → wheel/sdist
+    tb fbuild test                     # Build + venv-isolated tests per feature
+    tb fbuild upload --test            # Upload to test.pypi.org
+    tb fbuild upload --prod            # Upload to pypi.org
+    tb fbuild deps --analyze           # Show dependency map
+    tb fbuild deps --update            # Check for newer versions
+    tb fbuild deps --minimize          # Rewrite pyproject.toml base deps to mini-only
+    tb fbuild all --test               # Full pipeline → test.pypi
+    tb fbuild all --prod               # Full pipeline → pypi
 """
 from __future__ import annotations
 

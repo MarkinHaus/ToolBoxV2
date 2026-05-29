@@ -27,14 +27,15 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from toolboxv2 import get_logger, get_app
-from toolboxv2.mods.isaa.base.Agent.observability import ObservabilityLayer
 from toolboxv2.mods.isaa.extras.obs_viewer import _TEMPLATE as _VIEWER_TEMPLATE
 from toolboxv2.utils.workers.fast_tb import FastTB
 from toolboxv2.utils.workers.fast_tb_handler import FastTBHandler
 
+
+ObservabilityLayer = TypeVar('ObservabilityLayer')
 logger = get_logger()
 
 app = FastTB(title="ISAA Live OBS")

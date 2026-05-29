@@ -158,7 +158,6 @@ def run_debug_server(dist_path: str, port: int):
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     config = load_config()
-    config.manager.web_ui_enabled = False  # Konflikte mit anderen Diensten vermeiden
 
     # 2. Worker Infrastruktur (ZMQ Broker & WS Worker) im Hintergrund starten
     def start_infrastructure():

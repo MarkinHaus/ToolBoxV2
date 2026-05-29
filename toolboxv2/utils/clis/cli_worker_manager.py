@@ -334,9 +334,6 @@ class NginxManager:
         rate_zone = getattr(cfg, "rate_limit_zone", "tb_limit")
         rate_burst = getattr(cfg, "rate_limit_burst", 20)
         auth_burst = getattr(cfg, "auth_rate_limit_burst", 10)
-        admin_port = getattr(self._manager, "web_ui_port", 9005)
-
-        admin_block = self._generate_admin_ui_block(admin_port)
 
         return f"""# ToolBoxV2 Site Config
     # Ports pre-allocated: HTTP {base_http_port}-{base_http_port + max_http_workers - 1} | WS {base_ws_port}-{base_ws_port + max_ws_workers - 1}
@@ -489,7 +486,6 @@ class NginxManager:
             proxy_set_header Connection "";
             access_log off;
         }}
-        {admin_block}
 
         error_page 429 @rate_limited;
         location @rate_limited {{
@@ -958,11 +954,15 @@ class MetricsCollector:
 # ============================================================================
 
 class HealthChecker:
-    def __init__(self, interval: float = 5.0):
+    def __init__(self, interval: float = 5.0, max_fails: int = 3):
         self._interval = interval
+        self._max_fails = max_fails
         self._running = False
         self._thread: Thread | None = None
         self._workers: Dict[str, WorkerInfo] = {}
+        self._fails: Dict[str, int] = {}
+        self.restart_cb = None  # callable(worker_id) — set by manager
+        self.liveness_cb = None  # callable(worker_id) -> bool — set by manager
 
     def start(self, workers: Dict[str, WorkerInfo]):
         self._workers = workers
@@ -981,12 +981,35 @@ class HealthChecker:
     def _check_loop(self):
         while self._running:
             for wid, info in list(self._workers.items()):
+                # Dead process → respawn (new process = fresh source)
+                if self.liveness_cb is not None and not self.liveness_cb(wid):
+                    if info.state in (WorkerState.RUNNING, WorkerState.STARTING):
+                        info.healthy = False
+                        info.state = WorkerState.FAILED
+                        self._fails.pop(wid, None)
+                        if self.restart_cb is not None:
+                            self.restart_cb(wid)
+                    continue
                 if info.state != WorkerState.RUNNING:
+                    continue
+                # Live-UI standbys share the owner's port → port health is
+                # misleading; process liveness (above) is the only valid signal.
+                if wid.startswith("liveui_"):
+                    info.healthy = True
+                    info.last_health_check = time.time()
+                    self._fails[wid] = 0
                     continue
                 healthy, latency = self._check_worker(info)
                 info.healthy = healthy
                 info.health_latency_ms = latency
                 info.last_health_check = time.time()
+                if healthy:
+                    self._fails[wid] = 0
+                else:
+                    self._fails[wid] = self._fails.get(wid, 0) + 1
+                    if self._fails[wid] >= self._max_fails and self.restart_cb is not None:
+                        self._fails[wid] = 0
+                        self.restart_cb(wid)
             time.sleep(self._interval)
 
     def _check_worker(self, info: WorkerInfo) -> Tuple[bool, float]:
@@ -1161,6 +1184,26 @@ def _run_http_worker_process(worker_id: str, config_dict: Dict, port: int, socke
     else:
         worker.run(port=port)
 
+def _run_live_ui_process(worker_id: str, config_dict: Dict, port: int, standby: bool = True):
+    """Serve the FastTB local_ui as the One-Port-Collective owner.
+
+    All replicas target the SAME port: first to bind owns '/', the rest stand
+    by and take over on death (EADDRINUSE failover). Each process registers the
+    collective mount/unmount commands so other FastTB UIs can join from src.
+    """
+    from toolboxv2.utils.workers.config import Config
+    config = Config.from_dict(config_dict)
+    from toolboxv2.utils.workers.fast.local_ui import app as local_ui_app
+    from toolboxv2.utils.workers.fast.tray_api import (
+        mount_tray_api, register_collective_commands,
+    )
+    mount_tray_api(local_ui_app)
+    register_collective_commands(local_ui_app)
+    host = getattr(config.manager, "live_ui_host", "127.0.0.1")
+    local_ui_app.serve(
+        host=host, port=port, blocking=True, enable_ws=False,
+        standby=standby, allow_specialist=False,
+    )
 
 def _run_ws_worker_process(worker_id: str, config_dict: Dict, port: int):
     """Run WebSocket worker in a separate process."""
@@ -1255,6 +1298,28 @@ class WorkerManager:
         info.state = WorkerState.FAILED
         return None
 
+    def start_live_ui_worker(self, worker_id: str = None, port: int = None,
+                             standby: bool = True) -> WorkerInfo | None:
+        if not worker_id:
+            worker_id = f"liveui_{uuid.uuid4().hex[:8]}"
+        port = port or getattr(self.config.manager, "live_ui_port", 8700)
+        process = Process(target=_run_live_ui_process,
+                          args=(worker_id, self.config.to_dict(), port, standby),
+                          name=worker_id)
+        process.start()
+        info = WorkerInfo(worker_id=worker_id, worker_type=WorkerType.HTTP,
+                          pid=process.pid, port=port, state=WorkerState.STARTING,
+                          started_at=time.time())
+        self._workers[worker_id] = info
+        self._processes[worker_id] = process
+        time.sleep(0.5)
+        if process.is_alive():
+            info.state = WorkerState.RUNNING
+            logger.info(f"Live-UI worker started: {worker_id} (port {port}, standby={standby})")
+            return info
+        info.state = WorkerState.FAILED
+        return None
+
     def start_ws_worker(self, worker_id: str = None, port: int = None) -> WorkerInfo | None:
         if not worker_id:
             worker_id = f"ws_{uuid.uuid4().hex[:8]}"
@@ -1310,9 +1375,34 @@ class WorkerManager:
         port, wtype = info.port, info.worker_type
         self.stop_worker(worker_id)
         del self._workers[worker_id]
+        if worker_id.startswith("liveui_"):
+            return self.start_live_ui_worker(worker_id, port, standby=True)
         if wtype == WorkerType.HTTP:
             return self.start_http_worker(worker_id, port)
         return self.start_ws_worker(worker_id, port)
+
+    def _is_process_alive(self, worker_id: str) -> bool:
+        p = self._processes.get(worker_id)
+        return bool(p and p.is_alive())
+
+    def _respawn_worker(self, worker_id: str) -> None:
+        """Restart a dead/unhealthy worker from src, respecting restart policy."""
+        info = self._workers.get(worker_id)
+        if info is None:
+            return
+        cap = getattr(self.config.manager, "max_restart_attempts", 5)
+        if info.restart_count >= cap:
+            logger.error(f"[supervise] {worker_id} exceeded {cap} restarts — giving up")
+            info.state = WorkerState.FAILED
+            return
+        prev = info.restart_count
+        delay = getattr(self.config.manager, "restart_delay", 2)
+        logger.warning(f"[supervise] respawning {worker_id} (attempt {prev + 1}) in {delay}s")
+        time.sleep(delay)
+        new = self.restart_worker(worker_id)  # new Process → fresh import from src
+        if new is not None:
+            new.restart_count = prev + 1
+            self._health_checker.update_workers(self._workers)
 
     def _get_http_ports(self) -> List[int]:
         return [w.port for w in self._workers.values() if w.worker_type == WorkerType.HTTP and w.state == WorkerState.RUNNING]
@@ -1353,7 +1443,14 @@ class WorkerManager:
             self.start_http_worker()
         self.start_ws_worker()
 
+        # Live-UI owner + standby replicas on one dedicated port (failover).
+        # All standby=True: the first to bind owns '/', the rest wait.
+        for _ in range(max(1, getattr(self.config.manager, "live_ui_replicas", 2))):
+            self.start_live_ui_worker(standby=True)
+
         self._metrics_collector.start(self._workers)
+        self._health_checker.restart_cb = self._respawn_worker
+        self._health_checker.liveness_cb = self._is_process_alive
         self._health_checker.start(self._workers)
         self._cluster.start()
 
@@ -1518,22 +1615,19 @@ class WorkerManager:
 # Web UI
 # ============================================================================
 
-class ManagerWebUI(BaseHTTPRequestHandler):
+class ManagerAPI(BaseHTTPRequestHandler):
     manager: 'WorkerManager' = None
 
     def log_message(self, format, *args):
-        pass
+        pass  # Silent
 
     def do_GET(self):
         path = urlparse(self.path).path
         if path.startswith("/admin/manager"):
-            path = path[len("/admin/manager"):]  # exakt 14 chars
+            path = path[14:]  # Strip legacy prefix for cluster compat
         path = path.rstrip("/") or "/"
-        if path.startswith("/admin/manager"):
-            path = path[14:]
-        if path == "/":
-            self._serve_dashboard()
-        elif path == "/api/status":
+
+        if path == "/api/status":
             self._json(self.manager.get_status())
         elif path == "/api/workers":
             self._json(self.manager.get_workers())
@@ -1555,7 +1649,7 @@ class ManagerWebUI(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         if path.startswith("/admin/manager"):
-            path = path[len("/admin/manager"):]  # exakt 14 chars
+            path = path[14:]
         path = path.rstrip("/") or "/"
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length) if length else b""
@@ -1563,14 +1657,13 @@ class ManagerWebUI(BaseHTTPRequestHandler):
             data = json.loads(body) if body else {}
         except Exception:
             data = {}
-        if path.startswith("/admin/manager"):
-            path = path[14:]
+
         if path == "/api/workers/start":
             results = []
             for _ in range(data.get("count", 1)):
-                info = self.manager.start_http_worker() if data.get("type", "http") == "http" else self.manager.start_ws_worker()
-                if info:
-                    results.append(info.to_dict())
+                info = self.manager.start_http_worker() if data.get("type",
+                                                                    "http") == "http" else self.manager.start_ws_worker()
+                if info: results.append(info.to_dict())
             self._json({"status": "ok", "workers": results})
         elif path == "/api/workers/stop":
             self.manager.stop_worker(data.get("worker_id"), data.get("graceful", True))
@@ -1590,7 +1683,8 @@ class ManagerWebUI(BaseHTTPRequestHandler):
             self.manager._update_nginx_config()
             self._json({"status": "ok" if self.manager._nginx.reload() else "error"})
         elif path == "/api/cluster/join":
-            self._json({"status": "ok" if self.manager.add_cluster_node(data.get("host"), data.get("port", 9000), data.get("secret")) else "error"})
+            self._json({"status": "ok" if self.manager.add_cluster_node(data.get("host"), data.get("port", 9000),
+                                                                        data.get("secret")) else "error"})
         else:
             self.send_response(404)
             self.end_headers()
@@ -1598,130 +1692,17 @@ class ManagerWebUI(BaseHTTPRequestHandler):
     def _json(self, data: Any, status: int = 200):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
-        origin = self.headers.get("Origin", "")
-        allowed = {
-            "http://localhost",
-            f"http://127.0.0.1",
-            f"https://simplecore.app",
-            f"http://127.0.0.1:{self.server.server_address[1]}",
-        }
-        if origin in allowed:
-            self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(json.dumps(data, default=str).encode())
 
-    def _serve_dashboard(self):
-        http_port = getattr(self.manager.config.http_worker, "port", 5000)
-        mgr_port = self.server.server_address[1]
-        html = '''<!doctype html><html lang="en" data-theme="dark"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Worker Manager → /live</title>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-:root {
-  --primary: oklch(55% 0.18 230);
-  --text-main: rgba(255,255,255,0.85); --text-label: rgba(255,255,255,0.4); --text-muted: rgba(255,255,255,0.25);
-  --glass-bg: rgba(255,255,255,0.02); --glass-border: rgba(255,255,255,0.05);
-  --bg-elevated: rgba(15,15,25,0.9);
-}
-html, body { height: 100%; margin: 0; }
-body {
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  color: var(--text-main);
-  background:
-    radial-gradient(ellipse at 20% 10%, color-mix(in oklch, var(--primary) 8%, transparent), transparent 60%),
-    #08080d;
-  display: grid; place-items: center;
-}
-body::before {
-  content: ''; position: fixed; inset: 0;
-  background-image:
-    linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
-  background-size: 32px 32px; z-index: -1;
-}
-.card {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-  border-radius: 12px;
-  padding: 2.5rem 3rem;
-  max-width: 480px;
-  text-align: center;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 2px 4px rgba(0,0,0,0.5);
-}
-h6 {
-  font-family: 'IBM Plex Mono', monospace; font-size: 9px;
-  text-transform: uppercase; letter-spacing: 2.5px;
-  color: var(--text-label); margin: 0 0 0.5rem;
-}
-h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 1rem; }
-p { color: var(--text-muted); line-height: 1.6; margin: 0 0 1.5rem; font-size: 0.875rem; }
-code {
-  font-family: 'IBM Plex Mono', monospace; font-size: 0.75rem;
-  background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 2px;
-  color: var(--text-main);
-}
-.cta {
-  display: inline-block; padding: 0.5rem 1.25rem;
-  font-family: 'IBM Plex Mono', monospace; font-size: 0.75rem;
-  text-transform: uppercase; letter-spacing: 1.5px;
-  background: color-mix(in oklch, var(--primary) 15%, transparent);
-  border: 1px solid color-mix(in oklch, var(--primary) 30%, transparent);
-  border-radius: 2px; color: var(--text-main); text-decoration: none;
-  transition: background 200ms, border-color 200ms;
-}
-.cta:hover { background: color-mix(in oklch, var(--primary) 25%, transparent); border-color: color-mix(in oklch, var(--primary) 50%, transparent); }
-.api-list { text-align: left; margin: 1.5rem 0 0; font-size: 0.75rem; }
-.api-list h6 { margin-top: 1rem; }
-.api-list code { display: block; padding: 4px 8px; margin: 2px 0; }
-</style></head><body>
-<div class="card">
-  <h6>SimpleCore</h6>
-  <h1>Worker Manager</h1>
-  <p>This dashboard has moved.<br>
-  Cluster topology, metrics, and controls now live in <code>/live</code>.</p>
-  <a class="cta" href="/live" id="live-link">open /live</a>
-  <div class="api-list">
-    <h6>API endpoints (still active)</h6>
-    <code>GET  /api/status</code>
-    <code>GET  /api/workers</code>
-    <code>GET  /api/metrics</code>
-    <code>GET  /api/health</code>
-    <code>POST /api/scale</code>
-    <code>POST /api/workers/restart</code>
-    <code>POST /api/rolling-update</code>
-    <code>POST /api/nginx/reload</code>
-  </div>
-</div>
-<script>
-// Build the correct /live URL. The manager UI runs on a different port than
-// the HTTP worker that serves /live — swap the port only when we're actually
-// hitting the manager port directly (so this stays correct behind nginx too).
-const HTTP_PORT = "__HTTP_PORT__";
-const MGR_PORT  = "__MGR_PORT__";
-const url = new URL(location.href);
-if (url.port === MGR_PORT) { url.port = HTTP_PORT; }
-url.pathname = "/live";
-const k = new URLSearchParams(location.search).get("key");
-url.search = k ? ("?key=" + encodeURIComponent(k)) : "";
-document.getElementById("live-link").href = url.toString();
-</script>
-</body></html>'''
-        html = html.replace("__HTTP_PORT__", str(http_port)).replace("__MGR_PORT__", str(mgr_port))
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html")
-        self.end_headers()
-        self.wfile.write(html.encode())
 
-
-def run_web_ui(manager: WorkerManager, host: str, port: int):
-    ManagerWebUI.manager = manager
+def run_manager_api(manager: WorkerManager, host: str, port: int):
+    ManagerAPI.manager = manager
     for _ in range(5):
         try:
-            server = HTTPServer((host, port), ManagerWebUI)
+            server = HTTPServer((host, port), ManagerAPI)
             server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            logger.info(f"Web UI on http://{host}:{port}")
+            logger.info(f"Cluster API listening on {host}:{port}")
             server.serve_forever()
             break
         except OSError:
@@ -1740,7 +1721,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="ToolBoxV2 Worker Manager",
         prog="tb workers",
-        epilog=textwrap.dedent("""tb workers start             Startet alle Services + Web UI
+        usage="""
+tb workers start             Startet alle Services + Web UI
 tb workers stop              Stoppt alles
 tb workers restart           stop + start
 tb workers status            JSON Status-Dump
@@ -1763,7 +1745,7 @@ tb workers cluster-join --host H --port P --secret S
 tb workers live              Zeigt /live Dashboard URL + öffnet Browser
                              (env LIVE_DASHBOARD_KEY oder manager.live_dashboard_key nötig)
 
-tb workers debug             Startet Debug-Server auf dist/""")
+tb workers debug             Startet Debug-Server auf dist/"""
     )
     parser.add_argument(
         "command",
@@ -1800,8 +1782,6 @@ tb workers debug             Startet Debug-Server auf dist/""")
     parser.add_argument("--port",             type=int,
                         help="cluster-join: Remote port")
     parser.add_argument("--secret",           help="cluster-join: Cluster secret")
-    parser.add_argument("--no-ui",            action="store_true",
-                        help="start: Disable web UI")
     parser.add_argument("-v", "--verbose",    action="store_true")
 
     args = parser.parse_args()
@@ -1819,12 +1799,12 @@ tb workers debug             Startet Debug-Server auf dist/""")
     if args.command == "start":
         if not manager.start_all():
             sys.exit(1)
-        if config.manager.web_ui_enabled and not args.no_ui:
-            Thread(
-                target=run_web_ui,
-                args=(manager, config.manager.web_ui_host, config.manager.web_ui_port),
-                daemon=True,
-            ).start()
+        Thread(
+            target=run_manager_api,
+            args=(manager, getattr(config.manager, "web_ui_host", "127.0.0.1"),
+                  getattr(config.manager, "web_ui_port", 9005)),
+            daemon=True,
+        ).start()
         try:
             while manager._running:
                 time.sleep(1)

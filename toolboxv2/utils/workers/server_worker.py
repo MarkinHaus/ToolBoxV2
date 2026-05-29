@@ -1970,6 +1970,11 @@ class HTTPWorker:
         sub = request.path[len("/live/mgr/"):].rstrip("/")
         method = (getattr(request, "method", "GET") or "GET").upper()
 
+        # Direct broker control — handled locally via ZMQ, not proxied to the
+        # manager API. Asks the current ZMQ leader to step down (auto re-elect).
+        if method == "POST" and sub == "broker/relinquish":
+            return self._handle_live_relinquish()
+
         if method == "GET":
             target = self._LIVE_MGR_GET_MAP.get(sub)
         elif method == "POST":
@@ -2904,6 +2909,21 @@ code { font-family: var(--font-mono); font-size: var(--text-xs); background: var
 </html>
 """
 
+    def _handle_live_relinquish(self) -> Tuple:
+        """POST /live/mgr/broker/relinquish — ask the current ZMQ leader to step
+        down. rpc_call reaches whoever owns the REP socket (= the leader); a
+        follower then takes over via its watchdog. Returns the leader's ack."""
+        from toolboxv2.utils.workers.event_manager import Event, EventType
+        em = self._event_manager
+        if em is None or not getattr(em, "_running", False):
+            return error_response("event bus unavailable", 503, "Unavailable")
+        ev = Event(type=EventType.SYS_RELINQUISH, source=self.worker_id, target="*")
+        try:
+            resp = self._run_async(em.rpc_call(ev, timeout=3.0))  # returns dict
+        except Exception as e:
+            return error_response(f"relinquish failed: {e}", 502, "BadGateway")
+        return 200, {"Content-Type": "application/json"}, json.dumps(resp).encode()
+
     def _handle_health(self) -> Tuple:
         """Health check endpoint."""
         return json_response({
@@ -3140,17 +3160,9 @@ code { font-family: var(--font-mono); font-size: var(--text-xs); background: var
 
         # Run WSGI server
         try:
+            import errno as _errno
+            import random as _random
             from waitress import create_server
-
-            self._server = create_server(
-                self.wsgi_app,
-                host=host,
-                port=port,
-                threads=self.config.http_worker.max_concurrent,
-                connection_limit=self.config.http_worker.backlog,
-                channel_timeout=self.config.http_worker.timeout,
-                ident="ToolBoxV2",
-            )
 
             def signal_handler(sig, frame):
                 logger.info(f"Received signal {sig}, shutting down...")
@@ -3169,8 +3181,35 @@ code { font-family: var(--font-mono); font-size: var(--text-xs); background: var
             except (ValueError, RuntimeError) as e:
                 logger.warning(f"[HTTP] Could not register signal handlers: {e}")
 
-            logger.info(f"Serving on http://{host}:{port}")
-            self._server.run()
+            # P2P standby: if the port is owned by another worker, wait and
+            # retry. When the owner dies, this worker takes over the live UI.
+            _jitter = getattr(self.config.zmq, "takeover_jitter_max_s", 0.5)
+            _retry = max(1.0, getattr(self.config.zmq, "heartbeat_timeout_s", 3.0))
+            while self._running:
+                try:
+                    self._server = create_server(
+                        self.wsgi_app,
+                        host=host,
+                        port=port,
+                        threads=self.config.http_worker.max_concurrent,
+                        connection_limit=self.config.http_worker.backlog,
+                        channel_timeout=self.config.http_worker.timeout,
+                        ident="ToolBoxV2",
+                    )
+                except OSError as e:
+                    if e.errno not in (_errno.EADDRINUSE,
+                                       getattr(_errno, "WSAEADDRINUSE", 10048)):
+                        raise
+                    wait_s = _retry + _random.uniform(0.0, _jitter)
+                    logger.info(f"[HTTP-P2P] {host}:{port} busy, standby {wait_s:.2f}s")
+                    time.sleep(wait_s)
+                    continue
+
+                logger.info(f"Serving on http://{host}:{port} (active)")
+                self._server.run()  # blocks until close()
+                self._server = None
+                if self._running:
+                    time.sleep(_random.uniform(0.0, _jitter))
 
         except ImportError:
             from wsgiref.simple_server import make_server, WSGIServer

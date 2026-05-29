@@ -10,7 +10,7 @@ CLI and web session management layer. No Clerk dependency. Multi-worker safe via
 |--------|---------|------|
 | Magic Link Email | CLI + Web | Email → link → JWT stored locally |
 | Device Invite Code | CLI | Running session generates 6-digit code → CLI enters → JWT |
-| Web (OAuth / Passkey) | Browser | Redirect to `/web/scripts/login.html` |
+| Web (OAuth / Passkey) | Browser | Redirect to `/web/assets/login.html` |
 
 ## CLI Login Flow
 
@@ -66,7 +66,7 @@ tb -c CloudM session status           # Show current session info
 
 ## Web Login UI
 
-The web login page is served from `/web/scripts/login.html` and offers:
+The web login page is served from `/web/assets/login.html` and offers:
 
 - Discord OAuth2
 - Google OAuth2

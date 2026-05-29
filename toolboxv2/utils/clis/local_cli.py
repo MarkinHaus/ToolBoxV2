@@ -27,8 +27,11 @@ from .cli_printing import (
     Colors, c_print, print_box_header, print_box_content,
     print_box_footer, print_status, print_separator,
 )
-
-
+from .cli_oauth import cli_oauth_login, cli_passkey_login
+from .cli_input import menu_select_async
+from toolboxv2.mods.CloudM.LogInSystem import (
+    _save_cli_token, _clear_cli_token, _check_existing_session,
+)
 # =============================================================================
 # Shared helpers (mirror local_ui semantics)
 # =============================================================================
@@ -84,6 +87,7 @@ async def _has_any_user() -> bool:
         return False
 
 _global_token = [None]
+
 async def _emit_first_run_token() -> Optional[str]:
     if _global_token[0] is not None:
         return _global_token[0]
@@ -104,6 +108,83 @@ async def _emit_first_run_token() -> Optional[str]:
     _global_token[0] = token
     return token
 
+def _is_remote() -> bool:
+    return bool(os.environ.get("TOOLBOXV2_REMOTE_BASE"))
+
+
+def _err_text(result) -> str:
+    info = getattr(result, "info", None)
+    return getattr(info, "help_text", "invalid") if info else "invalid"
+
+
+async def _local_auth(tb_app, choice: str) -> Optional[dict]:
+    """In-process auth (no remote). Returns auth payload or None."""
+    if choice == "token":
+        token = _global_token[0] or _prompt("Token").strip()
+        if not token:
+            print_status("Token required", "error"); return None
+        result = await tb_app.a_run_any(("CloudM.Auth", "verify_magic_link"),
+                                        token=token, get_results=True)
+    elif choice == "magic":
+        email = _prompt("Email").strip()
+        if "@" not in email:
+            print_status("Valid email required", "error"); return None
+        req = await tb_app.a_run_any(("CloudM.Auth", "request_magic_link"),
+                                     email=email, get_results=True)
+        if hasattr(req, "is_error") and req.is_error():
+            print_status(f"Could not send: {_err_text(req)}", "error"); return None
+        print_status("Magic link sent — paste the token from the email.", "info")
+        token = _prompt("Token").strip()
+        if not token:
+            return None
+        result = await tb_app.a_run_any(("CloudM.Auth", "verify_magic_link"),
+                                        token=token, get_results=True)
+    elif choice == "invite":
+        code = _prompt("Device invite code (6 digits)").strip().replace(" ", "").replace("-", "")
+        if not code:
+            return None
+        result = await tb_app.a_run_any(("CloudM.Auth", "verify_device_invite"),
+                                        code=code, get_results=True)
+    else:
+        return None
+
+    if hasattr(result, "is_error") and result.is_error():
+        print_status(f"Auth failed: {_err_text(result)}", "error"); return None
+    payload = result.get() if hasattr(result, "get") else result
+    if isinstance(payload, dict) and payload.get("authenticated"):
+        return payload
+    print_status("Authentication failed", "error"); return None
+
+
+async def _remote_auth(tb_app, choice: str) -> Optional[dict]:
+    """Auth via the aiohttp Session (session.py) against TOOLBOXV2_REMOTE_BASE."""
+    s = tb_app.session
+    if choice in ("token", "magic"):
+        if choice == "magic":
+            email = _prompt("Email").strip()
+            if "@" not in email:
+                print_status("Valid email required", "error"); return None
+            req = await s.login_with_magic_link(email)
+            if req.is_error():
+                print_status(f"Could not send: {_err_text(req)}", "error"); return None
+            print_status("Magic link sent — paste the token from the email.", "info")
+        token = _prompt("Token").strip()
+        if not token:
+            return None
+        res = await s.verify_magic_link(token)
+    elif choice == "invite":
+        code = _prompt("Device invite code").strip().replace(" ", "").replace("-", "")
+        if not code:
+            return None
+        res = await s.login_with_invite_code(code)
+    else:
+        return None
+
+    if res.is_error():
+        print_status(f"Auth failed: {_err_text(res)}", "error"); return None
+    data = res.get() or {}
+    # session.py already set s.username/.access_token/.valid and persisted (see #6).
+    return {"authenticated": True, **data}
 
 # =============================================================================
 # State (one CLI session = one in-memory session)
@@ -153,129 +234,72 @@ def _prompt(label: str, mask: bool = False) -> str:
     except (KeyboardInterrupt, EOFError):
         raise SystemExit(0)
 
+async def _finalize(sess: CLISession, payload, tb_app, remote: bool) -> bool:
+    if not payload or not sess.adopt(payload):
+        print_status("Authentication failed", "error")
+        return False
+    if not remote:  # OAuth/Passkey authenticate against the local instance → persist local
+        try:
+            await _save_cli_token(tb_app, sess.username, {
+                "username": sess.username, "email": payload.get("email", ""),
+                "user_id": sess.user_id, "level": payload.get("level", 1),
+                "access_token": sess.access_token, "refresh_token": sess.refresh_token,
+                "provider": sess.provider, "authenticated_at": time.time(),
+            })
+        except Exception as e:
+            print_status(f"Session not persisted: {e}", "warning")
+    print_status(f"Signed in as {sess.username}", "success")
+    await asyncio.sleep(0.6)
+    return True
 
 async def login_screen(sess: CLISession) -> bool:
-    """Drive the user through one of the available auth flows. Returns True on success."""
+    tb_app = get_app("local_cli.auth")
+    remote = _is_remote()
+    first_run = (not remote) and (not await _has_any_user())
 
-
-    first_run = not await _has_any_user()
-    print_box_header("ToolBox · Sign in" + (" · first run" if first_run else ""), "🔐")
+    mode = "remote" if remote else "local"
+    print_box_header("ToolBox · Sign in" + (" · first run" if first_run else "") + f" · {mode}", "🔐")
 
     if first_run:
         token = await _emit_first_run_token()
         if token:
-            print_box_content("First run — your local setup token (single-use, 10 min):", "info")
+            print_box_content("First run — local setup token (single-use, 10 min):", "info")
             print()
             c_print(f"    {Colors.BOLD}{token}{Colors.RESET}")
             print()
-            print_box_content("Paste it below to create the local admin account.", "info")
-
+            print_box_content("Pick 'Local token' to create the local admin.", "info")
         print_separator()
-    else:
-        c_print("No local setup token found!", "")
-        c_print("run tb login", "")
 
-    c_print(f"  {Colors.BOLD}Choose a method:{Colors.RESET}")
     options = [
-        ("token",   "Setup / magic-link token"),
-        ("magic",   "Request magic link by email"),
-        ("discord", "Discord OAuth (opens browser)"),
-        ("google",  "Google OAuth (opens browser)"),
+        ("token",   "Local token"),
+        ("magic",   "Magic link by email"),
+        ("invite",  "Device invite code"),
+        ("discord", "Discord OAuth (browser)"),
+        ("google",  "Google OAuth (browser)"),
+        ("passkey", "Passkey (browser)"),
         ("quit",    "Quit"),
     ]
-    for i, (_, label) in enumerate(options, 1):
-        c_print(f"  {Colors.CYAN}{i}){Colors.RESET} {label}")
-    print()
-    raw = _prompt(f"Choose [1-{len(options)}]")
-    try:
-        idx = int(raw.strip()) - 1
-        choice = options[idx][0]
-    except (ValueError, IndexError):
-        print_status("Invalid choice", "error")
-        return False
-
-    if choice == "quit":
+    choice = await menu_select_async(
+        options, title="Choose a method:",
+        hint="\u2191/\u2193 or W/S to move \u00b7 Enter to select \u00b7 q/Esc to quit",
+    )
+    if choice in (None, "quit"):
         raise SystemExit(0)
 
-    tb_app = get_app("local_cli.auth")
-
-    if choice == "token":
-        token = _global_token[0] or _prompt("Token").strip()
-        if not token:
-            print_status("Token required", "error")
-            return False
-        result = await tb_app.a_run_any(
-            ("CloudM.Auth", "verify_magic_link"), token=token, get_results=True,
-        )
-        if hasattr(result, "is_error") and result.is_error():
-            print(result)
-            _prompt("Email").strip()
-            print_status(f"Verification failed: {(result.get() or {}).get('error', 'invalid')}", "error")
-            return False
-        payload = result.get() if hasattr(result, "get") else result
-        if not sess.adopt(payload):
-            print_status("Authentication failed", "error")
-            return False
-        print_status(f"Signed in as {sess.username}", "success")
-        return True
-
-    if choice == "magic":
-        email = _prompt("Email").strip()
-        if not email or "@" not in email:
-            print_status("Valid email required", "error")
-            return False
-        result = await tb_app.a_run_any(
-            ("CloudM.Auth", "request_magic_link"), email=email, get_results=True,
-        )
-        if hasattr(result, "is_error") and result.is_error():
-            print_status(f"Could not send: {(result.get() or {}).get('error', 'unknown')}", "error")
-            return False
-        print_status("Magic link sent. Open the link in a browser, or paste the token here.", "info")
-        token = _prompt("Token from email (or skip with empty)")
-        if not token.strip():
-            return False
-        result = await tb_app.a_run_any(
-            ("CloudM.Auth", "verify_magic_link"), token=token.strip(), get_results=True,
-        )
-        payload = result.get() if hasattr(result, "get") else result
-        if not sess.adopt(payload):
-            print_status("Authentication failed", "error")
-            return False
-        print_status(f"Signed in as {sess.username}", "success")
-        return True
-
     if choice in ("discord", "google"):
+        if remote:
+            print_status("OAuth authenticates against the LOCAL instance (remote-CLI bridge: TODO).", "warning")
+        print_status(f"Opening browser for {choice}\u2026 complete the login, then return here.", "info")
+        payload = await cli_oauth_login(choice)
+        return await _finalize(sess, payload, tb_app, remote=False)
 
-        print_status("workers must be running | start with | tb workers start", "")
+    if choice == "passkey":
+        print_status("Opening browser for passkey\u2026 use your authenticator, then return here.", "info")
+        payload = await cli_passkey_login()
+        return await _finalize(sess, payload, tb_app, remote=False)
 
-        fn = "get_discord_auth_url" if choice == "discord" else "get_google_auth_url"
-        result = await tb_app.a_run_any(
-            ("CloudM.Auth", fn), redirect_after="/", get_results=True,
-        )
-        if hasattr(result, "is_error") and result.is_error():
-            print_status(f"{choice.title()} not configured", "error")
-            return False
-        url = (result.get() if hasattr(result, "get") else result or {}).get("auth_url")
-        if not url:
-            print_status("No URL returned", "error")
-            return False
-        print_status(f"Open this URL in your browser:", "info")
-        c_print(f"    {Colors.CYAN}{url}{Colors.RESET}")
-        print_status("After confirming, the OAuth callback will create the session in HTTP. "
-                     "For the terminal session, paste the JWT access token printed by the callback page.",
-                     "info")
-        token = _prompt("Access token")
-        if not token.strip():
-            return False
-        # Treat the access_token as already-valid JWT — wrap into payload.
-        sess.access_token = token.strip()
-        sess.username = "oauth-user"
-        sess.provider = choice
-        print_status(f"Signed in via {choice}", "success")
-        return True
-
-    return False
-
+    payload = await (_remote_auth(tb_app, choice) if remote else _local_auth(tb_app, choice))
+    return await _finalize(sess, payload, tb_app, remote)
 
 # =============================================================================
 # Services screen
@@ -441,41 +465,56 @@ async def mods_screen(sess: CLISession):
 # =============================================================================
 
 async def root_menu(sess: CLISession):
+    tb_app = get_app("local_cli.menu")
     while True:
         os.system("cls" if sys.platform == "win32" else "clear")
         print_box_header(f"ToolBox · {sess.username}", "🏠")
-        print_box_content(f"local root · provider: {sess.provider or 'magic_link'}", "info")
+        print_box_content(f"{'remote' if _is_remote() else 'local'} · provider: {sess.provider or 'magic_link'}", "info")
         print_box_footer()
-        c_print(f"  {Colors.CYAN}1){Colors.RESET} Apps")
-        c_print(f"  {Colors.CYAN}2){Colors.RESET} Services")
-        c_print(f"  {Colors.CYAN}3){Colors.RESET} Open web UI (browser)")
-        c_print(f"  {Colors.CYAN}4){Colors.RESET} Logout")
-        c_print(f"  {Colors.CYAN}5){Colors.RESET} Quit")
-        c_print(f"  {Colors.DIM}Tip: full overview at /mainPagen.html{Colors.RESET}")
-        print()
+        choice = await menu_select_async([
+            ("apps",     "Apps"),
+            ("services", "Services"),
+            ("web",      "Open web UI (browser)"),
+            ("passkey_reg", "Register passkey (browser)"),
+            ("logout",   "Logout"),
+            ("quit",     "Quit"),
+        ], hint="\u2191/\u2193 or W/S \u00b7 Enter \u00b7 q to quit")
 
-        choice = _prompt("Choose [1-5]").strip()
-        if choice == "1":
+        if choice == "apps":
             await mods_screen(sess)
-        elif choice == "2":
+        elif choice == "services":
             await services_screen(sess)
-        elif choice == "3":
+        elif choice == "passkey_reg":
+            if not sess.user_id:
+                print_status("Login first", "error")
+            else:
+                ok = await cli_passkey_register(sess.user_id, sess.username)
+                print_status("Passkey registered" if ok else "Registration failed/cancelled",
+                             "success" if ok else "error")
+            await asyncio.sleep(0.8)
+        elif choice == "web":
             import webbrowser
             port = os.getenv("TB_HTTP_PORT", "8080")
             webbrowser.open(f"http://127.0.0.1:{port}/")
             print_status("Opened in browser", "success")
             await asyncio.sleep(0.6)
-        elif choice == "4":
-            tb_app = get_app("local_cli.logout")
+        elif choice == "logout":
             if sess.access_token:
                 try:
                     await tb_app.a_run_any(("CloudM.Auth", "logout"), token=sess.access_token)
                 except Exception:
                     pass
+            try:
+                if _is_remote():
+                    await tb_app.session.logout()
+                else:
+                    await _clear_cli_token(tb_app, sess.username)
+            except Exception:
+                pass
             sess.clear()
             print_status("Signed out", "success")
             return
-        elif choice in ("5", "q", "quit", "exit"):
+        elif choice in (None, "quit"):
             raise SystemExit(0)
 
 

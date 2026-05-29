@@ -139,8 +139,8 @@ class NotificationSystem(metaclass=Singleton):
                         print("⚠️  win10toast library has issues. Using alternative Windows notification methods.")
                         self.fallback_to_tkinter = True
                 except ImportError:
-                    print("⚠️  Windows toast notifications not available. Install win10toast: pip install win10toast")
-                    print("    Alternative: Will try built-in Windows notification methods.")
+                    # print("⚠️  Windows toast notifications not available. Install win10toast: pip install win10toast")
+                    # print("    Alternative: Will try built-in Windows notification methods.")
                     self.fallback_to_tkinter = True  # We still have alternatives
             elif self.platform.startswith('darwin'):
                 # Test macOS notifications

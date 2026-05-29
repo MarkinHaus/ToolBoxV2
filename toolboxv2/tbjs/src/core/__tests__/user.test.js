@@ -332,7 +332,7 @@ describe('User Module (Custom Auth)', () => {
 
             const result = await user.signIn();
 
-            expect(mockLocation.href).toContain('/web/scripts/login.html');
+            expect(mockLocation.href).toContain('/web/assets/login.html');
             expect(result).toEqual({ success: true });
         });
 

@@ -62,7 +62,7 @@ def registry_name_to_feature(registry_name: str) -> Optional[str]:
 def _get_registry_url() -> str:
     """Registry-URL aus Manifest oder Umgebungsvariable."""
     # 1. Umgebungsvariable
-    if url := os.environ.get("TB_REGISTRY_URL"):
+    if url := os.getenv("TB_REGISTRY_URL"):
         return url
 
     # 2. Manifest

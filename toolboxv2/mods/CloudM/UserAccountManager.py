@@ -437,7 +437,7 @@ async def get_account_section_html(app: App, request: RequestData):
     exp_next = 'false' if exp_features else 'true'
     profile_section = ""
     if is_custom_auth:
-        profile_section = '<div><button onclick="window.TB?.router?.navigate(\'/web/scripts/login.html#profile\')" class="tb-btn tb-btn-secondary">Profil-Einstellungen öffnen</button></div>'
+        profile_section = '<div><button onclick="window.TB?.router?.navigate(\'/web/assets/login.html#profile\')" class="tb-btn tb-btn-secondary">Profil-Einstellungen öffnen</button></div>'
 
 
     return f"""

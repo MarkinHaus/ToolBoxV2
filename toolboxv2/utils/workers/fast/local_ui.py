@@ -569,6 +569,8 @@ def _root_fragment(username: str, mods: List[Dict[str, Any]], services_running: 
 
   {mod_preview}
 
+  <div hx-get="/local-ui/partials/mounted" hx-trigger="load, every 8s" hx-swap="innerHTML"></div>
+
   <p class="hint">Add a feature: <code>tb feature install isaa</code> · <code>tb feature install desktop</code> · …</p>
 """
 
@@ -811,7 +813,29 @@ async def partial_mods(request: ParsedRequest, session: SessionData = None):
         return _login_fragment(False)
     return _mods_fragment(username, _all_user_facing_mods(), _features_status())
 
+def _mounted_fragment(mounted: List[Dict[str, str]]) -> str:
+    if not mounted:
+        return ('<div class="card"><div class="section-head">'
+                '<h2>Mounted apps</h2><span class="label">none</span>'
+                '</div></div>')
+    items = "".join(
+        f'<a class="btn btn-ghost" href="{m["prefix"]}/" '
+        f'title="source: {m["source"]}">{m["source"]} '
+        f'<span class="label">{m["prefix"]}</span></a>'
+        for m in mounted
+    )
+    return (f'<div class="card"><div class="section-head">'
+            f'<h2>Mounted apps</h2><span class="label">{len(mounted)} live</span>'
+            f'</div><div style="display:flex;flex-wrap:wrap;gap:var(--space-2);">'
+            f'{items}</div></div>')
 
+
+@app.get("/local-ui/partials/mounted")
+async def partial_mounted(request: ParsedRequest, session: SessionData = None):
+    err = _ensure_local(request)
+    if err is not None:
+        return err
+    return _mounted_fragment(app.list_mounted())
 # =============================================================================
 # Routes — auth (binds to CloudM.Auth API)
 # =============================================================================

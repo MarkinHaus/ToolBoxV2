@@ -1011,7 +1011,7 @@ def setup_logging(
                 log_info_data[filename] += 1
             try:
                 os.rename(log_filename, os.path.join(f"{logs_directory}",f"{filename}#{log_info_data[filename]}.log"))
-            except PermissionError:
+            except PermissionError and FileNotFoundError and BaseException:
                 pass
     with open(os.path.join(f"{logs_directory}","Logs.info"), "w") as li:
         if len(log_info_data.keys()) >= 7:

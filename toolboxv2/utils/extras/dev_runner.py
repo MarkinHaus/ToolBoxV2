@@ -405,7 +405,6 @@ def run_dev_server(target_module: str = None, port: int = 5000):
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     config = load_config()
-    config.manager.web_ui_enabled = False  # Konflikte vermeiden
 
     # 2. Loading Modules from CWD
     print(f"\033[94m[DEV]\033[0m Loading externals from {init_cwd}")

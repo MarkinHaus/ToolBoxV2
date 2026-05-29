@@ -670,7 +670,7 @@ const user = {
      */
     async signIn(options = {}) {
         const currentUrl = window.location.href;
-        const loginUrl = options.loginUrl || '/web/scripts/login.html';
+        const loginUrl = options.loginUrl || '/web/assets/login.html';
         const next = options.next || currentUrl;
 
         window.location.href = `${loginUrl}?next=${encodeURIComponent(next)}`;
@@ -682,7 +682,7 @@ const user = {
      */
     async signUp(options = {}) {
         const currentUrl = window.location.href;
-        const signUpUrl = options.signUpUrl || '/web/scripts/login.html?mode=signup';
+        const signUpUrl = options.signUpUrl || '/web/assets/login.html?mode=signup';
         const next = options.next || currentUrl;
 
         window.location.href = `${signUpUrl}&next=${encodeURIComponent(next)}`;
@@ -749,7 +749,7 @@ const user = {
         const currentPath = window.location.pathname;
         if (!currentPath.includes('/login.html') && !currentPath.includes('/signup.html')) {
             setTimeout(() => {
-                window.location.href = '/web/scripts/login.html';
+                window.location.href = '/web/assets/login.html';
             }, 2000);
         }
     },
@@ -1068,7 +1068,7 @@ const user = {
         // Custom Auth: render a simple redirect/iframe or load login form inline
         const urlParams = new URLSearchParams(window.location.search);
         const redirectUrl = urlParams.get('next') || options.afterSignInUrl || '/web/mainContent.html';
-        const loginPageUrl = options.loginUrl || '/web/scripts/login.html';
+        const loginPageUrl = options.loginUrl || '/web/assets/login.html';
 
         // If we're already on the login page, the login.html handles everything
         if (window.location.pathname.includes('/login.html')) {
@@ -1095,7 +1095,7 @@ const user = {
 
         const urlParams = new URLSearchParams(window.location.search);
         const redirectUrl = options.afterSignUpUrl || urlParams.get('next') || '/web/mainContent.html';
-        const loginPageUrl = options.loginUrl || '/web/scripts/login.html';
+        const loginPageUrl = options.loginUrl || '/web/assets/login.html';
 
         window.location.href = `${loginPageUrl}?mode=signup&next=${encodeURIComponent(redirectUrl)}`;
     },
@@ -1166,7 +1166,7 @@ const user = {
         const signOutBtn = element.querySelector('.tb-user-signout');
         signOutBtn?.addEventListener('click', async () => {
             await this.signOut();
-            const afterSignOutUrl = options.afterSignOutUrl || '/web/scripts/login.html';
+            const afterSignOutUrl = options.afterSignOutUrl || '/web/assets/login.html';
             window.location.href = afterSignOutUrl;
         });
     },

@@ -343,7 +343,6 @@ class TestFeatureManagerPackUnpack(unittest.TestCase):
   "utils/extras/depsy/*",
   "utils/extras/install/*",
   "utils/extras/notification.py",
-  "utils/extras/keword_matcher.py",
   "utils/extras/registry_client.py",
   "utils/extras/reqbuilder.py",
   "utils/extras/gist_control.py",

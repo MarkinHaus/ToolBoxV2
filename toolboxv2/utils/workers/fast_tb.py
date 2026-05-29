@@ -34,10 +34,14 @@ Usage:
 """
 
 import asyncio
+import errno
 import inspect
 import json
 import os
+import random
 import re
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple, Pattern
 
@@ -161,6 +165,9 @@ class FastTB:
         self._routes: List[Route] = []
         self._ws_routes: List[WSRoute] = []
         self._static_mounts: List[Tuple[str, str]] = []  # (url_prefix, fs_directory)
+        # One-Port-Collective: merged sub-apps tracked per source for clean unmount
+        self._mounted_sources: Dict[str, dict] = {}  # source -> {routes, static, prefix}
+        self._server = None  # waitress server handle (set by serve())
 
         # Pre-built index: method -> list of routes (populated on first resolve)
         self._route_index: Dict[str, List[Route]] = {}
@@ -459,6 +466,113 @@ connect();
 
         return None
 
+    # =========================================================================
+    # One-Port-Collective: mount / unmount sibling FastTB apps (Modell A)
+    # =========================================================================
+
+    @staticmethod
+    def _root_pattern(fallback_path: str) -> "re.Pattern":
+        """Compile a relocated-root pattern that matches /prefix and /prefix/."""
+        return re.compile(rf"^{re.escape(fallback_path)}/?$")
+
+    def mount_conflicts(self, other: "FastTB", fallback_path: str) -> List[str]:
+        """Non-root route collisions between `other` and this app.
+
+        Root '/' is auto-relocatable to `fallback_path`; everything else must
+        not collide on (method, path). Also flags the relocated root landing
+        on an already-occupied path. Empty list => compatible (mergeable).
+        """
+        own = {(r.method, r.path) for r in self._routes}
+        bad = []
+        for r in other._routes:
+            target = fallback_path if r.path == "/" else r.path
+            if (r.method, target) in own:
+                bad.append(f"{r.method} {target}")
+        return bad
+
+    def mount_app(self, other: "FastTB", fallback_prefix: str, source: str) -> List[str]:
+        """Merge `other`'s routes into this app (Modell A).
+
+        - other '/'  -> relocated to '/<fallback_prefix>' (matches with/without
+          trailing slash)
+        - all other routes -> merged top-level, unchanged
+        - static mounts -> merged (dedup by url_prefix)
+
+        Returns [] on success, or a list of conflicting routes (caller then
+        serves `other` on its own port as a specialist). Idempotent per source:
+        re-mounting the same source first unmounts it.
+        """
+        fp = "/" + fallback_prefix.strip("/")
+        conflicts = self.mount_conflicts(other, fp)
+        if conflicts:
+            return conflicts
+
+        if source in self._mounted_sources:
+            self.unmount_app(source)
+
+        added_routes, added_static = [], []
+        for r in other._routes:
+            if r.path == "/":
+                nr = Route(
+                    path=fp, method=r.method, handler=r.handler,
+                    pattern=self._root_pattern(fp), param_names=[],
+                    name=r.name,
+                )
+            else:
+                nr = r  # reuse object as-is; top-level merge
+            self._routes.append(nr)
+            added_routes.append(nr)
+
+        existing_prefixes = {p for p, _ in self._static_mounts}
+        for url_prefix, directory in other._static_mounts:
+            if url_prefix not in existing_prefixes:
+                self._static_mounts.append((url_prefix, directory))
+                added_static.append((url_prefix, directory))
+
+        self._mounted_sources[source] = {
+            "routes": added_routes, "static": added_static, "prefix": fp,
+        }
+        self._index_dirty = True
+        return []
+
+    def unmount_app(self, source: str) -> bool:
+        """Remove all routes/static mounts a source contributed. Enables clean
+        reload-from-src: unmount, re-import module, mount_app again."""
+        meta = self._mounted_sources.pop(source, None)
+        if not meta:
+            return False
+        rids = {id(r) for r in meta["routes"]}
+        self._routes = [r for r in self._routes if id(r) not in rids]
+        for sm in meta["static"]:
+            try:
+                self._static_mounts.remove(sm)
+            except ValueError:
+                pass
+        self._index_dirty = True
+        return True
+
+    def list_mounted(self) -> List[Dict[str, str]]:
+        """Sources currently merged into this owner app (for UI display)."""
+        return [{"source": src, "prefix": meta["prefix"]}
+                for src, meta in self._mounted_sources.items()]
+
+    def relocate_root(self, fallback_prefix: str) -> bool:
+        """Manual trigger: move THIS app's own '/' to '/<fallback_prefix>'.
+
+        Used by the first app to step aside voluntarily. Returns False if no
+        own root route exists."""
+        fp = "/" + fallback_prefix.strip("/")
+        moved = False
+        for r in self._routes:
+            if r.path == "/":
+                r.path = fp
+                r.pattern = self._root_pattern(fp)
+                r.param_names = []
+                moved = True
+        if moved:
+            self._index_dirty = True
+        return moved
+
     def has_route(self, path: str, method: str) -> bool:
         """Check if a route exists for this path+method (including static mounts)."""
         if self.resolve_route(path, method) is not None:
@@ -547,3 +661,233 @@ connect();
                 "handler": type(ws.handler_obj).__qualname__,
             })
         return routes
+
+    # =========================================================================
+    # Server Runner (WSGI Only) — One-Port-Collective aware
+    # =========================================================================
+
+    def _join_existing(self, host: str, port: int, source=None,
+                       module_path=None, app_attr="app",
+                       fallback_prefix=None) -> bool:
+        """Ask the owner on host:port to import+mount this app from src.
+        Returns True only if the owner reports a successful merge."""
+        if not module_path:
+            return False  # owner needs the import path to re-load from src
+        import urllib.request
+        base = os.environ.get("TB_TRAY_URL") or f"http://{host}:{port}"
+        body = {"command": "mount_app", "args": {
+            "module": module_path, "attr": app_attr,
+            "prefix": fallback_prefix or "",
+            "source": source or module_path,
+        }}
+        try:
+            req = urllib.request.Request(
+                f"{base.rstrip('/')}/tray/command",
+                data=json.dumps(body).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            resp = urllib.request.urlopen(req, timeout=2.0)
+            data = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return False
+        return bool(data.get("ok") and (data.get("result") or {}).get("merged"))
+
+    @staticmethod
+    def request_unmount(source: str, host: str = "127.0.0.1",
+                        port: int = 8080) -> bool:
+        """Joiner-side: tell the owner to unload this source (clean deregister).
+        Call when the UI section is closed / no longer needed."""
+        import urllib.request
+        base = os.environ.get("TB_TRAY_URL") or f"http://{host}:{port}"
+        body = {"command": "unmount_app", "args": {"source": source}}
+        try:
+            req = urllib.request.Request(
+                f"{base.rstrip('/')}/tray/command",
+                data=json.dumps(body).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            resp = urllib.request.urlopen(req, timeout=2.0)
+            data = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return False
+        return bool(data.get("ok") and (data.get("result") or {}).get("unmounted"))
+
+    def serve(self, host: str = "127.0.0.1", port: int = 8080,
+              blocking: bool = True, enable_ws: Optional[bool] = None,
+              allow_specialist: bool = True, source: Optional[str] = None,
+              module_path: Optional[str] = None, app_attr: str = "app",
+              fallback_prefix: Optional[str] = None, standby: bool = False,
+              standby_retry_s: float = 3.0, standby_jitter_s: float = 0.5):
+        """Start this FastTB app via Waitress (WSGI) with One-Port-Collective role resolution.
+
+        On bind, the role is decided at runtime by the bind mutex on `host:port`
+        (no flag chooses it — whoever binds first wins), in this order:
+
+          1. PORT FREE        -> OWNER. Binds the port, serves '/' plus built-in
+                                 endpoints (/live, /api/*, auth, /health) via
+                                 as_wsgi_app. Accepts joiners if the process also
+                                 called register_collective_commands().
+          2. PORT BUSY + standby=True
+                              -> STANDBY. Does NOT join and does NOT move. Waits
+                                 standby_retry_s (+jitter) and retries the SAME
+                                 port forever. When the current owner dies, one
+                                 standby binds and becomes owner; the rest keep
+                                 waiting. This is the live-UI failover path.
+          3. PORT BUSY + module_path set (+ not standby)
+                              -> JOINER. Asks the owner (via POST /tray/command
+                                 mount_app) to re-import this module from src and
+                                 merge its routes (Modell A: own '/' relocates to
+                                 '/<fallback_prefix>', all other routes merge
+                                 top-level). On a successful merge this process
+                                 has nothing left to serve and serve() returns
+                                 None. On conflict (owner already owns one of this
+                                 app's non-root routes) it falls through to (4).
+          4. PORT BUSY + allow_specialist=True (+ not standby, no merge)
+                              -> SPECIALIST. Binds the next free port
+                                 (port+1..port+49) and serves itself there. Used
+                                 when an app is incompatible with the owner.
+                                 If allow_specialist=False, raises OSError instead.
+
+        Shutdown is forced: close() shuts the server immediately, does NOT wait
+        for open client connections to drain, and never calls os._exit — so it is
+        safe to run inside an owner process that hosts other mounted sub-apps.
+
+        Args:
+            host: Interface to bind, e.g. "127.0.0.1" (local only) or "0.0.0.0".
+            port: Preferred port. Role resolution (above) decides whether this
+                exact port is bound (owner/standby) or an offset is used
+                (specialist).
+            blocking: True  -> run in the calling thread until shutdown, then
+                              clean up and return.
+                      False -> start Waitress in a daemon thread and return the
+                              server handle immediately (non-blocking).
+            enable_ws: Force the WS infrastructure (ZMQ broker + WS worker +
+                event bridge) on/off. None = auto: enabled iff this app has
+                @app.websocket() routes registered.
+            allow_specialist: If the port is busy and no merge/standby applies,
+                allow binding the next free port. False -> raise OSError instead
+                of moving (use for fixed-port services like the live-UI).
+            source: Stable identity of this app for the owner's mount registry.
+                Used as the key for mount_app/unmount_app so the owner can later
+                unload exactly this contribution (reload-from-src). Defaults to
+                module_path when omitted.
+            module_path: Importable module path the OWNER re-imports from src to
+                obtain this app's FastTB instance (e.g.
+                "toolboxv2.utils.workers.fast.local_ui"). REQUIRED for the joiner
+                path (3); without it a busy port can only go standby or
+                specialist, never merge.
+            app_attr: Attribute name of the FastTB instance inside module_path
+                (default "app"). The owner does getattr(module, app_attr).
+            fallback_prefix: Prefix this app's own '/' relocates to when merging
+                under an owner that already owns '/', e.g. "app2" -> '/app2'.
+                Empty -> the owner derives a slug from this app's title.
+            standby: Enable the STANDBY role (2). When True, a busy port is never
+                joined or escaped — the process waits and retries the same port,
+                providing hot failover for the live-UI owner.
+            standby_retry_s: Base wait between standby rebind attempts (seconds).
+            standby_jitter_s: Upper bound of random jitter added to each standby
+                wait, to avoid thundering-herd when several standbys race for a
+                freed port.
+
+        Returns:
+            - blocking=True:  None (returns only after shutdown).
+            - blocking=False: the Waitress server handle (already running in a
+                              background thread).
+            - joiner merged:  None (the owner serves this app; nothing local to
+                              run).
+
+        Raises:
+            OSError: no bindable port within port..port+49 (specialist path), or
+                the port is busy with allow_specialist=False and no standby/merge.
+        """
+        import socket as _socket
+        from .fast_tb_handler import FastTBHandler
+        from waitress.server import create_server
+
+        handler = FastTBHandler(self)
+        wsgi_app = handler.as_wsgi_app(enable_ws=enable_ws)
+
+        server = None
+        bound_port = port
+        attempt = 0
+        while True:
+            try:
+                server = create_server(
+                    wsgi_app, host=host, port=bound_port,
+                    clear_untrusted_proxy_headers=True,
+                )
+                break
+            except OSError as e:
+                if e.errno not in (errno.EADDRINUSE,
+                                   getattr(errno, "WSAEADDRINUSE", 10048)):
+                    raise
+                # Standby: wait for the SAME port (live-UI failover). Never join,
+                # never move. First replica to bind owns '/'; rest keep waiting
+                # and take over when that one dies.
+                if standby:
+                    wait_s = standby_retry_s + random.uniform(0.0, standby_jitter_s)
+                    print(f"[FastTB] {host}:{port} busy, standby {wait_s:.1f}s")
+                    time.sleep(wait_s)
+                    continue
+                # First attempt: try to join the owner as a sub-app.
+                if attempt == 0 and self._join_existing(
+                    host, port, source, module_path, app_attr, fallback_prefix
+                ):
+                    print(f"[FastTB] joined owner on {host}:{port}")
+                    return None
+                if not allow_specialist:
+                    raise
+                bound_port += 1  # specialist: next free port
+                attempt += 1
+                if attempt >= 50:
+                    raise OSError(f"[FastTB] no free port in {port}..{port + 49}")
+
+        if server is None:
+            raise OSError(f"[FastTB] no free port in {port}..{port + 49}")
+        self._server = server
+        role = "owner" if bound_port == port else f"specialist:{bound_port}"
+        print(f"[FastTB] Serving on http://{host}:{bound_port} "
+              f"({role}, {'blocking' if blocking else 'non-blocking'})")
+
+        if not blocking:
+            t = threading.Thread(target=server.run, daemon=True,
+                                 name="fasttb-waitress")
+            t.start()
+            return server
+
+        try:
+            server.run()
+        except KeyboardInterrupt:
+            print("\n[FastTB] Strg+C — shutting down…")
+        finally:
+            self.close()  # forced close, no os._exit
+        return None
+
+    async def serve_async(self, host: str = "127.0.0.1", port: int = 8080,
+                          blocking: bool = True, enable_ws: Optional[bool] = None,
+                          allow_specialist: bool = True):
+        """Async wrapper: starts Waitress in a background thread."""
+        import asyncio
+        server = self.serve(host=host, port=port, blocking=False,
+                            enable_ws=enable_ws, allow_specialist=allow_specialist)
+        if server is None or not blocking:
+            return server
+        try:
+            while True:
+                await asyncio.sleep(3600)
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            print("\n[FastTB] Async shutdown…")
+        finally:
+            self.close()
+        return None
+
+    def close(self):
+        """Stop the server immediately. Does NOT wait for open connections and
+        does NOT call os._exit (safe in a shared owner process)."""
+        srv = self._server
+        self._server = None
+        if srv is not None:
+            try:
+                srv.close()
+            except Exception:
+                pass

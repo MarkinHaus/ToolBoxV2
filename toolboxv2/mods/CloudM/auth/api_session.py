@@ -103,6 +103,29 @@ async def refresh_token(app: App = None, refresh_token: str = None, data: dict =
     return Result.ok(tokens)
 
 
+@export(mod_name=Name, version=version, api=False, interface=ToolBoxInterfaces.native)
+async def refresh_jwt_token(
+    app: App = None, session_id: str = None, user_id: str = None, data: dict = None
+) -> Result:
+    """In-process token refresh by user_id — used by RegistryClient's fallback.
+
+    NOT exposed over HTTP (api=False): mints a fresh token pair from the stored
+    user, trusting the in-process call boundary. Returns {"session_token": <access>}.
+    """
+    if app is None:
+        app = get_app(f"{Name}.refresh_jwt_token")
+    if data:
+        user_id = user_id or data.get("user_id")
+        session_id = session_id or data.get("session_id")
+    if not user_id:
+        return Result.default_user_error("user_id required")
+    user = await _load_user(app, user_id)
+    if not user:
+        return Result.default_user_error("User not found")
+    tokens = _generate_tokens(user)
+    return Result.ok({"session_token": tokens["access_token"], **tokens})
+
+
 @export(mod_name=Name, version=version, api=True)
 async def logout(app: App = None, token: str = None, data: dict = None) -> ApiResult:
     """Logout: blacklist current access token."""

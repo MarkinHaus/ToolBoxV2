@@ -54,7 +54,12 @@ def get_or_create_device_key():
         if os.path.exists(DEVICE_KEY_PATH):
             with open(DEVICE_KEY_PATH, "rb") as key_file:
                 encrypted_data = key_file.read()
-            decrypted_key = decrypt_with_key(encrypted_data, aes_key)
+            import cryptography
+            try:
+                decrypted_key = decrypt_with_key(encrypted_data, aes_key)
+            except cryptography.exceptions.InvalidTag:
+                raise RuntimeError("Invalid Device Key | or started tb thru code?")
+
             return decrypted_key.decode()
         else:
             print("Creating new device key")

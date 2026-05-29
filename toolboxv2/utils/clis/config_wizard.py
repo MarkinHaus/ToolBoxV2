@@ -22,6 +22,7 @@ from .cli_printing import (
     c_print,
     Colors,
 )
+from .cli_input import menu_select
 
 
 # =================== Environment Template Parser ===================
@@ -117,30 +118,15 @@ def prompt_input(prompt: str, default: str = "", password: bool = False,
 
 def prompt_choice(prompt: str, choices: List[str], default: int = 0) -> str:
     """Let user choose from a list of options."""
-    print()
-    c_print(f"  {prompt}")
-    print()
-
-    for idx, choice in enumerate(choices):
-        marker = f"{Colors.CYAN}▶{Colors.RESET}" if idx == default else " "
-        c_print(f"  {marker} {idx + 1}. {choice}")
-
-    print()
-
-    try:
-        selection = input(f"{Colors.CYAN}❯{Colors.RESET} Choose [1-{len(choices)}] (default: {default + 1}): ").strip()
-
-        if not selection:
-            return choices[default]
-
-        idx = int(selection) - 1
-        if 0 <= idx < len(choices):
-            return choices[idx]
-
-        print_status(f"Please enter 1-{len(choices)}", "warning")
-        return prompt_choice(prompt, choices, default)
-    except (ValueError, KeyboardInterrupt, EOFError):
+    sel = menu_select(
+        choices,
+        title=prompt,
+        start=default,
+        hint="↑/↓ or W/S · Enter · q to back"
+    )
+    if sel is None:
         return choices[default]
+    return sel
 
 
 def prompt_bool(prompt: str, default: bool = True) -> bool:

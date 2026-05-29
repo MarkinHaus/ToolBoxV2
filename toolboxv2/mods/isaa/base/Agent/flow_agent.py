@@ -1548,22 +1548,40 @@ class FlowAgent:
         self.active_session = session_id
         self.is_running = True
 
+        is_new_ctx = False
+        if query.strip().endswith("#new-ctx"):
+            query = query.strip()[:len("#new-ctx")]
+            is_new_ctx = True
+
         session = await self.session_manager.get_or_create(session_id)
         self.init_session_tools(session)
+
+        engine = self._get_execution_engine(human_online=human_online)
+
+        # Tolerantes Auto-Resume
+        if not execution_id and not is_new_ctx:
+            last_run_id = engine._session_last_run.get(session_id)
+            if last_run_id:
+                try:
+                    res = await engine.resume(
+                        execution_id=last_run_id,
+                        max_iterations=max_iterations,
+                        content=query,
+                        stream=False
+                    )
+                    if isinstance(res, str) and res.startswith("Error:"):
+                        pass  # Tolerant fallback: Neuer Context wird erstellt
+                    else:
+                        return (res, engine.get_execution(last_run_id)) if get_ctx else res
+                except Exception:
+                    pass  # Tolerant fallback
 
         # Check for resume
         ctx = None
         if execution_id:
-            engine = self._get_execution_engine(
-                human_online=human_online,
-            )
             ctx = engine.get_execution(execution_id)
 
         try:
-            # Get or create execution engine
-            engine = self._get_execution_engine(
-                human_online=human_online,
-            )
 
             # Execute
             result = await engine.execute(
@@ -1801,6 +1819,11 @@ class FlowAgent:
         self.active_session = session_id
         self.is_running = True
 
+        is_new_ctx = False
+        if query.strip().endswith("#new-ctx"):
+            query = query.strip()[:len("#new-ctx")]
+            is_new_ctx = True
+
         # TTFU: Sofortiges Status-Signal an UI (vor jeglichem I/O)
         yield {
             "type": "status",
@@ -1814,6 +1837,27 @@ class FlowAgent:
         # Engine einmalig holen (war vorher doppelt)
         engine = self._get_execution_engine(human_online=human_online)
 
+        # Tolerantes Auto-Resume
+        if not execution_id and not is_new_ctx:
+            last_run_id = engine._session_last_run.get(session_id)
+            if last_run_id:
+                try:
+                    res = await engine.resume(
+                        execution_id=last_run_id,
+                        max_iterations=max_iterations,
+                        content=query,
+                        stream=True
+                    )
+                    if isinstance(res, tuple) and len(res) == 2 and callable(res[0]):
+                        stream_func, resume_ctx = res
+                        async for chunk in stream_func(resume_ctx):
+                            yield chunk
+                        return
+                    else:
+                        yield {"type": "status", "status_msg": f"Auto-resume info: {res}. Starting fresh."}
+                except Exception as e:
+                    yield {"type": "status", "status_msg": f"Auto-resume failed: {e}. Starting fresh."}
+
         # Check for resume
         ctx = None
         if execution_id:
@@ -1821,7 +1865,6 @@ class FlowAgent:
 
         try:
             yield {"type": "status", "status_msg": "Preparing execution"}
-
             # Get stream generator
             stream_func, ctx = await engine.execute_stream(
                 query=query,

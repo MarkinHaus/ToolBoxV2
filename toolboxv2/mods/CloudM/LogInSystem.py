@@ -10,7 +10,7 @@ CLI Auth Methods:
 2. Device Invite Code: Logged-in user generates 6-digit code -> CLI enters code -> JWT issued
 
 Web Login:
-Redirects to /web/scripts/login.html (Discord/Google/Passkey UI)
+Redirects to /web/assets/login.html (Discord/Google/Passkey UI)
 """
 
 import json
@@ -671,4 +671,4 @@ async def open_web_login_web(app: App = None, request=None, **kwargs):
     Web login page - redirects to custom login.html.
     No Clerk SDK dependency.
     """
-    return Result.redirect("/web/scripts/login.html")
+    return Result.redirect("/web/assets/login.html")

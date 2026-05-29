@@ -7,8 +7,22 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
+class AsyncTestCase(unittest.TestCase):
+    """Base class providing async_run() for all async tests."""
+
+    def async_run(self, coro):
+        return asyncio.get_event_loop().run_until_complete(coro)
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            asyncio.get_event_loop()
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+
+
 def run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return AsyncTestCase().async_run(coro)
 
 
 class TestDebouncer(unittest.TestCase):

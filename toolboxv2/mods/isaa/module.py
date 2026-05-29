@@ -554,6 +554,7 @@ class Tools(MainTool):
         self.color = "VIOLET2"
         self.config = {
             "controller-init": False,
+            "catchup_missed_jobs": True,
             "agents-name-list": [],
             "FASTMODEL": os.getenv("FASTMODEL", "ollama/llama3.1"),
             "AUDIOMODEL": os.getenv("AUDIOMODEL", "groq/whisper-large-v3-turbo"),
@@ -1472,6 +1473,19 @@ class Tools(MainTool):
 
     def on_start(self):
         threading.Thread(target=self.load_to_mem_sync, daemon=True).start()
+
+        async def _start_scheduler():
+            await self.job_scheduler.start()
+            if self.config.get("catchup_missed_jobs", True):
+                await self.job_scheduler.fire_missed_jobs()
+
+        try:
+            coro = asyncio.create_task(_start_scheduler(), name="JobScheduler")
+            self.app.run_bg_task_advanced(coro)
+        except RuntimeError as e:
+            self.print(f"JobScheduler Error starting {e}")
+            self.app.debug_rains(e)
+
         self.print("ISAA module started.")
 
     def load_keys_from_env(self):
@@ -1481,7 +1495,7 @@ class Tools(MainTool):
         self.config["VAULTS"] = os.getenv("VAULTS")
 
     async def on_exit(self):
-        tasks = []
+        tasks = [self.job_scheduler.stop()]
         for agent_name, agent_instance in self.config.items():
             if agent_name.startswith("agent-instance-") and agent_instance:
                 if isinstance(agent_instance, FlowAgent):

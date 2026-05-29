@@ -14,6 +14,8 @@ from platform import node, system
 from typing import List, Tuple
 
 from dotenv import load_dotenv
+
+
 load_dotenv()
 
 import os
@@ -34,6 +36,8 @@ from toolboxv2.utils.extras.Style import Spinner, Style
 from toolboxv2.utils.system import CallingObject, get_state_from_app
 from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
 from toolboxv2.utils.system.getting_and_closing_app import a_save_closing_app
+from toolboxv2.utils.system.exe_bg import run_executable_in_background
+from toolboxv2.utils.clis.cli_input import menu_select, menu_select_async
 from .utils.toolbox import App as TbApp
 
 # ── WEB-Feature: workers, proxy, dashboard ────────────────────────────────────
@@ -240,24 +244,40 @@ def _run_business_overview():
     print(f"\n  ToolBoxV2 Status: {health}  ({running}/{total} services)  — run 'tb status' for details\n")
 
 
+import os
+import sys
+import subprocess
+from platform import system
+
 def start(pidname, args, filename):
     caller = args[0]
-    args = args[1:]
-    args = ["-bgr" if arg == "-bg" else arg for arg in args]
+    sub_args = args[1:]
+    sub_args = ["-bgr" if arg == "-bg" else arg for arg in sub_args]
 
-    if caller.endswith("tb"):
-        args = ["tb"] + args
-    else:
-        args = [sys.executable, "-m", "tb"] + args
     if system() == "Windows":
-        DETACHED_PROCESS = 0x00000008
-        p = subprocess.Popen(args, creationflags=DETACHED_PROCESS)
-    else:  # sys.executable, "-m",
-        p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # Ersetze python.exe durch pythonw.exe, um Fenster vollständig zu unterdrücken
+        exe_name = os.path.basename(sys.executable)
+        if exe_name.lower().startswith("python") and not exe_name.lower().startswith("pythonw"):
+            new_exe = exe_name.lower().replace("python", "pythonw")
+            executable = os.path.join(os.path.dirname(sys.executable), new_exe)
+            if not os.path.exists(executable):
+                executable = sys.executable
+        else:
+            executable = sys.executable
+
+        # Nutze direkt das Python-Modul, um den tb.exe Console-Wrapper zu umgehen
+        run_args = ["-m", "tb"] + sub_args
+    else:
+        executable = sys.executable
+        run_args = ["-m", "tb"] + sub_args
+
+    # Plattformspezifisches, lautloses Starten ohne Terminalfenster
+    p = run_executable_in_background(executable, run_args)
+
     pid = p.pid
     with open(filename, "w", encoding="utf8") as f:
         f.write(str(pid))
-    get_app().sprint(f"Service {pidname} started")
+    get_app().sprint(f"Service {pidname} started (PID {pid})")
 
 
 def stop(pidfile, pidname):
@@ -328,22 +348,29 @@ def uninstall_service():
 
 async def setup_service_windows():
     path = "C:/ProgramData/Microsoft/Windows/Start Menu/Programs/Startup"
-    print("Select mode:")
-    print("1. Init (first-time setup)")
-    print("2. Uninstall")
-    print("3. Show window")
-    print("4. hide window")
-    print("0. Exit")
 
-    mode = input("Enter the mode number: ").strip()
+    mode = await menu_select_async(
+        [
+            ("init", "Init (first-time setup)"),
+            ("uninstall", "Uninstall"),
+            ("show", "Show window"),
+            ("hide", "hide window"),
+            ("exit", "Exit")
+        ],
+        title="Select mode:",
+        hint="↑/↓ or W/S · Enter · q to back"
+    )
+
+    if mode in (None, "exit"):
+        return
 
     if not os.path.exists(path):
         print("pleas press win + r and enter")
         print("1. for system -> shell:common startup")
         print("2. for user -> shell:startup")
         path = input("Enter the path that opened: ")
-
-    if mode == "1":
+    res = None
+    if mode == "init":
         if os.path.exists(path + "/tb_start.bat"):
             os.remove(path + "/tb_start.bat")
         try:
@@ -353,47 +380,49 @@ async def setup_service_windows():
             print(f"Init Service in {path}")
         except PermissionError:
             print("Pleas run as Admin")
-    elif mode == "3":
-        await get_app().show_console()
-    elif mode == "4":
-        await get_app().hide_console()
-    elif mode == "0":
-        pass
-    elif mode == "2":
-        os.remove(path + "/tb_start.bat")
-        print(f"Removed Service from {path}")
-    else:
-        await setup_service_windows()
-
+    elif mode == "show":
+        res = get_app().show_console()
+    elif mode == "hide":
+        res = get_app().hide_console()
+    elif mode == "uninstall":
+        try:
+            os.remove(path + "/tb_start.bat")
+            print(f"Removed Service from {path}")
+        except FileNotFoundError:
+            print("Service file not found.")
+    if res is not None:
+        await res
 
 def setup_service_linux():
-    print("Select mode:")
-    print("1. Init (first-time setup)")
-    print("2. Start / Stop / Restart")
-    print("3. Status")
-    print("4. Uninstall")
+    mode = menu_select(
+        [
+            ("init", "Init (first-time setup)"),
+            ("manage", "Start / Stop / Restart"),
+            ("status", "Status"),
+            ("uninstall", "Uninstall"),
+            ("show", "Show window"),
+            ("hide", "hide window")
+        ],
+        title="Select mode:",
+        hint="↑/↓ or W/S · Enter · q to back"
+    )
 
-    print("5. Show window")
-    print("6. hide window")
+    if mode is None:
+        return
 
-    mode = int(input("Enter the mode number: "))
-
-    if mode == 1:
+    if mode == "init":
         init_service()
-    elif mode == 2:
+    elif mode == "manage":
         action = input("Enter 'start', 'stop', or 'restart': ")
         manage_service(action)
-    elif mode == 3:
+    elif mode == "status":
         show_service_status()
-    elif mode == 4:
+    elif mode == "uninstall":
         uninstall_service()
-    elif mode == 5:
+    elif mode == "show":
         get_app().show_console()
-    elif mode == 6:
+    elif mode == "hide":
         get_app().hide_console()
-    else:
-        print("Invalid mode")
-
 
 # =================== Constants ===================
 
@@ -1286,12 +1315,12 @@ def parse_args():
     # Handle custom help
     if args.help:
         parser.print_help()
-        sys.exit(0)
+        os._exitt(0)
 
     # Handle guide
     if args.guide:
         show_interactive_guide()
-        sys.exit(0)
+        os._exitt(0)
 
     # Add runner information
     if runner_name:
@@ -1485,7 +1514,7 @@ async def setup_app(ov_name=None, App=TbApp):
                 target=get_state_from_app,
                 args=(
                     tb_app,
-                    os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app"),
+                    os.getenv("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app"),
                     "https://github.com/MarkinHaus/ToolBoxV2/tree/master/toolboxv2/",
                 ),
                 daemon=True,
@@ -1509,17 +1538,33 @@ async def setup_app(ov_name=None, App=TbApp):
 
     if args.background_application_runner:
         from toolboxv2.utils.extras.notification import quick_info
+        import threading
 
-        quick_info(
+        threading.Thread(target=quick_info, args=(
             "Background Application",
-            f"Starting background application {sys.argv}",
-            timeout=12000,
-        )
+            f"Starting background application tb # {' '.join(sys.argv[1:])}"),
+             kwargs={
+                 "timeout": 12000
+             } , daemon=True
+        ).start()
         daemon_app = await DaemonApp(
             tb_app, args.host, args.port if args.port != 5000 else 6587, t=False
         )
         tb_app.daemon_app = daemon_app
         args.live_application = False
+
+        async def check_and_start_fallback():
+            await asyncio.sleep(2.0)  # Dem Tauri-Client Zeit zum Verbinden geben
+            from toolboxv2.utils.workers.fast.tray_api import has_active_subscribers
+            if not has_active_subscribers():
+                from toolboxv2.utils.extras.fallback_tray import run_fallback_tray
+                tb_app.sprint("No Tauri listener detected. Launching Fallback Tray...")
+                # Importiere die oben definierte Funktion
+                run_fallback_tray(tb_app)
+
+        # await check_and_start_fallback()
+        # tb_app.run_bg_task_advanced(check_and_start_fallback())
+
     elif args.background_application:
         tb_app.sprint("Starting background application", not args.kill)
         if not args.kill:
@@ -1530,7 +1575,8 @@ async def setup_app(ov_name=None, App=TbApp):
                 start(args.name, sys.argv, filename=f"{info_folder}bg-{args.name}.pid")
                 # NEU: Parent-Prozess sollte hier beenden
                 tb_app.sprint(f"Background process spawned. Exiting parent.")
-                sys.exit(0)
+                #sys.exit(0)
+                os._exit(0)
         else:
             if "-m " not in sys.argv:
                 pid_file = f"{info_folder}bg-{args.name}.pid"
@@ -2135,7 +2181,7 @@ def _build_guarded_runners(runner: dict) -> dict:
             print(f"\n❌ Feature '{name}' is not enabled.")
             print(f"   Enable with: tb manifest enable {name}")
             print(f"   Install deps: pip install toolboxv2[{name}]\n")
-            import sys; sys.exit(1)
+            import sys; os._exitt(1)
         return _handler
 
     # web-abhängige Runner
@@ -2183,12 +2229,13 @@ def main_runner():
                 print(
                     f"Service manager not supported on this platform {system()}"
                 )
-        sys.exit(run_service_manager_startup())
+        else:
+            os._exitt(run_service_manager_startup())
 
     if "--print-root" in sys.argv:
         from toolboxv2 import tb_root_dir
         print(str(tb_root_dir.parent))
-        sys.exit(0)
+        os._exitt(0)
     # Normale Main-App
     else:
         # Clear screen for clean start
@@ -2237,7 +2284,7 @@ def main_runner():
             if other_runners:
                 print(f"  \033[36mOther:\033[0m     {', '.join(other_runners)}")
             print(f"\n\033[2mUse 'tb <command> --help' for more information.\033[0m\n")
-            sys.exit(1)
+            os._exitt(1)
 
         try:
             loop = asyncio.new_event_loop()
@@ -2357,4 +2404,4 @@ def server_helper(instance_id: str = "main", db_mode=None):
 
 if __name__ == "__main__":
     # print("STARTED START FROM __main__")
-    sys.exit(main_runner())
+    os._exitt(main_runner())

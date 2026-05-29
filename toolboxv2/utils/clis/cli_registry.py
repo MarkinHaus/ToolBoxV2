@@ -5,15 +5,16 @@
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Optional
 
-from toolboxv2.mods.CloudM.LogInSystem import _load_cli_token
 from toolboxv2.utils.clis.cli_printing import (
     Colors, c_print, print_box_header, print_box_footer,
     print_box_content, print_status, print_table_header, print_table_row
 )
+from .cli_input import menu_select_async
 
 # Import RegistryClient
 from toolboxv2.utils.extras.registry_client import (
@@ -704,20 +705,10 @@ async def registry_login(args):
 
     app = get_app("registry_login")
 
-    # Get token from CloudM.Auth
-    #result = await app.a_run_any(
-    #    "CloudM.LogInSystem",
-    #    "get_token",
-    #    get_results=True
-    #)
-
-    #if result.is_error():
-    #    print_status("Failed to get authentication token", "error")
-    #    print_status("Make sure CloudM.Auth module is loaded", "warning")
-    #    return 1
-    await asyncio.sleep(0.25)
-    token_data = await _load_cli_token(app, app.session.username)
-    token = token_data.get("access_token")
+    token = await _current_cloudm_token(app)
+    if not token:
+        print_status("No CloudM session found — sign in first (tb local-cli)", "error")
+        return 1
 
     if not token:
         print_status("No token available", "error")
@@ -1075,34 +1066,28 @@ async def registry_admin_publisher(args):
 
             c_print(f"\n  Total: {len(publishers)} publisher(s)")
 
+
         elif args.action == "verify":
-            if not args.target:
+
+            if not ags.target:
                 # Interactive: show pending list, let user pick
                 pending = await client.admin_list_pending_publishers()
                 if not pending:
                     print_status("No pending verification requests", "info")
                     return 0
 
-                print_box_header("Pending Verification Requests", "⏳")
-                print_box_footer()
-                for i, p in enumerate(pending, 1):
-                    c_print(f"  {Colors.CYAN}{i}.{Colors.RESET} {p.name} ({p.display_name}) [{p.id}]")
+                options = [(p, f"{p.name} ({p.display_name}) [{p.id}]") for p in pending]
+                selected_pub = await menu_select_async(
+                    options,
+                    title="Pending Verification Requests",
+                    hint="↑/↓ or W/S · Enter · q to back"
+                )
+                if selected_pub is None:
+                    print_status("Cancelled", "info")
+                    return 0
+                target = selected_pub.id
+                target_name = selected_pub.name
 
-                c_print("")
-                try:
-                    choice = input("  Select publisher # to verify (or 'q' to cancel): ").strip()
-                    if choice.lower() == 'q':
-                        print_status("Cancelled", "info")
-                        return 0
-                    idx = int(choice) - 1
-                    if idx < 0 or idx >= len(pending):
-                        print_status("Invalid selection", "error")
-                        return 1
-                    target = pending[idx].id
-                    target_name = pending[idx].name
-                except (ValueError, IndexError):
-                    print_status("Invalid selection", "error")
-                    return 1
             else:
                 target = args.target
                 target_name = args.target
@@ -1120,33 +1105,28 @@ async def registry_admin_publisher(args):
                 print_status("Verification failed", "error")
                 return 1
 
+
         elif args.action == "reject":
+
             if not args.target:
+
                 pending = await client.admin_list_pending_publishers()
                 if not pending:
                     print_status("No pending verification requests", "info")
+
                     return 0
+                options = [(p, f"{p.name} ({p.display_name}) [{p.id}]") for p in pending]
+                selected_pub = await menu_select_async(
+                    options,
+                    title="Pending Verification Requests",
+                    hint="↑/↓ or W/S · Enter · q to back"
+                )
+                if selected_pub is None:
+                    print_status("Cancelled", "info")
+                    return 0
+                target = selected_pub.id
+                target_name = selected_pub.name
 
-                print_box_header("Pending Verification Requests", "⏳")
-                print_box_footer()
-                for i, p in enumerate(pending, 1):
-                    c_print(f"  {Colors.CYAN}{i}.{Colors.RESET} {p.name} ({p.display_name}) [{p.id}]")
-
-                c_print("")
-                try:
-                    choice = input("  Select publisher # to reject (or 'q' to cancel): ").strip()
-                    if choice.lower() == 'q':
-                        print_status("Cancelled", "info")
-                        return 0
-                    idx = int(choice) - 1
-                    if idx < 0 or idx >= len(pending):
-                        print_status("Invalid selection", "error")
-                        return 1
-                    target = pending[idx].id
-                    target_name = pending[idx].name
-                except (ValueError, IndexError):
-                    print_status("Invalid selection", "error")
-                    return 1
             else:
                 target = args.target
                 target_name = args.target
@@ -1169,8 +1149,11 @@ async def registry_admin_publisher(args):
                 print_status("Rejection failed", "error")
                 return 1
 
+
         elif args.action == "revoke":
+
             if not args.target:
+
                 # Show verified publishers to pick from
                 verified = await client.list_publishers(
                     page=1, per_page=100, status="verified",
@@ -1179,28 +1162,24 @@ async def registry_admin_publisher(args):
                     print_status("No verified publishers found", "info")
                     return 0
 
-                print_box_header("Verified Publishers", "🛡️")
-                print_box_footer()
-                for i, p in enumerate(verified, 1):
-                    c_print(f"  {Colors.CYAN}{i}.{Colors.RESET} {p.name} ({p.display_name}) [{p.id}]")
+                options = [(p, f"{p.name} ({p.display_name}) [{p.id}]") for p in verified]
+                selected_pub = await menu_select_async(
+                    options,
+                    title="Verified Publishers",
+                    hint="↑/↓ or W/S · Enter · q to back"
+                )
 
-                c_print("")
-                try:
-                    choice = input("  Select publisher # to revoke (or 'q' to cancel): ").strip()
-                    if choice.lower() == 'q':
-                        print_status("Cancelled", "info")
-                        return 0
-                    idx = int(choice) - 1
-                    if idx < 0 or idx >= len(verified):
-                        print_status("Invalid selection", "error")
-                        return 1
-                    target = verified[idx].id
-                    target_name = verified[idx].name
-                except (ValueError, IndexError):
-                    print_status("Invalid selection", "error")
-                    return 1
+                if selected_pub is None:
+                    print_status("Cancelled", "info")
+                    return 0
+
+                target = selected_pub.id
+                target_name = selected_pub.name
+
             else:
+
                 target = args.target
+
                 target_name = args.target
 
             notes = args.notes
@@ -1266,16 +1245,44 @@ async def registry_health(args):
 
 
 async def _get_auth_token() -> Optional[str]:
-    """Get stored auth token."""
-    token_file = Path.home() / ".tb-registry" / "auth_token.txt"
+    """Live CloudM access token (mode-agnostic), file-cache only as fallback."""
+    app = get_app("registry._get_auth_token")
+    token = await _current_cloudm_token(app)
+    if token:
+        return token
+    token_file = Path(app.appdata) / ".tb-registry" / "auth_token.txt"
     if token_file.exists():
         return token_file.read_text().strip()
+    return None
+
+async def _current_cloudm_token(app) -> Optional[str]:
+    """Current CloudM access token, mode-agnostic (remote session.py / local blob)."""
+    s = getattr(app, "session", None)
+    tok = getattr(s, "access_token", None)
+    if tok:
+        return tok
+    # remote: restore from session.py persistence
+    if s is not None and os.getenv("TOOLBOXV2_REMOTE_BASE"):
+        try:
+            if await s.login() and s.access_token:
+                return s.access_token
+        except Exception:
+            pass
+    # local: in-process restore + auto-refresh
+    try:
+        from toolboxv2.mods.CloudM.LogInSystem import _check_existing_session
+        sd = await _check_existing_session(app)
+        if sd and sd.get("access_token"):
+            return sd["access_token"]
+    except Exception:
+        pass
     return None
 
 
 async def _save_auth_token(token: Optional[str]):
     """Save auth token to file."""
-    token_file = Path.home() / ".tb-registry" / "auth_token.txt"
+    app = get_app("registry._set_auth_token")
+    token_file = Path(app.data_dir) / ".tb-registry" / "auth_token.txt"
     token_file.parent.mkdir(parents=True, exist_ok=True)
     if token:
         token_file.write_text(token)

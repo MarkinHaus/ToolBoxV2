@@ -11,7 +11,7 @@ Tests login functionality, magic links, and UI management:
 
 All network/external operations are mocked.
 """
-
+import asyncio
 import unittest
 import json
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -154,8 +154,21 @@ class TestVersionDisplay(unittest.TestCase):
             self.assertEqual(result, "2.0.0")
         mock_self.print.assert_called_once()
 
+class AsyncTestCase(unittest.TestCase):
+    """Base class providing async_run() for all async tests."""
 
-class TestAccountCreation(unittest.TestCase):
+    def async_run(self, coro):
+        return asyncio.get_event_loop().run_until_complete(coro)
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            asyncio.get_event_loop()
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+
+
+class TestAccountCreation(AsyncTestCase):
     """Tests for account creation workflows"""
 
     @patch('toolboxv2.mods.CloudM.extras.get_app')
@@ -227,7 +240,7 @@ class TestInitializeAdminPanel(unittest.TestCase):
         mock_app.run_any.assert_called_once()
 
 
-class TestCLIWebLogin(unittest.TestCase):
+class TestCLIWebLogin(AsyncTestCase):
     """Tests for CLI web login functions"""
 
     @patch('toolboxv2.mods.CloudM.extras.get_app')

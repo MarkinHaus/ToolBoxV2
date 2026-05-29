@@ -196,13 +196,21 @@ class ZMQConfig(BaseModel):
 
 class ManagerConfig(BaseModel):
     """Worker manager configuration."""
-    web_ui_enabled: bool = Field(default=True)
     web_ui_host: str = Field(default="127.0.0.1")
     web_ui_port: int = Field(default=9000)
     health_check_interval: int = Field(default=10)
     restart_delay: int = Field(default=2)
     max_restart_attempts: int = Field(default=5)
     live_dashboard_key: str = Field(default="")
+
+    control_socket: str = Field(default="")
+    pid_file: str = Field(default="")
+    log_file: str = Field(default="")
+    rolling_update_delay: int = Field(default=5)
+    live_ui_host: str = Field(default="127.0.0.1")
+    live_ui_port: int = Field(default=8700)  # dedicated port for the '/' live-UI owner
+    live_ui_replicas: int = Field(default=2)  # 1 owner + (n-1) standby for failover
+
 
 
 class ServicesConfig(BaseModel):

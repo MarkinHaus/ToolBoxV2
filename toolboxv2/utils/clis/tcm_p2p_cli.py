@@ -30,6 +30,7 @@ except ImportError:
     print("ERROR: ToolBoxV2 not found. Please install it first.")
     sys.exit(1)
 
+from .cli_input import menu_select
 # Required dependencies
 try:
     import psutil
@@ -1241,45 +1242,42 @@ class InteractiveP2PCLI:
     {Style.GREEN('╚════════════════════════════════════════════════════════════════════╝')}
     """)
 
-                print(f"""
-    {Style.Bold(Style.WHITE('┌─ 💬 CHAT MENU ───────────────────────────────────────────────────────┐'))}
-    {Style.WHITE('│')}                                                                      {Style.WHITE('│')}
-    {Style.WHITE('│')}  {Style.CYAN('1.')} {Style.WHITE('Create Room')}         - Create new E2E encrypted chat room         {Style.WHITE('│')}
-    {Style.WHITE('│')}  {Style.CYAN('2.')} {Style.WHITE('Join Room')}           - Join existing room by ID                   {Style.WHITE('│')}
-    {Style.WHITE('│')}  {Style.CYAN('3.')} {Style.WHITE('List Rooms')}          - Show available chat rooms                  {Style.WHITE('│')}
-    {Style.WHITE('│')}  {Style.CYAN('4.')} {Style.WHITE('Interactive Chat')}    - Start live chat (current room)             {Style.WHITE('│')}
-    {Style.WHITE('│')}  {Style.CYAN('5.')} {Style.WHITE('Send File')}           - Transfer file (E2E encrypted)              {Style.WHITE('│')}
-    {Style.WHITE('│')}  {Style.CYAN('6.')} {Style.WHITE('Voice Chat')}          - Start voice chat (beta)                    {Style.WHITE('│')}
-    {Style.WHITE('│')}  {Style.CYAN('7.')} {Style.WHITE('Lock Room')}           - Lock current room (owner only)             {Style.WHITE('│')}
-    {Style.WHITE('│')}  {Style.CYAN('8.')} {Style.WHITE('Leave Room')}          - Leave current chat room                    {Style.WHITE('│')}
-    {Style.WHITE('│')}  {Style.CYAN('0.')} {Style.WHITE('Back')}                - Return to main menu                        {Style.WHITE('│')}
-    {Style.WHITE('│')}                                                                      {Style.WHITE('│')}
-    {Style.Bold(Style.WHITE('└──────────────────────────────────────────────────────────────────────┘'))}
-    """)
+                options = [
+                    ("create", "Create Room - Create new E2E encrypted chat room"),
+                    ("join", "Join Room - Join existing room by ID"),
+                    ("list", "List Rooms - Show available chat rooms"),
+                    ("chat", "Interactive Chat - Start live chat (current room)"),
+                    ("file", "Send File - Transfer file (E2E encrypted)"),
+                    ("voice", "Voice Chat - Start voice chat (beta)"),
+                    ("lock", "Lock Room - Lock current room (owner only)"),
+                    ("leave", "Leave Room - Leave current chat room"),
+                    ("back", "Back - Return to main menu")
+                ]
 
-                choice = input(f"\n{Style.CYAN('❯')} {Style.WHITE('Select option:')} ").strip()
+                choice = menu_select(
+                    options,
+                    title=f"{Style.Bold(Style.WHITE('┌─ 💬 CHAT MENU ───────────────────────────────────────────────────────┐'))}",
+                    hint="↑/↓ or W/S · Enter · q to back"
+                )
 
-                if choice == '0':
+                if choice in (None, "back"):
                     break
-                elif choice == '1':
+                elif choice == "create":
                     self._create_chat_room()
-                elif choice == '2':
+                elif choice == "join":
                     self._join_chat_room()
-                elif choice == '3':
+                elif choice == "list":
                     self._list_chat_rooms()
-                elif choice == '4':
+                elif choice == "chat":
                     self._interactive_chat()
-                elif choice == '5':
+                elif choice == "file":
                     self._send_file()
-                elif choice == '6':
+                elif choice == "voice":
                     self._voice_chat()
-                elif choice == '7':
+                elif choice == "lock":
                     self._lock_room()
-                elif choice == '8':
+                elif choice == "leave":
                     self._leave_room()
-                else:
-                    print(f"{Style.RED('Invalid option')}")
-                    time.sleep(1)
         finally:
             if self._current_room_name() is not None:
                 self._leave_room(auto=True)
@@ -1738,33 +1736,30 @@ class InteractiveP2PCLI:
             self.clear_screen()
             self.print_header()
 
-            print(f"""
-{Style.Bold(Style.WHITE('┌─ 🔧 P2P CONFIGURATION ───────────────────────────────────────────────┐'))}
-{Style.WHITE('│')}                                                                      {Style.WHITE('│')}
-{Style.WHITE('│')}  {Style.CYAN('1.')} {Style.WHITE('Start Relay Server')}  - Become a relay for P2P connections         {Style.WHITE('│')}
-{Style.WHITE('│')}  {Style.CYAN('2.')} {Style.WHITE('Connect as Peer')}     - Connect to relay and other peers           {Style.WHITE('│')}
-{Style.WHITE('│')}  {Style.CYAN('3.')} {Style.WHITE('Expose Local Service')} - Make local service accessible via P2P     {Style.WHITE('│')}
-{Style.WHITE('│')}  {Style.CYAN('4.')} {Style.WHITE('Stop Instance')}       - Stop a running P2P instance                {Style.WHITE('│')}
-{Style.WHITE('│')}  {Style.CYAN('0.')} {Style.WHITE('Back')}                - Return to main menu                        {Style.WHITE('│')}
-{Style.WHITE('│')}                                                                      {Style.WHITE('│')}
-{Style.Bold(Style.WHITE('└──────────────────────────────────────────────────────────────────────┘'))}
-""")
+            options = [
+                ("relay", "Start Relay Server - Become a relay for P2P connections"),
+                ("peer", "Connect as Peer - Connect to relay and other peers"),
+                ("expose", "Expose Local Service - Make local service accessible via P2P"),
+                ("stop", "Stop Instance - Stop a running P2P instance"),
+                ("back", "Back - Return to main menu")
+            ]
 
-            choice = input(f"\n{Style.CYAN('❯')} {Style.WHITE('Select option:')} ").strip()
+            choice = menu_select(
+                options,
+                title=f"{Style.Bold(Style.WHITE('┌─ 🔧 P2P CONFIGURATION ───────────────────────────────────────────────┐'))}",
+                hint="↑/↓ or W/S · Enter · q to back"
+            )
 
-            if choice == '0':
+            if choice in (None, "back"):
                 break
-            elif choice == '1':
+            elif choice == "relay":
                 self._start_relay()
-            elif choice == '2':
+            elif choice == "peer":
                 self._connect_peer()
-            elif choice == '3':
+            elif choice == "expose":
                 self._expose_service()
-            elif choice == '4':
+            elif choice == "stop":
                 self._stop_instance()
-            else:
-                print(f"{Style.RED('Invalid option')}")
-                time.sleep(1)
 
     def _start_relay(self):
         """Start relay server."""
@@ -2009,30 +2004,27 @@ class InteractiveP2PCLI:
             self.clear_screen()
             self.print_header()
 
-            print(f"""
-{Style.Bold(Style.WHITE('┌─ ⚙️  SETTINGS ───────────────────────────────────────────────────────┐'))}
-{Style.WHITE('│')}                                                                      {Style.WHITE('│')}
-{Style.WHITE('│')}  {Style.CYAN('1.')} {Style.WHITE('Change Username')}    - Set display name for chat                   {Style.WHITE('│')}
-{Style.WHITE('│')}  {Style.CYAN('2.')} {Style.WHITE('Build P2P Binary')}   - Compile Rust P2P application                {Style.WHITE('│')}
-{Style.WHITE('│')}  {Style.CYAN('3.')} {Style.WHITE('Clean Up')}           - Remove old instances and data               {Style.WHITE('│')}
-{Style.WHITE('│')}  {Style.CYAN('0.')} {Style.WHITE('Back')}               - Return to main menu                         {Style.WHITE('│')}
-{Style.WHITE('│')}                                                                      {Style.WHITE('│')}
-{Style.Bold(Style.WHITE('└──────────────────────────────────────────────────────────────────────┘'))}
-""")
+            options = [
+                ("username", "Change Username - Set display name for chat"),
+                ("build", "Build P2P Binary - Compile Rust P2P application"),
+                ("cleanup", "Clean Up - Remove old instances and data"),
+                ("back", "Back - Return to main menu")
+            ]
 
-            choice = input(f"\n{Style.CYAN('❯')} {Style.WHITE('Select option:')} ").strip()
+            choice = menu_select(
+                options,
+                title=f"{Style.Bold(Style.WHITE('┌─ ⚙️  SETTINGS ───────────────────────────────────────────────────────┐'))}",
+                hint="↑/↓ or W/S · Enter · q to back"
+            )
 
-            if choice == '0':
+            if choice in (None, "back"):
                 break
-            elif choice == '1':
+            elif choice == "username":
                 self._change_username()
-            elif choice == '2':
+            elif choice == "build":
                 self._build_binary()
-            elif choice == '3':
+            elif choice == "cleanup":
                 self._cleanup()
-            else:
-                print(f"{Style.RED('Invalid option')}")
-                time.sleep(1)
 
     def _change_username(self):
         """Change username."""
@@ -2126,24 +2118,32 @@ class InteractiveP2PCLI:
         while self.running:
             self.clear_screen()
             self.print_header()
-            self.print_menu()
 
-            choice = input(f"\n{Style.CYAN('❯')} {Style.WHITE('Select option:')} ").strip()
+            options = [
+                ("chat", "💬 Chat Mode - Start interactive E2E encrypted chat"),
+                ("p2p", "🔧 P2P Configuration - Configure P2P connections"),
+                ("status", "📊 Status & Monitoring - View connections and rooms"),
+                ("settings", "⚙️  Settings - Manage configuration"),
+                ("exit", "🚪 Exit - Quit application")
+            ]
 
-            if choice == '0':
+            choice = menu_select(
+                options,
+                title=f"{Style.Bold(Style.WHITE('┌─ 🎯 MAIN MENU ───────────────────────────────────────────────────────┐'))}",
+                hint="↑/↓ or W/S · Enter · q to quit"
+            )
+
+            if choice in (None, "exit"):
                 print(f"\n{Style.YELLOW('👋 Goodbye!')}")
                 self.running = False
-            elif choice == '1':
+            elif choice == "chat":
                 self.chat_menu()
-            elif choice == '2':
+            elif choice == "p2p":
                 self.p2p_menu()
-            elif choice == '3':
+            elif choice == "status":
                 self.status_menu()
-            elif choice == '4':
+            elif choice == "settings":
                 self.settings_menu()
-            else:
-                print(f"{Style.RED('Invalid option')}")
-                time.sleep(1)
 
 
 # =================== CLI Entry Point ===================

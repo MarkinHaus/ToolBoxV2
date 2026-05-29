@@ -237,8 +237,20 @@ class TestFeatureToolsLive(unittest.IsolatedAsyncioTestCase):
 # =============================================================================
 # Base: Feature Test Helper
 # =============================================================================
+class AsyncTestCase(unittest.TestCase):
+    """Base class providing async_run() for all async tests."""
 
-class _FeatureTestBase(unittest.TestCase):
+    def async_run(self, coro):
+        return asyncio.get_event_loop().run_until_complete(coro)
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            asyncio.get_event_loop()
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+
+class _FeatureTestBase(AsyncTestCase):
     """
     Basisklasse für Feature-Tests.
     Subklassen setzen FEATURE_NAME und EXPECTED_TOOL_NAMES.
@@ -429,10 +441,9 @@ class _FeatureEnableTestBase(_FeatureTestBase):
                 pass
             return None
 
-    def _health_check(self, tool_name, timeout=10.0):
+    async def _health_check(self, tool_name, timeout=10.0):
         """Sync-Wrapper: liefert health_result oder None (Timeout)."""
-        coro = self._run_single_health_check(tool_name, timeout=timeout)
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return await self._run_single_health_check(tool_name, timeout=timeout)
 
 # =============================================================================
 # Feature-Klassen

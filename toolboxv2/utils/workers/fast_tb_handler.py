@@ -329,12 +329,13 @@ class FastTBHandler:
         kwargs: Dict[str, Any],
     ) -> Tuple[int, Dict[str, str], bytes]:
         """Execute handler and convert return value to response tuple."""
+        import functools
 
         # Call handler (async or sync)
         if asyncio.iscoroutinefunction(handler):
             result = await handler(**kwargs)
         else:
-            result = handler(**kwargs)
+            result = await asyncio.to_thread(functools.partial(handler, **kwargs))
 
         return self._format_result(result)
 

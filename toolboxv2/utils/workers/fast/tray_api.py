@@ -268,6 +268,103 @@ def register_command_handler(name: str, fn: Callable[..., Any]) -> None:
     """Expose a function to Tauri under /tray/command with `command=<name>`."""
     _command_handlers[name] = fn
 
+# =============================================================================
+# One-Port-Collective — owner-side mount/unmount commands
+# =============================================================================
+
+_owner_app = None  # FastTB owner instance that accepts joiners
+
+
+def set_owner_app(app) -> None:
+    """Register the FastTB app that owns '/' on this port."""
+    global _owner_app
+    _owner_app = app
+
+
+def _slug(s: str) -> str:
+    return "".join(c for c in (s or "").lower() if c.isalnum()) or "app"
+
+
+def _cmd_mount_app(module: str, attr: str = "app", prefix: str = "",
+                   source: str = "", include: list = None,
+                   exclude: list = None, **_) -> dict:
+    """Re-import a FastTB module from src and merge it into the owner app."""
+    if _owner_app is None:
+        return {"merged": False, "error": "no owner app on this port"}
+    try:
+        joiner = reload_from_src(module, attr, include=include, exclude=exclude)
+    except Exception as e:
+        return {"merged": False, "error": f"import failed: {e}"}
+    pfx = prefix or _slug(getattr(joiner, "title", module))
+    src = source or module
+    conflicts = _owner_app.mount_app(joiner, pfx, src)
+    if conflicts:
+        return {"merged": False, "conflicts": conflicts}
+    return {"merged": True, "prefix": "/" + pfx.strip("/"), "source": src}
+
+
+def reload_from_src(module_path: str, attr: str = "app",
+                    include: list = None, exclude: list = None):
+    """Import `module_path` fresh from disk and return getattr(module, attr).
+
+    Guarantees the newest on-disk version regardless of when the owner started:
+      - invalidate_caches() drops stale finder caches
+      - the entry module is reloaded (or imported if never loaded)
+      - already-imported submodules under `module_path` are deep-reloaded so
+        multi-file apps pick up edits, not just the top module
+    `include`/`exclude` are glob patterns matched against each module's file path
+    (include opts extra files in beyond the module_path subtree; exclude removes).
+    Uses importlib.reload — same mechanism as the FastTB hot-reload system.
+    """
+    import importlib, sys, os, fnmatch
+    importlib.invalidate_caches()
+    include = include or []
+    exclude = exclude or []
+
+    def _match(path, patterns):
+        p = os.path.abspath(path).replace("\\", "/")
+        return any(fnmatch.fnmatch(p, pat) for pat in patterns)
+
+    targets = []
+    for name, mod in list(sys.modules.items()):
+        if mod is None or name == module_path:
+            continue
+        f = getattr(mod, "__file__", None)
+        under = name.startswith(module_path + ".")
+        inc = bool(f) and bool(include) and _match(f, include)
+        if not (under or inc):
+            continue
+        if f and exclude and _match(f, exclude):
+            continue
+        targets.append((name, mod))
+
+    # Deepest module path first so parents see refreshed children
+    targets.sort(key=lambda nm: nm[0].count("."), reverse=True)
+    for name, mod in targets:
+        try:
+            importlib.reload(mod)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"[mount] reload skipped {name}: {e}")
+
+    if module_path in sys.modules:
+        mod = importlib.reload(sys.modules[module_path])
+    else:
+        mod = importlib.import_module(module_path)
+    return getattr(mod, attr)
+
+
+def _cmd_unmount_app(source: str, **_) -> dict:
+    if _owner_app is None:
+        return {"unmounted": False, "error": "no owner app"}
+    return {"unmounted": _owner_app.unmount_app(source), "source": source}
+
+
+def register_collective_commands(owner_app) -> None:
+    """Call this on the owner process after building its FastTB app."""
+    set_owner_app(owner_app)
+    register_command_handler("mount_app", _cmd_mount_app)
+    register_command_handler("unmount_app", _cmd_unmount_app)
 
 # =============================================================================
 # Client side — what every other worker embeds

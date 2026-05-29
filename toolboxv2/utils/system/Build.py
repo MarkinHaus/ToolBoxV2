@@ -320,22 +320,5 @@ def main(argv=None) -> int:
         dry_run=args.dry_run,
     )
 
-
-def run(app=None, args=None):
-    """TB-Mod Entry Point."""
-    if args is None:
-        return main()
-    if hasattr(args, "feature"):
-        return run_pipeline(
-            feature_name=args.feature,
-            bump=getattr(args, "bump", "patch"),
-            bump_main=getattr(args, "bump_main", False),
-            run_tests=not getattr(args, "no_test", False),
-            pip_upload=not getattr(args, "no_pip", False),
-            registry_upload=not getattr(args, "no_registry", False),
-            dry_run=getattr(args, "dry_run", False),
-        )
-    return main(args if isinstance(args, list) else None)
-
 if __name__ == "__main__":
     sys.exit(main())

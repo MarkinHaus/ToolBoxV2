@@ -1857,6 +1857,11 @@ BEISPIELE:
                     success = False
                     break
                 warning = self._loop_preamble(ctx)
+
+                # Refresh system prompt to reflect current slots and context on every iteration (crucial for resume)
+                if ctx.working_history and ctx.working_history[0].get("role") == "system":
+                    ctx.working_history[0]["content"] = self._build_system_prompt(ctx, session)
+
                 # Build current tool list
                 current_tools = self._get_tool_definitions(ctx)
 
@@ -1892,7 +1897,18 @@ BEISPIELE:
                 if response:
                     msg_dict = {"role": "assistant", "content": response.content}
                     if hasattr(response, "tool_calls") and response.tool_calls:
-                        msg_dict["tool_calls"] = response.tool_calls
+                        tool_calls_dicts = []
+                        for tc in response.tool_calls:
+                            if isinstance(tc, dict):
+                                tool_calls_dicts.append(tc)
+                            else:
+                                tool_calls_dicts.append(tc.to_dict() if hasattr(tc, "to_dict") else {
+                                    "id": getattr(tc, "id", ""),
+                                    "type": getattr(tc, "type", "function"),
+                                    "function": {"name": getattr(tc.function, "name", ""),
+                                                 "arguments": getattr(tc.function, "arguments", "")}
+                                })
+                        msg_dict["tool_calls"] = tool_calls_dicts
                     ctx.working_history.append(msg_dict)
 
                 # Process tool calls
@@ -2149,7 +2165,11 @@ BEISPIELE:
                             {"type": "warning", "message": warning.splitlines()[0]}
                         )
 
-                    # Build messages
+                        # Refresh system prompt to reflect current slots and context on every iteration (crucial for resume)
+                    if ctx.working_history and ctx.working_history[0].get("role") == "system":
+                        ctx.working_history[0]["content"] = self._build_system_prompt(ctx, session)
+
+                        # Build messages
                     messages = self._sanitize_history_for_api(ctx.working_history.copy())
 
                     # Get tool definitions
@@ -2645,6 +2665,10 @@ BEISPIELE:
                         {"type": "iteration_start", "iteration": ctx.current_iteration}
                     )
 
+                    # Refresh system prompt to reflect current slots and context on every iteration (crucial for resume)
+                    if ctx.working_history and ctx.working_history[0].get("role") == "system":
+                        ctx.working_history[0]["content"] = self._build_system_prompt(ctx, session)
+
                     current_tools = self._get_tool_definitions(ctx)
                     messages = self._sanitize_history_for_api(ctx.working_history.copy())
 
@@ -2703,7 +2727,18 @@ BEISPIELE:
                     # Add assistant message to history
                     msg_dict = {"role": "assistant", "content": content}
                     if hasattr(response, "tool_calls") and response.tool_calls:
-                        msg_dict["tool_calls"] = response.tool_calls
+                        tool_calls_dicts = []
+                        for tc in response.tool_calls:
+                            if isinstance(tc, dict):
+                                tool_calls_dicts.append(tc)
+                            else:
+                                tool_calls_dicts.append(tc.to_dict() if hasattr(tc, "to_dict") else {
+                                    "id": getattr(tc, "id", ""),
+                                    "type": getattr(tc, "type", "function"),
+                                    "function": {"name": getattr(tc.function, "name", ""),
+                                                 "arguments": getattr(tc.function, "arguments", "")}
+                                })
+                        msg_dict["tool_calls"] = tool_calls_dicts
 
                     ctx.working_history.append(msg_dict)
 
@@ -5010,18 +5045,24 @@ BEISPIELE:
         for msg in messages:
             if msg.get("role") == "assistant" and "tool_calls" in msg:
                 for tc in msg["tool_calls"]:
-                    args = tc["function"].get("arguments", "")
-                    try:
-                        json.loads(args)
-                    except json.JSONDecodeError:
-                        # ADMIN DEBUG: Hier siehst du im Terminal, was das Modell vermurkst hat
-
-                        print(f"⚠️ ADMIN WARNUNG: Modell hat ungültiges JSON generiert!")
-                        print(f"   Tool: {tc['function'].get('name')}")
-                        print(f"   Kaputter String: {args}")
-
-                        # Die "Safe-Box": Kaputtes JSON als String kapseln, um API 400 zu verhindern
-                        tc["function"]["arguments"] = json.dumps({"_raw_error": args})
+                    if isinstance(tc, dict):
+                        args = tc.get("function", {}).get("arguments", "")
+                        try:
+                            json.loads(args)
+                        except json.JSONDecodeError:
+                            print(f"⚠️ ADMIN WARNUNG: Modell hat ungültiges JSON generiert!")
+                            print(f"   Tool: {tc.get('function', {}).get('name')}")
+                            print(f"   Kaputter String: {args}")
+                            tc["function"]["arguments"] = json.dumps({"_raw_error": args})
+                    else:
+                        args = getattr(tc.function, "arguments", "")
+                        try:
+                            json.loads(args)
+                        except json.JSONDecodeError:
+                            print(f"⚠️ ADMIN WARNUNG: Modell hat ungültiges JSON generiert!")
+                            print(f"   Tool: {getattr(tc.function, 'name', '')}")
+                            print(f"   Kaputter String: {args}")
+                            tc.function.arguments = json.dumps({"_raw_error": args})
         return messages
 
     # =========================================================================

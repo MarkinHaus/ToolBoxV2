@@ -87,6 +87,7 @@ class EventType(str, Enum):
     WORKER_STATUS = "system.worker_status"
     SYS_TOPOLOGY = "system.topology"
     LEADER_ELECTED = "system.leader_elected"
+    SYS_RELINQUISH = "system.relinquish"  # ask the current leader to step down
 
     # Module events
     MODULE_CALL = "module.call"
@@ -434,6 +435,7 @@ class ZMQEventManager:
             self._topology_state["leader"] = self.worker_id
             self._topology_state["updated_at"] = time.time()
             self.on(EventType.WORKER_STATUS)(self._on_worker_status)
+            self.on(EventType.SYS_RELINQUISH)(self._on_relinquish_request)
             self._tasks.append(asyncio.create_task(self._heartbeat_loop()))
             self._tasks.append(asyncio.create_task(self._topology_broadcast_loop()))
             self._tasks.append(asyncio.create_task(self._topology_prune_loop()))
@@ -895,6 +897,76 @@ class ZMQEventManager:
             f"[P2P] Takeover result: {self.worker_id} is now "
             f"{'LEADER' if became_leader else 'FOLLOWER'}"
         )
+
+    async def relinquish_leadership(self) -> bool:
+        """Leader → follower transition on manual request (e.g. from /live).
+
+        Releases the broker binds (XPUB/XSUB/REP/PULL) and demotes to follower.
+        The leader stops emitting SYS_HEARTBEAT, so the remaining followers'
+        watchdogs detect the gap and one of them re-binds and becomes the new
+        leader. No-op if this manager is not currently the broker.
+
+        MUST run in its own task — it cancels ALL current tasks (incl. the broker
+        RPC/sub loops). Trigger it from the broker's command path like:
+
+            asyncio.create_task(self.relinquish_leadership())
+
+        i.e. schedule it AFTER acking the request, never await it inline from a
+        broker task (that would close the socket the caller is reading from).
+
+        Note: if this is the only node, its own watchdog re-elects it shortly
+        after (the system cannot run with zero brokers).
+        """
+        if not self.is_broker:
+            return False
+        logger.info(f"[P2P] Relinquishing leadership: {self.worker_id}")
+
+        # Cancel all current (leader-side) tasks except this one
+        current = asyncio.current_task()
+        for t in list(self._tasks):
+            if t is not current:
+                t.cancel()
+        self._tasks = [t for t in self._tasks if t is current]
+
+        # Close broker sockets so the endpoints free for the next leader
+        for attr in ("_xpub_socket", "_xsub_socket", "_rep_socket", "_pull_socket"):
+            sock = getattr(self, attr, None)
+            if sock is not None:
+                try:
+                    sock.close(linger=0)
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+
+        self.is_broker = False
+
+        # Re-join as follower (connect-only). _assume_role resets _last_heartbeat
+        # to now, giving us the LONGEST watchdog countdown — so any existing
+        # follower (older last_heartbeat, +smaller jitter) wins the re-election.
+        await self._assume_role(False)
+        return True
+
+    def _on_relinquish_request(self, event: "Event") -> dict:
+        """Leader-only RPC handler for SYS_RELINQUISH.
+
+        Returns an ack SYNCHRONOUSLY so _rpc_handler_loop can flush the
+        RPC_RESPONSE before the demote tears down the rep socket. The actual
+        demote is deferred (50ms) in its own task — this is the race fix: it
+        guarantees the caller's ack is sent before relinquish_leadership()
+        cancels _rpc_handler_loop and closes _rep_socket.
+        """
+        if not self.is_broker:
+            return {"relinquishing": False, "reason": "not leader"}
+
+        async def _deferred():
+            await asyncio.sleep(0.05)  # let the ack flush before sockets close
+            try:
+                await self.relinquish_leadership()
+            except Exception as e:
+                logger.error(f"[P2P] relinquish failed: {e}", exc_info=True)
+
+        asyncio.create_task(_deferred())
+        return {"relinquishing": True, "worker_id": self.worker_id}
 
     # --- Worker status emission (followers) ---
 

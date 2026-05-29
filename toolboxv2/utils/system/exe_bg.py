@@ -8,7 +8,7 @@ def run_executable_in_background(executable_path, args=None):
     if sys.platform == "win32":
         DETACHED_PROCESS = 0x00000008
         CREATE_NO_WINDOW = 0x08000000
-        subprocess.Popen(
+        return subprocess.Popen(
             [executable_path] + args,
             creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
             stdout=subprocess.DEVNULL,
@@ -16,7 +16,7 @@ def run_executable_in_background(executable_path, args=None):
             stdin=subprocess.DEVNULL
         )
     else:
-        subprocess.Popen(
+        return subprocess.Popen(
             [executable_path] + args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

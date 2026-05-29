@@ -23,6 +23,6 @@ async def get_auth_config(app=None) -> ApiResult:
             "google": {"enabled": bool(google["client_id"]), "client_id": google["client_id"]},
             "passkeys": {"enabled": True, "rp_id": get_passkey_config()["rp_id"]},
         },
-        "sign_in_url": "/web/scripts/login.html",
+        "sign_in_url": "/web/assets/login.html",
         "after_sign_in_url": "/web/mainContent.html",
     })
