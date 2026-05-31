@@ -103,7 +103,7 @@ class LiveObsHub:
         # ---- begin_run wrap ----
         prev_begin = obs.begin_run
 
-        def hub_begin(run_id, query, session_id="", persona="", skills=None):
+        def hub_begin(run_id, query, session_id="", persona="", skills=None, is_resume=False):
             prev_begin(run_id, query, session_id, persona, skills)
             current = obs._current_run
             self._fire({
@@ -115,6 +115,7 @@ class LiveObsHub:
                 "persona": persona,
                 "skills_matched": skills or [],
                 "t_start": current.t_start if current else time.time(),
+                "is_resume": is_resume,
             })
 
         obs.begin_run = hub_begin
@@ -266,7 +267,7 @@ class LiveObsHub:
         out: dict[str, str] = {}
         try:
             entries = os.listdir(root)
-        except OSError:
+        except OSError as e:
             return out
         for name in entries:
             obs_dir = os.path.join(root, name, "obs")
@@ -274,7 +275,7 @@ class LiveObsHub:
                 continue
             try:
                 files = os.listdir(obs_dir)
-            except OSError:
+            except OSError as e:
                 continue
             if any(
                 f == "_index.json" or f.startswith("live_") or f.startswith("run_")
@@ -315,7 +316,6 @@ class LiveObsHub:
         for root in self._scan_roots:
             for name, obs_dir in self._discover_agents(root).items():
                 discovered.setdefault(name, obs_dir)
-
         for name, obs_dir in discovered.items():
             # Skip agents wired live — they push via callbacks
             if name in self._live_wired:
@@ -324,6 +324,7 @@ class LiveObsHub:
             # Ensure ObservabilityLayer shadow registered for snapshot/get_run
             if name not in self._registered:
                 try:
+                    from toolboxv2.mods.isaa.base.Agent.observability import ObservabilityLayer
                     shadow = ObservabilityLayer(agent_name=name, obs_dir=obs_dir)
                 except Exception as e:
                     logger.debug(f"[LiveObsHub] shadow obs {name} failed: {e}")
@@ -443,10 +444,7 @@ def register_agent_obs(agent_or_obs: Any, vfs: Any = None) -> None:
     revert actions become available in the live UI for runs of this agent.
     """
     obs = getattr(agent_or_obs, "obs", agent_or_obs)
-    if not isinstance(obs, ObservabilityLayer):
-        raise TypeError(
-            f"expected ObservabilityLayer or agent with .obs, got {type(obs).__name__}"
-        )
+
     if vfs is None:
         vfs = getattr(agent_or_obs, "vfs", None) or getattr(agent_or_obs, "vfs_v2", None)
     hub = LiveObsHub.get()
@@ -1205,12 +1203,17 @@ function onRunStart(msg){
   const agent=msg.agent_name;
   const key=agent+'::'+msg.run_id;
   STATE.liveActivity[key]=Date.now();
+
+  // Beim Resume die bisherigen Schritte im UI behalten!
+  const existing = STATE.liveRuns[key];
+  const keepSteps = (msg.is_resume && existing) ? existing.steps : [];
+
   STATE.liveRuns[key]={
     run_id:msg.run_id, agent_name:agent,
     query:msg.query||'', persona:msg.persona||'',
     skills_matched:msg.skills_matched||[], session_id:msg.session_id||'',
     t_start:msg.t_start||Date.now()/1000,
-    steps:[], _agent:agent, _live:true,
+    steps:keepSteps, _agent:agent, _live:true,
   };
   if(!STATE.agents[agent]) STATE.agents[agent]={agent_name:agent,runs:[],interrupted:[],active_run:null};
   renderSidebar();
@@ -1479,11 +1482,7 @@ setInterval(()=>{ if(Object.keys(STATE.agents).length) renderSidebar(); }, 5000)
 # WSGI / Standalone
 # =============================================================================
 
-handler = FastTBHandler(app)
-wsgi_app = handler.as_wsgi_app(enable_ws=True)
-
-
-def main(host="127.0.0.1", port=7000, wit_static=True):
+async def main(host="127.0.0.1", port=7000, wit_static=True):
     print("\nRoutes:")
     for r in app.list_routes():
         print(f"  {r['method'].ljust(6)} {r['path']}")
@@ -1499,8 +1498,7 @@ def main(host="127.0.0.1", port=7000, wit_static=True):
     if wit_static:
         start_disk_scanner(str(Path(get_app().data_dir) / "Agents"))
 
-    from waitress import serve
-    serve(wsgi_app, host=host, port=port)
+    await app.serve_async(host=host, port=port, blocking=False, module_path="obs")
 
 if __name__ == "__main__":
     main()

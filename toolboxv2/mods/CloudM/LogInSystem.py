@@ -134,19 +134,14 @@ async def cli_login(app: App = None, email: str = None, method: str = None):
 
     # Choose login method
     if not method:
-        print_box_header("ToolBoxV2 Authentication", "#")
-        print()
-        print("  [1] Magic Link (Email)")
-        print("  [2] Device Invite Code")
-        print()
-        choice = input("\033[96m> Choose method (1/2): \033[0m").strip()
-        method = "invite" if choice == "2" else "magic"
-        print()
-
-    if method == "invite":
-        return await _cli_login_invite(app)
+        from toolboxv2.utils.clis.local_cli import login
+        await login()
+        return None
     else:
-        return await _cli_login_magic(app, email)
+        if method == "invite":
+            return await _cli_login_invite(app)
+        else:
+            return await _cli_login_magic(app, email)
 
 
 # =================== Magic Link Login ===================

@@ -4468,7 +4468,7 @@ class ISAA_Host:
         self._overlay: TaskOverlay | None = None
 
         # Job Scheduler
-        self.jobs_file = Path(self.app.appdata) / "icli" / "isaa_host_jobs.json"
+        self.jobs_file = Path(self.app.appdata) / "isaa" / "jobs.json"
         self.job_scheduler: JobScheduler | None = None
 
         # Load persisted state
@@ -12115,7 +12115,10 @@ class ISAA_Host:
 
         # Start Job Scheduler
         # Start Job Scheduler
-        self.job_scheduler = JobScheduler(self.jobs_file, self._fire_job_from_scheduler)
+        self.job_scheduler = self.isaa_tools.job_scheduler
+        sto_fire_callback = self.job_scheduler._fire_callback
+        self.job_scheduler._fire_callback = self._fire_job_from_scheduler
+        #  (self.jobs_file, self._fire_job_from_scheduler)
         await self.job_scheduler.start()
         await self.job_scheduler.fire_lifecycle("on_cli_start")
 
@@ -12246,8 +12249,9 @@ class ISAA_Host:
                 except Exception:
                     pass
             await self.job_scheduler.stop()
+            self.job_scheduler._fire_callback = sto_fire_callback
 
-        # Cancel in-flight background tasks
+            # Cancel in-flight background tasks
         for _, bg_task in self.all_executions.items():
             if bg_task.status == "running":
                 bg_task.async_task.cancel()

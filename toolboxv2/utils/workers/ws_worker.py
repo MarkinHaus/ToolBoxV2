@@ -506,6 +506,18 @@ class WSWorker:
                     except Exception as e:
                         logger.debug(f"Send failed to {conn_id}: {e}")
 
+        elif event.type == EventType.WS_CLOSE:
+            conn_id = event.payload.get("conn_id")
+            code = event.payload.get("code", 1008)
+            reason = event.payload.get("reason", "")
+            if conn_id:
+                conn = self._conn_manager.get(conn_id)
+                if conn and conn.is_alive:
+                    try:
+                        await conn.websocket.close(code, reason)
+                    except Exception as e:
+                        logger.debug(f"Close failed for {conn_id}: {e}")
+
         elif event.type == EventType.WS_BROADCAST_CHANNEL:
             channel = event.payload.get("channel")
             data = event.payload.get("data")
@@ -555,7 +567,22 @@ class WSWorker:
                 except Exception as e:
                     logger.debug(f"Send failed to {conn_id}: {e}")
 
-        @self._event_manager.on(EventType.WS_BROADCAST_CHANNEL)
+        @self._event_manager.on(EventType.WS_CLOSE)
+        async def handle_ws_close(event: Event):
+            """Force-close a specific connection (e.g. auth rejection)."""
+            conn_id = event.payload.get("conn_id")
+            code = event.payload.get("code", 1008)
+            reason = event.payload.get("reason", "")
+
+            if not conn_id:
+                return
+
+            conn = self._conn_manager.get(conn_id)
+            if conn and conn.is_alive:
+                try:
+                    await conn.websocket.close(code, reason)
+                except Exception as e:
+                    logger.debug(f"Close failed for {conn_id}: {e}")
         async def handle_ws_broadcast_channel(event: Event):
             """Broadcast to all connections in a channel."""
             channel = event.payload.get("channel")

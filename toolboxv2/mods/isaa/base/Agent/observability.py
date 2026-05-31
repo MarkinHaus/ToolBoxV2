@@ -72,7 +72,7 @@ class LLMCallRecord:
 @dataclass
 class StepRecord:
     """One iteration of the execution loop."""
-    step_id: int = 0               # iteration number
+    step_id: int = 0  # iteration number
     t_start: float = 0.0
     t_end: float = 0.0
     duration_s: float = 0.0
@@ -90,6 +90,9 @@ class StepRecord:
     # ExecutionContext snapshot for resume (only every N steps)
     ctx_snapshot: dict | None = None
 
+    # NEU: Marker für einen Resume-Punkt
+    is_resume_point: bool = False
+
     def to_dict(self) -> dict:
         d = {
             "step_id": self.step_id,
@@ -101,6 +104,8 @@ class StepRecord:
             "vfs_deltas": self.vfs_deltas,
             "compression": self.compression,
         }
+        if self.is_resume_point:
+            d["is_resume_point"] = True
         # ctx_snapshot only in live file, not in summary dicts
         return d
 
@@ -220,6 +225,7 @@ class RunRecord:
                 tool_calls=tcs,
                 vfs_deltas=sd.get("vfs_deltas", []),
                 compression=sd.get("compression"),
+                is_resume_point=sd.get("is_resume_point", False),
             ))
         return r
 
@@ -276,25 +282,51 @@ class ObservabilityLayer:
     # =========================================================================
 
     def begin_run(self, run_id: str, query: str, session_id: str = "",
-                  persona: str = "", skills: list[str] | None = None):
-        self._current_run = RunRecord(
-            run_id=run_id,
-            agent_name=self.agent_name,
-            query=query,
-            session_id=session_id,
-            t_start=time.time(),
-            persona=persona,
-            skills_matched=skills or [],
-        )
-        # Open live JSONL file (append-only crash-safe log)
+                  persona: str = "", skills: list[str] | None = None,
+                  is_resume: bool = False):
+
+        resume_step = None
+        if is_resume:
+            # Memory-State aus bestehendem Live-Log laden, um Historie zu behalten
+            resumable = self.get_resumable_run(run_id)
+            if resumable and resumable[0]:
+                self._current_run = resumable[0]
+
+                # Marker-Step hinzufügen
+                last_step_id = self._current_run.steps[-1].step_id if self._current_run.steps else 0
+                resume_step = StepRecord(
+                    step_id=last_step_id,
+                    is_resume_point=True,
+                    t_start=time.time(),
+                    t_end=time.time()
+                )
+                self._current_run.steps.append(resume_step)
+            else:
+                is_resume = False  # Fallback falls nicht gefunden
+
+        if not is_resume:
+            self._current_run = RunRecord(
+                run_id=run_id,
+                agent_name=self.agent_name,
+                query=query,
+                session_id=session_id,
+                t_start=time.time(),
+                persona=persona,
+                skills_matched=skills or [],
+            )
+
+        # Open live JSONL file ("a" = append-only, crash-safe log)
         live_path = os.path.join(self.obs_dir, f"live_{run_id}.jsonl")
         try:
             self._live_fd = open(live_path, "a", encoding="utf-8")
+            # Wenn es ein Resume war, den Marker-Step direkt ins live File pushen
+            if resume_step:
+                self._write_live_step(resume_step)
         except OSError as e:
             logger.warning(f"[Obs] Cannot open live file: {e}")
             self._live_fd = None
 
-        self._audit("RUN_START", run_id, details={
+        self._audit("RUN_RESUME" if is_resume else "RUN_START", run_id, details={
             "query": query, "session_id": session_id, "persona": persona,
         })
 

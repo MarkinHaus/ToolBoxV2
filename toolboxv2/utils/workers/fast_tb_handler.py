@@ -25,6 +25,7 @@ from toolboxv2.utils.workers.server_worker import (
     json_response,
     html_response,
     error_response,
+    redirect_response,
     parse_request,
 )
 from toolboxv2.utils.workers.session import SessionData
@@ -201,6 +202,35 @@ class FastTBHandler:
 
         Also serves static files from mounted directories.
         """
+        # Auth gate (enforcement variant iii: global). When effective auth is on,
+        # every served path requires an authenticated session except /health.
+        # Effective auth = route.auth if set, else app-level self._app.auth. For
+        # static files / unknown paths (no Route) the app-level flag applies.
+        if request.path != "/health":
+            _match = self._app.resolve_route(request.path, request.method)
+            if _match is not None and _match[0].auth is not None:
+                _eff_auth = _match[0].auth
+            else:
+                _eff_auth = self._app.auth
+            if _eff_auth:
+                _sess = request.session
+                if not (_sess is not None and _sess.is_authenticated):
+                    # Browser (HTML) requests are redirected to the login page so
+                    # the user can authenticate; ?next carries the original path so
+                    # tbjs (_handlePostAuthRedirect) returns here after login.
+                    # Non-HTML (fetch/API) requests get a JSON 401 instead.
+                    _accept = (request.headers.get("accept") or "").lower()
+                    if "text/html" in _accept:
+                        # Ensure the local login assets are reachable. If the app
+                        # didn't permanently mount /web, mount it now for the flow.
+                        self._app._ensure_web_mounted()
+                        from urllib.parse import quote
+                        _next = quote(request.path, safe="/")
+                        return redirect_response(
+                            f"/web/assets/login.html?next={_next}", 302
+                        )
+                    return error_response("Authentication required", 401, "Unauthorized")
+
         # Static file check (GET only)
         if request.method.upper() == "GET":
             static_path = self._app.resolve_static(request.path)
@@ -563,6 +593,11 @@ class FastTBHandler:
             app, config, worker._access_controller, config.toolbox.api_prefix
         )
 
+        # Permanently mount login UI assets when requested (e.g. remote base is
+        # local). Idempotent: skipped if the app already mounted /web itself.
+        if self._app.auth and self._app.serve_login_assets:
+            self._app._ensure_web_mounted()
+
         # Register WS handlers from FastTB into the app
         ws_handlers = self._app.get_websocket_handlers()
         if ws_handlers:
@@ -602,6 +637,24 @@ class FastTBHandler:
 
             # Check if FastTB can handle this (path + method only, no body read)
             if ftb_handler.has_route(path, method):
+                # Attach session before parse_request reads environ["tb.session"].
+                # Mirrors server_worker.wsgi_app: cookie/API-key/Bearer -> SessionData,
+                # never None (anonymous fallback). Bearer fallback for cross-origin
+                # (e.g. Tauri) where the cookie is not sent.
+                if worker._session_manager:
+                    session = worker._session_manager.get_session_from_request_sync(environ)
+                    if (not session or session.anonymous) and environ.get(
+                        "HTTP_AUTHORIZATION", "").startswith("Bearer "):
+                        bearer_token = environ["HTTP_AUTHORIZATION"][7:]
+                        try:
+                            valid, jwt_session = worker._session_manager.verify_session_token(bearer_token)
+                            if valid and jwt_session:
+                                session = jwt_session
+                                session.mark_dirty()
+                        except Exception as e:
+                            logger.debug(f"Bearer fallback failed: {e}")
+                    environ["tb.session"] = session
+
                 request = parse_request(environ)
 
                 loop = _get_loop()

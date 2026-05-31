@@ -73,6 +73,7 @@ class EventType(str, Enum):
     WS_BROADCAST_CHANNEL = "ws.broadcast_channel"
     WS_BROADCAST_ALL = "ws.broadcast_all"
     WS_SEND = "ws.send"
+    WS_CLOSE = "ws.close"
     WS_JOIN_CHANNEL = "ws.join_channel"
     WS_LEAVE_CHANNEL = "ws.leave_channel"
 
@@ -1395,6 +1396,24 @@ def create_ws_send_event(
         source=source,
         target="ws_worker",
         payload={"conn_id": conn_id, "data": payload},
+    )
+
+
+def create_ws_close_event(
+    source: str,
+    conn_id: str,
+    code: int = 1008,
+    reason: str = "Unauthorized",
+) -> Event:
+    """Create WS_CLOSE event to force-close a single connection.
+
+    Default code 1008 (policy violation) is used for auth rejection.
+    """
+    return Event(
+        type=EventType.WS_CLOSE,
+        source=source,
+        target="ws_worker",
+        payload={"conn_id": conn_id, "code": code, "reason": reason},
     )
 
 

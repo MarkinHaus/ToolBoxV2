@@ -28,8 +28,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Protocol, runtime_checkable
-
-_log = logging.getLogger(__name__)
+from toolboxv2 import get_logger
+_log = get_logger()
 
 
 # =============================================================================
@@ -845,7 +845,7 @@ class JobScheduler:
             await self._setup_trigger(job)
 
         # Start tick loop
-        self._tick_task = asyncio.create_task(self._tick_loop())
+        self._tick_task = asyncio.create_task(self._tick_loop(), name="JobScheduler")
         _log.debug("JobScheduler started with %d jobs", len(self._jobs))
 
     async def stop(self):

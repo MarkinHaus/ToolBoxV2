@@ -27,7 +27,7 @@ from .cli_printing import (
     Colors, c_print, print_box_header, print_box_content,
     print_box_footer, print_status, print_separator,
 )
-from .cli_oauth import cli_oauth_login, cli_passkey_login
+from .cli_oauth import cli_remote_login
 from .cli_input import menu_select_async
 from toolboxv2.mods.CloudM.LogInSystem import (
     _save_cli_token, _clear_cli_token, _check_existing_session,
@@ -286,17 +286,25 @@ async def login_screen(sess: CLISession) -> bool:
     if choice in (None, "quit"):
         raise SystemExit(0)
 
-    if choice in ("discord", "google"):
-        if remote:
-            print_status("OAuth authenticates against the LOCAL instance (remote-CLI bridge: TODO).", "warning")
-        print_status(f"Opening browser for {choice}\u2026 complete the login, then return here.", "info")
-        payload = await cli_oauth_login(choice)
-        return await _finalize(sess, payload, tb_app, remote=False)
-
-    if choice == "passkey":
-        print_status("Opening browser for passkey\u2026 use your authenticator, then return here.", "info")
-        payload = await cli_passkey_login()
-        return await _finalize(sess, payload, tb_app, remote=False)
+    if choice in ("discord", "google", "passkey"):
+        # All three run remotely on simplecore (its keys / rp_id). The remote
+        # login page bridges the issued tokens back to a local loopback; the
+        # resulting account is a remote account validated via app.session.
+        print_status(f"Opening browser for {choice} on simplecore\u2026 complete the login, then return here.", "info")
+        payload = await cli_remote_login(choice)
+        if payload:
+            s = tb_app.session
+            s.username = payload.get("username") or s.username
+            s._save_session_token(
+                payload.get("access_token", ""),
+                payload.get("refresh_token", ""),
+                payload.get("user_id", ""),
+            )
+            if not await s.login():
+                print_status("Remote session validation failed", "error")
+                return False
+            payload["username"] = s.username or payload.get("username", "")
+        return await _finalize(sess, payload, tb_app, remote=True)
 
     payload = await (_remote_auth(tb_app, choice) if remote else _local_auth(tb_app, choice))
     return await _finalize(sess, payload, tb_app, remote)
@@ -485,12 +493,15 @@ async def root_menu(sess: CLISession):
         elif choice == "services":
             await services_screen(sess)
         elif choice == "passkey_reg":
-            if not sess.user_id:
-                print_status("Login first", "error")
+            # Passkey registration happens on simplecore (remote rp_id). Open the
+            # remote login page; the user registers a passkey there while signed in.
+            import webbrowser
+            base = (tb_app.session.base or "").rstrip("/")
+            if not base:
+                print_status("No remote base configured (TOOLBOXV2_REMOTE_BASE)", "error")
             else:
-                ok = await cli_passkey_register(sess.user_id, sess.username)
-                print_status("Passkey registered" if ok else "Registration failed/cancelled",
-                             "success" if ok else "error")
+                webbrowser.open(f"{base}/web/assets/login.html")
+                print_status("Opened simplecore in browser — register your passkey there", "success")
             await asyncio.sleep(0.8)
         elif choice == "web":
             import webbrowser
@@ -521,7 +532,16 @@ async def root_menu(sess: CLISession):
 # =============================================================================
 # Main
 # =============================================================================
-
+async def login():
+    for i in range(3):
+        sess = CLISession()
+        ok = await login_screen(sess)
+        if not ok:
+            _prompt("Login failed (press enter)", False)
+            os.system("cls" if sys.platform == "win32" else "clear")
+            continue
+        else:
+            break
 async def main():
     sess = CLISession()
     while True:

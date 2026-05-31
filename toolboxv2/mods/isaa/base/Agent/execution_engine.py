@@ -1183,9 +1183,9 @@ class HistoryCompressor:
         }
 
         if system_msg:
-            return summary, [system_msg, summary] + compressed_msgs + to_keep
+            return summary, [system_msg] + compressed_msgs + to_keep
         else:
-            return summary, [summary] + compressed_msgs + to_keep
+            return summary, compressed_msgs + to_keep
 
 
 # =============================================================================
@@ -3037,6 +3037,7 @@ BEISPIELE:
                 ctx.run_id, query, session.session_id,
                 persona=ctx.active_persona.name,
                 skills=[s.name for s in ctx.matched_skills] if ctx.matched_skills else [],
+                is_resume=is_resume
             )
 
         # Narrator
@@ -5544,18 +5545,6 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         # 7. Register in active executions
         self._active_executions[ctx.run_id] = ctx
 
-        # 8. Clean up live file (obs will create a new one on begin_run)
-        # Keep the old live file as backup until new run completes
-        live_backup = None
-        import os
-        live_path = os.path.join(obs.obs_dir, f"live_{run_id}.jsonl")
-        if os.path.exists(live_path):
-            live_backup = live_path + ".bak"
-            try:
-                os.rename(live_path, live_backup)
-            except OSError:
-                pass
-
         self.live.log(
             f"[COLD RESUME] Restored run {run_id} at iter {ctx.current_iteration}, "
             f"session={session_id}, skills={len(ctx.matched_skills)}, "
@@ -5618,7 +5607,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         # --- HOT PATH: in-memory resume ---
         ctx = self._active_executions.get(execution_id)
         if ctx is not None:
-            if ctx.status not in ("paused", "max_iterations"):
+            if ctx.status not in ("paused", "max_iterations", "completed", "cancelled"):
                 return f"Error: Execution {execution_id} is not resumable (status: {ctx.status})"
 
             ctx.status = "running"

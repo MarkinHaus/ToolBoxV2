@@ -578,7 +578,10 @@ class Tools(MainTool, FileHandler):
             elif self.sockets[name]["do_async"]:
                 chunk = await r_socket_.read(self.sockets[name]["package_size"])
             elif self.sockets[name]["type_id"] == SocketType.client.name:
-                chunk = r_socket_.recv(self.sockets[name]["package_size"])
+                try:
+                    chunk = r_socket_.recv(self.sockets[name]["package_size"])
+                except Exception as e:
+                    return Result.custom_error(data=str(e), data_info="Connection down and closed")
             else:
                 try:
                     chunk = r_socket_.recv(self.sockets[name]["package_size"])

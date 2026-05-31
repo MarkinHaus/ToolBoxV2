@@ -55,6 +55,7 @@ class Route:
     pattern: "re.Pattern"        # Compiled regex for matching
     param_names: List[str]       # Extracted path parameter names
     name: str = ""               # Optional route name
+    auth: Optional[bool] = None  # Per-route auth override; None = inherit app.auth
 
 
 @dataclass
@@ -64,6 +65,7 @@ class WSRoute:
     handler_obj: Any             # Class instance or dict with on_connect/on_message/on_disconnect
     pattern: "re.Pattern"
     param_names: List[str]
+    auth: Optional[bool] = None  # Per-route auth override; None = inherit app.auth
 
 
 class WebSocketContext:
@@ -177,6 +179,17 @@ class FastTB:
         env = os.getenv("TB_ENV", "development").lower()
         self.hot_reload: bool = env != "production"
         self.inject_style: bool = True  # Inject Paper CSS into default pages (/docs, welcome)
+        # Auth: when True, all routes require an authenticated session except /health.
+        # Per-route override via @app.get("/x", auth=False/True). Default off.
+        self.auth: bool = False
+        # Serve the login UI assets (dist/web) under /web. When True the mount is
+        # installed permanently at startup. When False the mount is created lazily
+        # only when an auth-gated route is hit unauthenticated, so the local login
+        # page is reachable without permanently exposing /web.
+        self.serve_login_assets: bool = False
+        # True only if WE installed the /web mount (vs. the app having mounted it
+        # itself). Guards against touching an app-provided /web mount.
+        self._web_mount_owned: bool = False
         self._watch_dirs: List[str] = []
         self._hot_reload_running = False
 
@@ -184,36 +197,36 @@ class FastTB:
     # Route Registration Decorators
     # =========================================================================
 
-    def get(self, path: str, name: str = ""):
+    def get(self, path: str, name: str = "", auth: Optional[bool] = None):
         """Register GET endpoint."""
-        return self._route_decorator(path, "GET", name)
+        return self._route_decorator(path, "GET", name, auth)
 
-    def post(self, path: str, name: str = ""):
+    def post(self, path: str, name: str = "", auth: Optional[bool] = None):
         """Register POST endpoint."""
-        return self._route_decorator(path, "POST", name)
+        return self._route_decorator(path, "POST", name, auth)
 
-    def put(self, path: str, name: str = ""):
+    def put(self, path: str, name: str = "", auth: Optional[bool] = None):
         """Register PUT endpoint."""
-        return self._route_decorator(path, "PUT", name)
+        return self._route_decorator(path, "PUT", name, auth)
 
-    def delete(self, path: str, name: str = ""):
+    def delete(self, path: str, name: str = "", auth: Optional[bool] = None):
         """Register DELETE endpoint."""
-        return self._route_decorator(path, "DELETE", name)
+        return self._route_decorator(path, "DELETE", name, auth)
 
-    def patch(self, path: str, name: str = ""):
+    def patch(self, path: str, name: str = "", auth: Optional[bool] = None):
         """Register PATCH endpoint."""
-        return self._route_decorator(path, "PATCH", name)
+        return self._route_decorator(path, "PATCH", name, auth)
 
-    def route(self, path: str, methods: List[str] | None = None, name: str = ""):
+    def route(self, path: str, methods: List[str] | None = None, name: str = "", auth: Optional[bool] = None):
         """Register endpoint for multiple methods."""
         methods = methods or ["GET"]
         def decorator(func):
             for m in methods:
-                self._register_route(path, m.upper(), func, name)
+                self._register_route(path, m.upper(), func, name, auth)
             return func
         return decorator
 
-    def sse(self, path: str, name: str = ""):
+    def sse(self, path: str, name: str = "", auth: Optional[bool] = None):
         """Register SSE (Server-Sent Events) endpoint.
 
         The decorated function must be an async generator (yield items).
@@ -271,17 +284,17 @@ class FastTB:
             sse_wrapper.__qualname__ = func.__qualname__
             # Preserve original signature for DI
             sse_wrapper.__wrapped__ = func
-            self._register_route(path, "GET", sse_wrapper, name or func.__name__)
+            self._register_route(path, "GET", sse_wrapper, name or func.__name__, auth)
             return func
         return decorator
 
-    def _route_decorator(self, path: str, method: str, name: str):
+    def _route_decorator(self, path: str, method: str, name: str, auth: Optional[bool] = None):
         def decorator(func):
-            self._register_route(path, method, func, name)
+            self._register_route(path, method, func, name, auth)
             return func
         return decorator
 
-    def _register_route(self, path: str, method: str, handler: Callable, name: str = ""):
+    def _register_route(self, path: str, method: str, handler: Callable, name: str = "", auth: Optional[bool] = None):
         pattern, param_names = _path_to_regex(path)
         route = Route(
             path=path,
@@ -290,6 +303,7 @@ class FastTB:
             pattern=pattern,
             param_names=param_names,
             name=name or handler.__name__,
+            auth=auth,
         )
         self._routes.append(route)
         self._index_dirty = True
@@ -316,6 +330,28 @@ class FastTB:
         url_prefix = url_prefix.rstrip("/")
         directory = os.path.abspath(directory)
         self._static_mounts.append((url_prefix, directory))
+
+    def _ensure_web_mounted(self) -> bool:
+        """Idempotently mount the login UI assets (dist/web) under /web.
+
+        Used by the auth flow so the local login page is reachable. If /web is
+        already mounted (by the app or a previous call) this is a no-op and the
+        existing mount is left untouched. Returns True if /web is now available.
+        """
+        import os
+        for url_prefix, _ in self._static_mounts:
+            if url_prefix == "/web":
+                return True  # already served (by app or earlier call) — don't touch
+        try:
+            from toolboxv2 import tb_root_dir
+        except Exception:
+            return False
+        directory = os.path.join(os.path.abspath(str(tb_root_dir)), "dist", "web")
+        if not os.path.isdir(directory):
+            return False
+        self._static_mounts.append(("/web", directory))
+        self._web_mount_owned = True
+        return True
 
     def watch(self, *directories: str):
         """Add directories to watch for hot-reload.
@@ -406,11 +442,16 @@ connect();
     # WebSocket Registration
     # =========================================================================
 
-    def websocket(self, path: str):
+    def websocket(self, path: str, auth: Optional[bool] = None):
         """Register WebSocket handler.
 
         Accepts either a class with on_connect/on_message/on_disconnect methods
         or a dict with those keys.
+
+        Args:
+            path: WS route path, e.g. "/ws/chat".
+            auth: Per-route auth override. None inherits app.auth. When effective
+                  auth is True, unauthenticated connections are rejected at connect.
 
         Usage:
             @app.websocket("/ws/chat")
@@ -433,6 +474,7 @@ connect();
                 handler_obj=handler_obj,
                 pattern=pattern,
                 param_names=param_names,
+                auth=auth,
             )
             self._ws_routes.append(ws_route)
             return cls_or_dict
@@ -516,7 +558,7 @@ connect();
                 nr = Route(
                     path=fp, method=r.method, handler=r.handler,
                     pattern=self._root_pattern(fp), param_names=[],
-                    name=r.name,
+                    name=r.name, auth=r.auth,
                 )
             else:
                 nr = r  # reuse object as-is; top-level merge
@@ -597,7 +639,11 @@ connect();
         """Export WebSocket handlers in ToolBoxV2 format.
 
         Returns dict compatible with app.websocket_handlers:
-            { "handler_id": { "on_connect": fn, "on_message": fn, "on_disconnect": fn } }
+            { "handler_id": { "on_connect": fn, "on_message": fn, "on_disconnect": fn,
+                              "auth": bool } }
+
+        "auth" is the resolved effective requirement (route.auth if set, else
+        app.auth). The WS connect gate reads it to reject unauth connections.
         """
         handlers = {}
         for ws_route in self._ws_routes:
@@ -612,6 +658,7 @@ connect();
                     entry[method_name] = fn
 
             if entry:
+                entry["auth"] = ws_route.auth if ws_route.auth is not None else self.auth
                 handlers[handler_id] = entry
 
         return handlers
@@ -865,11 +912,11 @@ connect();
 
     async def serve_async(self, host: str = "127.0.0.1", port: int = 8080,
                           blocking: bool = True, enable_ws: Optional[bool] = None,
-                          allow_specialist: bool = True):
+                          allow_specialist: bool = True, **kwargs):
         """Async wrapper: starts Waitress in a background thread."""
         import asyncio
         server = self.serve(host=host, port=port, blocking=False,
-                            enable_ws=enable_ws, allow_specialist=allow_specialist)
+                            enable_ws=enable_ws, allow_specialist=allow_specialist, **kwargs)
         if server is None or not blocking:
             return server
         try:

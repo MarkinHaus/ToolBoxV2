@@ -407,14 +407,15 @@ const user = {
      * Login with Discord OAuth.
      * Fetches the OAuth URL from the backend and redirects the browser.
      */
-    async loginWithDiscord() {
+    async loginWithDiscord(redirectAfterOverride = null) {
         TB.logger.info('[User] Starting Discord OAuth login...');
         try {
-            // Fix: In Tauri, window.location.origin may be empty. Use a proper origin.
+            // redirectAfterOverride: explicit target (e.g. CLI loopback bridge) wins.
+            // Otherwise current origin (Tauri may have an empty origin → fallback).
             let redirectAfter;
-            if (env.isTauri()) {
-                // In Tauri, use the Tauri dev URL or configured base URL
-                // The worker will redirect back to this origin after OAuth
+            if (redirectAfterOverride) {
+                redirectAfter = encodeURIComponent(redirectAfterOverride);
+            } else if (env.isTauri()) {
                 redirectAfter = encodeURIComponent(window.location.origin || 'http://localhost:8080');
                 TB.logger.debug(`[User] Tauri mode, using redirect_after: ${redirectAfter}`);
             } else {
@@ -438,13 +439,14 @@ const user = {
      * Login with Google OAuth.
      * Fetches the OAuth URL from the backend and redirects the browser.
      */
-    async loginWithGoogle() {
+    async loginWithGoogle(redirectAfterOverride = null) {
         TB.logger.info('[User] Starting Google OAuth login...');
         try {
-            // Fix: In Tauri, window.location.origin may be empty. Use a proper origin.
+            // redirectAfterOverride: explicit target (e.g. CLI loopback bridge) wins.
             let redirectAfter;
-            if (env.isTauri()) {
-                // In Tauri, use the Tauri dev URL or configured base URL
+            if (redirectAfterOverride) {
+                redirectAfter = encodeURIComponent(redirectAfterOverride);
+            } else if (env.isTauri()) {
                 redirectAfter = encodeURIComponent(window.location.origin || 'http://localhost:8080');
                 TB.logger.debug(`[User] Tauri mode, using redirect_after: ${redirectAfter}`);
             } else {

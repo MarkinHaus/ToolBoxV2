@@ -33,7 +33,7 @@ from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from multiprocessing import Process
 from pathlib import Path
-from threading import Lock, Thread
+from threading import Lock, Thread, RLock
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -1225,6 +1225,7 @@ class WorkerManager:
         self.config = config
         self._workers: Dict[str, WorkerInfo] = {}
         self._processes: Dict[str, Process] = {}
+        self._lock = RLock()  # guards _workers / _processes structural access
         self._nginx = NginxManager(config)
         self._broker_process: Process | None = None
         self._running = False
@@ -1278,17 +1279,20 @@ class WorkerManager:
         if not worker_id:
             worker_id = f"http_{uuid.uuid4().hex[:8]}"
         if not port:
-            port = self._next_http_port
-            self._next_http_port += 1
+            with self._lock:
+                port = self._next_http_port
+                self._next_http_port += 1
 
         socket_path = self._get_socket_path(worker_id)
-        process = Process(target=_run_http_worker_process, args=(worker_id, self.config.to_dict(), port, socket_path), name=worker_id)
+        process = Process(target=_run_http_worker_process, args=(worker_id, self.config.to_dict(), port, socket_path),
+                          name=worker_id)
         process.start()
 
         info = WorkerInfo(worker_id=worker_id, worker_type=WorkerType.HTTP, pid=process.pid, port=port,
                           socket_path=socket_path, state=WorkerState.STARTING, started_at=time.time())
-        self._workers[worker_id] = info
-        self._processes[worker_id] = process
+        with self._lock:
+            self._workers[worker_id] = info
+            self._processes[worker_id] = process
 
         time.sleep(0.5)
         if process.is_alive():
@@ -1302,7 +1306,13 @@ class WorkerManager:
                              standby: bool = True) -> WorkerInfo | None:
         if not worker_id:
             worker_id = f"liveui_{uuid.uuid4().hex[:8]}"
-        port = port or getattr(self.config.manager, "live_ui_port", 8700)
+            # One-Port-Collective: every live-ui replica MUST target the same port.
+            # Force the canonical live_ui_port even if a caller (e.g. restart) hands
+            # in a drifted port — otherwise a replica "moves" and the collective breaks.
+        canonical = getattr(self.config.manager, "live_ui_port", 8700)
+        if port is not None and port != canonical:
+            logger.warning(f"Live-UI: requested port {port} != collective {canonical} — forcing {canonical}")
+        port = canonical
         process = Process(target=_run_live_ui_process,
                           args=(worker_id, self.config.to_dict(), port, standby),
                           name=worker_id)
@@ -1310,8 +1320,9 @@ class WorkerManager:
         info = WorkerInfo(worker_id=worker_id, worker_type=WorkerType.HTTP,
                           pid=process.pid, port=port, state=WorkerState.STARTING,
                           started_at=time.time())
-        self._workers[worker_id] = info
-        self._processes[worker_id] = process
+        with self._lock:
+            self._workers[worker_id] = info
+            self._processes[worker_id] = process
         time.sleep(0.5)
         if process.is_alive():
             info.state = WorkerState.RUNNING
@@ -1324,16 +1335,18 @@ class WorkerManager:
         if not worker_id:
             worker_id = f"ws_{uuid.uuid4().hex[:8]}"
         if not port:
-            port = self._next_ws_port
-            self._next_ws_port += 1
+            with self._lock:
+                port = self._next_ws_port
+                self._next_ws_port += 1
 
         process = Process(target=_run_ws_worker_process, args=(worker_id, self.config.to_dict(), port), name=worker_id)
         process.start()
 
         info = WorkerInfo(worker_id=worker_id, worker_type=WorkerType.WS, pid=process.pid, port=port,
                           state=WorkerState.STARTING, started_at=time.time())
-        self._workers[worker_id] = info
-        self._processes[worker_id] = process
+        with self._lock:
+            self._workers[worker_id] = info
+            self._processes[worker_id] = process
 
         time.sleep(0.5)
         if process.is_alive():
@@ -1344,10 +1357,11 @@ class WorkerManager:
         return None
 
     def stop_worker(self, worker_id: str, graceful: bool = True) -> bool:
-        if worker_id not in self._processes:
-            return False
-        info = self._workers.get(worker_id)
-        process = self._processes[worker_id]
+        with self._lock:
+            if worker_id not in self._processes:
+                return False
+            info = self._workers.get(worker_id)
+            process = self._processes[worker_id]
         if info:
             info.state = WorkerState.STOPPING
             if info.socket_path:
@@ -1364,17 +1378,20 @@ class WorkerManager:
             process.join(timeout=5)
         if info:
             info.state = WorkerState.STOPPED
-        del self._processes[worker_id]
+        with self._lock:
+            self._processes.pop(worker_id, None)
         logger.info(f"Worker stopped: {worker_id}")
         return True
 
     def restart_worker(self, worker_id: str) -> WorkerInfo | None:
-        if worker_id not in self._workers:
-            return None
-        info = self._workers[worker_id]
-        port, wtype = info.port, info.worker_type
+        with self._lock:
+            info = self._workers.get(worker_id)
+            if info is None:
+                return None
+            port, wtype = info.port, info.worker_type
         self.stop_worker(worker_id)
-        del self._workers[worker_id]
+        with self._lock:
+            self._workers.pop(worker_id, None)
         if worker_id.startswith("liveui_"):
             return self.start_live_ui_worker(worker_id, port, standby=True)
         if wtype == WorkerType.HTTP:
@@ -1403,16 +1420,6 @@ class WorkerManager:
         if new is not None:
             new.restart_count = prev + 1
             self._health_checker.update_workers(self._workers)
-
-    def _get_http_ports(self) -> List[int]:
-        return [w.port for w in self._workers.values() if w.worker_type == WorkerType.HTTP and w.state == WorkerState.RUNNING]
-
-    def _get_ws_ports(self) -> List[int]:
-        return [w.port for w in self._workers.values() if w.worker_type == WorkerType.WS and w.state == WorkerState.RUNNING]
-
-    def _get_http_sockets(self) -> List[str]:
-        return [w.socket_path for w in self._workers.values() if w.worker_type == WorkerType.HTTP and w.state == WorkerState.RUNNING and w.socket_path]
-
     def _write_initial_nginx_config(self, force: bool = False) -> None:
         """Write nginx site config ONCE. Certbot owns the file after that."""
         cfg = self.config
@@ -1477,10 +1484,70 @@ class WorkerManager:
             self.stop_worker(wid, graceful)
         self.stop_broker()
         logger.info("All services stopped")
+        try:
+            os.unlink(get_MANAGER_STATE_FILE())
+        except Exception:
+            pass
+
+    def restart_all(self) -> bool:
+        """In-place recycle of all workers + broker WITHOUT tearing down the
+        manager process, its API server or the state file. PID stays stable.
+        Brief downtime while workers rebind — use rolling_update for
+        zero-downtime HTTP cycling instead.
+        """
+        logger.info("Restarting all services in-place...")
+
+        # Pause supervisors so they don't fight the teardown / respawn dead procs
+        self._health_checker.stop()
+        self._cluster.stop()
+
+        # Stop all worker processes, then drop their stale WorkerInfo entries
+        for wid in list(self._processes.keys()):
+            self.stop_worker(wid, graceful=True)
+        with self._lock:
+            self._workers.clear()
+
+        # Stop broker (also stops the metrics collector)
+        self.stop_broker()
+
+        # Reset port allocators so reused ports match the nginx upstream block
+        # (HTTP base..base+workers-1 / WS base..). Otherwise ports drift upward
+        # on every restart and nginx routes to nothing.
+        self._next_http_port = self.config.http_worker.port
+        ws_base = self.config.ws_worker.port
+        if ws_base < self.config.http_worker.port + 100:
+            ws_base = self.config.http_worker.port + 100
+        self._next_ws_port = ws_base
+
+        # Start broker + workers again
+        if not self.start_broker():
+            logger.error("restart_all: broker failed to start")
+            return False
+        for _ in range(self.config.http_worker.workers):
+            self.start_http_worker()
+        self.start_ws_worker()
+        for _ in range(max(1, getattr(self.config.manager, "live_ui_replicas", 2))):
+            self.start_live_ui_worker(standby=True)
+
+        # Re-arm supervisors with the fresh worker set
+        self._metrics_collector.start(self._workers)
+        self._health_checker.restart_cb = self._respawn_worker
+        self._health_checker.liveness_cb = self._is_process_alive
+        self._health_checker.start(self._workers)
+        self._cluster.start()
+
+        # nginx: reload only — config already written, certbot owns the file
+        if self.config.nginx.enabled:
+            self._update_nginx_config()
+
+        logger.info("In-place restart complete")
+        return True
 
     def get_status(self) -> Dict[str, Any]:
         broker_alive = bool(self._broker_process and self._broker_process.is_alive())
         leader_id, topology = self._probe_p2p_topology()
+        with self._lock:
+            worker_items = list(self._workers.items())
         return {
             "running": self._running,
             "platform": SYSTEM,
@@ -1490,7 +1557,7 @@ class WorkerManager:
                 "leader": leader_id,
                 "topology_workers": len(topology.get("workers", {})) if topology else 0,
             },
-            "workers": {wid: w.to_dict() for wid, w in self._workers.items()},
+            "workers": {wid: w.to_dict() for wid, w in worker_items},
             "nginx": {"installed": self._nginx.is_installed(), "ssl_available": self._nginx.ssl_available, "version": self._nginx.get_version()},
             "cluster": {"nodes": len(self._cluster.nodes), "healthy_nodes": sum(1 for n in self._cluster.nodes.values() if n.healthy)},
         }
@@ -1504,7 +1571,9 @@ class WorkerManager:
         key = os.environ.get("LIVE_DASHBOARD_KEY") or getattr(self.config.manager, "live_dashboard_key", "")
         if not key:
             return None, {}
-        for w in self._workers.values():
+        with self._lock:
+            workers = list(self._workers.values())
+        for w in workers:
             if w.worker_type != WorkerType.HTTP or not w.port:
                 continue
             try:
@@ -1521,7 +1590,8 @@ class WorkerManager:
         return None, {}
 
     def get_workers(self) -> List[Dict]:
-        local = [w.to_dict() for w in self._workers.values()]
+        with self._lock:
+            local = [w.to_dict() for w in self._workers.values()]
         for w in local:
             m = self._metrics_collector.get_metrics(w["worker_id"])
             w["metrics"] = {"requests": m.requests, "connections": m.connections, "errors": m.errors, "avg_latency_ms": m.avg_latency_ms}
@@ -1529,10 +1599,12 @@ class WorkerManager:
 
     def get_metrics(self) -> Dict[str, Any]:
         all_m = self._metrics_collector.get_all_metrics()
+        with self._lock:
+            workers = list(self._workers.values())
         return {
-            "total_workers": len(self._workers),
-            "http_workers": sum(1 for w in self._workers.values() if w.worker_type == WorkerType.HTTP),
-            "ws_workers": sum(1 for w in self._workers.values() if w.worker_type == WorkerType.WS),
+            "total_workers": len(workers),
+            "http_workers": sum(1 for w in workers if w.worker_type == WorkerType.HTTP),
+            "ws_workers": sum(1 for w in workers if w.worker_type == WorkerType.WS),
             "total_requests": sum(m.requests for m in all_m.values()),
             "total_connections": sum(m.connections for m in all_m.values()),
             "total_errors": sum(m.errors for m in all_m.values()),
@@ -1542,19 +1614,23 @@ class WorkerManager:
     def get_health(self) -> Dict[str, Any]:
         broker_alive = bool(self._broker_process and self._broker_process.is_alive())
         leader_id, _ = self._probe_p2p_topology()
-        workers_healthy = all(w.healthy for w in self._workers.values()) if self._workers else False
+        with self._lock:
+            worker_items = list(self._workers.items())
+        workers_healthy = all(w.healthy for _, w in worker_items) if worker_items else False
         # P2P: cluster is healthy if workers are up AND a leader exists (either dedicated broker or elected worker)
         healthy = workers_healthy and (broker_alive or leader_id is not None)
         return {
             "healthy": healthy,
             "broker": {"alive": broker_alive, "leader_id": leader_id},
-            "workers": {wid: {"healthy": w.healthy, "state": w.state.value, "latency_ms": w.health_latency_ms} for wid, w in self._workers.items()},
+            "workers": {wid: {"healthy": w.healthy, "state": w.state.value, "latency_ms": w.health_latency_ms} for
+                        wid, w in worker_items},
             "nginx": {"installed": self._nginx.is_installed(), "ssl": self._nginx.ssl_available},
         }
 
     def scale_workers(self, worker_type: str, target: int) -> Dict[str, Any]:
         wtype = WorkerType.HTTP if worker_type == "http" else WorkerType.WS
-        current = [w for w in self._workers.values() if w.worker_type == wtype]
+        with self._lock:
+            current = [w for w in self._workers.values() if w.worker_type == wtype]
         started, stopped = [], []
 
         if target > len(current):
@@ -1577,7 +1653,9 @@ class WorkerManager:
 
     def rolling_update(self, delay: float = 2.0, validate: bool = True):
         logger.info("Starting rolling update...")
-        for info in [w for w in self._workers.values() if w.worker_type == WorkerType.HTTP]:
+        with self._lock:
+            targets = [w for w in self._workers.values() if w.worker_type == WorkerType.HTTP]
+        for info in targets:
             new = self.start_http_worker()
             if not new:
                 continue
@@ -1621,7 +1699,18 @@ class ManagerAPI(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass  # Silent
 
+    def _check_auth(self) -> bool:
+        """Every route requires X-Cluster-Secret == manager.cluster_secret."""
+        secret = self.headers.get("X-Cluster-Secret", "")
+        if secret and secret == self.manager.cluster_secret:
+            return True
+        self.send_response(403)
+        self.end_headers()
+        return False
+
     def do_GET(self):
+        if not self._check_auth():
+            return
         path = urlparse(self.path).path
         if path.startswith("/admin/manager"):
             path = path[14:]  # Strip legacy prefix for cluster compat
@@ -1647,6 +1736,8 @@ class ManagerAPI(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
+        if not self._check_auth():
+            return
         path = urlparse(self.path).path
         if path.startswith("/admin/manager"):
             path = path[14:]
@@ -1674,6 +1765,9 @@ class ManagerAPI(BaseHTTPRequestHandler):
         elif path == "/api/rolling-update":
             Thread(target=self.manager.rolling_update, daemon=True).start()
             self._json({"status": "ok"})
+        elif path == "/api/restart":
+            Thread(target=self.manager.restart_all, daemon=True).start()
+            self._json({"status": "ok"})
         elif path == "/api/scale":
             self._json(self.manager.scale_workers(data.get("type", "http"), data.get("count", 1)))
         elif path == "/api/shutdown":
@@ -1696,12 +1790,14 @@ class ManagerAPI(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(data, default=str).encode())
 
 
-def run_manager_api(manager: WorkerManager, host: str, port: int):
+def run_manager_api(manager: WorkerManager, host: str, port: int, bound_port_ref: list | None = None):
     ManagerAPI.manager = manager
     for _ in range(5):
         try:
             server = HTTPServer((host, port), ManagerAPI)
             server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if bound_port_ref is not None:
+                bound_port_ref[0] = port
             logger.info(f"Cluster API listening on {host}:{port}")
             server.serve_forever()
             break
@@ -1712,6 +1808,39 @@ def run_manager_api(manager: WorkerManager, host: str, port: int):
 # ============================================================================
 # CLI
 # ============================================================================
+def get_MANAGER_STATE_FILE():
+    from toolboxv2 import get_app
+    return os.path.join(get_app().appdata, "tb_manager_state.json")
+
+def _read_manager_state() -> dict | None:
+    try:
+        with open(get_MANAGER_STATE_FILE(), "r") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def _is_process_alive(pid: int) -> bool:
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+def _get_live_url(api_host: str, api_port: int, secret: str) -> str | None:
+    try:
+        conn = http.client.HTTPConnection(api_host, api_port, timeout=2)
+        conn.request("GET", "/api/status", headers={"X-Cluster-Secret": secret})
+        resp = conn.getresponse()
+        data = json.loads(resp.read().decode()) if resp.status == 200 else {}
+        conn.close()
+        for w in data.get("workers", {}).values():
+            if w.get("worker_type") == "http" and w.get("state") == "running":
+                return f"http://127.0.0.1:{w['port']}/live"
+    except Exception:
+        pass
+    return None
 
 def main():
     if IS_WINDOWS:
@@ -1794,40 +1923,163 @@ tb workers debug             Startet Debug-Server auf dist/"""
     from toolboxv2.utils.workers.config import load_config
     config  = load_config(args.config)
     manager = WorkerManager(config)
+    def start_helper():
+        state = _read_manager_state()
+        if state and _is_process_alive(state.get("pid")):
+            api_host = state["api_host"]
+            api_port = state["api_port"]
+            try:
+                conn = http.client.HTTPConnection(api_host, api_port, timeout=1)
+                conn.request("GET", "/api/health", headers={"X-Cluster-Secret": state.get("secret", "")})
+                if conn.getresponse().status == 200:
+                    conn.close()
+                    print(f"⚠️  Manager läuft bereits (PID {state['pid']})")
+                    live_url = _get_live_url(api_host, api_port, state.get("secret", ""))
+                    if live_url:
+                        key = os.environ.get("LIVE_DASHBOARD_KEY") or getattr(config.manager, "live_dashboard_key", "")
+                        print(
+                            f"🔗 Nutze /live UI für Scaling: {live_url}?key={key}" if key else f"🔗 API: http://{api_host}:{api_port}")
+                    print("   Keine neuen Worker gestartet.")
+                    sys.exit(0)
+            except Exception:
+                print("⚠️  State-File existiert aber API nicht erreichbar — starte neu.")
+                try:
+                    os.unlink(get_MANAGER_STATE_FILE())
+                except Exception:
+                    pass
 
-    # -------------------------------------------------------------------------
-    if args.command == "start":
         if not manager.start_all():
             sys.exit(1)
+
+        api_host = getattr(config.manager, "web_ui_host", "127.0.0.1")
+        api_port = getattr(config.manager, "web_ui_port", 9005)
+        bound_port_ref = [api_port]
+
         Thread(
             target=run_manager_api,
-            args=(manager, getattr(config.manager, "web_ui_host", "127.0.0.1"),
-                  getattr(config.manager, "web_ui_port", 9005)),
+            args=(manager, api_host, api_port, bound_port_ref),
             daemon=True,
         ).start()
+
+        time.sleep(0.5)
+        try:
+            with open(get_MANAGER_STATE_FILE(), "w") as f:
+                json.dump({
+                    "pid": os.getpid(),
+                    "api_host": api_host,
+                    "api_port": bound_port_ref[0],
+                    "started_at": time.time(),
+                    "secret": manager.cluster_secret,
+                }, f)
+            # State file now holds the API secret → restrict to owner-only.
+            os.chmod(get_MANAGER_STATE_FILE(), 0o600)
+        except Exception as e:
+            logger.warning(f"State-File write failed: {e}")
+
         try:
             while manager._running:
                 time.sleep(1)
         except KeyboardInterrupt:
             manager.stop_all()
 
+    def stop_helper():
+        state = _read_manager_state()
+        if not state or not _is_process_alive(state.get("pid")):
+            print("✗ Kein laufender Manager gefunden.")
+            sys.exit(1)
+
+        api_host, api_port = state["api_host"], state["api_port"]
+        secret = state.get("secret", "")
+        try:
+            conn = http.client.HTTPConnection(api_host, api_port, timeout=5)
+            conn.request("POST", "/api/shutdown", headers={"X-Cluster-Secret": secret})
+            resp = conn.getresponse()
+            conn.close()
+            if resp.status == 200:
+                print("✅ Shutdown-Signal gesendet.")
+                try:
+                    os.unlink(get_MANAGER_STATE_FILE())
+                except Exception:
+                    pass
+            else:
+                print(f"✗ API-Fehler: {resp.status} {resp.reason}")
+                sys.exit(1)
+        except Exception as e:
+            print(f"✗ Manager nicht erreichbar ({api_host}:{api_port}): {e}")
+            sys.exit(1)
+    # -------------------------------------------------------------------------
+    if args.command == "start":
+        start_helper()
+
     # -------------------------------------------------------------------------
     elif args.command == "stop":
-        manager.stop_all()
+        stop_helper()
 
     # -------------------------------------------------------------------------
     elif args.command == "restart":
-        manager.stop_all()
-        time.sleep(2)
-        manager.start_all()
+        state = _read_manager_state()
+        if not state or not _is_process_alive(state.get("pid")):
+            print("⚠️  Worker laufen nicht — nichts zu neustarten.")
+            sys.exit(1)
+        api_host, api_port = state["api_host"], state["api_port"]
+        secret = state.get("secret", "")
+        try:
+            conn = http.client.HTTPConnection(api_host, api_port, timeout=5)
+            conn.request("POST", "/api/restart", headers={"X-Cluster-Secret": secret})
+            resp = conn.getresponse()
+            conn.close()
+            if resp.status == 200:
+                print("✅ In-place Restart gestartet (async, gleiche PID).")
+            else:
+                print(f"✗ API-Fehler: {resp.status} {resp.reason}")
+                sys.exit(1)
+        except Exception as e:
+            print(f"✗ Manager nicht erreichbar ({api_host}:{api_port}): {e}")
+            sys.exit(1)
 
     # -------------------------------------------------------------------------
     elif args.command == "status":
-        print(json.dumps(manager.get_status(), indent=2))
+        state = _read_manager_state()
+        if not state or not _is_process_alive(state.get("pid")):
+            print("✗ Manager läuft nicht.")
+            sys.exit(1)
+
+        api_host, api_port = state["api_host"], state["api_port"]
+        secret = state.get("secret", "")
+        try:
+            conn = http.client.HTTPConnection(api_host, api_port, timeout=5)
+            conn.request("GET", "/api/status", headers={"X-Cluster-Secret": secret})
+            resp = conn.getresponse()
+            if resp.status == 200:
+                print(json.dumps(json.loads(resp.read().decode()), indent=2))
+            else:
+                print(f"✗ API-Fehler: {resp.status} {resp.reason}")
+            conn.close()
+        except Exception as e:
+            print(f"✗ Manager nicht erreichbar ({api_host}:{api_port}): {e}")
+            sys.exit(1)
 
     # -------------------------------------------------------------------------
     elif args.command == "update":
-        manager.rolling_update()
+        state = _read_manager_state()
+        if not state or not _is_process_alive(state.get("pid")):
+            print("⚠️  Worker laufen nicht — nichts zu aktualisieren.")
+            sys.exit(1)
+        api_host, api_port = state["api_host"], state["api_port"]
+        secret = state.get("secret", "")
+        try:
+            conn = http.client.HTTPConnection(api_host, api_port, timeout=5)
+            conn.request("POST", "/api/rolling-update", headers={"X-Cluster-Secret": secret})
+            resp = conn.getresponse()
+            conn.close()
+            if resp.status == 200:
+                print("✅ Rolling Update gestartet (async).")
+            else:
+                print(f"✗ API-Fehler: {resp.status} {resp.reason}")
+                sys.exit(1)
+        except Exception as e:
+            print(f"✗ Manager nicht erreichbar ({api_host}:{api_port}): {e}")
+            sys.exit(1)
 
     # -------------------------------------------------------------------------
     elif args.command == "nginx-init":
@@ -1975,12 +2227,12 @@ tb workers debug             Startet Debug-Server auf dist/"""
             print(f"  workers in topology: {len(snap.get('workers', {}))}")
         else:
             print("  (no topology snapshot available yet — workers may still be starting)")
-        if not args.no_ui:
-            try:
-                import webbrowser
-                webbrowser.open(url)
-            except Exception:
-                pass
+
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
 
     # -------------------------------------------------------------------------
     elif args.command == "debug":

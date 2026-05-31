@@ -20,7 +20,6 @@ from ..system.tb_logger import get_logger
 
 load_dotenv()
 
-TB_R_KEY = os.getenv("TB_R_KEY", "randomstring")
 
 def derive_aes_key(tb_r_key: str) -> bytes:
     return hashlib.sha256(tb_r_key.encode()).digest()  # 32 Byte AES-Schlüssel
@@ -49,8 +48,7 @@ def get_or_create_device_key():
             os.makedirs(DEVICE_KEY_DIR)
     try:
         ensure_device_key_dir_exists()
-        aes_key = derive_aes_key(TB_R_KEY)
-
+        aes_key = derive_aes_key(os.getenv("TB_R_KEY", "randomstring"))
         if os.path.exists(DEVICE_KEY_PATH):
             with open(DEVICE_KEY_PATH, "rb") as key_file:
                 encrypted_data = key_file.read()

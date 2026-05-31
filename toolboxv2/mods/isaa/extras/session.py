@@ -34,6 +34,9 @@ class ChatSession:
             role = "tool"
         else:
             raise ValueError(f"Invalid role value {message['role']}")
+
+        if '__sub__' in self.space_name:
+            return
         await self.mem.add_data(self.space_name, message['content'],
                           {'role': role,
                             'timestamp': datetime.now().isoformat(), **kwargs}, direct=direct)
@@ -42,6 +45,9 @@ class ChatSession:
 
     async def get_reference(self, text,row=False, **kwargs):
         kwargs["to_str"] = not row
+
+        if '__sub__' in self.space_name:
+            return await self.mem.query(text, None, **kwargs) if not row else await self.mem.query(text, None, **kwargs)
         return await self.mem.query(text, self.space_name, **kwargs) if not row else await self.mem.query(text, self.space_name, **kwargs)
 
     def get_past_x(self, x, last_u=False):
@@ -58,7 +64,11 @@ class ChatSession:
             if h.get('role') == 'user':
                 break
         return history[::-1]
+
     def on_exit(self):
+        if '__sub__' in self.space_name:
+            self.clear_history()
+            return
         self.mem.save_memory(self.space_name, f'{get_app().appdata}/{self.space_name}.mem')
 
     def get_volume(self):

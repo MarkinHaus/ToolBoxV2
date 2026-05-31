@@ -266,10 +266,10 @@ def start(pidname, args, filename):
             executable = sys.executable
 
         # Nutze direkt das Python-Modul, um den tb.exe Console-Wrapper zu umgehen
-        run_args = ["-m", "tb"] + sub_args
+        run_args = ["-m", "toolboxv2"] + sub_args
     else:
         executable = sys.executable
-        run_args = ["-m", "tb"] + sub_args
+        run_args = ["-m", "toolboxv2"] + sub_args
 
     # Plattformspezifisches, lautloses Starten ohne Terminalfenster
     p = run_executable_in_background(executable, run_args)
@@ -277,7 +277,7 @@ def start(pidname, args, filename):
     pid = p.pid
     with open(filename, "w", encoding="utf8") as f:
         f.write(str(pid))
-    get_app().sprint(f"Service {pidname} started (PID {pid})")
+    print(f"Service {pidname} started (PID {pid})")
 
 
 def stop(pidfile, pidname):
@@ -427,6 +427,8 @@ def setup_service_linux():
 # =================== Constants ===================
 
 RUNNER_KEYS = [
+    "help",
+    "!",
     "version",
     "venv",
     "db",
@@ -1315,12 +1317,12 @@ def parse_args():
     # Handle custom help
     if args.help:
         parser.print_help()
-        os._exitt(0)
+        os._exit(0)
 
     # Handle guide
     if args.guide:
         show_interactive_guide()
-        os._exitt(0)
+        os._exit(0)
 
     # Add runner information
     if runner_name:
@@ -1566,33 +1568,40 @@ async def setup_app(ov_name=None, App=TbApp):
         # tb_app.run_bg_task_advanced(check_and_start_fallback())
 
     elif args.background_application:
-        tb_app.sprint("Starting background application", not args.kill)
+
+        tb_app.alive = False
         if not args.kill:
+            tb_app.sprint("Starting background application")
             if args.background_application_runner:
                 tb_app.sprint("Already in background runner mode, not spawning again")
             else:
-                tb_app.sprint(f"Spawning background process...")
+                print(f"Spawning background process...")
                 start(args.name, sys.argv, filename=f"{info_folder}bg-{args.name}.pid")
                 # NEU: Parent-Prozess sollte hier beenden
-                tb_app.sprint(f"Background process spawned. Exiting parent.")
+                print(f"Background process spawned. Exiting parent.")
                 #sys.exit(0)
-                os._exit(0)
+                #os._exit(0)
+                return tb_app, args
         else:
-            if "-m " not in sys.argv:
-                pid_file = f"{info_folder}bg-{args.name}.pid"
-            try:
-                _ = await ProxyApp(
-                    tb_app,
-                    args.host if args.host != "0.0.0.0" else "localhost",
-                    args.port if args.port != 5000 else 6587,
-                    timeout=4,
-                )
-                res = await _.verify()
-                if await _.exit_main() != "No data look later":
+            pid_file = f"{info_folder}bg-{args.name}.pid"
+            if not os.path.exists(pid_file):
+                print(f"NO background process running for {args.name}")
+            else:
+                try:
+                    _ = await ProxyApp(
+                        tb_app,
+                        args.host if args.host != "0.0.0.0" else "localhost",
+                        args.port if args.port != 5000 else 6587,
+                        timeout=4,
+                    )
+                    res = await _.verify()
+                    if await _.exit_main() != "No data look later":
+
+                        stop(pid_file, args.name)
+                except Exception as e:
+                    print("Auto Stopping background application")
                     stop(pid_file, args.name)
-            except Exception:
-                tb_app.sprint("Auto Stopping background application")
-                stop(pid_file, args.name)
+                    # tb_app.debug_rains(e)
     elif args.live_application:
         try:
             tb_app = await a_get_proxy_app(
@@ -1804,23 +1813,11 @@ async def main(App=TbApp, do_exit=True):
             print("You must first run the mode")
         else:
             try:
-                tb_app.cluster_manager.stop_all()
-            except Exception as e:
-                print(Style.YELLOW(f"Error stopping cluster manager: {e}"))
-            try:
                 from toolboxv2.utils.clis.cli_worker_manager import WorkerManager
                 from toolboxv2.utils.workers.config import load_config
 
                 config = load_config(None)
                 WorkerManager(config).stop_all()
-            except Exception as e:
-                print(Style.YELLOW(f"Error stopping workers manager: {e}"))
-            try:
-                from toolboxv2.utils.clis.tcm_p2p_cli import handle_stop
-
-                _ = lambda: None
-                _.names = None
-                handle_stop(_)
             except Exception as e:
                 print(Style.YELLOW(f"Error stopping workers manager: {e}"))
 
@@ -1857,6 +1854,183 @@ async def main(App=TbApp, do_exit=True):
         return tb_app
     return tb_app
 
+CATEGORIES = {
+    "core": {
+        "title": "📦 Core Operations",
+        "runners": {
+            "user": "User management (levels, MinIO credentials, key rotation)",
+            "run": "Execute .tbx files using TBX Language",
+            "db": "Database management (standalone, desktop, mobile SQLite, active-active sync)",
+            "workers": "Orchestrate workers (HTTP, WS, Broker) [feature: web]",
+            "services": "Service manager for auto-start/restart and system service integration",
+            "registry": "Manage packages & mods on SimpleCore Registry (login, search, publish)",
+        }
+    },
+    "utility": {
+        "title": "⚙️  Utility Commands",
+        "runners": {
+            "login": "Browser-based login to SimpleCore Hub",
+            "logout": "End current authentication session",
+            "status": "Check complete system status & health (DB, API, P2P, Workers)",
+            "session": "Manage JWT, cookie, cluster and worker secrets",
+            "manifest": "Interactive manifest manager (enable/disable feature groups)",
+        }
+    },
+    "dev": {
+        "title": "🔬 Developer Tools & Interfaces",
+        "runners": {
+            "venv": "Manage Python environments (conda, uv, native)",
+            "mcp": "Start Model Context Protocol server for AI agents [feature: isaa]",
+            "gui": "Launch Tauri-based graphical desktop app [feature: desktop]",
+            "browser": "Compile, install and package browser extension",
+            "jsx": "Start JSX development server with live preview",
+            "p2p": "P2P client chat, file transfer & voice support",
+            "analyze": "Analyze python & JS code statically and at runtime",
+        }
+    },
+    "infra": {
+        "title": "🌐 Infrastructure & Pipelines",
+        "runners": {
+            "broker": "ZMQ event broker for worker orchestration",
+            "http_worker": "Start a single HTTP worker instance [feature: web]",
+            "ws_worker": "Start a single WebSocket worker instance [feature: web]",
+            "docksh": "Launch interactive Docker CLI shell",
+            "access": "Manage global system-wide 'tb' CLI access path",
+            "build": "Build and package ToolBoxV2 + features for pip/upload",
+            "fbuild": "Build ToolBox feature packs for pip",
+            "fl": "Unpack and load feature packs",
+            "docker-image": "Build ToolBoxV2 Docker images & compose stacks",
+            "obs": "E2E observability layer (MinIO/S3 + OpenObserve integration)",
+            "mkdocs": "Scan codebase and compile MkDocs documentation with DocMap",
+            "ytss": "YouTube streaming & broadcast service",
+            "LiveSync": "Real-time file synchronization client",
+        }
+    }
+}
+
+
+async def run_interactive_help():
+    """Launches a 2-tiered interactive keypad help menu to browse runners and view docstrings."""
+    from .utils.clis.cli_input import menu_select_async
+    import importlib
+    import textwrap
+
+    while True:
+        cat_options = [
+            (cat_key, f"{cat_data['title']} ({len(cat_data['runners'])} commands)")
+            for cat_key, cat_data in CATEGORIES.items()
+        ]
+        cat_options.append(("exit", "❌ Exit help"))
+
+        selected_cat = await menu_select_async(
+            cat_options,
+            title="🌩️  Select Help Category:",
+            hint="↑/↓ or W/S · Enter · q to exit"
+        )
+
+        if selected_cat in (None, "exit"):
+            break
+
+        while True:
+            cat_data = CATEGORIES[selected_cat]
+            runner_options = [
+                (run_key, f"{run_key:<15} - {desc}")
+                for run_key, desc in cat_data["runners"].items()
+            ]
+            runner_options.append(("back", "↩ Back to Categories"))
+
+            selected_runner = await menu_select_async(
+                runner_options,
+                title=f"{cat_data['title']} - Select command to view help or run:",
+                hint="↑/↓ or W/S · Enter · q to back"
+            )
+
+            if selected_runner in (None, "back"):
+                break
+
+            action_options = [
+                ("info", "ℹ️  Show detailed help / docstring"),
+                ("run", "🚀 Run command directly"),
+                ("back", "↩ Back")
+            ]
+
+            action = await menu_select_async(
+                action_options,
+                title=f"Command '{selected_runner}': What would you like to do?",
+                hint="↑/↓ or W/S · Enter · q to back"
+            )
+
+            if action == "info":
+                desc = cat_data["runners"][selected_runner]
+                doc = None
+                try:
+                    # Resilient module-level docstring loader for lazy-loaded lambdas
+                    if selected_runner == "venv":
+                        mod = importlib.import_module("toolboxv2.utils.system.venv_runner")
+                        doc = mod.__doc__
+                    elif selected_runner == "db":
+                        mod = importlib.import_module("toolboxv2.utils.clis.db_cli_manager")
+                        doc = mod.__doc__
+                    elif selected_runner == "p2p":
+                        mod = importlib.import_module("toolboxv2.utils.clis.tcm_p2p_cli")
+                        doc = mod.__doc__
+                    elif selected_runner == "registry":
+                        mod = importlib.import_module("toolboxv2.utils.clis.cli_registry")
+                        doc = mod.__doc__
+                    elif selected_runner == "services":
+                        mod = importlib.import_module("toolboxv2.utils.clis.service_manager")
+                        doc = mod.__doc__
+                    elif selected_runner == "manifest":
+                        mod = importlib.import_module("toolboxv2.utils.clis.manifest_cli")
+                        doc = mod.__doc__
+                    elif selected_runner == "llm-gateway":
+                        mod = importlib.import_module("toolboxv2.utils.clis.llm_gateway_cli")
+                        doc = mod.__doc__
+                    elif selected_runner == "docker-image":
+                        mod = importlib.import_module("toolboxv2.utils.clis.docker_image_cli")
+                        doc = mod.__doc__
+                    elif selected_runner == "obs":
+                        mod = importlib.import_module("toolboxv2.utils.clis.observability_helper")
+                        doc = mod.__doc__
+                    elif selected_runner == "mkdocs":
+                        mod = importlib.import_module("toolboxv2.utils.clis.cli_mkdocs")
+                        doc = mod.__doc__
+                    elif selected_runner == "gui":
+                        mod = importlib.import_module("toolboxv2.utils.clis.tauri_cli")
+                        doc = mod.__doc__
+                    else:
+                        runners_dict = runner_setup()
+                        func = runners_dict.get(selected_runner)
+                        if func:
+                            doc = func.__doc__
+                except Exception:
+                    pass
+
+                detail_text = textwrap.dedent(doc).strip() if doc else "No detailed docstring available."
+
+                print("\033[2J\033[H")
+                print("═" * 70)
+                print(f"  Command Help: {selected_runner}")
+                print("═" * 70)
+                print(f"Summary: {desc}\n")
+                print("Details / Docstring:")
+                print("-" * 70)
+                print(detail_text)
+                print("-" * 70)
+                input("\nPress Enter to return...")
+
+            elif action == "run":
+                runners_dict = runner_setup()
+                func = runners_dict.get(selected_runner)
+                if func:
+                    print("\033[2J\033[H")
+                    print(f"🚀 Launching runner: {selected_runner}...\n")
+                    import sys
+                    sys.argv = [sys.argv[0]]
+                    res = func()
+                    if asyncio.iscoroutine(res):
+                        await res
+                    sys.exit(0)
 
 def runner_setup():
     def helper_gui():
@@ -2086,6 +2260,8 @@ def runner_setup():
 
 
     runner = {
+        "help": run_interactive_help,
+        "!": run_interactive_help,
         "venv": lambda: __import__(
             "toolboxv2.utils.system.venv_runner", fromlist=["main"]
         ).main(),
@@ -2181,7 +2357,7 @@ def _build_guarded_runners(runner: dict) -> dict:
             print(f"\n❌ Feature '{name}' is not enabled.")
             print(f"   Enable with: tb manifest enable {name}")
             print(f"   Install deps: pip install toolboxv2[{name}]\n")
-            import sys; os._exitt(1)
+            import sys; os._exit(1)
         return _handler
 
     # web-abhängige Runner
@@ -2230,12 +2406,12 @@ def main_runner():
                     f"Service manager not supported on this platform {system()}"
                 )
         else:
-            os._exitt(run_service_manager_startup())
+            os._exit(run_service_manager_startup())
 
     if "--print-root" in sys.argv:
         from toolboxv2 import tb_root_dir
         print(str(tb_root_dir.parent))
-        os._exitt(0)
+        os._exit(0)
     # Normale Main-App
     else:
         # Clear screen for clean start
@@ -2284,7 +2460,7 @@ def main_runner():
             if other_runners:
                 print(f"  \033[36mOther:\033[0m     {', '.join(other_runners)}")
             print(f"\n\033[2mUse 'tb <command> --help' for more information.\033[0m\n")
-            os._exitt(1)
+            os._exit(1)
 
         try:
             loop = asyncio.new_event_loop()
@@ -2345,8 +2521,9 @@ def main_runner():
                         return
 
                 elif runner_name and not app.alive and runner_name != "default":
-                    raise ValueError(f"FIX DAS SOFORT WENN RUNNER {runner_name} muss {app.alive=} == TRUE sein")
-
+                    if not '-bg' in sys.argv:
+                        raise ValueError(f"FIX DAS SOFORT WENN RUNNER {runner_name} muss {app.alive=} == TRUE sein")
+                    await app.a_exit()
 
             loop.run_until_complete(main_helper(runner_name))
         except KeyboardInterrupt:
@@ -2404,4 +2581,4 @@ def server_helper(instance_id: str = "main", db_mode=None):
 
 if __name__ == "__main__":
     # print("STARTED START FROM __main__")
-    os._exitt(main_runner())
+    os._exit(main_runner())

@@ -303,7 +303,33 @@
                 show ? el.classList.add('show') : el.classList.remove('show');
             }
 
+            // CLI-bridge mode: if redirect_after points at a loopback receiver,
+            // hand the freshly issued tokens back there instead of entering the app.
+            function getBridgeTarget() {
+                const ra = new URLSearchParams(window.location.search).get('redirect_after');
+                if (!ra) return null;
+                try {
+                    const u = new URL(ra);
+                    if (u.hostname === '127.0.0.1' || u.hostname === 'localhost') return ra;
+                } catch (e) { /* malformed → ignore, normal app flow */ }
+                return null;
+            }
+
+            function bridgeTokensTo(target) {
+                // Same param format the server token-bridge uses, so the CLI
+                // loopback receiver is identical for OAuth and passkey.
+                const u = TB.state.get('user') || {};
+                const params =
+                    'token=' + encodeURIComponent(u.token || '') +
+                    '&refresh_token=' + encodeURIComponent(u.refreshToken || '') +
+                    '&user_id=' + encodeURIComponent(u.userId || '') +
+                    '&username=' + encodeURIComponent(u.username || '');
+                window.location.href = target + (target.includes('?') ? '&' : '?') + params;
+            }
+
             function doRedirect() {
+                const bridge = getBridgeTarget();
+                if (bridge) { bridgeTokensTo(bridge); return; }
                 if (window.__TAURI__) window.location.href = '/index.html';
                 else if (TB.router) TB.router.navigateTo('/web/mainContent.html');
                 else window.location.href = '/web/mainContent.html';
@@ -337,7 +363,10 @@
 
             window.handleDiscordLogin = function() {
                 toggleLoad(true, 'Connecting to Discord...');
-                TB.user.loginWithDiscord().catch(e => {
+                // In CLI-bridge mode, OAuth must carry the loopback target so the
+                // server bridge returns tokens there, not into the simplecore app.
+                // getBridgeTarget() is null outside bridge mode → normal behavior.
+                TB.user.loginWithDiscord(getBridgeTarget()).catch(e => {
                     showError('Discord Login fehlgeschlagen.');
                     toggleLoad(false);
                 });
@@ -345,7 +374,7 @@
 
             window.handleGoogleLogin = function() {
                 toggleLoad(true, 'Connecting to Google...');
-                TB.user.loginWithGoogle().catch(e => {
+                TB.user.loginWithGoogle(getBridgeTarget()).catch(e => {
                     showError('Google Login fehlgeschlagen.');
                     toggleLoad(false);
                 });
@@ -423,7 +452,17 @@
                 // Not authenticated — show login UI
                 if (params.has('error')) showError(decodeURIComponent(params.get('error')));
 
+                const bridgeTarget = getBridgeTarget();
+
                 TB.events.on('user:authError', (d) => {
+                    // In bridge mode, also report the failure back to the CLI loopback
+                    // so it can stop waiting instead of timing out.
+                    if (bridgeTarget) {
+                        const t = bridgeTarget + (bridgeTarget.includes('?') ? '&' : '?') +
+                            'error=' + encodeURIComponent(d.message || 'login failed');
+                        setTimeout(() => { window.location.href = t; }, 300);
+                        return;
+                    }
                     showError(d.message || 'Login fehlgeschlagen');
                     toggleLoad(false);
                 });
@@ -432,6 +471,14 @@
                     toggleLoad(true, 'Login erfolgreich! Redirect...');
                     setTimeout(doRedirect, 500);
                 });
+
+                // CLI bridge: auto-start a pre-selected method (?method=discord|google|passkey)
+                const method = params.get('method');
+                if (bridgeTarget && method) {
+                    if (method === 'discord') handleDiscordLogin();
+                    else if (method === 'google') handleGoogleLogin();
+                    else if (method === 'passkey') handlePasskeyLogin();
+                }
 
                 // UI Cleanup — only show login buttons if NOT authenticated
                 const initLoad = document.getElementById('auth-loading-initial');

@@ -1227,8 +1227,10 @@ async def print_status_dashboard_v2(host: 'ISAA_Host') -> int:
                 if live.tool.name: fo = f"◇ {live.tool.name[:16]}"
                 elif live.thought: fo = f"◎ {live.thought[:16]}"
                 elif live.status_msg: fo = live.status_msg[:18]
-            except Exception:
-                bar = f"{'─'*16} {(datetime.now()-t.started_at).total_seconds():.0f}s"
+            except Exception as e:
+                import time
+                c_print(str(e))
+                bar = f"{'─'*16} {(time.time()-t.started_at).total_seconds():.0f}s"
             print_table_row([t.agent_name[:14], bar, ph, fo], [14,22,10,18], ["cyan","green","white","grey"])
 
     if host.job_scheduler and host.job_scheduler.total_count > 0:

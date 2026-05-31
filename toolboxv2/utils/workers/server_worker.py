@@ -1220,6 +1220,27 @@ class WebSocketMessageHandler:
             return
 
         self._logger.info(f"Found handler: {handler_id}")
+
+        # Auth gate (Decision A): if the WS route requires auth and the connection
+        # is not authenticated, do NOT call on_connect. Force-close the connection
+        # via the WS worker instead (hard close, no protocol-level 401).
+        handler_entry = self.app.websocket_handlers.get(handler_id, {})
+        if handler_entry.get("auth") and not event.payload.get("authenticated", False):
+            self._logger.warning(f"WS connect denied (unauthenticated): {handler_id} conn={conn_id}")
+            try:
+                from toolboxv2.utils.workers.event_manager import create_ws_close_event
+                await self.event_manager.send_to_ws(
+                    create_ws_close_event(
+                        source="fasttb_ws_gate",
+                        conn_id=conn_id,
+                        code=1008,
+                        reason="Unauthorized",
+                    )
+                )
+            except Exception as e:
+                self._logger.error(f"WS close emit failed for {conn_id}: {e}", exc_info=True)
+            return
+
         handler = self.app.websocket_handlers.get(handler_id, {}).get("on_connect")
         if handler:
             try:

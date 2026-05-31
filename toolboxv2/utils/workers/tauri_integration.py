@@ -118,7 +118,7 @@ class TauriWorker:
     def _run_fasttb(self):
         from .fast.local_ui import app as local_ui_app
         from .fast.tray_api import (
-            mount_tray_api, register_command_handler, TrayClient,
+            mount_tray_api, register_command_handler, TrayClient, register_collective_commands
         )
         from .fast_tb_handler import FastTBHandler
         from waitress import create_server
@@ -127,6 +127,8 @@ class TauriWorker:
         mount_tray_api(local_ui_app)
 
         # 2) Register tray commands
+
+        register_collective_commands(local_ui_app)
         register_command_handler("start_worker", _cmd_start_worker)
         register_command_handler("stop_worker", _cmd_stop_worker)
         register_command_handler("open_url", _cmd_open_url)

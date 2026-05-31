@@ -537,11 +537,25 @@ body.is-running .isa-logo,
   font-size: var(--text-base, 13px);
   line-height: 1.6;
   color: rgba(255,255,255,0.85);
-  white-space: pre-wrap;
+  white-space: normal;
   word-wrap: break-word;
   margin-top: var(--space-2, 8px);
 }
 .step-body em { color: var(--text-muted, rgba(255,255,255,0.5)); font-style: normal; }
+.step-body h1, .step-body h2, .step-body h3, .step-body h4, .step-body h5, .step-body h6 { margin: 0.5em 0; font-weight: 600; line-height: 1.3; }
+.step-body p { margin: 0.5em 0; }
+.step-body pre { background: #1e1e1e; padding: 0.8em; border-radius: 4px; overflow-x: auto; margin: 0.5em 0; }
+.step-body code { background: #2d2d2d; padding: 0.2em 0.4em; border-radius: 3px; font-family: var(--font-mono, monospace); font-size: 0.9em; }
+.step-body pre code { background: none; padding: 0; }
+.step-body blockquote { border-left: 3px solid #555; padding-left: 0.8em; color: #aaa; margin: 0.5em 0; }
+.step-body ul, .step-body ol { margin: 0.5em 0; padding-left: 1.5em; }
+.step-body li { margin: 0.2em 0; }
+.step-body a { color: #58a6ff; text-decoration: none; }
+.step-body a:hover { text-decoration: underline; }
+.step-body hr { border: none; border-top: 1px solid #333; margin: 1em 0; }
+.step-body table { border-collapse: collapse; margin: 0.5em 0; }
+.step-body th, .step-body td { border: 1px solid #444; padding: 0.3em 0.6em; }
+.step-body th { background: #2a2a2a; font-weight: 600; }
 
 .step-l1 {
   display: none;
@@ -659,16 +673,20 @@ body.is-running .isa-logo,
   position: absolute;
   left: 50%;
   top: 50%;
-  /* Welcome state: dead-center. translateY(-50%) centers on its own height. */
   transform: translate(-50%, -50%);
   width: min(880px, 70vw);
   max-width: min(880px, 70vw);
   z-index: 10;
-  will-change: transform, width, max-width;
+  opacity: 1;
+  visibility: visible;
+  will-change: transform, width, max-width, opacity;
+  /* return path (→chat): opacity instant → visible FIRST, then transform animates */
   transition:
     transform 500ms cubic-bezier(0.4, 0, 0.2, 1),
     width 500ms cubic-bezier(0.4, 0, 0.2, 1),
-    max-width 500ms cubic-bezier(0.4, 0, 0.2, 1);
+    max-width 500ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 200ms ease,
+    visibility 0s;
 }
 /* Chat state: slide down to bottom + shrink. transformY pushes the element's
    bottom edge to viewport_bottom minus 24px, by translating its own height. */
@@ -676,6 +694,23 @@ body.is-running .isa-logo,
   transform: translate(-50%, calc(50vh - 24px - 100%)) scale(0.92);
   width: 760px;
   max-width: calc(100vw - 96px);
+}
+
+/* Widget mode: input-bar hält die Chat-Position, macht die Animation fertig und
+   fadet erst DANACH aus (delay) → zuletzt unsichtbar. */
+.isaa-body[data-view="widgets"] .isaa-input-bar {
+  transform: translate(-50%, calc(50vh - 24px - 100%)) scale(0.92);
+  width: 760px;
+  max-width: calc(100vw - 96px);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    transform 500ms cubic-bezier(0.4, 0, 0.2, 1),
+    width 500ms cubic-bezier(0.4, 0, 0.2, 1),
+    max-width 500ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 250ms ease 450ms,
+    visibility 0s linear 700ms;
 }
 
 .bubble {
@@ -812,7 +847,7 @@ body.is-running .isa-logo,
   gap: var(--space-3, 12px);
   box-shadow: var(--highlight-inset, inset 0 1px 0 rgba(255,255,255,0.05)), 0 10px 30px rgba(0,0,0,0.7);
 }
-.isaa-modal-title { font-family: var(--font-mono, monospace); font-size: var(--text-sm, 11px); text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-label, rgba(255,255,255,0.4)); }
+.isaa-modal-title { display: flex; align-items: center; gap: var(--space-2, 8px); font-family: var(--font-mono, monospace); font-size: var(--text-sm, 11px); text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-label, rgba(255,255,255,0.4)); }
 .isaa-modal-body { flex: 1 1 auto; overflow-y: auto; }
 .isaa-modal-body pre, .isaa-modal-body textarea {
   width: 100%;
@@ -830,7 +865,87 @@ body.is-running .isa-logo,
   resize: none;
 }
 .isaa-modal-footer { display: flex; justify-content: flex-end; gap: var(--space-2, 8px); }
+/* ── VFS Markdown Toggle ── */
+#vfs-md-toggle {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs, 9px);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill, 9999px);
+  background: rgba(74,158,255,0.08);
+  border: 1px solid rgba(74,158,255,0.25);
+  color: var(--primary, #4a9eff);
+  cursor: pointer;
+  margin-left: auto;
+  transition: background 150ms, border-color 150ms;
+  white-space: nowrap;
+}
+#vfs-md-toggle:hover {
+  background: rgba(74,158,255,0.15);
+  border-color: rgba(74,158,255,0.5);
+}
 
+/* Visibility toggling via data-md-mode attribute */
+.isaa-modal-body[data-md-mode="raw"] #vfs-md-preview { display: none; }
+.isaa-modal-body[data-md-mode="raw"] #m-text { display: block; }
+.isaa-modal-body[data-md-mode="formatted"] #vfs-md-preview { display: block; overflow-y: auto; }
+.isaa-modal-body[data-md-mode="formatted"] #m-text { display: none; }
+
+/* Preview container — step-body-like typography */
+#vfs-md-preview {
+  font-size: var(--text-base, 13px);
+  line-height: 1.6;
+  color: rgba(255,255,255,0.85);
+  word-wrap: break-word;
+}
+#vfs-md-preview h1, #vfs-md-preview h2, #vfs-md-preview h3,
+#vfs-md-preview h4, #vfs-md-preview h5, #vfs-md-preview h6 {
+  margin: 0.5em 0;
+  font-weight: 600;
+  line-height: 1.3;
+}
+#vfs-md-preview p { margin: 0.5em 0; }
+#vfs-md-preview pre {
+  background: #1e1e1e;
+  padding: 0.8em;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+#vfs-md-preview code {
+  background: #2d2d2d;
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9em;
+}
+#vfs-md-preview pre code {
+  background: none;
+  padding: 0;
+}
+#vfs-md-preview blockquote {
+  border-left: 3px solid #555;
+  padding-left: 0.8em;
+  color: #aaa;
+  margin: 0.5em 0;
+}
+#vfs-md-preview ul, #vfs-md-preview ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+#vfs-md-preview li { margin: 0.2em 0; }
+#vfs-md-preview a { color: #58a6ff; text-decoration: none; }
+#vfs-md-preview a:hover { text-decoration: underline; }
+#vfs-md-preview hr { border: none; border-top: 1px solid #333; margin: 1em 0; }
+#vfs-md-preview table { border-collapse: collapse; margin: 0.5em 0; }
+#vfs-md-preview th, #vfs-md-preview td { border: 1px solid #444; padding: 0.3em 0.6em; }
+#vfs-md-preview th { background: #2a2a2a; font-weight: 600; }
+#vfs-md-preview img { max-width: 100%; border-radius: 4px; }
+.vfs-md-preview-active { /* contract-required class — visibility via data-md-mode attribute */ }
 /* scrollbars */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -843,10 +958,10 @@ body.is-running .isa-logo,
 
 .running-footer {
   position: fixed;
-  left: 50%;
-  bottom: 90px;
-  transform: translateX(-50%);
+  top: var(--space-4, 16px);
+  right: var(--space-4, 16px);
   max-width: 800px;
+  max-height: 60px;
   width: max-content;
   height: 48px;
   display: flex;
@@ -918,7 +1033,7 @@ body.is-running .isa-logo,
     width: calc(100% - 24px);
     max-width: calc(100% - 24px);
   }
-  .running-footer { bottom: calc(130px + env(safe-area-inset-bottom)); font-size: 9px; padding: 0 8px; height: 36px; max-width: calc(100% - 24px); overflow-x: auto; }
+  .running-footer { top: auto; right: auto; left: 50%; transform: translateX(-50%); bottom: calc(130px + env(safe-area-inset-bottom)); font-size: 9px; padding: 0 8px; height: 36px; max-width: calc(100% - 24px); overflow-x: auto; }
   .isaa-view { padding: var(--space-3, 12px); padding-bottom: 200px; }
   .chat-stream { max-width: 100%; }
   .welcome { padding-top: 10vh; }

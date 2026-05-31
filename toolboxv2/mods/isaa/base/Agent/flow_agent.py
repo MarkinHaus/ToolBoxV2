@@ -1550,7 +1550,7 @@ class FlowAgent:
 
         is_new_ctx = False
         if query.strip().endswith("#new-ctx"):
-            query = query.strip()[:len("#new-ctx")]
+            query = query.strip()[:-len("#new-ctx")]
             is_new_ctx = True
 
         session = await self.session_manager.get_or_create(session_id)
@@ -1821,7 +1821,7 @@ class FlowAgent:
 
         is_new_ctx = False
         if query.strip().endswith("#new-ctx"):
-            query = query.strip()[:len("#new-ctx")]
+            query = query.strip()[:-len("#new-ctx")]
             is_new_ctx = True
 
         # TTFU: Sofortiges Status-Signal an UI (vor jeglichem I/O)

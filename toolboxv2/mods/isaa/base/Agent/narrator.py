@@ -1145,7 +1145,7 @@ class AgentLiveNarrator:
         query: str,
         history: list[dict],
         skills_manager: Any,
-        ctx:None=None,
+        ctx=None,
     ) -> None:
         """
         Fire-and-forget: ask Blitz to pick the most relevant skills for the

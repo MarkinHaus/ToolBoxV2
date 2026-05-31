@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 from toolboxv2 import App, Result, get_app, get_logger
 from toolboxv2.utils.system.types import ApiResult
 
-from .config import get_discord_config, get_google_config
+from .config import get_discord_config, get_google_config, is_allowed_redirect
 from .state import _store_oauth_state, _validate_and_consume_state
 from .oauth import _exchange_oauth_code, _get_discord_user, _get_google_user
 from .user_store import _create_or_update_user
@@ -23,10 +23,13 @@ async def get_discord_auth_url(app: App = None, redirect_after: str = None) -> A
     """Generate Discord OAuth authorization URL."""
     if app is None:
         app = get_app(f"{Name}.get_discord_auth_url")
-    config = get_discord_config()
+    config = get_discord_config(redirect_after)
     if not config["client_id"]:
         return Result.default_internal_error("Discord OAuth not configured")
+    if not is_allowed_redirect(redirect_after):
+        return Result.default_user_error("redirect_after not in trusted list")
     state = await _store_oauth_state(app, "discord", {"redirect_after": redirect_after})
+
     params = {
         "client_id": config["client_id"],
         "redirect_uri": config["redirect_uri"],
@@ -45,6 +48,8 @@ async def get_google_auth_url(app: App = None, redirect_after: str = None) -> Ap
     config = get_google_config()
     if not config["client_id"]:
         return Result.default_internal_error("Google OAuth not configured")
+    if not is_allowed_redirect(redirect_after):
+        return Result.default_user_error("redirect_after not in trusted list")
     state = await _store_oauth_state(app, "google", {"redirect_after": redirect_after})
     params = {
         "client_id": config["client_id"],

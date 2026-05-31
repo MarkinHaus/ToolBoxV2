@@ -15,6 +15,7 @@ Author: ISAA Team
 
 from __future__ import annotations
 
+import os
 import platform
 import subprocess
 import sys
@@ -26,7 +27,15 @@ _CHECK_INTERVAL_MINUTES = 15
 
 def _get_python_executable() -> str:
     """Get the current Python executable path."""
-    return sys.executable
+    exe_name = os.path.basename(sys.executable)
+    if exe_name.lower().startswith("python") and not exe_name.lower().startswith("pythonw"):
+        new_exe = exe_name.lower().replace("python", "pythonw")
+        executable = os.path.join(os.path.dirname(sys.executable), new_exe)
+        if not os.path.exists(executable):
+            executable = sys.executable
+    else:
+        executable = sys.executable
+    return executable
 
 
 def _get_runner_command(jobs_file: Path) -> str:

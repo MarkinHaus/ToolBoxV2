@@ -45,6 +45,8 @@
     // ui per chat
     expandedSteps: new Set(),
     l2Steps: new Set(),
+    ioOpen: new Set(),   // `${stepId}::${toolId}` — expanded tool i/o
+    rawOpen: new Set(),  // stepId — expanded raw frames
 
     // ----- emit/on -----
     on(ev, fn) {
@@ -75,10 +77,14 @@
       if (!id) {
         this.expandedSteps = new Set();
         this.l2Steps = new Set();
+        this.ioOpen = new Set();
+        this.rawOpen = new Set();
         return;
       }
       this.expandedSteps = new Set(lsGet(`expanded.${id}`, []));
       this.l2Steps = new Set(lsGet(`l2.${id}`, []));
+      this.ioOpen = new Set();
+      this.rawOpen = new Set();
     },
     toggleExpanded(stepId) {
       if (this.expandedSteps.has(stepId)) this.expandedSteps.delete(stepId);
@@ -92,7 +98,14 @@
       lsSet(`l2.${this.activeChatId}`, Array.from(this.l2Steps));
       this.emit('step:l2', stepId);
     },
-
+    toggleIo(key) {
+      if (this.ioOpen.has(key)) this.ioOpen.delete(key);
+      else this.ioOpen.add(key);
+    },
+    toggleRaw(stepId) {
+      if (this.rawOpen.has(stepId)) this.rawOpen.delete(stepId);
+      else this.rawOpen.add(stepId);
+    },
     // ----- sidebar -----
     setPanel(p) {
       this.sidebarPanel = p;

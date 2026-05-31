@@ -31,7 +31,15 @@ from toolboxv2.utils.workers.server_worker import ParsedRequest
 from toolboxv2.utils.workers.session import SessionData
 
 app = FastTB(title="ToolBox Local")
-
+# Global auth on: every route requires an authenticated session except those
+# explicitly marked auth=False (the local sign-in flow under "/" and /local-ui/auth/*)
+# and /health. The local UI no longer gates routes itself via _require_auth; the
+# FastTB guard enforces it uniformly.
+# app.auth = True
+# The local UI is the local origin, so the login page (login.html) is served from
+# our own dist/web rather than the remote site — mount it permanently.
+app.serve_login_assets = True
+app.inject_style = False
 
 # =============================================================================
 # Helpers
@@ -735,7 +743,7 @@ def _features_status() -> Dict[str, bool]:
 # Routes — entry
 # =============================================================================
 
-@app.get("/")
+@app.get("/", auth=False)
 async def root(
     request: ParsedRequest,
     session: SessionData = None,
@@ -873,7 +881,7 @@ async def _finalize_session(session: SessionData, auth_result: Any) -> Optional[
     return payload
 
 
-@app.post("/local-ui/auth/magic/request")
+@app.post("/local-ui/auth/magic/request", auth=False)
 async def auth_magic_request(request: ParsedRequest, session: SessionData = None):
     err = _ensure_local(request)
     if err is not None: return err
@@ -890,7 +898,7 @@ async def auth_magic_request(request: ParsedRequest, session: SessionData = None
     return f'<div class="toast-msg is-ok">Link sent to {email}. Click it to sign in.</div>'
 
 
-@app.post("/local-ui/auth/passkey/start")
+@app.post("/local-ui/auth/passkey/start", auth=False)
 async def auth_passkey_start(request: ParsedRequest, session: SessionData = None):
     """Return a Passkey-login HTML fragment that drives WebAuthn in the browser."""
     err = _ensure_local(request)
@@ -955,7 +963,7 @@ async def auth_passkey_start(request: ParsedRequest, session: SessionData = None
 """
 
 
-@app.post("/local-ui/auth/passkey/finish")
+@app.post("/local-ui/auth/passkey/finish", auth=False)
 async def auth_passkey_finish(request: ParsedRequest, session: SessionData = None):
     err = _ensure_local(request)
     if err is not None: return err
@@ -981,7 +989,7 @@ async def auth_passkey_finish(request: ParsedRequest, session: SessionData = Non
     return _root_fragment(payload.get("username") or "you", mods, running_count)
 
 
-@app.get("/local-ui/auth/discord")
+@app.get("/local-ui/auth/discord", auth=False)
 async def auth_discord_redirect(request: ParsedRequest, session: SessionData = None):
     """Get the Discord OAuth URL and redirect the browser to it."""
     err = _ensure_local(request)
@@ -992,15 +1000,15 @@ async def auth_discord_redirect(request: ParsedRequest, session: SessionData = N
         redirect_after="/", get_results=True,
     )
     if hasattr(result, "is_error") and result.is_error():
-        return Result.default_internal_error(info="Discord not configured.")
+        return result.lazy_return(1).default_internal_error(info="Discord not configured.")
     data = result.get() if hasattr(result, "get") else result
     url = (data or {}).get("auth_url")
     if not url:
-        return Result.default_internal_error(info="No auth URL returned.")
+        return result.lazy_return(1).default_internal_error(info="No auth URL returned.")
     return Result.redirect(url) if hasattr(Result, "redirect") else f'<meta http-equiv="refresh" content="0;url={url}">'
 
 
-@app.get("/local-ui/auth/google")
+@app.get("/local-ui/auth/google", auth=False)
 async def auth_google_redirect(request: ParsedRequest, session: SessionData = None):
     err = _ensure_local(request)
     if err is not None: return err
@@ -1010,11 +1018,11 @@ async def auth_google_redirect(request: ParsedRequest, session: SessionData = No
         redirect_after="/", get_results=True,
     )
     if hasattr(result, "is_error") and result.is_error():
-        return Result.default_internal_error(info="Google not configured.")
+        return result.lazy_return(1).default_internal_error(info="Google not configured.")
     data = result.get() if hasattr(result, "get") else result
     url = (data or {}).get("auth_url")
     if not url:
-        return Result.default_internal_error(info="No auth URL returned.")
+        return result.lazy_return(1).default_internal_error(info="No auth URL returned.")
     return Result.redirect(url) if hasattr(Result, "redirect") else f'<meta http-equiv="refresh" content="0;url={url}">'
 
 
@@ -1074,7 +1082,7 @@ async def _oauth_callback(provider: str, code: str, state: str, session: Session
     )
 
 
-@app.get("/auth/discord/callback")
+@app.get("/auth/discord/callback", auth=False)
 async def discord_callback(
     request: ParsedRequest,
     session: SessionData = None,
@@ -1088,7 +1096,7 @@ async def discord_callback(
     return await _oauth_callback("discord", code, state, session)
 
 
-@app.get("/auth/google/callback")
+@app.get("/auth/google/callback", auth=False)
 async def google_callback(
     request: ParsedRequest,
     session: SessionData = None,
@@ -1106,17 +1114,9 @@ async def google_callback(
 # Routes — services API
 # =============================================================================
 
-def _require_auth(session: SessionData) -> Optional[Result]:
-    if not _session_user(session):
-        return Result.default_user_error(info="Sign in required.", exec_code=401)
-    return None
-
-
 @app.post("/local-ui/api/services/{name}/start")
 async def svc_start(request: ParsedRequest, name: str, session: SessionData = None):
     err = _ensure_local(request)
-    if err is not None: return err
-    err = _require_auth(session)
     if err is not None: return err
     try:
         from toolboxv2.utils.clis.service_manager import ServiceManager
@@ -1132,8 +1132,6 @@ async def svc_start(request: ParsedRequest, name: str, session: SessionData = No
 async def svc_stop(request: ParsedRequest, name: str, session: SessionData = None):
     err = _ensure_local(request)
     if err is not None: return err
-    err = _require_auth(session)
-    if err is not None: return err
     try:
         from toolboxv2.utils.clis.service_manager import ServiceManager
         ServiceManager().stop_service(name)
@@ -1145,8 +1143,6 @@ async def svc_stop(request: ParsedRequest, name: str, session: SessionData = Non
 @app.post("/local-ui/api/services/{name}/auto-toggle")
 async def svc_auto(request: ParsedRequest, name: str, session: SessionData = None):
     err = _ensure_local(request)
-    if err is not None: return err
-    err = _require_auth(session)
     if err is not None: return err
     try:
         from toolboxv2.utils.clis.service_manager import ServiceManager
@@ -1167,8 +1163,6 @@ async def svc_auto(request: ParsedRequest, name: str, session: SessionData = Non
 async def mod_start(request: ParsedRequest, name: str, session: SessionData = None):
     err = _ensure_local(request)
     if err is not None: return err
-    err = _require_auth(session)
-    if err is not None: return err
 
     # Resolve the function from user_facing (so authors decide the entry point).
     function_name = "start"
@@ -1188,8 +1182,6 @@ async def mod_start(request: ParsedRequest, name: str, session: SessionData = No
 @app.post("/local-ui/api/features/{name}/install")
 async def feature_install_hint(request: ParsedRequest, name: str, session: SessionData = None):
     err = _ensure_local(request)
-    if err is not None: return err
-    err = _require_auth(session)
     if err is not None: return err
     # Per design: show the command, don't invoke install in the request flow.
     return (
@@ -1271,7 +1263,7 @@ if __name__ == "__main__":
     print("\nRoutes:")
     for r in app.list_routes():
         print(f"  {r['method'].ljust(6)} {r['path']}")
-    print("\nServing on http://127.0.0.1:8080  (local only)\n")
+    print("\nServing on http://127.0.0.1:5000  (local only)\n")
 
     handler = FastTBHandler(app)
-    serve(handler.as_wsgi_app(enable_ws=False), host="127.0.0.1", port=8080)
+    serve(handler.as_wsgi_app(enable_ws=False), host="127.0.0.1", port=5000)

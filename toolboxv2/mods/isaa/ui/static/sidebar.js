@@ -166,8 +166,8 @@
       modal.className = 'isaa-modal-backdrop';
       modal.innerHTML = `
         <div class="isaa-modal">
-          <div class="isaa-modal-title" id="m-title"></div>
-          <div class="isaa-modal-body"><textarea id="m-text" spellcheck="false"></textarea></div>
+          <div class="isaa-modal-title" id="m-title"><span id="m-title-text"></span><button id="vfs-md-toggle" class="vfs-md-toggle-btn">▾ Preview</button><button id="vfs-html-widget" class="vfs-md-toggle-btn" style="display:none">→ Widget</button></div>
+          <div class="isaa-modal-body" id="m-body" data-md-mode="raw"><textarea id="m-text" spellcheck="false"></textarea><div id="vfs-md-preview" class="vfs-md-preview"></div><iframe id="vfs-html-frame" sandbox="allow-scripts" style="display:none;width:100%;height:100%;border:none;background:#fff"></iframe></div>
           <div class="isaa-modal-footer">
             <button class="btn-secondary" data-action="close">Schließen</button>
             <button class="btn-secondary" data-action="download">⬇ Download</button>
@@ -189,12 +189,91 @@
           window.open(`/api/vfs/download?session_id=${encodeURIComponent(Store.activeChatId)}&path=${encodeURIComponent(cur)}`, '_blank');
         }
       });
+      // Markdown toggle handler
+      const mdToggle = modal.querySelector('#vfs-md-toggle');
+      const mdBody = modal.querySelector('#m-body');
+      const mdPreview = modal.querySelector('#vfs-md-preview');
+      mdToggle.addEventListener('click', () => {
+        const isRaw = mdBody.dataset.mdMode === 'raw';
+        const newMode = isRaw ? 'formatted' : 'raw';
+        mdBody.dataset.mdMode = newMode;
+        mdBody.style.setProperty('--vfs-md-mode', newMode);
+        mdToggle.textContent = isRaw ? '▴ Raw' : '▾ Preview';
+        if (isRaw) {
+const src = modal.querySelector('#m-text').value;
+          try {
+            mdPreview.innerHTML = marked.parse(src);
+            mdPreview.querySelectorAll('pre code').forEach(block => {
+              hljs.highlightElement(block);
+            });
+          } catch (err) {
+            mdPreview.innerHTML = '<p style="color:#ff4757;">Markdown rendering error: ' + err.message + '</p>';
+          }
+}
+        mdPreview.classList.toggle('vfs-md-preview-active', isRaw);
+      });
+      // "→ Widget": open current HTML file content as a widget
+      const htmlWidgetBtn = modal.querySelector('#vfs-html-widget');
+      htmlWidgetBtn.addEventListener('click', () => {
+        const src = modal.querySelector('#m-text').value;
+        const id = (window.crypto && crypto.randomUUID)
+          ? crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+          : Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        if (window.ISAA.Widgets) window.ISAA.Widgets.createWidget(id, 'htmldoc', { html: src });
+        modal.dataset.open = 'false';
+      });
     }
     modal.dataset.path = path;
     modal.dataset.open = 'true';
-    modal.querySelector('#m-title').textContent = path;
+    modal.querySelector('#m-title-text').textContent = path;
     modal.querySelector('#m-text').value = content;
+    // File-type view setup: .md → formatted preview, .html → iframe, else raw textarea
+    const lower = path.toLowerCase();
+    const isMd = ['.md', '.markdown', '.mdx'].some(ext => lower.endsWith(ext));
+    const isHtml = /\.html?$/.test(lower);
+    const mdBody = modal.querySelector('#m-body');
+    const mdToggle = modal.querySelector('#vfs-md-toggle');
+    const mdPreview = modal.querySelector('#vfs-md-preview');
+    const mText = modal.querySelector('#m-text');
+    const htmlFrame = modal.querySelector('#vfs-html-frame');
+    const htmlWidgetBtn = modal.querySelector('#vfs-html-widget');
+
+    // reset view bits
+    mText.style.display = '';
+    mdPreview.style.display = '';
+    mdPreview.classList.remove('vfs-md-preview-active');
+    htmlFrame.style.display = 'none';
+    htmlFrame.removeAttribute('srcdoc');
+    mdToggle.style.display = 'none';
+    htmlWidgetBtn.style.display = 'none';
+
+    if (isMd) {
+      mdToggle.style.display = 'inline-flex';
+      mdBody.dataset.mdMode = 'formatted';
+      mdBody.style.setProperty('--vfs-md-mode', 'formatted');
+      mdToggle.textContent = '▴ Raw';
+      try {
+        mdPreview.innerHTML = marked.parse(content || '');
+        mdPreview.querySelectorAll('pre code').forEach(block => hljs.highlightElement(block));
+      } catch (err) {
+        mdPreview.innerHTML = '<p style="color:#ff4757;">Markdown rendering error: ' + err.message + '</p>';
+      }
+      mdPreview.classList.add('vfs-md-preview-active');
+    } else if (isHtml) {
+      mText.style.display = 'none';
+      mdPreview.style.display = 'none';
+      htmlFrame.style.display = 'block';
+      htmlFrame.srcdoc = content || '';
+      htmlWidgetBtn.style.display = 'inline-flex';
+      mdBody.dataset.mdMode = 'raw';
+      mdBody.style.setProperty('--vfs-md-mode', 'raw');
+    } else {
+      mdBody.dataset.mdMode = 'raw';
+      mdBody.style.setProperty('--vfs-md-mode', 'raw');
+      mdPreview.innerHTML = '';
+    }
   }
+
 
   async function renderAgent(panel) {
     panel.innerHTML = '<h3 class="sb-panel-title">Agent Config</h3><div id="agent-form"><em>laden…</em></div>';

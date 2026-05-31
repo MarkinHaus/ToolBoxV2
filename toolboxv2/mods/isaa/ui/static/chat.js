@@ -275,34 +275,107 @@
     `;
   }
 
-  function renderStepL2(step) {
-    let html = '<div class="step-l2-section"><h4>Args / Results (full)</h4>';
+function extractStepMeta(step) {
+    const m = { iter: null, max_iter: null, tokens_used: null, tokens_max: null,
+                persona_model: null, narrator_msg: '', narrator_mini_plan: '' };
+    const skills = new Set();
+    for (const f of step.rawFrames) {
+      if (typeof f.iter === 'number') m.iter = f.iter;
+      if (typeof f.max_iter === 'number') m.max_iter = f.max_iter;
+      if (typeof f.tokens_used === 'number') m.tokens_used = f.tokens_used;
+      if (typeof f.tokens_max === 'number') m.tokens_max = f.tokens_max;
+      if (typeof f.persona_model === 'string' && f.persona_model) m.persona_model = f.persona_model;
+      if (typeof f.narrator_msg === 'string' && f.narrator_msg.trim()) m.narrator_msg = f.narrator_msg;
+      if (typeof f.narrator_mini_plan === 'string' && f.narrator_mini_plan.trim()) m.narrator_mini_plan = f.narrator_mini_plan;
+      if (Array.isArray(f.skills)) f.skills.forEach(s => skills.add(s));
+    }
+    m.skills = skills.size ? [...skills] : null;
+    return m;
+  }
+
+  // tool_start.args arrives as a JSON string; parse it for tree rendering, else leave as-is.
+  function parseMaybeJson(v) {
+    if (typeof v !== 'string') return v;
+    const s = v.trim();
+    if (!s) return v;
+    if ((s[0] === '{' && s.endsWith('}')) || (s[0] === '[' && s.endsWith(']'))) {
+      try { return JSON.parse(s); } catch (_) { return v; }
+    }
+    return v;
+  }
+
+  function renderStepMeta(step) {
+    const m = extractStepMeta(step);
+    const kStyle = 'min-width:130px;flex-shrink:0';
+    const row = (k, v, dim) =>
+      `<div class="l2-meta-row" style="display:flex;gap:8px;font-size:12px${dim ? ';opacity:.55' : ''}">
+        <span class="k" style="${kStyle}">${k}</span><span class="v">${v}</span></div>`;
+    let html = '<div class="step-l2-section l2-meta" style="display:flex;flex-direction:column;gap:4px">';
+    if (m.narrator_msg) html += row('Narrator', escape(m.narrator_msg));
+    if (m.narrator_mini_plan) html += row('Plan', escape(m.narrator_mini_plan));
+    const ctx = [];
+    if (m.iter != null) ctx.push(`Iteration ${m.iter}${m.max_iter != null ? '/' + m.max_iter : ''}`);
+    if (m.tokens_used != null) {
+      const pct = m.tokens_max ? Math.round((m.tokens_used / m.tokens_max) * 100) : null;
+      ctx.push(`Tokens ${m.tokens_used.toLocaleString()}${m.tokens_max != null ? ' / ' + m.tokens_max.toLocaleString() : ''}${pct != null ? ' (' + pct + '%)' : ''}`);
+    }
+    if (ctx.length) html += row('Kontext &amp; Zustand', escape(ctx.join(' · ')));
+    const mod = [];
+    if (m.skills && m.skills.length) mod.push('Skills: ' + m.skills.map(escape).join(', '));
+    if (m.persona_model) mod.push('Model: ' + escape(m.persona_model));
+    if (mod.length) html += row('Aktive Module', mod.join(' · '));
+    html += row('Datenformat', 'JSONL-Stream — Events des ISAA-Agentensystems', true);
+    html += row('Event-Typen', 'status, iteration_start, content, tool_start, tool_result, widget_create', true);
+    html += '</div>';
+    return html;
+  }
+
+  function renderStepArgsResults(step) {
+    let html = '<div class="step-l2-section"><h4>Args / Results</h4>';
+    const content = step.finalAnswer != null ? step.finalAnswer : step.body;
+    if (content) html += `<div class="l2-content"><span class="k">Content</span><pre>${escape(content)}</pre></div>`;
     if (step.tools.length === 0) {
-      html += '<div class="kv-tree"><em>no tools</em></div>';
+      html += '<div class="kv-tree"><em>keine Tools</em></div>';
     } else {
       for (const t of step.tools) {
-        html += `<div style="margin-bottom: 12px;">`;
-        html += `<div class="k">${escape(t.name)} (status=${escape(t.status)})</div>`;
-        html += `<div class="kv-tree">args: ${renderKvTree(t.args)}</div>`;
-        html += `<div class="kv-tree">result: ${renderKvTree(t.result)}</div>`;
-        html += `</div>`;
+        const ioKey = step.step_id + '::' + t.id;
+        const ioOpen = window.ISAA.Store.ioOpen.has(ioKey);
+        const icon = t.status === 'running' ? '⟳' : (t.status === 'ok' ? '✓' : '✕');
+        const word = t.status === 'running' ? 'läuft' : (t.status === 'ok' ? 'ok' : 'Fehler');
+        html += `<div class="l2-tool" style="margin-bottom:8px">
+          <div class="l2-tool-head" style="display:flex;gap:8px;align-items:center">
+            <span class="tp-name">${escape(t.name)}</span>
+            <span class="tp-status" data-status="${escape(t.status)}">${icon} ${word}</span>
+          </div>
+          <div class="l2-io-toggle" data-action="toggle-io" data-io-key="${escape(ioKey)}" style="cursor:pointer;user-select:none;font-size:11px;opacity:.8;margin:4px 0">${ioOpen ? '▾ tool i/o' : '▸ tool i/o'}</div>
+          ${ioOpen ? `<div class="l2-io" style="padding-left:8px">
+            <div class="kv-tree">args: ${renderKvTree(parseMaybeJson(t.args))}</div>
+            <div class="kv-tree">result: ${renderKvTree(parseMaybeJson(t.result))}</div>
+          </div>` : ''}
+        </div>`;
       }
     }
     html += '</div>';
+    return html;
+  }
 
+  function renderStepRaw(step) {
+    const open = window.ISAA.Store.rawOpen.has(step.step_id);
+    let html = '<div class="step-l2-section">';
+    html += `<div class="l2-raw-toggle" data-action="toggle-raw" data-step-id="${escape(step.step_id)}" style="cursor:pointer;user-select:none"><h4 style="display:inline">Raw frames</h4> <span>${open ? '▾' : '▸'}</span></div>`;
+    if (open) html += `<pre>${escape(step.rawFrames.map(f => JSON.stringify(f)).join('\n'))}</pre>`;
+    html += '</div>';
+    return html;
+  }
+
+  function renderStepL2(step) {
+    let html = '';
+    html += renderStepMeta(step);
+    html += renderStepArgsResults(step);
     if (step.reasoning) {
-      html += '<div class="step-l2-section"><h4>Reasoning (full)</h4>';
-      html += `<pre>${escape(step.reasoning)}</pre></div>`;
+      html += '<div class="step-l2-section"><h4>Reasoning</h4><pre>' + escape(step.reasoning) + '</pre></div>';
     }
-
-    if (step.narrator.length) {
-      html += '<div class="step-l2-section"><h4>Narrator</h4>';
-      html += step.narrator.map(m => `<div class="kv-tree">${escape(m)}</div>`).join('');
-      html += '</div>';
-    }
-
-    html += '<div class="step-l2-section"><h4>Raw frames</h4>';
-    html += `<pre>${escape(step.rawFrames.map(f => JSON.stringify(f)).join('\n'))}</pre></div>`;
+    html += renderStepRaw(step);
     return html;
   }
 
@@ -417,6 +490,16 @@
         e.preventDefault();
         e.stopPropagation();
         window.ISAA.Store.toggleL2(stepId);
+      } else if (action === 'toggle-io') {
+        e.preventDefault();
+        e.stopPropagation();
+        const ioKey = t.closest('[data-io-key]')?.dataset?.ioKey;
+        if (ioKey) { window.ISAA.Store.toggleIo(ioKey); render(container); }
+      } else if (action === 'toggle-raw' && stepId) {
+        e.preventDefault();
+        e.stopPropagation();
+        window.ISAA.Store.toggleRaw(stepId);
+        render(container);
       } else if (action === 'rollback' && stepId) {
         e.preventDefault();
         e.stopPropagation();

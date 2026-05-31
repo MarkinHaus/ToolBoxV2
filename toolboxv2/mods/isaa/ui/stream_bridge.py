@@ -390,9 +390,15 @@ def _register_ui_tools(agent, bridge: "StreamBridge", store) -> None:
         (close_widget, "close_widget",
          "Close a widget and remove it from the UI."),
         (set_var, "set_var",
-         "Set a variable for widgets to read. scope='agent'|'global'."),
+         "Set a variable for widgets to read. scope='agent'|'global'. "
+         "WARNING: keys prefixed 'storage:' belong to interactive html-doc widgets "
+         "(their window.storage state, scope='agent', per chat). You MAY read/edit them, "
+         "but the value is a JSON STRING in that page's own schema — parse before reading, "
+         "and write back the SAME shape, or you will corrupt the page state."),
         (get_var, "get_var",
-         "Read a variable set by set_var. scope='agent'|'global'."),
+         "Read a variable set by set_var. scope='agent'|'global'. "
+         "Keys prefixed 'storage:' are html-doc widget state (JSON string, scope='agent'); "
+         "json.loads the returned value before using it."),
         (define_template, "define_template",
          "Register a custom widget template. Returns template_id."),
     ]:

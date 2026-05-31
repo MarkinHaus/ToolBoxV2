@@ -1471,22 +1471,23 @@ class Tools(MainTool):
         self.print("Version: ", self.version)
         return self.version
 
-    def on_start(self):
+    async def on_start(self):
         threading.Thread(target=self.load_to_mem_sync, daemon=True).start()
-
         async def _start_scheduler():
             await self.job_scheduler.start()
             if self.config.get("catchup_missed_jobs", True):
                 await self.job_scheduler.fire_missed_jobs()
+            self.print("[Jobs] started.")
 
         try:
-            coro = asyncio.create_task(_start_scheduler(), name="JobScheduler")
-            self.app.run_bg_task_advanced(coro)
+            await _start_scheduler()
+            # coro = asyncio.create_task(_start_scheduler(), name="JobScheduler")
+            # self.app.run_bg_task_advanced(coro)
         except RuntimeError as e:
             self.print(f"JobScheduler Error starting {e}")
             self.app.debug_rains(e)
 
-        self.print("ISAA module started.")
+        self.print("module started.")
 
     def load_keys_from_env(self):
         for key in self.config:
@@ -3202,19 +3203,79 @@ async def serve_app(self, app=None, host: str = "127.0.0.1", port: int = 8000, w
     except KeyboardInterrupt:
         self.print("Interrupted")
 
-@export(mod_name="isaa", name="ui")
+@export(mod_name="isaa", name="ui_open")
 async def serve_app(self, app=None, host: str = "127.0.0.1", port: int = 8080):
     from toolboxv2.mods.isaa.ui.app import main as isaa_ui
-
+    from toolboxv2.mods.isaa.extras.live_obs_server import main as obs_ui
     self.print(f"[ISAA UI] serving on http://{host}:{port}")
+    # await obs_ui(host, port, isaa_ui)
     isaa_ui(host, port)
 
-@export(mod_name="isaa", name="obs")
-async def obs_app(self, app=None, host: str = "127.0.0.1", port: int = 7000, wit_static=True):
-    from toolboxv2.mods.isaa.extras.live_obs_server import main as obs_ui
 
-    self.print(f"[ISAA OBS] serving on http://{host}:{port}")
-    obs_ui(host, port, wit_static)
+# Stable identities for the owner's mount registry (unmount/reload-from-src).
+ISAA_SOURCE = "isaa_ui"
+ISAA_MODULE = "toolboxv2.mods.isaa.ui.app"
+OBS_SOURCE = "isaa_obs"
+OBS_MODULE = "toolboxv2.mods.isaa.extras.live_obs_server"
+
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = int(os.getenv("TB_HTTP_PORT", "5000"))
+
+
+@export(mod_name=Name, name="ui")
+async def serve_app(self, app=None, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
+    """Serve the ISAA UI on the collective port.
+
+    If local_ui (or any owner) already holds the port, ISAA merges under "/isaa".
+    Otherwise ISAA becomes the owner on "/" and accepts OBS as a joiner.
+    """
+    from toolboxv2.mods.isaa.ui.app import build_app
+
+    # ISAA's UI is auth-gated like every other FastTB app.
+    isaa_app = build_app(app)
+    isaa_app.auth = True
+    # ISAA is reachable on the local origin, so serve the login assets locally too.
+    isaa_app.serve_login_assets = True
+
+    # If ISAA ends up the owner, let OBS join it.
+    from toolboxv2.utils.workers.fast.tray_api import register_collective_commands
+    register_collective_commands(isaa_app)
+
+    self.print(f"[ISAA UI] serving on http://{host}:{port} (prefix /isaa when joining)")
+
+    # blocking=False so this export returns; the owner/standby loop runs in a thread.
+    isaa_app.serve(
+        host=host,
+        port=port,
+        blocking=False,
+        source=ISAA_SOURCE,
+        module_path=ISAA_MODULE,
+        app_attr="app",
+        fallback_prefix="isaa",
+    )
+
+
+@export(mod_name=Name, name="obs")
+async def serve_obs(self, app=None, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
+    """Serve the OBS UI. Always relocates to "/obs" when joining an owner;
+    binds standalone only if no owner holds the port."""
+    from toolboxv2.mods.isaa.extras.live_obs_server import app as obs_app
+
+    obs_app.auth = True
+    obs_app.serve_login_assets = True
+
+    self.print(f"[OBS UI] serving on http://{host}:{port} (prefix /obs)")
+
+    obs_app.serve(
+        host=host,
+        port=port,
+        blocking=False,
+        source=OBS_SOURCE,
+        module_path=OBS_MODULE,
+        app_attr="app",
+        fallback_prefix="obs",
+    )
+
 # =============================================================================
 # MAIN
 # =============================================================================
