@@ -3204,7 +3204,7 @@ async def serve_app(self, app=None, host: str = "127.0.0.1", port: int = 8000, w
         self.print("Interrupted")
 
 @export(mod_name="isaa", name="ui_open")
-async def serve_app(self, app=None, host: str = "127.0.0.1", port: int = 8080):
+async def serve_app(self, app=None, host: str = "0.0.0.0", port: int = 8080):
     from toolboxv2.mods.isaa.ui.app import main as isaa_ui
     from toolboxv2.mods.isaa.extras.live_obs_server import main as obs_ui
     self.print(f"[ISAA UI] serving on http://{host}:{port}")
