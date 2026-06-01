@@ -3242,7 +3242,10 @@ async def serve_app(self, app=None, host: str = DEFAULT_HOST, port: int = DEFAUL
     register_collective_commands(isaa_app)
 
     self.print(f"[ISAA UI] serving on http://{host}:{port} (prefix /isaa when joining)")
+    from toolboxv2.mods.isaa.extras.live_obs_server import app, start_disk_scanner
+    start_disk_scanner(str(Path(get_app().data_dir) / "Agents"))
 
+    isaa_app.mount_app(app, "/obs", "/")
     # blocking=False so this export returns; the owner/standby loop runs in a thread.
     isaa_app.serve(
         host=host,
@@ -3255,7 +3258,8 @@ async def serve_app(self, app=None, host: str = DEFAULT_HOST, port: int = DEFAUL
     )
 
 
-@export(mod_name=Name, name="obs")
+
+@export(mod_name=Name, name="obs_app")
 async def serve_obs(self, app=None, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
     """Serve the OBS UI. Always relocates to "/obs" when joining an owner;
     binds standalone only if no owner holds the port."""
@@ -3269,7 +3273,7 @@ async def serve_obs(self, app=None, host: str = DEFAULT_HOST, port: int = DEFAUL
     obs_app.serve(
         host=host,
         port=port,
-        blocking=False,
+        blocking=True,
         source=OBS_SOURCE,
         module_path=OBS_MODULE,
         app_attr="app",
