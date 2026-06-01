@@ -208,9 +208,13 @@ class FastTBHandler:
         # static files / unknown paths (no Route) the app-level flag applies.
         if request.path.startswith("/vendors-") or request.path.startswith("/main-"):
             pass
-        elif request.path.startswith("/web/assets/login.html"):
+        elif request.path.startswith("/web/"):
             pass
-        elif request.path ==  "/favicon.ico":
+        elif request.path == "/helper.html":
+            pass
+        elif request.path == "/index.html":
+            pass
+        elif request.path == "/favicon.ico":
             pass
         elif request.path != "/health":
             _match = self._app.resolve_route(request.path, request.method)
@@ -226,7 +230,7 @@ class FastTBHandler:
                     # the user can authenticate; ?next carries the original path so
                     # tbjs (_handlePostAuthRedirect) returns here after login.
                     # Non-HTML (fetch/API) requests get a JSON 401 instead.
-                    _accept = (request.headers.get("accept") or "").lower()
+                    _accept = request.headers.get("accept", '').lower()
                     if "text/html" in _accept:
                         # Ensure the local login assets are reachable. If the app
                         # didn't permanently mount /web, mount it now for the flow.
@@ -238,14 +242,16 @@ class FastTBHandler:
                         )
                     return error_response("Authentication required", 401, "Unauthorized")
 
+
+        result = self._app.resolve_route(request.path, request.method)
+
         # Static file check (GET only)
-        if request.method.upper() == "GET":
+        if result is None and request.method.upper() == "GET":
             static_path = self._app.resolve_static(request.path)
             print(static_path, request.path)
             if static_path is not None:
                 return self._serve_static_file(static_path)
 
-        result = self._app.resolve_route(request.path, request.method)
         if result is None:
             return error_response("Not Found", 404, "NotFound")
 

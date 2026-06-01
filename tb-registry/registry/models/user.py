@@ -76,7 +76,7 @@ class User:
     """User information.
 
     Attributes:
-        cloudm_user_id: CloudM.Auth user ID. (was: cloudm_user_id)
+        cloudm_user_id: CloudM.Auth user ID.
         email: User email.
         username: Username.
         publisher_id: Associated publisher ID.

@@ -288,7 +288,6 @@
             <p>By continuing, you agree to our <a href="#">Terms of Service</a> and <a href="#">Privacy Policy</a></p>
         </div>
     </div>
-    <div id="MainContent"></div>
     <script unSave="true">
         (function () {
             'use strict';
@@ -297,7 +296,7 @@
             const cont_els = document.getElementsByClassName("login-container")
             if (cont_els.length > 1){
                 cont_els[0].style.display = "none"
-                cont_els.innerHtml = ""
+                cont_els[0].innerHtml = ""
             }
             function showError(msg) {
                 const el = document.getElementById('errorMessage');

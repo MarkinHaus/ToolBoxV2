@@ -94,10 +94,12 @@ class SessionData:
     @property
     def is_authenticated(self) -> bool:
         """Check if session represents an authenticated user."""
+        if self.anonymous and self.user_name != "anonymous":
+            self.anonymous = False
         return (
             self.validated and
             not self.anonymous and
-            self.level >= AccessLevel.LOGGED_IN and
+            (self.level >= AccessLevel.LOGGED_IN or self.level == -1) and
             self.user_id != "" and
             not self.is_expired
         )

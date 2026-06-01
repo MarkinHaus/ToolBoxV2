@@ -768,7 +768,7 @@ class WSWorker:
             user_id=session_data.user_id if session_data else "",
             session_id=session_data.session_id if session_data else "",
             level=session_data.level if session_data else 0,
-            cloudm_user_id=session_data.cloudm_user_id if session_data else "",
+            cloudm_user_id=session_data.user_id if session_data else "",
             authenticated=session_data.is_authenticated if session_data else False,
             metadata={"path": path},
         )
