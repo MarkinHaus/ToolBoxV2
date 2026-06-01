@@ -42,8 +42,11 @@ import random
 import re
 import threading
 import time
+import traceback
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple, Pattern
+
+from toolboxv2 import Spinner
 
 
 @dataclass
@@ -339,17 +342,19 @@ class FastTB:
         existing mount is left untouched. Returns True if /web is now available.
         """
         import os
-        for url_prefix, _ in self._static_mounts:
-            if url_prefix == "/web":
-                return True  # already served (by app or earlier call) — don't touch
+        #for url_prefix, _ in self._static_mounts:
+        #    if url_prefix == "":
+        #        return True  # already served (by app or earlier call) — don't touch
+        if self._web_mount_owned:
+            return True
         try:
             from toolboxv2 import tb_root_dir
         except Exception:
             return False
-        directory = os.path.join(os.path.abspath(str(tb_root_dir)), "dist", "web")
+        directory = os.path.join(os.path.abspath(str(tb_root_dir)), "dist")
         if not os.path.isdir(directory):
             return False
-        self._static_mounts.append(("/web", directory))
+        self._static_mounts.append(("", directory))
         self._web_mount_owned = True
         return True
 
@@ -902,11 +907,33 @@ connect();
             t.start()
             return server
 
+        # Register SIGINT/SIGTERM so Strg+C reliably unblocks the Waitress accept
+        # loop. On Windows `except KeyboardInterrupt` around server.run() does NOT
+        # fire — calling server.close() is what makes run() return.
+        import signal as _signal
+
+        def _shutdown_handler(_sig, _frame):
+            print(f"\n[FastTB] signal {_sig} — shutting down…")
+            try:
+                self.close()  # unblocks server.run() -> finally runs a_exit
+            except Exception as e:
+                print(e)
+                pass
+
+        if threading.current_thread() is threading.main_thread():
+            try:
+                _signal.signal(_signal.SIGINT, _shutdown_handler)
+                _signal.signal(_signal.SIGTERM, _shutdown_handler)
+            except (ValueError, RuntimeError) as e:
+                print(f"[FastTB] could not register signal handlers: {e}")
+
         try:
             server.run()
         except KeyboardInterrupt:
             print("\n[FastTB] Strg+C — shutting down…")
         finally:
+            # Guaranteed on-exit save: run the async app exit flow, THEN force-close.
+            # run() has already returned here, so the main thread is free for asyncio.run.
             self.close()  # forced close, no os._exit
         return None
 
@@ -929,12 +956,47 @@ connect();
         return None
 
     def close(self):
-        """Stop the server immediately. Does NOT wait for open connections and
-        does NOT call os._exit (safe in a shared owner process)."""
+        """Stop WS infrastructure, then the server. Idempotent, no os._exit.
+
+        Stops the ZMQ event managers + WS worker so their ZMQ contexts are
+        term()'d and the daemon threads exit (otherwise pyzmq blocks at
+        interpreter exit -> process hangs).
+        """
+        import asyncio as _asyncio
+
+        def _stop_on(manager, loop, *, stop_loop=False):
+            """Run manager.stop() on its own loop from this sync thread."""
+            if manager is None or loop is None or loop.is_closed():
+                return
+            try:
+                fut = _asyncio.run_coroutine_threadsafe(manager.stop(), loop)
+                fut.result(timeout=2)
+            except TimeoutError:
+                pass
+            except Exception as e:
+                print(f"[FastTB] stop({getattr(manager, 'worker_id', manager)}) failed: {e}")
+            if stop_loop:
+                with Spinner("closing worker loops"):
+                    try:
+                        loop.call_soon_threadsafe(loop.stop)
+                    except Exception as e:
+                        print(e)
+                        pass
+
+        # HTTP em: shared fasttb-loop -> stop manager only (loop is daemon).
+        _stop_on(getattr(self, "_ws_em", None), getattr(self, "_ws_em_loop", None))
+        # WS worker: stop() closes serve_forever -> run_until_complete returns -> thread exits.
+        _stop_on(getattr(self, "_ws_worker", None), getattr(self, "_ws_worker_loop", None))
+        # Broker: run_forever -> must also stop its loop so the thread exits.
+        _stop_on(getattr(self, "_ws_broker", None), getattr(self, "_ws_broker_loop", None), stop_loop=False)
+
+        self._ws_em = self._ws_worker = self._ws_broker = None
+
         srv = self._server
         self._server = None
         if srv is not None:
             try:
                 srv.close()
-            except Exception:
+            except Exception as e:
+                print(e)
                 pass

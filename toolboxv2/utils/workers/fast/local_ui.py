@@ -996,8 +996,7 @@ async def auth_discord_redirect(request: ParsedRequest, session: SessionData = N
     if err is not None: return err
     tb_app = get_app("local_ui.discord_redirect")
     result = await tb_app.a_run_any(
-        ("CloudM.Auth", "get_discord_auth_url"),
-        redirect_after="/", get_results=True,
+        ("CloudM.Auth", "get_discord_auth_url"), get_results=True,
     )
     if hasattr(result, "is_error") and result.is_error():
         return result.lazy_return(1).default_internal_error(info="Discord not configured.")

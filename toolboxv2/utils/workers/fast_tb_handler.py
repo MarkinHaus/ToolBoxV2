@@ -206,12 +206,19 @@ class FastTBHandler:
         # every served path requires an authenticated session except /health.
         # Effective auth = route.auth if set, else app-level self._app.auth. For
         # static files / unknown paths (no Route) the app-level flag applies.
-        if request.path != "/health":
+        if request.path.startswith("/vendors-") or request.path.startswith("/main-"):
+            pass
+        elif request.path.startswith("/web/assets/login.html"):
+            pass
+        elif request.path ==  "/favicon.ico":
+            pass
+        elif request.path != "/health":
             _match = self._app.resolve_route(request.path, request.method)
             if _match is not None and _match[0].auth is not None:
                 _eff_auth = _match[0].auth
             else:
                 _eff_auth = self._app.auth
+
             if _eff_auth:
                 _sess = request.session
                 if not (_sess is not None and _sess.is_authenticated):
@@ -234,6 +241,7 @@ class FastTBHandler:
         # Static file check (GET only)
         if request.method.upper() == "GET":
             static_path = self._app.resolve_static(request.path)
+            print(static_path, request.path)
             if static_path is not None:
                 return self._serve_static_file(static_path)
 
@@ -761,6 +769,8 @@ class FastTBHandler:
                 http_to_ws_endpoint=config.zmq.http_to_ws_endpoint,
                 cluster_secret=getattr(config.zmq, "cluster_secret", ""),
             )
+            self._app._ws_broker = broker  # retain for shutdown
+            self._app._ws_broker_loop = loop
             loop.run_until_complete(broker.start())
             loop.run_forever()
 
@@ -775,6 +785,8 @@ class FastTBHandler:
             asyncio.set_event_loop(loop)
             from toolboxv2.utils.workers.ws_worker import WSWorker
             ws = WSWorker("fasttb_ws", config)
+            self._app._ws_worker = ws  # retain for shutdown
+            self._app._ws_worker_loop = loop
             loop.run_until_complete(ws.start())
 
         threading.Thread(target=_run_ws_worker, daemon=True, name="fasttb-ws-worker").start()
@@ -821,6 +833,8 @@ class FastTBHandler:
 
             worker._event_manager = em
             worker._event_loop = loop
+            self._app._ws_em = em  # retain for shutdown
+            self._app._ws_em_loop = loop
             logger.info(f"[FastTB] WS bridge ready (ws port {config.ws_worker.port})")
 
         future = asyncio.run_coroutine_threadsafe(_init_bridge(), loop)

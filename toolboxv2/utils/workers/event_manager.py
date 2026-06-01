@@ -690,7 +690,7 @@ class ZMQEventManager:
                     continue
 
                 # Log all WS events for debugging
-                if event.type.startswith("ws."):
+                if event.type.startswith("ws.") and not event.type.endswith("_all"):
                     logger.info(f"[EventManager] Received {event.type} from {event.source} to {event.target}")
 
                 # Skip expired events
@@ -728,7 +728,7 @@ class ZMQEventManager:
         """Dispatch event to registered handlers."""
         handlers = self._registry.get_handlers(event.type)
 
-        if event.type.startswith("ws."):
+        if event.type.startswith("ws.") and not event.type.endswith("_all"):
             logger.info(f"[EventManager] Dispatching {event.type} to {len(handlers)} handlers")
 
         for handler in handlers:

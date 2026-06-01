@@ -235,6 +235,7 @@
     </style>
 </head>
 <body>
+
     <div class="login-container">
         <div class="logo">
             <h1>ToolBoxV2</h1>
@@ -287,11 +288,17 @@
             <p>By continuing, you agree to our <a href="#">Terms of Service</a> and <a href="#">Privacy Policy</a></p>
         </div>
     </div>
-
+    <div id="MainContent"></div>
     <script unSave="true">
         (function () {
             'use strict';
-
+            const TB = window.TB;
+            // get all elemts wit the class login-container and if 2 exist hid the fiste one
+            const cont_els = document.getElementsByClassName("login-container")
+            if (cont_els.length > 1){
+                cont_els[0].style.display = "none"
+                cont_els.innerHtml = ""
+            }
             function showError(msg) {
                 const el = document.getElementById('errorMessage');
                 if (el) { el.textContent = msg; el.classList.add('show'); }
@@ -330,9 +337,11 @@
             function doRedirect() {
                 const bridge = getBridgeTarget();
                 if (bridge) { bridgeTokensTo(bridge); return; }
+                const urlParams = new URLSearchParams(window.location.search);
+                const redirectUrl =  urlParams.get('next') || '/web/mainContent.html'
                 if (window.__TAURI__) window.location.href = '/index.html';
-                else if (TB.router) TB.router.navigateTo('/web/mainContent.html');
-                else window.location.href = '/web/mainContent.html';
+                else if (TB.router) TB.router.navigateTo(redirectUrl);
+                else window.location.href = redirectUrl;
             }
 
             function waitForTB() {
@@ -495,4 +504,5 @@
         })();
     </script>
 </body>
+
 </html>

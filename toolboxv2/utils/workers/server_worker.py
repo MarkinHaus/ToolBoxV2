@@ -410,6 +410,23 @@ class AccessController:
             self._open_modules = set(modules)
             logger.info(f"Open modules: {self._open_modules}")
 
+    def is_cm_auth(self, module_name: str, function_name: str) -> bool:
+        if module_name != "CloudM.Auth":
+            return False
+
+        save_fuctions = [
+            "passkey_login_start", "verify_magic_link",
+            "check_magic_link_status", "verify_device_invite",
+            "passkey_register_start", "passkey_register_finish",
+            "passkey_login_start", "passkey_login_finish",
+            "verify_session_token", "get_discord_auth_url",
+            "get_google_auth_url", "login_discord", "login_google",
+        ]
+        if function_name in save_fuctions:
+            return True
+
+        return False
+
     def is_public_endpoint(self, module_name: str, function_name: str) -> bool:
         """Check if endpoint is publicly accessible (no auth required)."""
         # Module in open_modules list
@@ -437,6 +454,10 @@ class AccessController:
         """
         # Public endpoints
         if self.is_public_endpoint(module_name, function_name):
+            return True, None
+
+        # ClaudM Auth
+        if self.is_cm_auth(module_name, function_name):
             return True, None
 
         # Not logged in

@@ -34,11 +34,11 @@ def get_base_url() -> str:
     return os.getenv("APP_BASE_URL", "http://localhost:8000")
 
 
-def get_discord_config(redirect_after=None) -> dict:
+def get_discord_config() -> dict:
     return {
         "client_id": os.getenv("DISCORD_CLIENT_ID", ""),
         "client_secret": os.getenv("DISCORD_CLIENT_SECRET", ""),
-        "redirect_uri": redirect_after or os.getenv("DISCORD_REDIRECT_URI", f"{get_base_url()}/auth/discord/callback"),
+        "redirect_uri": os.getenv("DISCORD_REDIRECT_URI", f"{get_base_url()}/auth/discord/callback"),
         "scopes": ["identify", "email"],
         "authorize_url": "https://discord.com/api/oauth2/authorize",
         "token_url": "https://discord.com/api/oauth2/token",
@@ -70,37 +70,3 @@ def get_passkey_config() -> dict:
     }
 
 
-def get_redirect_whitelist() -> list[str]:
-    """Allowed origins for OAuth redirect_after (token bridge target).
-
-    Always includes the deployment base URL. Loopback (127.0.0.1/localhost on any
-    port) is allowed separately in is_allowed_redirect to support the local CLI
-    loopback receiver. Extra origins via TB_OAUTH_REDIRECT_WHITELIST (comma-sep).
-    """
-    raw = os.getenv("TB_OAUTH_REDIRECT_WHITELIST", "")
-    extra = [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
-    return [get_base_url().rstrip("/")] + extra
-
-
-def is_allowed_redirect(redirect_after: str) -> bool:
-    """Validate an OAuth redirect_after target against the trusted list.
-
-    Empty/None is allowed (means: no cross-origin redirect, stay on this origin).
-    Loopback hosts are always allowed (CLI receiver). Otherwise the scheme+host
-    [+port] must match an entry in get_redirect_whitelist().
-    """
-    if redirect_after == "/":
-        return True
-    if not redirect_after:
-        return True
-    from urllib.parse import urlparse
-    try:
-        u = urlparse(redirect_after)
-    except Exception:
-        return False
-    if not u.scheme or not u.hostname:
-        return False
-    if u.hostname in ("127.0.0.1", "localhost"):
-        return True
-    origin = f"{u.scheme}://{u.netloc}".rstrip("/")
-    return origin in get_redirect_whitelist()

@@ -3247,7 +3247,7 @@ async def serve_app(self, app=None, host: str = DEFAULT_HOST, port: int = DEFAUL
     isaa_app.serve(
         host=host,
         port=port,
-        blocking=False,
+        blocking=True,
         source=ISAA_SOURCE,
         module_path=ISAA_MODULE,
         app_attr="app",
