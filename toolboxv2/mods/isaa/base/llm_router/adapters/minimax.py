@@ -27,12 +27,15 @@ class MiniMaxAdapter(OpenAICompatAdapter):
     """MiniMax via OpenAI-compat endpoint with sanitization quirks."""
 
     MODEL_MAP: dict[str, str] = {
+        "minimax-m3": "MiniMax-M3",
+        "minimax-m3-highspeed": "MiniMax-M3-highspeed",
+        "minimax-m2.7": "MiniMax-M2.7",
+        "minimax-m2.7-highspeed": "MiniMax-M2.7-highspeed",
         "minimax-m2.5": "MiniMax-M2.5",
         "minimax-m2.5-highspeed": "MiniMax-M2.5-highspeed",
         "minimax-m2.1": "MiniMax-M2.1",
+        "minimax-m2.1-highspeed": "MiniMax-M2.1-highspeed",
         "minimax-m2": "MiniMax-M2",
-        "codex-minimax-m2.5": "MiniMax-M2.5",
-        "codex-minimax-m2.1": "MiniMax-M2.1",
     }
 
     def __init__(self, base_url: str = "https://api.minimax.io/v1", **kw):

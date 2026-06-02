@@ -222,7 +222,6 @@ class FastTBHandler:
                 _eff_auth = _match[0].auth
             else:
                 _eff_auth = self._app.auth
-
             if _eff_auth:
                 _sess = request.session
                 if not (_sess is not None and _sess.is_authenticated):
@@ -248,7 +247,6 @@ class FastTBHandler:
         # Static file check (GET only)
         if result is None and request.method.upper() == "GET":
             static_path = self._app.resolve_static(request.path)
-            print(static_path, request.path)
             if static_path is not None:
                 return self._serve_static_file(static_path)
 
@@ -818,6 +816,9 @@ class FastTBHandler:
 
             # Install WS bridge on app (ws_send, ws_broadcast etc.)
             install_ws_bridge(app, em, "fasttb_http")
+            # Point this FastTB instance at the ToolBox app that now carries the
+            # WS bridge, so FastTB.ws_broadcast/ws_send can delegate to it.
+            self._app.app_instance = app
 
             # Wire up WS message handler
             ac = worker._access_controller

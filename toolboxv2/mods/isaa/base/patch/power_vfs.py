@@ -1366,7 +1366,7 @@ def rg_grep(
     if file_pattern != "*" and not any(c in file_pattern for c in "*?[]"):
         exact_path = path.rstrip("/") + "/" + file_pattern
         vfs_file = vfs.files.get(exact_path)
-        if vfs_file and vfs_file.is_loaded and vfs_file.filename not in ("vfs_guide.md",):
+        if vfs_file and vfs_file.filename not in ("vfs_guide.md",):
             # Skip if already covered by rg
             skip = any(
                 exact_path == cp or exact_path.startswith(cp if cp.endswith("/") else cp + "/")
@@ -1374,7 +1374,15 @@ def rg_grep(
             )
             if not skip:
                 try:
-                    lines = vfs_file.content.split("\n")
+                    if vfs_file.is_loaded:
+                        _content = vfs_file._content or ""
+                    elif getattr(vfs_file, "local_path", None):
+                        _content = Path(vfs_file.local_path).read_text(
+                            encoding="utf-8", errors="ignore"
+                        )
+                    else:
+                        _content = None
+                    lines = (_content or "").split("\n") if _content is not None else []
                     for line_num, line in enumerate(lines, 1):
                         matched = bool(regex.search(line))
                         if invert:
@@ -1404,10 +1412,6 @@ def rg_grep(
         if skip:
             continue
 
-        # Only pure in-memory files remain
-        if not vfs_file.is_loaded:
-            continue  # Not loaded + not on disk = nothing to search
-
         if file_pattern != "*" and not fnmatch.fnmatch(vfs_file.filename, file_pattern):
             continue
 
@@ -1415,7 +1419,18 @@ def rg_grep(
             continue
 
         try:
-            content = vfs_file.content
+            # Acquire content: in-memory if loaded, else lazy-read from disk.
+            # Shadow/mounted files have is_loaded == False but are backed by
+            # local_path — skipping them here was why content search returned
+            # nothing whenever ripgrep was unavailable.
+            if vfs_file.is_loaded:
+                content = vfs_file._content or ""
+            elif getattr(vfs_file, "local_path", None):
+                content = Path(vfs_file.local_path).read_text(
+                    encoding="utf-8", errors="ignore"
+                )
+            else:
+                continue  # neither in memory nor on disk → nothing to search
             lines = content.split("\n")
             for line_num, line in enumerate(lines, 1):
                 matched = bool(regex.search(line))
@@ -1441,7 +1456,45 @@ def rg_grep(
 # =============================================================================
 # VFS SEARCH
 # =============================================================================
+# Starke Default-Excludes gegen VFS-/Such-Bloat.
+# fnmatch gegen filename UND full path → */dir/* fängt ganze Bäume.
+DEFAULT_EXCLUDE_PATTERNS = [
+    # ── Dependency-/Package-Verzeichnisse ──
+    "*/node_modules/*", "*/.venv/*", "*/venv/*", "*/env/*", "*/.env/*",
+    "*/site-packages/*", "*/vendor/*", "*/bower_components/*",
+    "*/.cargo/*", "*/target/*",          # Rust
+    "*/.gradle/*", "*/.m2/*",            # JVM
+    "*/Pods/*", "*/.pub-cache/*",
 
+    # ── Build-/Output-Artefakte ──
+    "*/dist/*", "*/build/*", "*/out/*", "*/.next/*", "*/.nuxt/*",
+    "*/.svelte-kit/*", "*/.output/*", "*/.turbo/*", "*/.parcel-cache/*",
+    "*/coverage/*", "*/htmlcov/*", "*/.tox/*", "*/.eggs/*", "*.egg-info",
+
+    # ── Caches ──
+    "*/__pycache__/*", "*.pyc", "*.pyo", "*.pyd",
+    "*/.pytest_cache/*", "*/.mypy_cache/*", "*/.ruff_cache/*",
+    "*/.cache/*", "*/.npm/*", "*/.yarn/*", "*/.pnpm-store/*",
+
+    # ── VCS / IDE / OS ──
+    "*/.git/*", "*/.hg/*", "*/.svn/*",
+    "*/.idea/*", "*/.vscode/*", "*/.vs/*",
+    ".DS_Store", "Thumbs.db", "*.swp", "*~",
+
+    # ── Logs / temp / lockfiles ──
+    "*.log", "*/logs/*", "*/tmp/*", "*/temp/*",
+    "*.lock", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+    "poetry.lock", "Cargo.lock", "*.min.js", "*.min.css", "*.map",
+
+    # ── Binär / Medien / Archive (selten durchsuchenswert) ──
+    "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.ico", "*.svg",
+    "*.pdf", "*.zip", "*.tar", "*.gz", "*.7z", "*.rar",
+    "*.so", "*.dll", "*.dylib", "*.exe", "*.bin", "*.wasm",
+    "*.sqlite", "*.db", "*.parquet",
+
+    # ── ML/Daten-Gewichte (RAM-/Token-Killer) ──
+    "*.pt", "*.pth", "*.onnx", "*.gguf", "*.safetensors", "*.ckpt", "*.npz",
+]
 
 class SearchMode(Enum):
     """Suchmodus"""
@@ -1496,11 +1549,18 @@ def search_vfs(
 
     Returns:
         Liste von SearchResult
+
+    klarstellen: für „alle Dateien auflisten" → find_files("*")/ls, nicht search_vfs
     """
     results: list[SearchResult] = []
 
     # Save original query for rg_grep (before potential .lower())
     _original_query = query
+
+    # "list everything" intent: bare wildcards/empty are not a substring search.
+    # Treat them as match-all on filenames so the agent gets the file list back
+    # instead of [] (which previously pushed it to dozens of grep fallbacks).
+    match_all = (not regex) and (query.strip() in ("", "*", "**"))
 
     # Prepare pattern
     if regex:
@@ -1513,10 +1573,12 @@ def search_vfs(
         if not case_sensitive:
             query = query.lower()
 
-    exclude_patterns = exclude_patterns or []
+    exclude_patterns = exclude_patterns or DEFAULT_EXCLUDE_PATTERNS
 
     def matches_query(text: str) -> bool:
         """Prüft ob Text dem Query entspricht"""
+        if match_all:
+            return True
         if regex:
             return bool(pattern.search(text))
         else:
@@ -1570,7 +1632,7 @@ def search_vfs(
                     break
 
     # Content Search — via ripgrep, outside the per-file loop
-    if mode in (SearchMode.CONTENT, SearchMode.BOTH) and len(results) < max_results:
+    if mode in (SearchMode.CONTENT, SearchMode.BOTH) and not match_all and len(results) < max_results:
         # Build regex pattern string for rg_grep — use original (un-lowered) query
         if regex:
             rg_pattern = _original_query if case_sensitive else f"(?i){_original_query}"

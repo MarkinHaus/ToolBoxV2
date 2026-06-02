@@ -25,6 +25,8 @@ import shlex
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+
+
 if TYPE_CHECKING:
     from toolboxv2.mods.isaa.base.Agent.agent_session_v2 import AgentSessionV2
 
@@ -1191,7 +1193,7 @@ def make_vfs_view(session: "AgentSessionV2"):
     """
     vfs = session.vfs
 
-    def vfs_view(
+    async def vfs_view(
         path: str,
         line_start: int = 1,
         line_end: int = -1,
@@ -1287,7 +1289,7 @@ def make_vfs_view(session: "AgentSessionV2"):
                 if not local_path or not os.path.exists(local_path):
                     return {"success": False, "error": f"Media file needs a local backing file: {path}"}
 
-                from toolboxv2.mods.isaa.extras.adapter import litellm_complete
+                from toolboxv2.mods.isaa.extras.adapter import llm_complete
                 import base64
 
                 model = os.getenv("VISIONMODEL", "openrouter/openai/gpt-4.1-mini")
@@ -1304,8 +1306,7 @@ def make_vfs_view(session: "AgentSessionV2"):
                                 {"type": "text", "text": prompt},
                                 {"type": "image_url", "image_url": {"url": f"data:application/pdf;base64,{b64_pdf}"}}
                             ]}]
-                            resp = litellm_complete(model=model, messages=messages)
-                            text_result = resp.choices[0].message.content
+                            text_result = await llm_complete(model=model, messages=messages)
                         except Exception as native_err:
                             # Attempt 2: Fallback to PyMuPDF (fitz) converting pages to images
                             import fitz
@@ -1324,8 +1325,7 @@ def make_vfs_view(session: "AgentSessionV2"):
                                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}})
 
                             messages = [{"role": "user", "content": content_arr}]
-                            resp = litellm.completion(model=model, messages=messages)
-                            text_result = resp.choices[0].message.content
+                            text_result = await llm_complete(model=model, messages=messages)
                     else:
                         # Standard Images
                         mime = "image/jpeg" if ext in [".jpg", ".jpeg"] else f"image/{ext.strip('.')}"
@@ -1335,8 +1335,7 @@ def make_vfs_view(session: "AgentSessionV2"):
                             {"type": "text", "text": prompt},
                             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}}
                         ]}]
-                        resp = litellm.completion(model=model, messages=messages)
-                        text_result = resp.choices[0].message.content
+                        text_result = await llm_complete(model=model, messages=messages)
 
                     # Overwrite VFS memory with the text analysis directly
                     # (bypass setter so it doesn't set is_dirty=True and corrupt local disk on sync)

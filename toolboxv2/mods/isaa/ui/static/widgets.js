@@ -193,6 +193,22 @@
           delete: function(key){ var k = PREFIX + key; delete cache[k]; post(k, null); return Promise.resolve({ key: key, deleted: true }); },
           list: function(prefix){ var out = []; for (var k in cache){ if (k.indexOf(PREFIX) === 0){ var bare = k.slice(PREFIX.length); if (!prefix || bare.indexOf(prefix) === 0) out.push(bare); } } return Promise.resolve({ keys: out }); }
         };
+        // Sandbox = opaque origin → native localStorage/sessionStorage throw.
+        // localStorage: cache-backed + persisted via storage: bridge. sessionStorage: in-memory.
+        function mkLS(backing, persist){
+          return {
+            getItem: function(key){ var k = PREFIX + key; return (k in backing && backing[k] != null) ? String(backing[k]) : null; },
+            setItem: function(key, value){ var k = PREFIX + key; backing[k] = String(value); if (persist) post(k, String(value)); },
+            removeItem: function(key){ var k = PREFIX + key; delete backing[k]; if (persist) post(k, null); },
+            clear: function(){ for (var k in backing){ if (k.indexOf(PREFIX) === 0){ if (persist) post(k, null); delete backing[k]; } } },
+            key: function(i){ var ks = []; for (var k in backing){ if (k.indexOf(PREFIX) === 0) ks.push(k); } return ks[i] ? ks[i].slice(PREFIX.length) : null; },
+            get length(){ var n = 0; for (var k in backing){ if (k.indexOf(PREFIX) === 0) n++; } return n; }
+          };
+        }
+        try {
+          Object.defineProperty(window, 'localStorage', { value: mkLS(cache, true), configurable: true });
+          Object.defineProperty(window, 'sessionStorage', { value: mkLS({}, false), configurable: true });
+        } catch (e) {}
         window.addEventListener('message', function(e){
           var d = e.data;
           if (d && d.__isaa_var_set && typeof d.key === 'string' && d.key.indexOf(PREFIX) === 0) cache[d.key] = d.value;

@@ -158,6 +158,24 @@
     showFileModal(path, res.content || '');
   }
 
+  function withStoragePolyfill(html) {
+    const boot = `<script>(function(){
+      function mk(){ var s={}; return {
+        getItem:function(k){return k in s?String(s[k]):null;},
+        setItem:function(k,v){s[k]=String(v);},
+        removeItem:function(k){delete s[k];},
+        clear:function(){for(var k in s)delete s[k];},
+        key:function(i){return Object.keys(s)[i]||null;},
+        get length(){return Object.keys(s).length;}
+      };}
+      try{ Object.defineProperty(window,'localStorage',{value:mk(),configurable:true});
+           Object.defineProperty(window,'sessionStorage',{value:mk(),configurable:true}); }catch(e){}
+    })();<\/script>`;
+    if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, m => m + boot);
+    if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, m => m + boot);
+    return boot + html;
+  }
+
   function showFileModal(path, content) {
     let modal = document.getElementById('vfs-modal');
     if (!modal) {
@@ -263,7 +281,7 @@ const src = modal.querySelector('#m-text').value;
       mText.style.display = 'none';
       mdPreview.style.display = 'none';
       htmlFrame.style.display = 'block';
-      htmlFrame.srcdoc = content || '';
+      htmlFrame.srcdoc = withStoragePolyfill(content || '');
       htmlWidgetBtn.style.display = 'inline-flex';
       mdBody.dataset.mdMode = 'raw';
       mdBody.style.setProperty('--vfs-md-mode', 'raw');

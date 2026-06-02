@@ -178,12 +178,13 @@ class LocalPlayer(AudioPlayer):
         pip install sounddevice numpy
     """
 
-    def __init__(self, device=0):
+    def __init__(self, device=0, channels=2):
         self._queue = asyncio.Queue()
         self._task = None
         self._stop_event = asyncio.Event()
         self._playing = False
         self.device = device
+        self.channels = channels
 
     async def start(self) -> None:
         self._stop_event.clear()
@@ -234,6 +235,13 @@ class LocalPlayer(AudioPlayer):
                 self._playing = True
                 try:
                     audio_np, sample_rate = _wav_to_numpy(wav_bytes)
+                    if self.channels is not None:
+                        if self.channels == 2 and audio_np.ndim == 1:
+                            # Mono-Audio duplizieren, um Stereo zu erzwingen
+                            audio_np = np.column_stack((audio_np, audio_np))
+                        elif self.channels == 1 and audio_np.ndim > 1:
+                            # Falls das Gerät Mono braucht, wir aber Stereo haben -> Durchschnitt
+                            audio_np = np.mean(audio_np, axis=1)
                     sd.play(audio_np, sample_rate, device=self.device)
                     sd.wait()
                 except Exception as e:

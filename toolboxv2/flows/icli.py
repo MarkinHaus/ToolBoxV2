@@ -71,7 +71,7 @@ from toolboxv2 import init_cwd, tb_root_dir
 from prompt_toolkit import print_formatted_text, HTML
 from toolboxv2.mods.isaa.CodingAgent.coder import CoderAgent
 from toolboxv2.mods.isaa.base.audio_io.audioIo import (
-    AudioStreamPlayer, LocalPlayer, WebPlayer, NullPlayer,
+    AudioStreamPlayer, LocalPlayer, WebPlayer, NullPlayer, AudioStreamRecorder,
 )
 from toolboxv2.mods.isaa.base.audio_io.Tts import TTSConfig, TTSBackend, TTSEmotion
 from toolboxv2.mods.isaa.base.audio_io.audio_live import (
@@ -4438,7 +4438,7 @@ class ISAA_Host:
         self._was_recording_is_prossesing_audio = False
         self._audio_buffer: list[bytes] = []
         self._last_transcription: str | None = None
-        self._live_engine: Optional[LiveModeEngine] = None
+        self._live_engine: Optional[AudioStreamRecorder] = None
         self._speaker_store: SpeakerProfileStore = SpeakerProfileStore()
         self._live_config: LiveModeConfig = LiveModeConfig()
         self._audio_setup_agents: set[str] = set()

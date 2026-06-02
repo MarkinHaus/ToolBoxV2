@@ -49,6 +49,9 @@ async def litellm_complete_if_cache(
     clean_kw = {k: v for k, v in kwargs.items()
                 if k not in ("response_format",) or v is not None}
 
+    return await llm_complete(model=model, messages=messages, api_key=_api_key, **clean_kw)
+
+async def llm_complete(model="model", messages=None, _api_key="", stream=False, **clean_kw):
     try:
         if stream:
             async def inner():

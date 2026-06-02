@@ -218,74 +218,6 @@ SKILL_DISCOVERY_TOOLS = [
     },
 ]
 
-CODING_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "write_patch",
-            "description": (
-                "Apply a patch to an existing VFS file. Internally: "
-                "1) Reads the file + collects context you provide, "
-                "2) Uses a complex LLM to generate a precise patch in one shot, "
-                "3) Validates the result (syntax, structure). "
-                "You provide the file path and a clear description of WHAT to change and WHY. "
-                "The tool handles the actual code generation. One file per call."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "VFS path of the file to patch (e.g. /project/src/main.py)",
-                    },
-                    "task": {
-                        "type": "string",
-                        "description": "Detailed description of what to change, why, and any constraints. Include relevant context (function signatures, error messages, test expectations).",
-                    },
-                    "context_files": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional: additional VFS file paths to read as context for the patch (imports, related modules, tests)",
-                    },
-                },
-                "required": ["file_path", "task"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": (
-                "Create a new file in VFS. Internally: "
-                "1) Collects context from your description + optional reference files, "
-                "2) Uses a complex LLM to generate the complete file in one shot, "
-                "3) Validates syntax. "
-                "You provide the target path, purpose, and detailed spec. One file per call."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "VFS path for the new file (e.g. /project/src/utils.py)",
-                    },
-                    "task": {
-                        "type": "string",
-                        "description": "Detailed spec: what the file should contain, its purpose, interfaces, constraints. The more precise, the better the output.",
-                    },
-                    "context_files": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional: VFS file paths to read as reference (existing modules, interfaces, types)",
-                    },
-                },
-                "required": ["file_path", "task"],
-            },
-        },
-    },
-]
-
 # VFS Tools - always available for file navigation (part of static)
 VFS_TOOL_NAMES = ["vfs_read", "vfs_write", "vfs_list", "vfs_navigate", "vfs_control"]
 _VFS_PERSONAS = "/global/.memory/dreamer/personas.json"
@@ -1606,8 +1538,8 @@ BEISPIELE:
                     "  • If multiple root causes possible → list all, pick most likely.\n"
                     "  • NO fixes in this phase.\n\n"
                     "D — DECIDE: Pick exactly ONE next action.\n"
-                    "  • For new code/files → use write_file tool.\n"
-                    "  • For patches to existing files → use write_patch tool.\n"
+                    "  • For new code/files → use write tool.\n"
+                    "  • For patches to existing files → use edit tool.\n"
                     "  • Both tools handle LLM generation + validation internally.\n"
                     "  • If objective met → final_answer.\n\n"
                     "A — ACT: Execute the decision.\n"
@@ -1623,7 +1555,6 @@ BEISPIELE:
                 ),
                 "tools_used": [
                     "vfs_read", "vfs_write", "vfs_list", "vfs_navigate",
-                    "write_patch", "write_file",
                     "think", "final_answer", "load_tools", "list_tools",
                 ],
                 "tool_groups": ["vfs"],
@@ -1856,17 +1787,8 @@ BEISPIELE:
                     final_response = "Execution cancelled."
                     success = False
                     break
-                warning = self._loop_preamble(ctx)
-
-                # Refresh system prompt to reflect current slots and context on every iteration (crucial for resume)
-                if ctx.working_history and ctx.working_history[0].get("role") == "system":
-                    ctx.working_history[0]["content"] = self._build_system_prompt(ctx, session)
-
-                # Build current tool list
+                warning, messages = self._loop_preamble(ctx)
                 current_tools = self._get_tool_definitions(ctx)
-
-                messages = self._sanitize_history_for_api(ctx.working_history.copy())
-
                 log.info(f"messages AutoFocus {len(messages)} done")
 
                 # LLM Call
@@ -2152,7 +2074,7 @@ BEISPIELE:
                         yield enrich({"type": "cancelled", "run_id": ctx.run_id, "answer": final_response})
                         break
 
-                    warning = self._loop_preamble(ctx)
+                    warning, messages = self._loop_preamble(ctx)
                     # Sofortiges Iteration-Start-Signal (vor LLM-Latenz)
                     yield enrich(
                         {
@@ -2164,13 +2086,6 @@ BEISPIELE:
                         yield enrich(
                             {"type": "warning", "message": warning.splitlines()[0]}
                         )
-
-                        # Refresh system prompt to reflect current slots and context on every iteration (crucial for resume)
-                    if ctx.working_history and ctx.working_history[0].get("role") == "system":
-                        ctx.working_history[0]["content"] = self._build_system_prompt(ctx, session)
-
-                        # Build messages
-                    messages = self._sanitize_history_for_api(ctx.working_history.copy())
 
                     # Get tool definitions
                     tool_definitions = self._get_tool_definitions(ctx)
@@ -2659,18 +2574,13 @@ BEISPIELE:
                         yield enrich({"type": "cancelled", "run_id": ctx.run_id, "answer": final_response})
                         break
 
-                    warning = self._loop_preamble(ctx)
+                    warning, messages = self._loop_preamble(ctx)
 
                     yield enrich(
                         {"type": "iteration_start", "iteration": ctx.current_iteration}
                     )
 
-                    # Refresh system prompt to reflect current slots and context on every iteration (crucial for resume)
-                    if ctx.working_history and ctx.working_history[0].get("role") == "system":
-                        ctx.working_history[0]["content"] = self._build_system_prompt(ctx, session)
-
                     current_tools = self._get_tool_definitions(ctx)
-                    messages = self._sanitize_history_for_api(ctx.working_history.copy())
 
                     # --- LLM Call (non-streaming) ---
                     try:
@@ -3003,7 +2913,7 @@ BEISPIELE:
             max_iterations, trigger_kw, trigger_skill = await self._parallel_init(
                 ctx, session, query, max_iterations
             )
-            system_prompt = self._build_system_prompt(ctx, session)
+            system_prompt = self._build_static_system_prompt(ctx, session)
             history_depth = 2 if self.is_sub_agent else 6
             permanent_history = session.get_history_for_llm(last_n=history_depth)
             ctx.working_history = [
@@ -3164,7 +3074,7 @@ BEISPIELE:
             task = asyncio.create_task(finalize_coro)
             self._pending_finalize_tasks[ctx.run_id] = task
 
-    def _loop_preamble(self, ctx: ExecutionContext) -> str | None:
+    def _loop_preamble(self, ctx: ExecutionContext) -> tuple[str | None, list[dict]]:
         """Iteration bookkeeping + loop warning. Returns warning msg or None."""
         _obs = getattr(self.agent, 'obs', None)
         if _obs:
@@ -3195,7 +3105,21 @@ BEISPIELE:
             ctx.working_history.append({"role": "system", "content": warning})
             ctx.loop_warning_given = True
         ctx.working_history = clean_messages(ctx.working_history)
-        return warning
+
+        # Build current tool list
+
+        messages = self._sanitize_history_for_api(ctx.working_history.copy())
+        # Append dynamic context as second-to-last or last message to optimize prefix caching
+        if messages:
+            dynamic_msg = {"role": "system", "content": self._build_dynamic_system_prompt(ctx)}
+            if messages[-1].get("role") == "user":
+                messages.insert(len(messages) - 1, dynamic_msg)
+            elif len(messages) > 2:
+                messages.insert(-2, dynamic_msg)
+            else:
+                messages.append(dynamic_msg)
+
+        return warning, messages
 
     def _classify_tool_calls(
         self, tool_calls: list, dict_mode: bool = False,
@@ -4900,9 +4824,6 @@ BEISPIELE:
         # 2b. Skill discovery tools (always available, not counted in limit)
         definitions.extend(SKILL_DISCOVERY_TOOLS)
 
-        # 2c. Coding tools (always available)
-        definitions.extend(CODING_TOOLS)
-
         # 3. Sub-agent tools (ONLY for main agent, not for sub-agents)
         if not self.is_sub_agent:
             definitions.extend(SUB_AGENT_TOOLS)
@@ -4939,12 +4860,11 @@ BEISPIELE:
     # PROMPT BUILDING
     # =========================================================================
 
-    def _build_system_prompt(self, ctx: ExecutionContext, session) -> str:
+    def _build_static_system_prompt(self, ctx: ExecutionContext, session) -> str:
         """Order: STATIC prefix → marker → DYNAMIC suffix.
         Static prefix is byte-stable across runs → provider caching works.
         """
         static_parts: list[str] = []
-        dynamic_parts: list[str] = []
 
         # ═══ STATIC PREFIX (cacheable across runs) ═══
         static_parts.append(self.agent.amd.system_message)
@@ -4993,6 +4913,12 @@ BEISPIELE:
 
         static_parts.append("\n--- RUNTIME CONTEXT (varies per run, not cached) ---\n")
 
+        return "\n".join(static_parts)
+
+    def _build_dynamic_system_prompt(self, ctx: ExecutionContext) -> str:
+        """Dynamic suffix (changes per run/query), injected near the end to optimize caching."""
+
+        dynamic_parts: list[str] = []
         # ═══ DYNAMIC SUFFIX (changes per run/query) ═══
         # Tool slots
         loaded_tool_names = ctx.get_dynamic_tool_names()
@@ -5039,7 +4965,7 @@ BEISPIELE:
                 "verify the result with a read/list/status tool before proceeding."
             )
 
-        return "\n".join(static_parts + dynamic_parts)
+        return "\n".join(dynamic_parts)
 
     def _sanitize_history_for_api(self, messages: List[dict]) -> List[dict]:
         """Fixes invalid JSON in assistant tool_calls to prevent API 400 errors."""

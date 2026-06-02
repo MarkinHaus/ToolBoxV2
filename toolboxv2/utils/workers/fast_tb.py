@@ -342,9 +342,6 @@ class FastTB:
         existing mount is left untouched. Returns True if /web is now available.
         """
         import os
-        #for url_prefix, _ in self._static_mounts:
-        #    if url_prefix == "":
-        #        return True  # already served (by app or earlier call) — don't touch
         if self._web_mount_owned:
             return True
         try:
@@ -514,6 +511,49 @@ connect();
         return None
 
     # =========================================================================
+    # WebSocket send/broadcast — thin delegation to the ToolBox app's WS bridge
+    # =========================================================================
+
+    def _ws_bridge_target(self):
+        """Resolve the object that carries the WS bridge methods.
+
+        Prefer app_instance (set at WS startup on the served instance). Fall back
+        to get_app() so a MOUNTED instance — which is never served itself and thus
+        never gets app_instance set — still reaches the same singleton ToolBox app
+        on which install_ws_bridge() ran. Returns None if neither is available.
+        """
+        inst = self.app_instance
+        if inst is None:
+            try:
+                from toolboxv2 import get_app
+                inst = get_app()
+            except Exception:
+                return None
+        return inst
+
+    def ws_broadcast(self, channel_id: str, payload: dict, source_conn_id: str = ""):
+        """Broadcast to a WS channel via the ToolBox app's bridge.
+
+        Returns the underlying awaitable (await it) or False if WS is unavailable.
+        """
+        inst = self._ws_bridge_target()
+        fn = getattr(inst, "ws_broadcast", None) if inst is not None else None
+        if fn is None:
+            return False
+        return fn(channel_id, payload, source_conn_id)
+
+    def ws_send(self, conn_id: str, payload: dict):
+        """Send to a single WS connection via the ToolBox app's bridge.
+
+        Returns the underlying awaitable (await it) or False if WS is unavailable.
+        """
+        inst = self._ws_bridge_target()
+        fn = getattr(inst, "ws_send", None) if inst is not None else None
+        if fn is None:
+            return False
+        return fn(conn_id, payload)
+
+    # =========================================================================
     # One-Port-Collective: mount / unmount sibling FastTB apps (Modell A)
     # =========================================================================
 
@@ -535,6 +575,11 @@ connect();
             target = fallback_path if r.path == "/" else r.path
             if (r.method, target) in own:
                 bad.append(f"{r.method} {target}")
+        # WS routes merge top-level (unchanged path) — flag path collisions too.
+        own_ws = {w.path for w in self._ws_routes}
+        for w in other._ws_routes:
+            if w.path in own_ws:
+                bad.append(f"WS {w.path}")
         return bad
 
     def mount_app(self, other: "FastTB", fallback_prefix: str, source: str) -> List[str]:
@@ -576,8 +621,20 @@ connect();
                 self._static_mounts.append((url_prefix, directory))
                 added_static.append((url_prefix, directory))
 
+        # WS routes merge top-level, path unchanged (clients connect to the
+        # original WS path, e.g. "/ws/openLive"); they are NOT relocated under
+        # the prefix. Dedup by path so re-mount can't duplicate a handler.
+        added_ws = []
+        own_ws_paths = {w.path for w in self._ws_routes}
+        for w in other._ws_routes:
+            if w.path not in own_ws_paths:
+                self._ws_routes.append(w)
+                added_ws.append(w)
+                own_ws_paths.add(w.path)
+
         self._mounted_sources[source] = {
-            "routes": added_routes, "static": added_static, "prefix": fp,
+            "routes": added_routes, "static": added_static,
+            "ws_routes": added_ws, "prefix": fp,
         }
         self._index_dirty = True
         return []
@@ -590,6 +647,9 @@ connect();
             return False
         rids = {id(r) for r in meta["routes"]}
         self._routes = [r for r in self._routes if id(r) not in rids]
+        wids = {id(w) for w in meta.get("ws_routes", [])}
+        if wids:
+            self._ws_routes = [w for w in self._ws_routes if id(w) not in wids]
         for sm in meta["static"]:
             try:
                 self._static_mounts.remove(sm)
