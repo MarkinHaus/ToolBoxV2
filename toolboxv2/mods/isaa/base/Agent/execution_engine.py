@@ -3226,6 +3226,7 @@ BEISPIELE:
             # und dann nicht vergessen in dem setup gucken ob dieser task typneu ist oder existirt. dann ob der type |sein untertype neu ist oder exsitert.
             # und wenn er neu ist. schonmal den neuen order anlagen. wenn er exitiert die experiances "für die task" kopiliren. so wie den order
             # dann als pre context mit dem aent gaben. damit isaa wirklich aitomatisch adaptive lernt.
+            # mien isaa agent kennt den toolbox weg wie man sachen macht nicht. alo wider wie der agent toolbox spezifschen code schriben kann so wie wie man mit dem framwork richtig um geht. die lösung coprest foschot lerning auto agrgation.
         except Exception as e:
             self.live.log(f"Background Learning Error: {e}", logging.WARNING)
 

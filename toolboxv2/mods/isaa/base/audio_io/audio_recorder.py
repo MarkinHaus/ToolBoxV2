@@ -153,10 +153,17 @@ class LocalMicRecorder(AudioRecorder):
             pcm = (indata[:, 0] * 32767).astype(np.int16).tobytes()
             if self.sample_rate != TARGET_SR:
                 pcm = resample_pcm16(pcm, self.sample_rate, TARGET_SR)
-            try:
-                self._loop.call_soon_threadsafe(self._queue.put_nowait, pcm)
-            except asyncio.QueueFull:
-                logger.warning("LocalMicRecorder queue full — dropping frame")
+            def _enqueue(p=pcm):
+                try:
+                    self._queue.put_nowait(p)
+                except asyncio.QueueFull:
+                    logger.warning("LocalMicRecorder queue full — dropping frame - restart")
+                    self._active = False
+                    if self._stream is not None:
+                        self._stream.stop()
+                        self._stream.close()
+                        self._stream = None
+            self._loop.call_soon_threadsafe(_enqueue)
 
         self._stream = sd.InputStream(
             samplerate=self.sample_rate,

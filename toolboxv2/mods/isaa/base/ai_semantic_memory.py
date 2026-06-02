@@ -350,6 +350,15 @@ class AISemanticMemory(metaclass=Singleton):
         return False
 
     # ── persistence ────────────────────────────────────────────────────
+    @staticmethod
+    def _safe_path(p: "Path") -> "Path":
+        """Sanitize the FINAL path component for the OS (Windows forbids
+        <>:\"/\\|?* and control chars). Session ids can carry them -> OSError
+        [Errno 22]. Parent dirs are app-controlled and left untouched.
+        No-op for already-valid names, so existing memory files are unaffected."""
+        import re
+        safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", p.name)
+        return p.with_name(safe) if safe != p.name else p
 
     def save_memory(self, name: str, path: str) -> bool | bytes:
         """
@@ -368,7 +377,7 @@ class AISemanticMemory(metaclass=Singleton):
         try:
             p = None
             if path is not None:
-                p = Path(path)
+                p = self._safe_path(Path(path))
                 if p.is_dir() or not p.suffix:
                     # Directory-based save
                     p.mkdir(parents=True, exist_ok=True)
@@ -404,7 +413,7 @@ class AISemanticMemory(metaclass=Singleton):
                 self.memories[sanitized] = store
                 return True
 
-            p = Path(path)
+            p = self._safe_path(Path(path))
             if p.is_dir():
                 # Directory-based load
                 store = HybridMemoryStore(

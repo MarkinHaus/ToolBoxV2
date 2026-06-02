@@ -27,14 +27,20 @@ import wave
 import io
 
 from toolboxv2.mods.isaa.base.audio_io.omni import (
+    BlobStateStore,
     JobManager,
     OmniBackend,
     OmniEvent,
     OmniEventType,
     OmniSession,
+    OmniState,
     StubOmniBackend,
     VoiceModeConfig,
+    WorldModel,
+    _summarize_omni,
     make_agent_tools,
+    make_session_tools,
+    make_world_model_tools,
     pcm16_to_wav,
 )
 
@@ -604,6 +610,395 @@ class TestVoiceModeConfig(unittest.TestCase):
     def test_omni_cloud_builds_without_connecting(self):
         b = VoiceModeConfig(mode="omni_cloud").build_backend()
         self.assertEqual(b.backend_name, "CloudOmniBackend")
+
+# ===========================================================================
+# Fakes for the persistent-state surface
+# ===========================================================================
+
+class FakeLLMAgent:
+    """FlowAgent-like with a_run_llm_completion (used for summaries). Records
+    every call; on_call lets a test mutate state DURING the await."""
+
+    def __init__(self, reply="SUMMARY", on_call=None):
+        self.reply = reply
+        self.on_call = on_call
+        self.calls: list[dict] = []
+
+    async def a_run_llm_completion(self, messages, **kwargs):
+        self.calls.append({"messages": messages, "kwargs": kwargs})
+        if self.on_call is not None:
+            self.on_call()
+        return self.reply
+
+
+def make_fake_blob():
+    """Return (BlobFileCls, backing_dict, opens). The class mimics the real
+    BlobFile semantics this code relies on: context manager, 'r' loads / 'w'
+    saves, read_json on empty/missing -> {}. backing simulates the blob store
+    keyed by path so save->load round-trips across instances."""
+    backing: dict[str, bytes] = {}
+    opens: list[dict] = []
+
+    class FakeBlobFile:
+        def __init__(self, filename, mode="r", key=None, **kw):
+            opens.append({"path": filename, "mode": mode, "key": key})
+            self.path = filename
+            self.mode = mode
+            self.key = key
+            self.buf = b""
+
+        def __enter__(self):
+            if "r" in self.mode:
+                data = backing.get(self.path)
+                if data:
+                    self.buf = data
+            return self
+
+        def __exit__(self, *a):
+            if "w" in self.mode:
+                backing[self.path] = self.buf
+            return False
+
+        def read_json(self):
+            if not self.buf:
+                return {}
+            return json.loads(self.buf.decode())
+
+        def write_json(self, data):
+            self.buf += json.dumps(data).encode()
+
+    return FakeBlobFile, backing, opens
+
+
+# ===========================================================================
+# WorldModel / OmniState
+# ===========================================================================
+
+class TestWorldModelState(unittest.TestCase):
+    def test_world_model_roundtrip_and_render(self):
+        wm = WorldModel(user="u", agent_role="r", routines=["a", "b"])
+        self.assertEqual(WorldModel.from_dict(wm.to_dict()), wm)
+        rendered = wm.render()
+        self.assertIn("User: u", rendered)
+        self.assertIn("Your role: r", rendered)
+        self.assertIn("a, b", rendered)
+
+    def test_omni_state_roundtrip(self):
+        st = OmniState(
+            world_model=WorldModel(user="u"),
+            full_summary="s",
+            session_summaries=["x"],
+            active_history=[{"role": "user", "text": "h"}],
+        )
+        self.assertEqual(OmniState.from_dict(st.to_dict()), st)
+
+    def test_from_none_and_empty_are_defaults(self):
+        self.assertEqual(OmniState.from_dict(None), OmniState())
+        self.assertEqual(WorldModel.from_dict({}), WorldModel())
+
+    def test_empty_world_model_renders_empty(self):
+        self.assertEqual(WorldModel().render(), "")
+
+
+# ===========================================================================
+# BlobStateStore
+# ===========================================================================
+
+class TestBlobStateStore(unittest.TestCase):
+    def test_missing_blob_yields_default_state(self):
+        Blob, _backing, _opens = make_fake_blob()
+        store = BlobStateStore("isaa/omni/omni_state.json", Blob)
+        self.assertIsInstance(store.state, OmniState)
+        self.assertEqual(store.state, OmniState())
+
+    def test_save_then_reload_roundtrips(self):
+        Blob, _backing, _opens = make_fake_blob()
+        path = "isaa/omni/omni_state.json"
+        store = BlobStateStore(path, Blob)
+        store.state.full_summary = "hello"
+        store.state.world_model.user = "Markin"
+        store.save()
+
+        store2 = BlobStateStore(path, Blob)
+        self.assertEqual(store2.state.full_summary, "hello")
+        self.assertEqual(store2.state.world_model.user, "Markin")
+
+    def test_key_is_passed_through_to_blobfile(self):
+        Blob, _backing, opens = make_fake_blob()
+        BlobStateStore("isaa/omni/omni_state.json", Blob, key=b"DEVKEY")
+        self.assertTrue(any(o["key"] == b"DEVKEY" for o in opens))
+
+
+# ===========================================================================
+# world_model_edit tool
+# ===========================================================================
+
+class TestWorldModelEditTool(unittest.IsolatedAsyncioTestCase):
+    def _edit(self):
+        Blob, _backing, _opens = make_fake_blob()
+        store = BlobStateStore("isaa/omni/omni_state.json", Blob)
+        edit = make_world_model_tools(store)[0]["tool_func"]
+        return store, edit
+
+    async def test_set_user_and_persists(self):
+        store, edit = self._edit()
+        out = await edit("user", "set", "Markin, builds ISAA")
+        self.assertEqual(json.loads(out)["ok"], True)
+        self.assertEqual(store.state.world_model.user, "Markin, builds ISAA")
+        # persisted: a fresh store sees it
+        store2 = BlobStateStore("isaa/omni/omni_state.json", store._BlobFile)
+        self.assertEqual(store2.state.world_model.user, "Markin, builds ISAA")
+
+    async def test_routines_append_dedup_and_remove(self):
+        store, edit = self._edit()
+        await edit("routines", "append", "standup")
+        await edit("routines", "append", "standup")  # dedup
+        await edit("routines", "append", "deploy")
+        self.assertEqual(store.state.world_model.routines, ["standup", "deploy"])
+        await edit("routines", "remove", "standup")
+        self.assertEqual(store.state.world_model.routines, ["deploy"])
+
+    async def test_invalid_field_and_op(self):
+        _store, edit = self._edit()
+        self.assertIn("unknown field", await edit("nope", "set", "x"))
+        self.assertIn("Error", await edit("user", "append", "x"))
+        self.assertIn("Error", await edit("routines", "set", "x"))
+
+
+# ===========================================================================
+# Transcript aggregation (TEXT -> active_history)
+# ===========================================================================
+
+class TestTranscriptAggregation(unittest.IsolatedAsyncioTestCase):
+    def _sess(self):
+        Blob, _backing, _opens = make_fake_blob()
+        store = BlobStateStore("isaa/omni/omni_state.json", Blob)
+        return store, OmniSession(StubOmniBackend(), state_store=store)
+
+    async def test_consecutive_same_source_merge_and_role_mapping(self):
+        store, sess = self._sess()
+        await sess.dispatch(OmniEvent.text_chunk("hi ", source="user"))
+        await sess.dispatch(OmniEvent.text_chunk("there", source="user"))
+        await sess.dispatch(OmniEvent.text_chunk("hello", source="model"))
+        await sess.dispatch(OmniEvent.turn_end())
+        self.assertEqual(
+            store.state.active_history,
+            [{"role": "user", "text": "hi there"},
+             {"role": "assistant", "text": "hello"}],
+        )
+
+    async def test_default_source_is_assistant(self):
+        store, sess = self._sess()
+        await sess.dispatch(OmniEvent.text_chunk("untagged"))
+        await sess.dispatch(OmniEvent.turn_end())
+        self.assertEqual(store.state.active_history,
+                         [{"role": "assistant", "text": "untagged"}])
+
+    async def test_no_store_does_not_buffer(self):
+        sess = OmniSession(StubOmniBackend())  # no state_store
+        await sess.dispatch(OmniEvent.text_chunk("x", source="user"))
+        await sess.dispatch(OmniEvent.turn_end())
+        self.assertEqual(sess._turn_buf, [])
+
+
+# ===========================================================================
+# _summarize_omni
+# ===========================================================================
+
+class TestSummarize(unittest.IsolatedAsyncioTestCase):
+    async def test_uses_fast_completion_without_context_or_stream(self):
+        agent = FakeLLMAgent(reply="OUT")
+        out = await _summarize_omni(agent, "transcript text", "PRIOR")
+        self.assertEqual(out, "OUT")
+        kw = agent.calls[-1]["kwargs"]
+        self.assertIs(kw["with_context"], False)
+        self.assertIs(kw["stream"], False)
+        self.assertEqual(kw["model_preference"], "fast")
+        body = agent.calls[-1]["messages"][1]["content"]
+        self.assertIn("PRIOR", body)
+        self.assertIn("transcript text", body)
+
+    async def test_one_line_uses_compact_instruction(self):
+        agent = FakeLLMAgent(reply="x")
+        await _summarize_omni(agent, "long summary", one_line=True)
+        self.assertIn("ONE short line", agent.calls[-1]["messages"][0]["content"])
+
+
+# ===========================================================================
+# _compress + compress_session tool
+# ===========================================================================
+
+class TestCompress(unittest.IsolatedAsyncioTestCase):
+    def _store(self, history=None, full_summary=""):
+        Blob, _backing, _opens = make_fake_blob()
+        store = BlobStateStore("isaa/omni/omni_state.json", Blob)
+        store.state.active_history = history or []
+        store.state.full_summary = full_summary
+        return store
+
+    async def test_compress_folds_history_into_summary(self):
+        store = self._store(history=[{"role": "user", "text": "a"}], full_summary="OLD")
+        agent = FakeLLMAgent(reply="NEW")
+        sess = OmniSession(StubOmniBackend(), state_store=store, fallback=agent)
+        out = await sess._compress(merge_old=True)
+        self.assertEqual(out, "NEW")
+        self.assertEqual(store.state.full_summary, "NEW")
+        self.assertEqual(store.state.active_history, [])
+        self.assertIn("OLD", agent.calls[-1]["messages"][1]["content"])
+
+    async def test_compress_no_merge_drops_prior(self):
+        store = self._store(history=[{"role": "user", "text": "a"}], full_summary="OLD")
+        agent = FakeLLMAgent(reply="FRESH")
+        sess = OmniSession(StubOmniBackend(), state_store=store, fallback=agent)
+        await sess._compress(merge_old=False)
+        self.assertNotIn("Previous summary", agent.calls[-1]["messages"][1]["content"])
+
+    async def test_compress_keeps_turns_arriving_during_call(self):
+        store = self._store(history=[{"role": "user", "text": "a"}])
+
+        def late():
+            store.state.active_history.append({"role": "user", "text": "late"})
+
+        agent = FakeLLMAgent(reply="S", on_call=late)
+        sess = OmniSession(StubOmniBackend(), state_store=store, fallback=agent)
+        await sess._compress(merge_old=True)
+        # the snapshot folded only the first turn; the late one survives
+        self.assertEqual(store.state.active_history, [{"role": "user", "text": "late"}])
+
+    async def test_compress_nothing_to_do(self):
+        store = self._store()
+        agent = FakeLLMAgent()
+        sess = OmniSession(StubOmniBackend(), state_store=store, fallback=agent)
+        self.assertEqual(await sess._compress(), "nothing to compress")
+        self.assertEqual(agent.calls, [])
+
+    async def test_compress_tool_schedules_and_runs(self):
+        store = self._store(history=[{"role": "user", "text": "hi"}])
+        agent = FakeLLMAgent(reply="DONE")
+        sess = OmniSession(StubOmniBackend(), state_store=store, fallback=agent)
+        tool = make_session_tools(sess)[0]["tool_func"]
+        self.assertEqual(await tool(merge_old=True), "compression scheduled")
+        for _ in range(100):
+            if store.state.full_summary:
+                break
+            await asyncio.sleep(0)
+        self.assertEqual(store.state.full_summary, "DONE")
+
+
+# ===========================================================================
+# Seed text + session archive
+# ===========================================================================
+
+class TestSeedAndArchive(unittest.IsolatedAsyncioTestCase):
+    def _store(self):
+        Blob, _backing, _opens = make_fake_blob()
+        return BlobStateStore("isaa/omni/omni_state.json", Blob)
+
+    def test_build_seed_text_assembles_all_parts(self):
+        store = self._store()
+        store.state.world_model = WorldModel(user="Markin", agent_role="voice", routines=["x"])
+        store.state.full_summary = "Discussed X."
+        store.state.active_history = [{"role": "user", "text": "hey"},
+                                      {"role": "assistant", "text": "hi"}]
+        sess = OmniSession(StubOmniBackend(), state_store=store)
+        seed = sess._build_seed_text()
+        self.assertIn("resume", seed)
+        self.assertIn("User: Markin", seed)
+        self.assertIn("Discussed X.", seed)
+        self.assertIn("Recent turns:", seed)
+
+    async def test_archive_appends_one_liner(self):
+        store = self._store()
+        store.state.full_summary = "A long rolling summary of the call."
+        agent = FakeLLMAgent(reply="one-liner")
+        sess = OmniSession(StubOmniBackend(), state_store=store, fallback=agent)
+        await sess._archive_session()
+        self.assertEqual(store.state.session_summaries, ["one-liner"])
+        self.assertIn("ONE short line", agent.calls[-1]["messages"][0]["content"])
+
+    async def test_archive_noop_without_summary(self):
+        store = self._store()
+        agent = FakeLLMAgent()
+        sess = OmniSession(StubOmniBackend(), state_store=store, fallback=agent)
+        await sess._archive_session()
+        self.assertEqual(store.state.session_summaries, [])
+        self.assertEqual(agent.calls, [])
+
+
+# ===========================================================================
+# Session restart + export
+# ===========================================================================
+
+class TestRestart(unittest.IsolatedAsyncioTestCase):
+    def _setup(self, **session_kw):
+        Blob, _backing, _opens = make_fake_blob()
+        store = BlobStateStore("isaa/omni/omni_state.json", Blob)
+        created: list = []
+
+        def factory():
+            b = StubOmniBackend()
+            created.append(b)
+            return b
+
+        agent = FakeLLMAgent(reply="S")
+        sess = OmniSession(
+            StubOmniBackend(), state_store=store, backend_factory=factory,
+            fallback=agent, **session_kw,
+        )
+        sess._tool_specs = [{"name": "noop"}]
+        return store, created, sess
+
+    def test_should_restart_threshold(self):
+        store, _created, sess = self._setup(restart_at_turns=3)
+        sess.turns = 2
+        self.assertFalse(sess._should_restart())
+        sess.turns = 3
+        self.assertTrue(sess._should_restart())
+
+    def test_should_restart_needs_factory(self):
+        Blob, _b, _o = make_fake_blob()
+        store = BlobStateStore("isaa/omni/omni_state.json", Blob)
+        sess = OmniSession(StubOmniBackend(), state_store=store, restart_at_turns=2)
+        sess.turns = 5
+        self.assertFalse(sess._should_restart())  # no backend_factory
+
+    async def test_do_restart_swaps_backend_and_reseeds(self):
+        _store, created, sess = self._setup()
+        old = sess.backend
+        await sess._do_restart(compress=False)
+        self.assertIs(sess.backend, created[0])
+        self.assertIsNot(sess.backend, old)
+        self.assertTrue(created[0].started)
+        self.assertEqual(created[0].advertised_tools, [{"name": "noop"}])
+        self.assertEqual(sess.turns, 0)
+        self.assertEqual(len(created[0].sent_texts), 1)
+        self.assertIn("resume", created[0].sent_texts[0])
+        self.assertFalse(sess._restarting)
+
+    async def test_turn_end_at_threshold_schedules_restart(self):
+        _store, created, sess = self._setup(restart_at_turns=2, restart_compress=False)
+        await sess.dispatch(OmniEvent.turn_end())   # turns=1
+        self.assertFalse(sess._restarting)
+        await sess.dispatch(OmniEvent.turn_end())   # turns=2 -> schedules
+        self.assertTrue(sess._restarting)
+        for _ in range(100):
+            if not sess._restarting:
+                break
+            await asyncio.sleep(0)
+        self.assertFalse(sess._restarting)
+        self.assertIs(sess.backend, created[-1])
+        self.assertEqual(sess.turns, 0)
+
+    async def test_export_state_flushes_and_persists(self):
+        Blob, _backing, _opens = make_fake_blob()
+        store = BlobStateStore("isaa/omni/omni_state.json", Blob)
+        sess = OmniSession(StubOmniBackend(), state_store=store)
+        await sess.dispatch(OmniEvent.text_chunk("note", source="user"))  # only buffered
+        out = sess.export_state()
+        self.assertEqual(out["active_history"], [{"role": "user", "text": "note"}])
+        # persisted to the blob
+        store2 = BlobStateStore("isaa/omni/omni_state.json", Blob)
+        self.assertEqual(store2.state.active_history, [{"role": "user", "text": "note"}])
 
 
 if __name__ == "__main__":

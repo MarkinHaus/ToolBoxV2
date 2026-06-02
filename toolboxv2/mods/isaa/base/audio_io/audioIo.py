@@ -242,8 +242,11 @@ class LocalPlayer(AudioPlayer):
                         elif self.channels == 1 and audio_np.ndim > 1:
                             # Falls das Gerät Mono braucht, wir aber Stereo haben -> Durchschnitt
                             audio_np = np.mean(audio_np, axis=1)
-                    sd.play(audio_np, sample_rate, device=self.device)
-                    sd.wait()
+                    loop = asyncio.get_event_loop()
+                    def _play(a=audio_np, sr=sample_rate, dev=self.device):
+                        sd.play(a, sr, device=dev)
+                        sd.wait()
+                    await loop.run_in_executor(None, _play)
                 except Exception as e:
                     print(f"[LocalPlayer] Playback error: {e}")
                 finally:
@@ -255,6 +258,78 @@ class LocalPlayer(AudioPlayer):
             except Exception as e:
                 print(f"[LocalPlayer] Worker error: {e}")
                 self._playing = False
+
+# =============================================================================
+# STREAMING LOCAL PLAYER (gapless, low-latency continuous OutputStream)
+# =============================================================================
+
+
+class StreamingLocalPlayer(AudioPlayer):
+    """Gapless, low-latency PCM output via ONE continuous sounddevice OutputStream.
+
+    LocalPlayer does one sd.play()/sd.wait() per WAV -> audible gaps between
+    streamed chunks. This keeps a single OutputStream open and feeds a ring
+    buffer that the audio callback drains continuously, so Omni's 24kHz PCM
+    chunks play back-to-back with ~one callback of latency. Mono int16; the
+    stream sample rate is fixed at construction (Gemini live = 24000), so the
+    backend's output SR MUST match (pass output_sample_rate accordingly).
+    """
+
+    def __init__(self, device=None, sample_rate: int = 24000, channels: int = 1):
+        import threading
+        self.device = device
+        self.sample_rate = sample_rate
+        self.channels = channels
+        self._buf = bytearray()
+        self._lock = threading.Lock()
+        self._stream = None
+        self._running = False
+
+    async def start(self) -> None:
+        import numpy as np
+        import sounddevice as sd
+        self._running = True
+        bpf = 2 * self.channels  # bytes per frame (int16)
+
+        def _cb(outdata, frames, time_info, status):
+            need = frames * bpf
+            with self._lock:
+                take = bytes(self._buf[:need])
+                del self._buf[:need]
+            if len(take) < need:                       # underrun -> silence, no glitch
+                take += b"\x00" * (need - len(take))
+            outdata[:] = np.frombuffer(take, dtype=np.int16).reshape(frames, self.channels)
+
+        self._stream = sd.OutputStream(
+            samplerate=self.sample_rate, channels=self.channels, dtype="int16",
+            device=self.device, callback=_cb, latency="low",
+        )
+        self._stream.start()
+
+    async def stop(self) -> None:
+        self._running = False
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+        with self._lock:
+            self._buf.clear()
+
+    async def queue_audio(self, wav_bytes: bytes, metadata: dict) -> None:
+        try:
+            arr, _sr = _wav_to_numpy(wav_bytes)   # unwrap; SR assumed == self.sample_rate
+        except Exception:
+            return
+        with self._lock:
+            self._buf.extend(arr.tobytes())
+
+    @property
+    def is_active(self) -> bool:
+        with self._lock:
+            return len(self._buf) > 0
 
 
 # =============================================================================

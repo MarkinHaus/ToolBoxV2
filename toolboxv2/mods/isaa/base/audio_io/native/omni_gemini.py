@@ -59,6 +59,7 @@ class GeminiLiveBackend(OmniBackend):
         *,
         system_instruction: str = "You are a helpful real-time voice assistant.",
         voice: Optional[str] = None,
+        thinking_level: Optional[str] = None,
         output_transcription: bool = False,
         input_transcription: bool = False,
         compression_trigger_tokens: int = 16000,
@@ -68,6 +69,7 @@ class GeminiLiveBackend(OmniBackend):
         self.api_key_env = api_key_env
         self.system_instruction = system_instruction
         self.voice = voice
+        self.thinking_level = thinking_level
         self.output_transcription = output_transcription
         self.input_transcription = input_transcription
         self.compression_trigger_tokens = compression_trigger_tokens
@@ -82,7 +84,10 @@ class GeminiLiveBackend(OmniBackend):
 
     # -- setup payload --------------------------------------------------------
     def _build_setup(self, tools: Optional[list[dict]]) -> dict:
-        gen_config: dict = {"responseModalities": ["AUDIO"]}
+        gen_config: dict = {
+            "responseModalities": ["AUDIO"],
+            "thinkingConfig": { "thinkingLevel": self.thinking_level },
+                            }
         if self.voice:
             gen_config["speechConfig"] = {
                 "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self.voice}}
@@ -95,6 +100,7 @@ class GeminiLiveBackend(OmniBackend):
                 "slidingWindow": {},
                 "triggerTokens": self.compression_trigger_tokens,
             },
+            # "historyConfig": {"initialHistoryInClientContent": True},
         }
         if self.output_transcription:
             setup["outputAudioTranscription"] = {}
@@ -252,6 +258,26 @@ class GeminiLiveBackend(OmniBackend):
         except Exception as e:  # noqa: BLE001
             self._closed = True
             logger.debug("GeminiLiveBackend.send_text after close: %s", e)
+
+    async def send_media(self, data: bytes, mime_type: str, *, as_turn: bool = False) -> None:
+        """Image / video frame (update 3). as_turn=True -> discrete user turn via
+        clientContent (one-shot image/file); else realtime video frame."""
+        if self._ws is None or self._closed:
+            return
+        b64 = base64.b64encode(data).decode("ascii")
+        if as_turn:
+            msg = {"clientContent": {
+                "turns": [{"role": "user",
+                           "parts": [{"inlineData": {"mimeType": mime_type, "data": b64}}]}],
+                "turnComplete": False,
+            }}
+        else:
+            msg = {"realtimeInput": {"video": {"data": b64, "mimeType": mime_type}}}
+        try:
+            await self._ws.send(json.dumps(msg))
+        except Exception as e:  # noqa: BLE001
+            self._closed = True
+            logger.debug("GeminiLiveBackend.send_media after close: %s", e)
 
     async def events(self) -> AsyncIterator[OmniEvent]:
         while True:
