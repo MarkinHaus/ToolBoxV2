@@ -395,7 +395,7 @@ def _build_manifest_tools(app):
                 "app.profiling": "PROFILING",
                 "database.mode": "TB_DB_MODE",
                 "app.debug": "TB_DEBUG",
-                "app.log_level": "TB_LOG_LEVEL",
+                "app.log_level": "TOOLBOX_LOGGING_LEVEL",
                 "app.environment": "TB_ENVIRONMENT",
                 "auth.jwt.secret": "TB_JWT_SECRET",
                 "auth.session.cookie_secret": "TB_COOKIE_SECRET",

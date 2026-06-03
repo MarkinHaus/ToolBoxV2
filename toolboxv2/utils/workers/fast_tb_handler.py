@@ -14,6 +14,8 @@ import asyncio
 import inspect
 import json
 import logging
+import os
+import threading
 import time
 import traceback
 from http import HTTPStatus
@@ -170,6 +172,48 @@ def _is_hashed_filename(path: str) -> bool:
     name = os.path.basename(path)
     return bool(re.search(r'[-_.][0-9a-f]{6,}\.', name))
 
+class _LoopPool:
+    """Pool of asyncio event loops, each on its own daemon thread.
+
+    Request coroutines are spread across N loops via least-pending dispatch.
+    A single blocking / CPU-bound `async def` handler then occupies only ONE
+    loop instead of freezing every request on a shared loop. The GIL still
+    serializes CPU work, so heavy handlers slow others — but the app stays
+    responsive instead of dead-locking. For true CPU-bound work, offload to a
+    process pool inside the handler (FastTB.run_cpu)."""
+
+    def __init__(self, size: int):
+        self._loops: List[asyncio.AbstractEventLoop] = []
+        self._pending: List[int] = []
+        self._lock = threading.Lock()
+        for i in range(max(1, size)):
+            loop = asyncio.new_event_loop()
+            threading.Thread(target=loop.run_forever, daemon=True,
+                             name=f"fasttb-loop-{i}").start()
+            self._loops.append(loop)
+            self._pending.append(0)
+
+    def submit(self, coro):
+        """Schedule coro on the least-busy loop. Returns (Future, loop)."""
+        with self._lock:
+            i = min(range(len(self._loops)), key=self._pending.__getitem__)
+            self._pending[i] += 1
+        loop = self._loops[i]
+        fut = asyncio.run_coroutine_threadsafe(coro, loop)
+        fut.add_done_callback(lambda _f, k=i: self._release(k))
+        return fut, loop
+
+    def _release(self, k: int):
+        with self._lock:
+            self._pending[k] = max(0, self._pending[k] - 1)
+
+    def shutdown(self):
+        """Stop all dispatch loops; their daemon threads exit when the loop stops."""
+        for loop in self._loops:
+            try:
+                loop.call_soon_threadsafe(loop.stop)
+            except Exception:
+                pass
 
 class FastTBHandler:
     """Dispatch engine for FastTB routes.
@@ -617,27 +661,36 @@ class FastTBHandler:
                 app.websocket_handlers = {}
             app.websocket_handlers.update(ws_handlers)
 
-        # Background event loop for async FastTB handlers + event manager
+        # Single long-lived INFRA loop: WS bridge + ZMQ event manager + hot-reload
+        # broadcast live here permanently (they own ZMQ sockets / @em.on handlers
+        # and must not move). Requests do NOT use this loop — they run on the
+        # _LoopPool (_req_pool). This separation is intentional.
         _loop = None
         _loop_lock = threading.Lock()
 
-        def _get_loop():
+        def _get_infra_loop():
             nonlocal _loop
             if _loop is None or _loop.is_closed():
                 with _loop_lock:
                     if _loop is None or _loop.is_closed():
                         _loop = asyncio.new_event_loop()
                         t = threading.Thread(
-                            target=_loop.run_forever, daemon=True, name="fasttb-loop"
+                            target=_loop.run_forever, daemon=True, name="fasttb-infra-loop"
                         )
                         t.start()
             return _loop
 
+        # Request dispatch pool: N loops on N threads. One blocking/CPU-bound
+        # async handler occupies one loop instead of freezing all requests.
+        # Infra loop (_get_loop) stays separate so WS/event-manager never stall.
+        _pool_size = int(os.getenv("TB_FASTTB_LOOPS", "0")) or (os.cpu_count() or 4)
+        _req_pool = _LoopPool(_pool_size)
+        self._app._req_loop_pool = _req_pool
         # ---- WS Infrastructure (ZMQ broker + WS worker + bridge) ----
         has_ws = enable_ws if enable_ws is not None else bool(self._app._ws_routes)
 
         if has_ws:
-            self._start_ws_infrastructure(config, app, worker, _get_loop)
+            self._start_ws_infrastructure(config, app, worker, _get_infra_loop)
 
         ftb_handler = self
         original_wsgi = worker.wsgi_app
@@ -669,9 +722,8 @@ class FastTBHandler:
 
                 request = parse_request(environ)
 
-                loop = _get_loop()
-                future = asyncio.run_coroutine_threadsafe(
-                    ftb_handler.handle_request(request), loop
+                future, loop = _req_pool.submit(
+                    ftb_handler.handle_request(request)
                 )
                 try:
                     status, headers, body = future.result(timeout=15)
@@ -735,7 +787,7 @@ class FastTBHandler:
 
         # Warn if thread count is too low for SSE/streaming
         if self._app.hot_reload:
-            self._start_hot_reload(app, config, _get_loop)
+            self._start_hot_reload(app, config, _get_infra_loop)
         _has_sse = any(
             r.handler.__name__ == 'sse_wrapper'
             for r in self._app._routes

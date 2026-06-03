@@ -195,6 +195,12 @@ class FastTB:
         self._web_mount_owned: bool = False
         self._watch_dirs: List[str] = []
         self._hot_reload_running = False
+        # CPU offload: one long-lived ProcessPoolExecutor, lazily built on first
+        # use. Devs opt in per handler via `await app.run_cpu(fn, *args)`.
+        self._cpu_pool = None
+        self._cpu_pool_lock = threading.Lock()
+        # Request dispatch loop pool (set by FastTBHandler.as_wsgi_app).
+        self._req_loop_pool = None
 
     # =========================================================================
     # Route Registration Decorators
@@ -775,6 +781,76 @@ connect();
         return routes
 
     # =========================================================================
+    # CPU Offload — process pool for GIL-bound handler work (dev opt-in)
+    # =========================================================================
+
+    def _ensure_cpu_pool(self):
+        """Lazily build the shared ProcessPoolExecutor (spawn, thread-safe).
+
+        spawn is mandatory: this process runs Waitress threads, ZMQ contexts and
+        the asyncio loop pool — forking it inherits locked mutexes and
+        deadlocks/segfaults. spawn starts a clean interpreter per worker. One
+        pool, built once, reused for the process lifetime (amortizes spawn cost).
+        """
+        pool = self._cpu_pool
+        if pool is not None:
+            return pool
+        with self._cpu_pool_lock:
+            if self._cpu_pool is None:
+                import multiprocessing as _mp
+                from concurrent.futures import ProcessPoolExecutor
+                workers = int(os.getenv("TB_CPU_WORKERS", "0")) or (os.cpu_count() or 2)
+                workers = max(1, min(workers, 61))  # Windows hard cap is 61
+                kw = {"max_workers": workers,
+                      "mp_context": _mp.get_context("spawn")}
+                try:
+                    # 3.11+: recycle workers to bound RSS on long-running owners
+                    self._cpu_pool = ProcessPoolExecutor(max_tasks_per_child=100, **kw)
+                except TypeError:
+                    self._cpu_pool = ProcessPoolExecutor(**kw)
+        return self._cpu_pool
+
+    async def run_cpu(self, fn, *args, **kwargs):
+        """Offload a CPU-bound function to the process pool; never blocks the loop.
+
+        DEV OPT-IN — call inside an async handler for GIL-heavy work (AST parse,
+        project inventory, hashing, image/video encode). The loop pool only
+        time-shares such work; this removes it from the loop entirely (real
+        multi-core, GIL bypassed).
+
+        Contract (spawn): `fn` MUST be importable at module level, and
+        fn(*args, **kwargs) plus its return value MUST be picklable. Lambdas,
+        closures and bound methods of stateful objects do NOT work — extract the
+        hot core into a top-level function taking/returning plain data. The
+        callable must not call back into Executor/Future (deadlock).
+
+        Auto-recovers once from a BrokenProcessPool (crashed worker).
+        """
+        import asyncio as _asyncio
+        # from concurrent.futures import BrokenProcessPool
+        loop = _asyncio.get_running_loop()
+        if kwargs:
+            import functools
+            call, call_args = functools.partial(fn, **kwargs), args
+        else:
+            call, call_args = fn, args
+        for attempt in (0, 1):
+            pool = self._ensure_cpu_pool()
+            try:
+                return await loop.run_in_executor(pool, call, *call_args)
+            except Exception as e:
+                if "BrokenProcessPool" not in str(e):
+                    raise
+                with self._cpu_pool_lock:
+                    if self._cpu_pool is pool:
+                        self._cpu_pool = None
+                        try:
+                            pool.shutdown(wait=False)
+                        except Exception:
+                            pass
+                if attempt == 1:
+                    raise
+    # =========================================================================
     # Server Runner (WSGI Only) — One-Port-Collective aware
     # =========================================================================
 
@@ -1015,6 +1091,17 @@ connect();
             self.close()
         return None
 
+    def run_cpu(self, fn, *args, **kwargs):
+        """Offload CPU-bound (GIL-heavy) work to a process pool; returns awaitable.
+        fn + args must be picklable (top-level fn, plain data in/out)."""
+        import functools
+        loop = asyncio.get_running_loop()
+        if self._cpu_pool is None:
+            from concurrent.futures import ProcessPoolExecutor
+            self._cpu_pool = ProcessPoolExecutor(
+                max_workers=int(os.getenv("TB_CPU_WORKERS", "0")) or (os.cpu_count() or 2))
+        return loop.run_in_executor(self._cpu_pool, functools.partial(fn, *args, **kwargs))
+
     def close(self):
         """Stop WS infrastructure, then the server. Idempotent, no os._exit.
 
@@ -1051,6 +1138,26 @@ connect();
         _stop_on(getattr(self, "_ws_broker", None), getattr(self, "_ws_broker_loop", None), stop_loop=False)
 
         self._ws_em = self._ws_worker = self._ws_broker = None
+
+        # CPU process pool: forced shutdown (consistent with forced server close).
+        cpu_pool = self._cpu_pool
+        self._cpu_pool = None
+        if cpu_pool is not None:
+            try:
+                cpu_pool.shutdown(wait=False, cancel_futures=True)
+            except TypeError:  # <3.9: no cancel_futures
+                cpu_pool.shutdown(wait=False)
+            except Exception as e:
+                print(e)
+
+        # Request loop pool: stop the dispatch loops (daemon threads then exit).
+        req_pool = self._req_loop_pool
+        self._req_loop_pool = None
+        if req_pool is not None:
+            try:
+                req_pool.shutdown()
+            except Exception as e:
+                print(e)
 
         srv = self._server
         self._server = None

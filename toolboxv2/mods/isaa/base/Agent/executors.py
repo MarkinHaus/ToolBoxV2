@@ -186,6 +186,8 @@ class AgentToolProxy:
                     if loop.is_running():
                         # In async context - need to create task
                         # For now, raise error with hint
+                        from toolboxv2 import get_app
+                        return get_app().run_bg_task_advanced(result)
                         raise RuntimeError(
                             f"Tool '{tool_name}' is async. Use 'await tools.{tool_name}()' "
                             "in async context."

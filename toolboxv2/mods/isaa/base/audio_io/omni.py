@@ -1127,16 +1127,24 @@ class FallbackOmniBackend(OmniBackend):
     supports_restart = False  # no live model session -> never reseed-speak
 
     def __init__(self, agent: Any, *, session_id: str = "fallback",
-                 config: Any = None, require_wake_word: bool = False):
+                 config: Any = None, require_wake_word: bool = False,
+                 engine_factory: Optional[Callable[[Callable], Any]] = None):
         self._agent = agent
         self._session_id = session_id
         self._config = config
         self._require_wake_word = require_wake_word
+        self._engine_factory = engine_factory
         self._engine = None
         self._recorder = None
         self._q: "asyncio.Queue[Any]" = asyncio.Queue()
 
     async def start(self, tools: Optional[list[dict]] = None) -> None:
+        if self._engine_factory is not None:  # test seam
+            self._engine = self._engine_factory(self._on_utterance)
+            self._recorder = getattr(self._engine, "recorder", None)
+            await self._engine.start()
+            logger.info("FallbackOmniBackend: injected engine started")
+            return
         from toolboxv2.mods.isaa.base.audio_io.audio_live import (
             LiveModeEngine, LiveModeConfig,
         )
@@ -1154,6 +1162,8 @@ class FallbackOmniBackend(OmniBackend):
     async def send_audio(self, pcm: bytes) -> None:
         if self._recorder is not None:
             await self._recorder.feed(pcm)
+        elif self._engine is not None and hasattr(self._engine, "feed"):
+            await self._engine.feed(pcm)
 
     async def send_tool_result(self, call_id: str, result: str) -> None:
         return None  # agent runs its own tools internally

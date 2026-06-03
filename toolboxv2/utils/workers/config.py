@@ -338,7 +338,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
     env_mapping = {
         "TB_ENV": ["environment"],
         "TB_DEBUG": ["debug"],
-        "TB_LOG_LEVEL": ["log_level"],
+        "TOOLBOX_LOGGING_LEVEL": ["log_level"],
         "TB_COOKIE_SECRET": ["session", "cookie_secret"],
         "TB_HTTP_HOST": ["http_worker", "host"],
         "TB_HTTP_PORT": ["http_worker", "port"],

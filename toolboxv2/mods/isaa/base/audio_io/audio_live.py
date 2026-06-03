@@ -116,9 +116,12 @@ class SpeakerProfileStore:
 
     def _load_all(self):
         for npy in self.dir.glob("*.npy"):
-            name = npy.stem
-            emb = np.load(str(npy))
-            self.profiles[name] = SpeakerProfile(name=name, embedding=emb)
+            try:
+                emb = np.load(str(npy))
+            except Exception as e:  # missing pkg / corrupt profile -> skip, run label-free
+                print(f"[SpeakerProfileStore] skip {npy.name}: {e}")
+                continue
+            self.profiles[npy.stem] = SpeakerProfile(name=npy.stem, embedding=emb)
 
     def add(self, name: str, embedding: np.ndarray) -> None:
         emb = embedding / (np.linalg.norm(embedding) + 1e-8)

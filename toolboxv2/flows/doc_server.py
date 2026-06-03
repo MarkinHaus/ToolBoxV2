@@ -3101,14 +3101,15 @@ async def run(app, args):
     pp = f"Doc Server -> http://{host if host != '0.0.0.0' else '127.0.0.1'}:{port}"
     print(pp)
     logger.info(pp)
-
+    web_app.auth = True
+    web_app.serve(host=host, port=port, enable_ws=True)
     # Register WS handlers if any
-    ws_handlers = web_app.get_websocket_handlers()
-    from waitress.server import create_server
-    server = create_server(wsgi_app, host=host, port=port)
-    logger.info("Press Ctrl+C to stop")
-    try:
-        server.run()
-    except KeyboardInterrupt:
-        logger.info("Shutting down doc server...")
-        server.close()
+    # ws_handlers = web_app.get_websocket_handlers()
+    # from waitress.server import create_server
+    # server = create_server(wsgi_app, host=host, port=port)
+    # logger.info("Press Ctrl+C to stop")
+    # try:
+    #     server.run()
+    # except KeyboardInterrupt:
+    #     logger.info("Shutting down doc server...")
+    #     server.close()

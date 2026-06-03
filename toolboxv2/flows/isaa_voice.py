@@ -174,7 +174,7 @@ async def run(app: App, args=None, mode: str = "stub", device: str = "cuda",
     builder: 'FlowAgentBuilder' = isaa.get_agent_builder("isaa_voice", add_base_tools=True)
     await isaa.register_agent(builder
                               .with_stream(True)
-                              .with_models(fast_model="9rou/speed", complex_model="9rou/fast")
+                              .with_models(fast_model="9rou/fast", complex_model="9rou/complex")
                               )
     agent = await isaa.get_agent("speed")
     print(Style.GREEN(f"Agent ready: {agent.amd.name}"))
