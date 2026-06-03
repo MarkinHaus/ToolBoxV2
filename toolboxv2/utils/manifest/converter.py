@@ -151,12 +151,20 @@ class ConfigConverter:
 
         # Manager config
         config["manager"] = {
-            "web_ui_enabled": m.services.manager.web_ui_enabled,
             "web_ui_host": m.services.manager.web_ui_host,
             "web_ui_port": m.services.manager.web_ui_port,
             "health_check_interval": m.services.manager.health_check_interval,
             "restart_delay": m.services.manager.restart_delay,
             "max_restart_attempts": m.services.manager.max_restart_attempts,
+
+            "live_dashboard_key":m.services.manager.live_dashboard_key,
+            "control_socket":m.services.manager.control_socket,
+            "pid_file":m.services.manager.pid_file,
+            "log_file":m.services.manager.log_file,
+            "rolling_update_delay":m.services.manager.rolling_update_delay,
+            "live_ui_host":m.services.manager.live_ui_host,
+            "live_ui_port":m.services.manager.live_ui_port,
+            "live_ui_replicas":m.services.manager.live_ui_replicas,
         }
 
         # ToolBox integration

@@ -427,15 +427,16 @@ def _run_feature_test(
 
     return result
 
-def cmd_test(only_feature: str | None = None) -> list[dict]:
+def cmd_test(only_feature: str | None = None, do_build=True) -> list[dict]:
     """Teste jedes Feature isoliert."""
     console.rule("TEST")
 
-    wheel = _find_wheel()
-    if not wheel:
-        _p("  Kein wheel gefunden — baue zuerst ...")
+    #wheel = _find_wheel()
+    #if not wheel:
+    #    _p("  Kein wheel gefunden — baue zuerst ...")
+    if do_build:
         cmd_build()
-        wheel = _find_wheel()
+    wheel = _find_wheel()
     if not wheel:
         _p("  ✗ Build fehlgeschlagen", style="red")
         return []
@@ -983,7 +984,7 @@ def main():
         build_results = cmd_build()
         test_results = []
         if not args.skip_tests:
-            test_results = cmd_test()
+            test_results = cmd_test(do_build=False)
         report_path = cmd_report(build_results, test_results)
         # Fix #1: exit with code 1 on failures
         has_test_fail = any(not r.get("passed", False) for r in test_results if r)
