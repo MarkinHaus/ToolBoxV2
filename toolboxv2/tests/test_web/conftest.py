@@ -11,10 +11,13 @@ import asyncio
 import os
 from typing import AsyncGenerator
 
-import pytest
+try:
+    import pytest
+except ImportError:
+    pytest = None
 
 try:
-    from tests.test_web.web_util import AsyncWebTestFramework
+    from toolboxv2.tests.test_web.web_util import AsyncWebTestFramework
 except ImportError:
     AsyncWebTestFramework = None
 

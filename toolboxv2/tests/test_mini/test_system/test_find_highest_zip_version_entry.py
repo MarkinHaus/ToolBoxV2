@@ -25,5 +25,5 @@ class TestFindHighestZipVersionEntry(unittest.TestCase):
     def test_find_highest_zip_version_entry_with_invalid_filepath(self):
         # Test case with an invalid filepath
         get_app(name="test-debug")
-        with self.assertRaises(FileNotFoundError):
-            find_highest_zip_version_entry(name="example", filepath="invalid.yaml")
+        result = find_highest_zip_version_entry(name="example", filepath="invalid.yaml")
+        self.assertEqual(result, {})

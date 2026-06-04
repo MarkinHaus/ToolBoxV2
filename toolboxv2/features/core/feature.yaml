@@ -48,6 +48,7 @@ files:
   - "mods/CloudM/*"
   - "mods/DB/*"
   - "mods/__init__.py"
+  - "flows/core/*"
 imports:
   - "toolboxv2.utils.toolbox"
   - "toolboxv2.flows"

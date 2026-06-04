@@ -27,6 +27,7 @@ files:
   - "utils/clis/venv_runner.py"
   # ── CLI Extras ─────────────────────────────────────────────
   - "utils/extras/live_debugger.py"
+  - "flows/cli/*"
 imports:
   - "toolboxv2.__main__"
 dependencies:

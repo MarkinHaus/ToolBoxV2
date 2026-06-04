@@ -22,7 +22,7 @@ Run:
 import asyncio
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 
 # =============================================================================
@@ -72,7 +72,7 @@ def _make_mock_agent() -> MagicMock:
 
 def _try_import_features():
     try:
-        from toolboxv2.flows.icli import ALL_FEATURES
+        from toolboxv2.flows.isaa.icli import ALL_FEATURES
         return ALL_FEATURES, None
     except ImportError as e:
         return None, str(e)
@@ -163,7 +163,7 @@ class TestFeatureToolsLive(unittest.IsolatedAsyncioTestCase):
 
     async def test_all_features_tools_health(self):
         """Iteriert über alle Features, aktiviert sie und checkt die neuen Tools."""
-        from toolboxv2.flows.icli import ALL_FEATURES
+        from toolboxv2.flows.isaa.icli import ALL_FEATURES
         from toolboxv2.mods.isaa.base.Agent.tool_manager import ToolHealthResult
 
         fm = _make_fm()
@@ -743,7 +743,6 @@ class TestSessionToolsLive(unittest.IsolatedAsyncioTestCase):
 
     async def test_03_per_tool_subtests(self):
         from toolboxv2.mods.isaa.base.Agent.tool_manager import ToolHealthResult
-        import sys
 
         entries = self.tm.get_all()
         print(f"\n  Session-Tools Health Check ({len(entries)} tools):\n", flush=True)
@@ -1046,7 +1045,7 @@ class TestDocsFeatureLive(_FeatureEnableTestBase):
         fm = DummyFM()
 
         # Loader-Funktion aufrufen (füllt self.feature_callbacks["docs"])
-        from toolboxv2.flows.icli import load_docs_feature
+        from toolboxv2.flows.isaa.icli import load_docs_feature
         load_docs_feature(fm)
 
         # Falls der Mock-Agent in _FeatureEnableTestBase kein 'add_tools' hat,
@@ -1143,7 +1142,7 @@ class TestAutoDocFeatureLive(_FeatureEnableTestBase):
                 }
 
         fm = DummyFM()
-        from toolboxv2.flows.icli import load_autodoc_feature
+        from toolboxv2.flows.isaa.icli import load_autodoc_feature
         load_autodoc_feature(fm)
 
         if not hasattr(self.agent, "add_tools"):
@@ -1217,7 +1216,7 @@ class TestAutoTestFeatureLive(_FeatureEnableTestBase):
                 }
 
         fm = DummyFM()
-        from toolboxv2.flows.icli import load_autotest_feature
+        from toolboxv2.flows.isaa.icli import load_autotest_feature
         load_autotest_feature(fm)
 
         if not hasattr(self.agent, "add_tools"):
@@ -1291,7 +1290,7 @@ class TestAutoFixFeatureLive(_FeatureEnableTestBase):
                 }
 
         fm = DummyFM()
-        from toolboxv2.flows.icli import load_autofix_feature
+        from toolboxv2.flows.isaa.icli import load_autofix_feature
         load_autofix_feature(fm)
 
         if not hasattr(self.agent, "add_tools"):

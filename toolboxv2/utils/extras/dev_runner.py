@@ -18,7 +18,6 @@ import json
 import inspect
 from typing import Dict, Any
 
-import uvicorn
 try:
     from a2wsgi import WSGIMiddleware
 except ImportError:
@@ -469,6 +468,7 @@ def run_dev_server(target_module: str = None, port: int = 5000):
     print(f"        UI URL: http://localhost:{port}")
     print(f"        CWD   : {init_cwd}\n")
 
+    import uvicorn
     uvicorn.run(dev_app, host="0.0.0.0", port=port, log_level="warning")
 
 def main():

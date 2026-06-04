@@ -2315,8 +2315,8 @@ class Tools(MainTool):
         len_text = len(text)
         if len_text < min_length:
             return text
-
-        key = self.one_way_hash(text, "summaries", "isaa")
+        from toolboxv2 import Code
+        key = Code().one_way_hash(text, "summaries", "isaa")
         value = self.mas_text_summaries_dict.get(key)
         if value is not None:
             return value

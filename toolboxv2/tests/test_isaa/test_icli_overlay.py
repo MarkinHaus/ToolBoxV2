@@ -3,21 +3,19 @@
 Unit tests für TaskOverlay Navigation, Rendering-State und ingest_chunk.
 Kein echtes Terminal — alles über Zustandsprüfung.
 """
-import time
 import unittest
-from unittest.mock import MagicMock, patch
 
 
 def _make_tv(task_id="t1", agent="self", status="running",
              iteration=3, max_iter=15) -> "TaskView":
-    from toolboxv2.flows.icli import TaskView
+    from toolboxv2.flows.isaa.icli import TaskView
     tv = TaskView(task_id=task_id, agent_name=agent, query="test query",
                   status=status, iteration=iteration, max_iter=max_iter)
     return tv
 
 
 def _make_overlay(views=None):
-    from toolboxv2.flows.icli import TaskOverlay
+    from toolboxv2.flows.isaa.icli import TaskOverlay
     if views is None:
         views = {"t1": _make_tv()}
     ov = TaskOverlay(views)
@@ -32,7 +30,7 @@ class TestTaskViewFinalAnswer(unittest.TestCase):
         self.assertEqual(tv.final_answer, "")
 
     def test_ingest_final_answer_chunk(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _make_tv()
         ingest_chunk(tv, {"type": "final_answer", "answer": "The answer is 42."})
         self.assertEqual(tv.final_answer, "The answer is 42.")
@@ -40,13 +38,13 @@ class TestTaskViewFinalAnswer(unittest.TestCase):
         self.assertEqual(tv.phase, "done")
 
     def test_ingest_final_answer_content_fallback(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _make_tv()
         ingest_chunk(tv, {"type": "final_answer", "content": "Fallback content."})
         self.assertEqual(tv.final_answer, "Fallback content.")
 
     def test_ingest_final_answer_empty_chunk_leaves_blank(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _make_tv()
         tv.final_answer = "existing"
         ingest_chunk(tv, {"type": "final_answer"})
@@ -213,7 +211,6 @@ class TestEffectiveView(unittest.TestCase):
 class TestIterDrillDown(unittest.TestCase):
 
     def test_drill_down_sets_selected_iter(self):
-        from toolboxv2.flows.icli import IterView
         tv = _make_tv()
         tv._get_iter(1)
         tv._get_iter(2)
@@ -236,7 +233,6 @@ class TestIterDrillDown(unittest.TestCase):
         self.assertEqual(ov._selected_iter, 3)
 
     def test_direct_iter_jump(self):
-        from toolboxv2.flows.icli import IterView
         tv = _make_tv()
         tv._get_iter(5)
         ov = _make_overlay({"t1": tv})
@@ -270,7 +266,7 @@ class TestIterDrillDown(unittest.TestCase):
 class TestIngestChunkIter(unittest.TestCase):
 
     def test_tool_start_sets_pending(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _make_tv()
         tv.iteration = 1
         ingest_chunk(tv, {"type": "tool_start", "name": "vfs_shell", "iter": 1})
@@ -279,7 +275,7 @@ class TestIngestChunkIter(unittest.TestCase):
         self.assertEqual(iv.pending_tool, "vfs_shell")
 
     def test_tool_result_clears_pending(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _make_tv()
         tv.iteration = 1
         ingest_chunk(tv, {"type": "tool_start", "name": "vfs_shell", "iter": 1})
@@ -293,7 +289,7 @@ class TestIngestChunkIter(unittest.TestCase):
         self.assertTrue(tok)
 
     def test_reasoning_appended_to_iter(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _make_tv()
         tv.iteration = 2
         ingest_chunk(tv, {"type": "reasoning", "chunk": "I think...", "iter": 2})

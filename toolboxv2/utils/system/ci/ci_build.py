@@ -266,7 +266,7 @@ def _run_feature_test(
     feature_name: str,
     extras: list[str],
     wheel: Path,
-    timeout: int = 240,
+    timeout: int = 60,
 ) -> dict:
     """Teste ein Feature in isoliertem venv."""
     result = {
@@ -333,19 +333,9 @@ def _run_feature_test(
 
         result["install_ok"] = True
 
-        # Resolve tests path from installed wheel (NOT source tree).
-        # ROOT in cwd/rootdir would shadow site-packages via sys.path.
-        resolve = subprocess.run(
-            [str(venv_python), "-c",
-             "import toolboxv2, pathlib; "
-             "print(pathlib.Path(toolboxv2.__file__).parent / 'tests')"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if resolve.returncode != 0 or not resolve.stdout.strip():
-            result["output"] = f"Cannot resolve installed tests path:\n{resolve.stderr[-800:]}"
-            result["status"] = "RESOLVE_FAIL"
-            return result
-        installed_tests = Path(resolve.stdout.strip())
+        # Tests aus dem Source-Ordner (root), NICHT aus dem Wheel.
+        # Wheel enthält keine Tests mehr (toolboxv2.tests* excluded).
+        installed_tests = TOOLBOXV2_DIR / "tests"
         feature_test_dir = installed_tests / f"test_{feature_name}"
 
         if feature_test_dir.exists():

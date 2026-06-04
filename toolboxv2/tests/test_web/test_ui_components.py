@@ -13,10 +13,16 @@ Run:
     pytest toolboxv2/tests/web_test/test_ui_components.py -v -k "test_modal"
 """
 
-import pytest
 from typing import List, Dict, Any
+try:
+    import pytest
+except ImportError:
+    pytest = None
 
-from tests.test_web.web_util import AsyncWebTestFramework
+try:
+    from toolboxv2.tests.test_web.web_util import AsyncWebTestFramework
+except ImportError:
+    AsyncWebTestFramework = None
 
 # Web URL for page tests (nginx on port 80)
 import os

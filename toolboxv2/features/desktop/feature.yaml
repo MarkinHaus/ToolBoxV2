@@ -1,4 +1,4 @@
-name: tauri
+name: desktop
 version: "0.1.26"
 enabled: true
 immutable: false
@@ -13,6 +13,7 @@ files:
   - "utils/extras/show_and_hide_console.py"
   - "utils/extras/qr.py"
   - "utils/extras/pt_spinner_patch.py"
+  - "flows/desktop/*"
 imports: []
 dependencies:
     - "pygetwindow"

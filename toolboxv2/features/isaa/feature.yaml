@@ -12,6 +12,7 @@ files:
   - "mods/ContainerManager/*"
   # ── ISAA CLI ───────────────────────────────────────────────
   - "utils/clis/tcm_p2p_cli.py"
+  - "flows/isaa/*"
 imports: []
 dependencies:
     - "networkx"

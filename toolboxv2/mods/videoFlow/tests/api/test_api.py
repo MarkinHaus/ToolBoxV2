@@ -3,7 +3,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 
-from toolboxv2.flows.story_generator import StoryData, ImageStyle, StylePreset, VideoStyle
+from toolboxv2.flows.exotic.story_generator import StoryData, ImageStyle, StylePreset, VideoStyle
 
 
 @pytest.mark.asyncio

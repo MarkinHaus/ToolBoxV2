@@ -65,8 +65,13 @@ toolboxv2 = [
     # ── Welcome (mini) ──
     "mods/welcome.py",
 
-    # ── Tests ──
-    "tests/**/*.py",
+]
+
+[tool.setuptools.exclude-package-data]
+toolboxv2 = [
+    "tests/**/*",
+    "ytss.py",
+    "mods/CloudM/LiveSync/**/*",
 ]
 
 [tool.setuptools.packages.find]
@@ -82,10 +87,19 @@ exclude = [
     "toolboxv2.mods.icli_web*",
     "toolboxv2.mods.[!CDW]*",  # Nur CloudM, DB, welcome.py behalten
 
+     # ── Exclude flows (nur mini bleibt) ──
+    "toolboxv2.flows.isaa*",
+    "toolboxv2.flows.desktop*",
+    "toolboxv2.flows.exotic*",
+    "toolboxv2.mods.CloudM.LiveSync*",
+
     # ── Exclude utils subsets ──
     "toolboxv2.utils.tbx*",
     "toolboxv2.utils.daemon*",
     "toolboxv2.utils.proxy*",
+
+    # ── Exclude tests ──
+    "toolboxv2.tests*",
 
     # ── Exclude external projects ──
     "toolboxv2.simple-core*",

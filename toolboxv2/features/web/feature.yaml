@@ -11,6 +11,7 @@ files:
   # ── Web Mods ───────────────────────────────────────────────
   - "mods/icli_web/*"
   - "mods/Minu/*"
+  - "flows/web/*"
 imports: []
 dependencies:
     - "websockets"

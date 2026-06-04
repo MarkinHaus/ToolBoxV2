@@ -35,9 +35,8 @@ Usage:
 import asyncio
 import html
 import platform
-import random
 import shutil
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, Callable, Optional
 
 from prompt_toolkit import Application, print_formatted_text
@@ -1177,7 +1176,7 @@ def print_brand_section(title, icon="◈"):
 
 async def print_status_dashboard_v2(host: 'ISAA_Host') -> int:
     """Drop-in replacement. Returns total lines for animation offset."""
-    from toolboxv2.flows.icli import (
+    from toolboxv2.flows.isaa.icli import (
         print_table_header, print_table_row, c_print, AgentInfo
     )
 

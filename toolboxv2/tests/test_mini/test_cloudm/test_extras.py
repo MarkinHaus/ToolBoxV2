@@ -174,7 +174,7 @@ class TestAccountCreation(AsyncTestCase):
     @patch('toolboxv2.mods.CloudM.extras.get_app')
     @patch('toolboxv2.mods.CloudM.extras.get_invitation')
     @patch('toolboxv2.mods.CloudM.extras.print_qrcode_to_console')
-    async def test_register_initial_loot_user_success(self, mock_qr, mock_invitation, mock_get_app):
+    def test_register_initial_loot_user_success(self, mock_qr, mock_invitation, mock_get_app):
         """Test successful loot user registration"""
         from toolboxv2.mods.CloudM.extras import register_initial_loot_user
 
@@ -194,7 +194,7 @@ class TestAccountCreation(AsyncTestCase):
 
         mock_get_app.return_value = mock_app
 
-        result = await register_initial_loot_user(mock_app, "test@example.com")
+        result = self.async_run(register_initial_loot_user(mock_app, "test@example.com"))
 
         self.assertIsInstance(result, Result)
         self.assertTrue(result.is_ok())
@@ -203,7 +203,7 @@ class TestAccountCreation(AsyncTestCase):
         mock_qr.assert_called_once()
 
     @patch('toolboxv2.mods.CloudM.extras.get_app')
-    async def test_register_initial_loot_user_already_exists(self, mock_get_app):
+    def test_register_initial_loot_user_already_exists(self, mock_get_app):
         """Test registration when user already exists"""
         from toolboxv2.mods.CloudM.extras import register_initial_loot_user
 
@@ -212,7 +212,7 @@ class TestAccountCreation(AsyncTestCase):
         mock_app.config_fh.get_file_handler.return_value = "existing_key"
         mock_get_app.return_value = mock_app
 
-        result = await register_initial_loot_user(mock_app, "test@example.com")
+        result = self.async_run(register_initial_loot_user(mock_app, "test@example.com"))
 
         self.assertIsInstance(result, Result)
         self.assertTrue(result.is_error())

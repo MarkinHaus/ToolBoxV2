@@ -19,7 +19,7 @@ from typing import Optional, Tuple, List
 
 from toolboxv2 import get_app
 from toolboxv2.tests.a_util import async_test
-from tests.test_web.web_util import AsyncWebTestFramework
+from toolboxv2.tests.test_web.web_util import AsyncWebTestFramework
 
 # =================== Configuration ===================
 
@@ -56,6 +56,7 @@ _test_sessions: dict[str, dict] = {}
 
 def test_web():
     """Run all tests"""
+    import sys
     os.system(' '.join([sys.executable, "-m", "pytest", "toolboxv2/tests/web_test/test_api.py","-v"]))
 
 # =================== Server Management via API CLI ===================

@@ -22,9 +22,6 @@ Bereiche:
 import asyncio
 import time
 import unittest
-from dataclasses import dataclass, field
-from typing import Optional
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -33,7 +30,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 def _import():
     """Lazy import um Module ohne Prompt-Toolkit-Init zu laden."""
-    from toolboxv2.flows.icli import (
+    from toolboxv2.flows.isaa.icli import (
         _short, _bar, _fmt_elapsed, _tool_result_info,
         ingest_chunk, TaskView, IterView,
         render_footer_toolbar, TaskOverlay,
@@ -47,7 +44,7 @@ def _import():
 
 def _tv(task_id="t1", agent="self", status="running",
         iteration=0, max_iter=15) -> "TaskView":
-    from toolboxv2.flows.icli import TaskView
+    from toolboxv2.flows.isaa.icli import TaskView
     return TaskView(task_id=task_id, agent_name=agent, query="test",
                     status=status, iteration=iteration, max_iter=max_iter)
 
@@ -98,27 +95,26 @@ class TestBar(unittest.TestCase):
 
     def test_bar_full(self):
         result = self._bar(10, 10, 8)
-        from toolboxv2.flows.icli import SYM
+        from toolboxv2.flows.isaa.icli import SYM
         self.assertEqual(result, SYM["bar_fill"] * 8)
 
     def test_bar_empty(self):
         result = self._bar(0, 10, 8)
-        from toolboxv2.flows.icli import SYM
+        from toolboxv2.flows.isaa.icli import SYM
         self.assertEqual(result, SYM["bar_empty"] * 8)
 
     def test_bar_half(self):
         result = self._bar(5, 10, 8)
-        from toolboxv2.flows.icli import SYM
+        from toolboxv2.flows.isaa.icli import SYM
         fill_count = result.count(SYM["bar_fill"])
         self.assertEqual(fill_count, 4)
 
     def test_bar_over_max_clamps(self):
         result = self._bar(20, 10, 8)
-        from toolboxv2.flows.icli import SYM
+        from toolboxv2.flows.isaa.icli import SYM
         self.assertEqual(result, SYM["bar_fill"] * 8)
 
     def test_bar_width_respected(self):
-        from toolboxv2.flows.icli import SYM
         for w in [4, 10, 20]:
             result = self._bar(1, 2, w)
             self.assertEqual(len(result), w)
@@ -277,54 +273,54 @@ class TestToolResultInfo(unittest.TestCase):
 class TestIngestChunkBasicFields(unittest.TestCase):
 
     def test_agent_name_updated(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"agent": "analyst"})
         self.assertEqual(tv.agent_name, "analyst")
 
     def test_persona_updated(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"persona": "fallback_analyst"})
         self.assertEqual(tv.persona, "fallback_analyst")
 
     def test_skills_updated(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"skills": ["code", "research"]})
         self.assertEqual(tv.skills, ["code", "research"])
 
     def test_iteration_updated(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"iter": 7})
         self.assertEqual(tv.iteration, 7)
 
     def test_max_iter_updated(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"max_iter": 20})
         self.assertEqual(tv.max_iter, 20)
 
     def test_tokens_used_updated(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"tokens_used": 1234})
         self.assertEqual(tv.tokens_used, 1234)
 
     def test_tokens_max_updated(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"tokens_max": 128000})
         self.assertEqual(tv.tokens_max, 128000)
 
     def test_empty_chunk_no_crash(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {})
 
     def test_sub_agent_registered(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         tv.iteration = 1
         ingest_chunk(tv, {"_sub_agent_id": "sub_abc123", "iter": 1})
@@ -334,7 +330,7 @@ class TestIngestChunkBasicFields(unittest.TestCase):
 class TestIngestChunkTypeRouting(unittest.TestCase):
 
     def test_reasoning_sets_phase_thinking(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         tv.iteration = 1
         ingest_chunk(tv, {"type": "reasoning", "chunk": "I think...", "iter": 1})
@@ -342,7 +338,7 @@ class TestIngestChunkTypeRouting(unittest.TestCase):
         self.assertEqual(tv.last_thought, "I think...")
 
     def test_reasoning_appended_to_iter(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         tv.iteration = 2
         ingest_chunk(tv, {"type": "reasoning", "chunk": "thought A", "iter": 2})
@@ -353,13 +349,13 @@ class TestIngestChunkTypeRouting(unittest.TestCase):
         self.assertIn("thought B", iv.thoughts)
 
     def test_content_sets_phase(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"type": "content"})
         self.assertEqual(tv.phase, "content")
 
     def test_tool_start_sets_pending(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         tv.iteration = 3
         ingest_chunk(tv, {"type": "tool_start", "name": "vfs_shell", "iter": 3})
@@ -369,7 +365,7 @@ class TestIngestChunkTypeRouting(unittest.TestCase):
         self.assertEqual(iv.pending_tool, "vfs_shell")
 
     def test_tool_result_clears_pending(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         import json
         tv = _tv()
         tv.iteration = 3
@@ -385,7 +381,7 @@ class TestIngestChunkTypeRouting(unittest.TestCase):
         self.assertEqual(len(iv.tools), 1)
 
     def test_tool_result_records_success(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         import json
         tv = _tv()
         tv.iteration = 1
@@ -403,7 +399,7 @@ class TestIngestChunkTypeRouting(unittest.TestCase):
         self.assertIn("10", info)
 
     def test_tool_result_records_failure(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         import json
         tv = _tv()
         tv.iteration = 1
@@ -419,60 +415,60 @@ class TestIngestChunkTypeRouting(unittest.TestCase):
         self.assertFalse(tok)
 
     def test_done_chunk_sets_completed(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"type": "done", "success": True})
         self.assertEqual(tv.status, "completed")
         self.assertEqual(tv.phase, "done")
 
     def test_done_chunk_failure(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"type": "done", "success": False})
         self.assertEqual(tv.status, "failed")
 
     def test_error_chunk(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"type": "error"})
         self.assertEqual(tv.status, "error")
         self.assertEqual(tv.phase, "error")
 
     def test_final_answer_with_answer_key(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"type": "final_answer", "answer": "The answer is 42."})
         self.assertEqual(tv.final_answer, "The answer is 42.")
         self.assertEqual(tv.status, "completed")
 
     def test_final_answer_content_fallback(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"type": "final_answer", "content": "Result from content."})
         self.assertEqual(tv.final_answer, "Result from content.")
 
     def test_final_answer_chunk_fallback(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"type": "final_answer", "chunk": "Result from chunk."})
         self.assertEqual(tv.final_answer, "Result from chunk.")
 
     def test_final_answer_empty_does_not_overwrite(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         tv.final_answer = "existing answer"
         ingest_chunk(tv, {"type": "final_answer"})
         self.assertEqual(tv.final_answer, "existing answer")
 
     def test_final_answer_multiline_preserved(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         multiline = "Line 1\nLine 2\nLine 3"
         ingest_chunk(tv, {"type": "final_answer", "answer": multiline})
         self.assertEqual(tv.final_answer, multiline)
 
     def test_unknown_type_no_crash(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"type": "completely_unknown", "data": "x"})
 
@@ -539,7 +535,7 @@ class TestTaskViewModel(unittest.TestCase):
 class TestIterViewModel(unittest.TestCase):
 
     def test_iter_view_defaults(self):
-        from toolboxv2.flows.icli import IterView
+        from toolboxv2.flows.isaa.icli import IterView
         iv = IterView(n=1)
         self.assertEqual(iv.n, 1)
         self.assertEqual(iv.thoughts, [])
@@ -547,7 +543,7 @@ class TestIterViewModel(unittest.TestCase):
         self.assertEqual(iv.pending_tool, "")
 
     def test_tool_start_time_tracked(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         tv.iteration = 1
         t_before = time.time()
@@ -557,7 +553,7 @@ class TestIterViewModel(unittest.TestCase):
         self.assertGreaterEqual(iv._tool_start_times["vfs_shell"], t_before)
 
     def test_tool_elapsed_calculated(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         import json
         tv = _tv()
         tv.iteration = 1
@@ -575,7 +571,7 @@ class TestIterViewModel(unittest.TestCase):
         self.assertGreaterEqual(elapsed, 0.04)
 
     def test_multiple_tools_same_iter(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         import json
         tv = _tv()
         tv.iteration = 2
@@ -604,31 +600,31 @@ class TestStatusTransitions(unittest.TestCase):
         self.assertEqual(tv.status, "running")
 
     def test_running_to_completed_via_done(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"type": "done", "success": True})
         self.assertEqual(tv.status, "completed")
 
     def test_running_to_failed_via_done(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"type": "done", "success": False})
         self.assertEqual(tv.status, "failed")
 
     def test_running_to_error(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"type": "error"})
         self.assertEqual(tv.status, "error")
 
     def test_running_to_completed_via_final_answer(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"type": "final_answer", "answer": "result"})
         self.assertEqual(tv.status, "completed")
 
     def test_phase_sequence(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         tv.iteration = 1
         phases = []
@@ -644,7 +640,7 @@ class TestStatusTransitions(unittest.TestCase):
         self.assertEqual(phases, ["thinking", "tool", "tool_done", "done"])
 
     def test_last_tool_info_updated(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         tv.iteration = 1
         ingest_chunk(tv, {"type": "tool_start", "name": "vfs_shell", "iter": 1})
@@ -666,7 +662,7 @@ class TestStatusTransitions(unittest.TestCase):
 class TestRenderFooterToolbar(unittest.TestCase):
 
     def setUp(self):
-        from toolboxv2.flows.icli import render_footer_toolbar
+        from toolboxv2.flows.isaa.icli import render_footer_toolbar
         self._render = render_footer_toolbar
 
     def _text(self, tokens):
@@ -761,7 +757,7 @@ class TestRenderFooterToolbar(unittest.TestCase):
         self.assertIn("fail", text)
 
     def test_thinking_phase_shows_thought(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         tv.iteration = 1
         ingest_chunk(tv, {"type": "reasoning", "chunk": "pondering things", "iter": 1})
@@ -770,7 +766,7 @@ class TestRenderFooterToolbar(unittest.TestCase):
         self.assertIn("pondering", text)
 
     def test_tool_phase_shows_tool_name(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         tv.iteration = 1
         ingest_chunk(tv, {"type": "tool_start", "name": "search_vfs", "iter": 1})
@@ -950,7 +946,7 @@ class TestRateLimiterConfigApplication(unittest.TestCase):
         return calls
 
     def test_default_config(self):
-        from toolboxv2.flows.icli import DEFAULT_RATE_LIMITER_CONFIG
+        from toolboxv2.flows.isaa.icli import DEFAULT_RATE_LIMITER_CONFIG
         result = self._apply(DEFAULT_RATE_LIMITER_CONFIG)
         self.assertTrue(result["with_rate_limiter"]["enable_rate_limiting"])
         self.assertTrue(result["with_rate_limiter"]["enable_model_fallback"])
@@ -958,7 +954,7 @@ class TestRateLimiterConfigApplication(unittest.TestCase):
         self.assertEqual(result["with_rate_limiter"]["key_rotation_mode"], "balance")
 
     def test_fallback_chain_extracted(self):
-        from toolboxv2.flows.icli import DEFAULT_RATE_LIMITER_CONFIG
+        from toolboxv2.flows.isaa.icli import DEFAULT_RATE_LIMITER_CONFIG
         result = self._apply(DEFAULT_RATE_LIMITER_CONFIG)
         # Default config has a fallback chain für glm-4.7
         primaries = [p for p, _ in result["fallback_chains"]]
@@ -1084,7 +1080,7 @@ class TestDreamJobConfig(unittest.TestCase):
 class TestIngestChunkMultiIter(unittest.TestCase):
 
     def test_iterations_independent(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         tv.iteration = 1
         ingest_chunk(tv, {"type": "reasoning", "chunk": "iter1 thought", "iter": 1})
@@ -1096,7 +1092,7 @@ class TestIngestChunkMultiIter(unittest.TestCase):
         self.assertNotIn("iter1 thought", tv._iter_map[2].thoughts)
 
     def test_tool_in_wrong_iter_creates_new_iter(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         import json
         tv = _tv()
         tv.iteration = 5
@@ -1112,7 +1108,7 @@ class TestIngestChunkMultiIter(unittest.TestCase):
         self.assertEqual(len(tv._iter_map[5].tools), 1)
 
     def test_sub_agent_spawning_tracked(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         tv.iteration = 6
         for sub in ["sub_abc", "sub_def", "sub_ghi", "sub_jkl"]:
@@ -1120,7 +1116,7 @@ class TestIngestChunkMultiIter(unittest.TestCase):
         self.assertEqual(len(tv.sub_agents), 4)
 
     def test_iteration_count_tracks_correctly(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         for i in range(1, 16):
             tv.iteration = i
@@ -1129,7 +1125,7 @@ class TestIngestChunkMultiIter(unittest.TestCase):
         self.assertEqual(tv.max_iter, 15)
 
     def test_token_usage_accumulates(self):
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         tv = _tv()
         ingest_chunk(tv, {"tokens_used": 1000, "tokens_max": 128000})
         ingest_chunk(tv, {"tokens_used": 5000})
@@ -1138,7 +1134,7 @@ class TestIngestChunkMultiIter(unittest.TestCase):
 
     def test_full_agent_run_simulation(self):
         """Simuliert einen kompletten Agenten-Lauf mit allen Chunk-Typen."""
-        from toolboxv2.flows.icli import ingest_chunk
+        from toolboxv2.flows.isaa.icli import ingest_chunk
         import json
 
         tv = _tv()
@@ -1188,32 +1184,32 @@ class TestIngestChunkMultiIter(unittest.TestCase):
 class TestStatusSymbols(unittest.TestCase):
 
     def test_all_statuses_have_entries(self):
-        from toolboxv2.flows.icli import STATUS_SYM
+        from toolboxv2.flows.isaa.icli import STATUS_SYM
         for status in ["running", "completed", "done", "failed", "error", "cancelled"]:
             self.assertIn(status, STATUS_SYM)
 
     def test_running_is_cyan(self):
-        from toolboxv2.flows.icli import STATUS_SYM
+        from toolboxv2.flows.isaa.icli import STATUS_SYM
         _, col = STATUS_SYM["running"]
         self.assertEqual(col, "cyan")
 
     def test_completed_is_green(self):
-        from toolboxv2.flows.icli import STATUS_SYM
+        from toolboxv2.flows.isaa.icli import STATUS_SYM
         _, col = STATUS_SYM["completed"]
         self.assertEqual(col, "green")
 
     def test_failed_is_red(self):
-        from toolboxv2.flows.icli import STATUS_SYM
+        from toolboxv2.flows.isaa.icli import STATUS_SYM
         _, col = STATUS_SYM["failed"]
         self.assertEqual(col, "red")
 
     def test_error_is_red(self):
-        from toolboxv2.flows.icli import STATUS_SYM
+        from toolboxv2.flows.isaa.icli import STATUS_SYM
         _, col = STATUS_SYM["error"]
         self.assertEqual(col, "red")
 
     def test_unknown_status_uses_default(self):
-        from toolboxv2.flows.icli import STATUS_SYM
+        from toolboxv2.flows.isaa.icli import STATUS_SYM
         sym, col = STATUS_SYM.get("unknown_status", ("◯", "cyan"))
         self.assertEqual(sym, "◯")
 

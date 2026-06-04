@@ -1,0 +1,1 @@
+TODO: optimierte loading-platzhalter (WebP/CSS-animation, paar KB statt 105MB GIF)

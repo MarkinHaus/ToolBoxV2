@@ -291,35 +291,38 @@ def find_highest_zip_version_entry(name, target_app_version=None, filepath='tbSt
     highest_zip_ver = None
     highest_entry = {}
 
-    with open(filepath) as file:
-        data = yaml.safe_load(file)
-        # print(data)
-        app_ver_h = None
-        for key, value in list(data.get('installable', {}).items())[::-1]:
-            # Prüfe, ob der Name im Schlüssel enthalten ist
+    if not os.path.exists(filepath):
+        print("File not found")
+        data = asdict(get_state_from_app(get_app('state.system')))
+    else:
+        with open(filepath) as file:
+            data = yaml.safe_load(file)
+    # print(data)
+    app_ver_h = None
+    for key, value in list(data.get('installable', {}).items())[::-1]:
+        # Prüfe, ob der Name im Schlüssel enthalten ist
+        if name in key:
+            v = value['version']
+            if len(v) == 1:
+                app_ver = v[0].split('v')[-1]
+                zip_ver = "0.0.0"
+            else:
+                app_ver, zip_ver = v
+                app_ver = app_ver.split('v')[-1]
+            app_ver = version.parse(app_ver)
+            # Wenn eine Ziel-App-Version angegeben ist, vergleiche sie
+            if target_app_version is None or app_ver == version.parse(target_app_version):
+                current_zip_ver = version.parse(zip_ver)
+                # print(current_zip_ver, highest_zip_ver)
 
-            if name in key:
-                v = value['version']
-                if len(v) == 1:
-                    app_ver = v[0].split('v')[-1]
-                    zip_ver = "0.0.0"
-                else:
-                    app_ver, zip_ver = v
-                    app_ver = app_ver.split('v')[-1]
-                app_ver = version.parse(app_ver)
-                # Wenn eine Ziel-App-Version angegeben ist, vergleiche sie
-                if target_app_version is None or app_ver == version.parse(target_app_version):
-                    current_zip_ver = version.parse(zip_ver)
-                    # print(current_zip_ver, highest_zip_ver)
+                if highest_zip_ver is None or current_zip_ver > highest_zip_ver:
+                    highest_zip_ver = current_zip_ver
+                    highest_entry = value
 
-                    if highest_zip_ver is None or current_zip_ver > highest_zip_ver:
-                        highest_zip_ver = current_zip_ver
-                        highest_entry = value
-
-                    if app_ver_h is None or app_ver > app_ver_h:
-                        app_ver_h = app_ver
-                        highest_zip_ver = current_zip_ver
-                        highest_entry = value
+                if app_ver_h is None or app_ver > app_ver_h:
+                    app_ver_h = app_ver
+                    highest_zip_ver = current_zip_ver
+                    highest_entry = value
     return highest_entry
 
 

@@ -943,7 +943,7 @@ class BeastCLI:
                 builder.with_stream(True)
 
                 # Import and register toolbox_admin tools
-                from toolboxv2.flows.toolbox_admin import (
+                from toolboxv2.flows.mini.toolbox_admin import (
                     _build_toolbox_tools, _build_docs_tools, _build_manifest_tools,
                     SYSTEM_PROMPT,
                 )
@@ -1046,7 +1046,7 @@ class BeastCLI:
         print(Style.CYAN("🤖 Agent:"))
 
         try:
-            from toolboxv2.flows.icli import print_code_block
+            from toolboxv2.flows.isaa.icli import print_code_block
         except ImportError:
             print_code_block = lambda x:print(x, end="", flush=True)
         try:

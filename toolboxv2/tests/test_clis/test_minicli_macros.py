@@ -10,15 +10,14 @@ import json
 import os
 import tempfile
 import unittest
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, mock_open
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _make_cli():
     """Build a BeastCLI instance with mocked App and BlobFile."""
-    from toolboxv2.flows.minicli import BeastCLI, CLIContext, MacroContext
+    from toolboxv2.flows.mini.minicli import BeastCLI
 
     app = MagicMock()
     app.debug = False
@@ -47,7 +46,7 @@ class TestMacroDataclass(unittest.TestCase):
     """Macro dataclass defaults and field types."""
 
     def test_macro_default_fields(self):
-        from toolboxv2.flows.minicli import Macro
+        from toolboxv2.flows.mini.minicli import Macro
         m = Macro(name="test", commands=["echo hi"])
         self.assertEqual(m.name, "test")
         self.assertEqual(m.commands, ["echo hi"])
@@ -57,7 +56,7 @@ class TestMacroDataclass(unittest.TestCase):
         self.assertIsInstance(m.created, datetime.datetime)
 
     def test_macro_context_defaults(self):
-        from toolboxv2.flows.minicli import MacroContext
+        from toolboxv2.flows.mini.minicli import MacroContext
         ctx = MacroContext()
         self.assertFalse(ctx.break_flag)
         self.assertFalse(ctx.continue_flag)
@@ -83,7 +82,7 @@ class TestMacroSaveLoad(unittest.TestCase):
         }
 
     def test_load_macros_populates_dict(self):
-        from toolboxv2.flows.minicli import BeastCLI, Macro
+        from toolboxv2.flows.mini.minicli import Macro
 
         cli = _make_cli()
         macro_data = self._make_macro_data()
@@ -106,7 +105,7 @@ class TestMacroSaveLoad(unittest.TestCase):
         self.assertEqual(m.loop_count, 2)
 
     def test_save_macros_writes_correct_structure(self):
-        from toolboxv2.flows.minicli import Macro
+        from toolboxv2.flows.mini.minicli import Macro
 
         cli = _make_cli()
         cli.macros["my_macro"] = Macro(
@@ -184,7 +183,7 @@ class TestMacroArguments(unittest.TestCase):
     """Argument passing via $arg1, $1 etc."""
 
     def test_args_set_as_arg1_and_dollar1(self):
-        from toolboxv2.flows.minicli import Macro, MacroContext
+        from toolboxv2.flows.mini.minicli import Macro
 
         cli = _make_cli()
         cli.macros["greet"] = Macro(name="greet", commands=["echo $arg1"])
@@ -334,7 +333,7 @@ class TestExportImportJSON(unittest.TestCase):
             os.unlink(tmp_path)
 
     def test_import_conflict_overwrite(self):
-        from toolboxv2.flows.minicli import Macro
+        from toolboxv2.flows.mini.minicli import Macro
 
         cli = _make_cli()
         cli.macros["existing"] = Macro(name="existing", commands=["old"])
@@ -401,7 +400,7 @@ class TestMacroResultCapture(unittest.TestCase):
     """Return values from macros get saved as $rN."""
 
     def test_return_value_saved_to_quick_vars(self):
-        from toolboxv2.flows.minicli import Macro
+        from toolboxv2.flows.mini.minicli import Macro
 
         cli = _make_cli()
         cli.context.result_count = 0

@@ -15,6 +15,7 @@ files:
   - "utils/system/state_system.py"
   - "utils/system/cache.py"
   - "utils/extras/Style.py"
+  - "flows/mini/*"
 imports:
   - "toolboxv2.utils.toolbox"
 dependencies:

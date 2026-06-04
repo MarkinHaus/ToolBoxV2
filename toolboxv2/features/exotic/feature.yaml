@@ -8,6 +8,7 @@ files:
   - "utils/daemon/*"
   # ── Proxy ──────────────────────────────────────────────────
   - "utils/proxy/*"
+  - "flows/exotic/*"
 imports: []
 dependencies:
     - "langchain-community"

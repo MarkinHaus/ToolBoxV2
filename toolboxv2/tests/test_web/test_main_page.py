@@ -10,10 +10,17 @@ Ausführung:
     pytest toolboxv2/tests/web_test/test_main_page.py -v -k "test_index"
 """
 
-import pytest
 from typing import List, Dict, Any
 
-from tests.test_web.web_util import AsyncWebTestFramework
+try:
+    import pytest
+except ImportError:
+    pytest = None
+
+try:
+    from toolboxv2.tests.test_web.web_util import AsyncWebTestFramework
+except ImportError:
+    AsyncWebTestFramework = None
 
 # Import server config
 try:

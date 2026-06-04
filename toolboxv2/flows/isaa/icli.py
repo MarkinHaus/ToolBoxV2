@@ -18,7 +18,6 @@ Version: 4.0.0
 import asyncio
 import dataclasses
 import logging
-import sys
 import shutil
 import subprocess
 import threading
@@ -32,7 +31,7 @@ from prompt_toolkit.filters import is_done
 from prompt_toolkit.output.win32 import NoConsoleScreenBufferError
 
 from toolboxv2.utils.workers import get_registry
-from toolboxv2.utils.extras.Style import SpinnerManager, Spinner
+from toolboxv2.utils.extras.Style import Spinner
 from toolboxv2.utils.extras.pt_spinner_patch import apply_prompt_toolkit_patch_safe, get_spinner_toolbar_fragment, register_app
 
 # Suppress noisy loggers
@@ -54,10 +53,6 @@ from toolboxv2 import get_app, remove_styles, get_logger
 from toolboxv2.mods.isaa.base.Agent.builder import (
     FlowAgentBuilder,
 )
-from toolboxv2.mods.isaa.base.Agent.flow_agent import FlowAgent
-from toolboxv2.mods.isaa.base.Agent.instant_data_vis import (
-    visualize_data_terminal,
-)
 from toolboxv2.mods.isaa.base.Agent.vfs_v2 import FileBackingType, VFSFile
 from toolboxv2.mods.isaa.base.AgentUtils import detect_shell
 
@@ -71,11 +66,11 @@ from toolboxv2 import init_cwd, tb_root_dir
 from prompt_toolkit import print_formatted_text, HTML
 from toolboxv2.mods.isaa.CodingAgent.coder import CoderAgent
 from toolboxv2.mods.isaa.base.audio_io.audioIo import (
-    AudioStreamPlayer, LocalPlayer, WebPlayer, NullPlayer, AudioStreamRecorder,
+    AudioStreamPlayer, LocalPlayer, AudioStreamRecorder,
 )
 from toolboxv2.mods.isaa.base.audio_io.Tts import TTSConfig, TTSBackend, TTSEmotion
 from toolboxv2.mods.isaa.base.audio_io.audio_live import (
-    LiveModeEngine, LiveModeConfig, EndMode,
+    LiveModeConfig, EndMode,
     SpeakerProfileStore,
 )
 import os
@@ -2559,7 +2554,7 @@ def load_autodoc_feature(fm):
     """AutoDoc: findet getesteten, undokumentierten Code → schreibt 2-Part Docs."""
     from toolboxv2.mods.isaa.base.chain.chain_tools import ChainStore, StoredChain
     from toolboxv2 import get_app, tb_root_dir
-    import ast, re
+    import re
 
     _TOOL_HEALTH_EXTENSIONS = {
         # ─── AUTODOC ───
@@ -5778,7 +5773,7 @@ class ISAA_Host:
             if name == "icli_admin":
                 try:
                     # Import and register toolbox_admin tools
-                    from toolboxv2.flows.toolbox_admin import (
+                    from toolboxv2.flows.mini.toolbox_admin import (
                         _build_toolbox_tools, _build_docs_tools, _build_manifest_tools,
                         SYSTEM_PROMPT,
                     )
@@ -9689,7 +9684,6 @@ class ISAA_Host:
                     await self.audio_player.start()
 
                 from toolboxv2.mods.isaa.base.audio_io.audio_recorder import LocalMicRecorder
-                from toolboxv2.mods.isaa.base.audio_io.Stt import STTConfig, STTBackend
                 from toolboxv2.mods.isaa.base.audio_io.audioIo import AudioStreamRecorder
 
                 # Spinner-as-live-subtitle: the engine fires on_partial every
