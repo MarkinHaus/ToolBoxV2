@@ -1,5 +1,5 @@
 name: mini
-version: "0.1.26"
+version: "0.1.27"
 enabled: true
 immutable: true
 description: "Absolute minimal install — just App, types, logging. No CLI/web overhead."

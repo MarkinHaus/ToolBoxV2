@@ -1,5 +1,5 @@
 name: web
-version: "0.1.26"
+version: "0.1.27"
 enabled: true
 immutable: false
 description: "Web server — HTTP/WebSocket workers, Starlette, icli_web + Minu mods"
@@ -9,9 +9,9 @@ files:
   # ── Web Assets ─────────────────────────────────────────────
   - "dist/*"
   # ── Web Mods ───────────────────────────────────────────────
-  - "mods/icli_web/*"
   - "mods/Minu/*"
   - "flows/web/*"
+  - "tbjs/dist/*"
 imports: []
 dependencies:
     - "websockets"

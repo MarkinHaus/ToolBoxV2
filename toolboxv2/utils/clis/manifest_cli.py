@@ -738,17 +738,25 @@ def cmd_unpack(args) -> int:
     """Unpack a feature from a ZIP archive."""
     from pathlib import Path
 
-    zip_path = Path(args.path)
-    print_box_header(f"Unpack Feature: {zip_path.name}", "📥")
+    fm = _get_feature_manager()
+    zip_path = fm.resolve_packed_zip(args.path)
 
-    if not zip_path.exists():
-        print_status(f"File not found: {zip_path}", "error")
+    if zip_path is None:
+        print_box_header(f"Unpack Feature: {args.path}", "📥")
+        print_status(f"Nicht gefunden als Pfad, Dateiname oder Feature-Name: {args.path}", "error")
+        print_status("Verfügbare Pakete: tb manifest packed", "info")
         print_box_footer()
         return 1
 
-    try:
-        fm = _get_feature_manager()
+    print_box_header(f"Unpack Feature: {zip_path.name}", "📥")
 
+
+    if not zip_path.exists():
+            print_status(f"File not found: {zip_path}", "error")
+            print_box_footer()
+            return 1
+
+    try:
         # Show package info
         print_status(f"Archive: {zip_path}", "info")
         size_kb = zip_path.stat().st_size // 1024
@@ -802,6 +810,8 @@ def cmd_packed(args) -> int:
     print_box_header("Packed Features", "📦")
 
     try:
+
+        from toolboxv2 import tb_root_dir
         fm = _get_feature_manager()
         packages = fm.list_packed_features(search_dir=args.dir)
 
@@ -834,8 +844,8 @@ def cmd_packed(args) -> int:
                     pkg.get("feature_name", pkg.get("filename", "unknown")),
                     pkg.get("version", "unknown"),
                     f"{pkg.get('size_kb', '?')} KB",
-                    pkg.get("packed_at", "-")[:19] if pkg.get("packed_at") else "-",
-                    pkg.get("path", "")
+                    str(pkg.get("packed_at", "-")) if pkg.get("packed_at") else "-",
+                    pkg.get("path", "").replace(str(tb_root_dir), "")
                 )
 
         console.print(table)

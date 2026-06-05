@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from platform import system
 from typing import Any
 
-from langchain_core.tools import BaseTool
 
 
 @dataclass(frozen=True)
@@ -61,12 +60,9 @@ def functions_to_llm_functions(functions: list):
     return llm_functions
 
 
-def crate_llm_function_from_langchain_tools(tool: str or BaseTool or list[str], hf=False) -> list[LLMFunction]:
-    from langchain_community.agent_toolkits.load_tools import (
-        load_huggingface_tool,
-        load_tools,
-    )
-    if isinstance(tool, BaseTool):
+def crate_llm_function_from_langchain_tools(tool: str or 'BaseTool' or list[str], hf=False) -> list[LLMFunction]:
+
+    if hasattr(tool, 'name') and hasattr(tool, 'description') and hasattr(tool, 'args'):
         return [LLMFunction(name=tool.name, description=tool.description, parameters=tool.args, function=tool)]
 
     if isinstance(tool, list):
@@ -77,19 +73,27 @@ def crate_llm_function_from_langchain_tools(tool: str or BaseTool or list[str], 
 
     returning_llm_function_list = []
 
-    if hf:
-        for tool_name in tool:
-            huggingface_tool = load_huggingface_tool(tool_name)
-            returning_llm_function_list.append(
-                LLMFunction(name=huggingface_tool.name, description=huggingface_tool.description,
-                            parameters=huggingface_tool.args, function=huggingface_tool))
-    else:
-
-        for langchain_tool in load_tools(tool):
-            returning_llm_function_list.append(
-                LLMFunction(name=langchain_tool.name, description=langchain_tool.description,
-                            parameters=langchain_tool.args, function=langchain_tool))
-
+    try:
+        if hf:
+            from langchain_community.agent_toolkits.load_tools import (
+                load_huggingface_tool,
+            )
+            for tool_name in tool:
+                huggingface_tool = load_huggingface_tool(tool_name)
+                returning_llm_function_list.append(
+                    LLMFunction(name=huggingface_tool.name, description=huggingface_tool.description,
+                                parameters=huggingface_tool.args, function=huggingface_tool))
+        else:
+            from langchain_community.agent_toolkits.load_tools import (
+                load_tools,
+            )
+            for langchain_tool in load_tools(tool):
+                returning_llm_function_list.append(
+                    LLMFunction(name=langchain_tool.name, description=langchain_tool.description,
+                                parameters=langchain_tool.args, function=langchain_tool))
+    except (ImportError, AttributeError, ModuleNotFoundError):
+        print("Error loding langchain tools")
+        pass
     return returning_llm_function_list
 
 

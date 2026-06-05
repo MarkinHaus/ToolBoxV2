@@ -18,8 +18,8 @@ import json
 # ============================================================================
 from toolboxv2 import tb_root_dir
 
-_MAIN_CSS = (tb_root_dir / "tbjs" / "src" / "styles" / "tbjs-main.css").read_text(encoding="utf-8", errors="ignore")
-_PAPER_CSS = (tb_root_dir / "tbjs" / "src" / "styles" / "tbjs-paper.css").read_text(encoding="utf-8", errors="ignore")
+_MAIN_CSS = (tb_root_dir / "tbjs" / "dist" / "tbjs.css").read_text(encoding="utf-8", errors="ignore")
+_PAPER_CSS = (tb_root_dir / "tbjs" / "dist" / "tbjs.css").read_text(encoding="utf-8", errors="ignore")
 _FONTS = (
     '<link rel="preconnect" href="https://fonts.googleapis.com">'
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'

@@ -1,6 +1,6 @@
 [project]
 name = "toolboxv2"
-version = "0.1.26"
+version = "0.1.27"
 description = "Add your description here"
 readme = "README.md"
 
@@ -8,6 +8,7 @@ requires-python = ">=3.10"
 dependencies = [
     "requests>=2.31.0", # rewrite all to aiohttp
     "httpx>=0.28.1", # rewrite all to aiohttp
+    "rich", # rewrite to prompt-toolkit
     "aiohttp>=3.12.15",
     "aiohttp-cors>=0.8.1",
     "cryptography>=45.0.7",
@@ -38,9 +39,6 @@ toolboxv2 = [
     "features_packed/*.md",
     "features/core/**/*",
     "features/mini/**/*",
-
-    # ── Web assets ──
-    "dist/**/*",
 
     # ── Utils extras (einzelne Files für mini) ──
     "utils/extras/Style.py",
@@ -73,6 +71,7 @@ toolboxv2 = [
     "ytss.py",
     "mods/CloudM/LiveSync/**/*",
 ]
+"*" = ["**/node_modules/**"]
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -92,11 +91,6 @@ exclude = [
     "toolboxv2.flows.desktop*",
     "toolboxv2.flows.exotic*",
     "toolboxv2.mods.CloudM.LiveSync*",
-
-    # ── Exclude utils subsets ──
-    "toolboxv2.utils.tbx*",
-    "toolboxv2.utils.daemon*",
-    "toolboxv2.utils.proxy*",
 
     # ── Exclude tests ──
     "toolboxv2.tests*",

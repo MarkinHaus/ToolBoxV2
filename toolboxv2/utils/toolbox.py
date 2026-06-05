@@ -159,7 +159,10 @@ class App(AppType, metaclass=Singleton):
             manifest = loader.load()
             self.manifest = manifest
         except Exception as e:
-            print("Error loading manifest",e)
+            self.print("Error loading manifest",e)
+            self.debug_rains(e)
+            from toolboxv2.utils.manifest.schema import TBManifest
+            self.manifest = TBManifest()
 
         if args.init and args.init is not None and self.start_dir not in sys.path:
             sys.path.append(self.start_dir)
@@ -1706,7 +1709,7 @@ class App(AppType, metaclass=Singleton):
                 try:
                     self._obs_sync_manager.stop_auto_sync()
                     stats = self._obs_sync_manager.sync_all()  # final push
-                    self.logger.info(f"AutoSync stop time: {time.time() - to} -> {stats=}")
+                    self.logger.info(f"AutoSync stop time: {time.time() - to}")
                 except Exception as e:
                     self.debug_rains(e)
             self.alive = False

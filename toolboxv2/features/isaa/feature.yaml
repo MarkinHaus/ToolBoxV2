@@ -1,5 +1,5 @@
 name: isaa
-version: "0.1.26"
+version: "0.1.27"
 enabled: false
 immutable: false
 description: "ISAA agent system — LLM integration, coding agents, MCP server, ContainerManager"

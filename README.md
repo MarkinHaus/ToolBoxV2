@@ -4,66 +4,20 @@
 [![Donate](https://img.shields.io/badge/Donate-Buy%20me%20a%20coffee-yellowgreen.svg)](https://www.buymeacoffee.com/markinhaus)
 [![zread](https://img.shields.io/badge/Ask_Zread-_.svg?style=flat&color=00b0aa&labelColor=000000&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTQuOTYxNTYgMS42MDAxSDIuMjQxNTZDMS44ODgxIDEuNjAwMSAxLjYwMTU2IDEuODg2NjQgMS42MDE1NiAyLjI0MDFWNC45NjAxQzEuNjAxNTYgNS4zMTM1NiAxLjg4ODEgNS42MDAxIDIuMjQxNTYgNS42MDAxSDQuOTYxNTZDNS4zMTUwMiA1LjYwMDEgNS42MDE1NiA1LjMxMzU2IDUuNjAxNTYgNC45NjAxVjIuMjQwMUM1LjYwMTU2IDEuODg2NjQgNS4zMTUwMiAxLjYwMDEgNC45NjE1NiAxLjYwMDFaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00Ljk2MTU2IDEwLjM5OTlIMi4yNDE1NkMxLjg4ODEgMTAuMzk5OSAxLjYwMTU2IDEwLjY4NjQgMS42MDE1NiAxMS4wMzk5VjEzLjc1OTlDMS42MDE1NiAxNC4xMTM0IDEuODg4MSAxNC4zOTk5IDIuMjQxNTYgMTQuMzk5OUg0Ljk2MTU2QzUuMzE1MDIgMTQuMzk5OSA1LjYwMTU2IDE0LjExMzQgNS42MDE1NiAxMy43NTk5VjExLjAzOTlDNS42MDE1NiAxMC42ODY0IDUuMzE1MDIgMTAuMzk5OSA0Ljk2MTU2IDEwLjM5OTlaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik0xMy43NTg0IDEuNjAwMUgxMS4wMzg0QzEwLjY4NSAxLjYwMDEgMTAuMzk4NCAxLjg4NjY0IDEwLjM5ODQgMi4yNDAxVjQuOTYwMUMxMC4zOTg0IDUuMzEzNTYgMTAuNjg1IDUuNjAwMSAxMS4wMzg0IDUuNjAwMUgxMy43NTg0QzE0LjExMTkgNS42MDAxIDE0LjM5ODQgNS4zMTM1NiAxNC4zOTg0IDQuOTYwMVYyLjI0MDFDMTQuMzk4NCAxLjg4NjY0IDE0LjExMTkgMS42MDAxIDEzLjc1ODQgMS42MDAxWiIgZmlsbD0iI2ZmZiIvPgo8cGF0aCBkPSJNNCAxMkwxMiA0TDQgMTJaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00IDEyTDEyIDQiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K&logoColor=ffffff)](https://zread.ai/MarkinHaus/ToolBoxV2)
 
-A flexible modular framework for tools, functions, and complete applications – deployable locally, on the web, or as a desktop/mobile app.
+A flexible modular framework for utilitys, functions, and complete capability's – deployable live/local, on the web, or as a desktop/mobile app system agnosic.
 
 ---
 
-## 🔍 Overview & Architecture
-
-ToolBoxV2 is a Python-first framework with a high-performance worker infrastructure for web, desktop, and mobile applications.
-
-### Architecture
-
-```
-                    ┌─────────────┐
-                    │    Nginx    │
-                    │ (Load Bal., │
-                    │ Rate Limit) │
-                    └──────┬──────┘
-                           │
-         ┌─────────────────┼─────────────────┐
-         │                 │                 │
-         ▼                 ▼                 ▼
-  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
-  │ HTTP Worker │   │ HTTP Worker │   │ WS Worker   │
-  │  (WSGI)     │   │  (WSGI)     │   │ (asyncio)   │
-  │  Port 8000  │   │  Port 8001  │   │  Port 8010  │
-  └──────┬──────┘   └──────┬──────┘   └──────┬──────┘
-         │                 │                 │
-         └────────────┬────┴─────────────────┘
-                      │
-               ┌──────▼──────┐
-               │ ZeroMQ      │
-               │ Event Broker│
-               │ (Pub/Sub)   │
-               └──────┬──────┘
-                      │
-               ┌──────▼──────┐
-               │ ToolBoxV2   │
-               │ App Instance│
-               └─────────────┘
-```
-
-### Key Components
-
-- **Python Backend**: Core library with modular architecture
-- **Worker System**: High-performance WSGI/async workers (replacing the legacy Rust server)
-- **ZeroMQ IPC**: Fast inter-worker communication
-- **Tauri + tbjs**: Cross-platform desktop/web UI
-- **Nginx**: Load balancing, rate limiting, SSL termination
-
-For detailed worker documentation, see [toolboxv2/utils/workers/README.md](toolboxv2/utils/workers/README.md).
-
----
 
 ## 🎯 Goal
 
-The primary goal of ToolBoxV2 is to provide a flexible platform that enables developers, end-users, and small to medium-sized businesses to efficiently create, customize, and use applications. It aims to:
-*   Execute applications seamlessly.
-*   Integrate diverse functionalities.
+The primary goal of ToolBoxV2 is to provide a flexible platform that enables developers, end-users, and small to medium-sized businesses to efficiently create, customize, and use digital products. It aims to:
+*   Handel seamlessly Execute.
+*   Integrates in to diverse functionalities.
 *   Ensure system-independence.
 
-The underlying system, built on a monolithic modular architecture, combines the advantages of both approaches, enabling intuitive interaction with the digital world. It connects various components and provides utility functions accessible from anywhere. This platform promotes creative collaboration and eases access to digital resources.
+The underlying system, built on a monolithic modular architecture, enabling intuitive interaction with the digital world. It connects various components and core utility functions accessible from anywhere.
+This platform promotes creative collaboration and eases access to digital resources.
 
 ---
 

@@ -339,17 +339,25 @@ class FeatureManager(metaclass=Singleton):
         # Prüfe ob uv verfügbar ist
         try:
             result = subprocess.run(
-                [sys.executable, "-m", "uv", "--version"],
+                ["uv", "--version"],
                 capture_output=True,
                 text=True
             )
             use_uv = result.returncode == 0
         except Exception:
-            use_uv = False
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "uv", "--version"],
+                    capture_output=True,
+                    text=True
+                )
+                use_uv = result.returncode == 0
+            except Exception:
+                use_uv = False
 
         # Erstelle Kommando
         if use_uv:
-            cmd = [sys.executable, "-m", "uv", "pip", "install"]
+            cmd = ["uv", "pip", "install", "--python", sys.executable]
         else:
             cmd = [sys.executable, "-m", "pip", "install"]
 
@@ -556,6 +564,35 @@ class FeatureManager(metaclass=Singleton):
         }
 
     # =================== Pack/Unpack System ===================
+    def _get_packed_dir(self) -> Path:
+        """Verzeichnis der mitgelieferten Feature-ZIPs."""
+        return self.features_dir.parent / "features_packed"
+
+    def resolve_packed_zip(self, name_or_path: str) -> Optional[Path]:
+        """Löse Feature-Name | Dateiname | Pfad zu einer gepackten ZIP auf (mehrere Versionen -> höchste)."""
+        p = Path(name_or_path)
+        if p.is_file():
+            return p
+        packed_dir = self._get_packed_dir()
+        if not packed_dir.exists():
+            return None
+        stem = p.name
+        for cand in (packed_dir / stem, packed_dir / f"{stem}.zip"):
+            if cand.is_file():
+                return cand
+        feature = stem
+        if feature.startswith("tbv2-feature-"):
+            feature = feature[len("tbv2-feature-"):].rsplit("-", 1)[0]
+
+        def _ver(z: Path):
+            tail = z.stem.rsplit("-", 1)[-1]
+            try:
+                return tuple(int(x) for x in tail.split("."))
+            except ValueError:
+                return (0,)
+
+        matches = sorted(packed_dir.glob(f"tbv2-feature-{feature.lower()}-*.zip"), key=_ver)
+        return matches[-1] if matches else None
 
     def pack_feature(self, feature_name: str, output_path: Optional[str] = None) -> Optional[str]:
         """
@@ -769,10 +806,13 @@ class FeatureManager(metaclass=Singleton):
 
             if source_dir.exists() and source_dir.is_dir():
                 for file_path in source_dir.rglob("*"):
-                    if file_path.is_file() and "__pycache__" not in str(file_path):
-                        rel_path = file_path.relative_to(tb_root)
-                        arc_name = f"files/{rel_path}"
-                        zf.write(file_path, arc_name)
+                    if not file_path.is_file():
+                        continue
+                    parts = set(file_path.parts)
+                    if parts & {"__pycache__", "node_modules", ".git"}:
+                        continue
+                    rel_path = file_path.relative_to(tb_root)
+                    zf.write(file_path, f"files/{rel_path}")
         else:
             # Einzelne Datei
             source_file = tb_root / file_pattern
@@ -801,6 +841,7 @@ class FeatureManager(metaclass=Singleton):
                 data = yaml.safe_load(f)
 
             if data:
+                data.pop("name", None)
                 self.features[feature_name] = FeatureSpec(
                     name=feature_name,
                     **data
@@ -827,7 +868,7 @@ class FeatureManager(metaclass=Singleton):
         if search_dir:
             search_path = Path(search_dir)
         else:
-            search_path = Path("features_sto")
+            search_path = self._get_packed_dir()
 
         if not search_path.exists():
             return []

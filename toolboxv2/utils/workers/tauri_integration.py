@@ -52,7 +52,7 @@ def _cmd_start_worker(name: str = "workers", **_) -> dict:
 
 def _cmd_stop_worker(worker_id: str, **_) -> dict:
     """Ask the named worker to stop via its pid in the tray state."""
-    from .fast.tray_api import get_store
+    from toolboxv2.utils.workers.fast.tray_api import get_store
     info = get_store().workers.get(worker_id)
     if not info:
         return {"error": f"unknown worker_id: {worker_id}"}
@@ -68,7 +68,7 @@ def _cmd_stop_worker(worker_id: str, **_) -> dict:
 
 def _cmd_open_url(url: str, target: str = "main", **_) -> dict:
     """Have Tauri navigate to the given URL via the open_url tray event."""
-    from .fast.tray_api import emit_open_url
+    from toolboxv2.utils.workers.fast.tray_api import emit_open_url
     emit_open_url(url, target=target)
     return {"emitted": url, "target": target}
 
@@ -116,11 +116,11 @@ class TauriWorker:
     # ------------------------------------------------------------------
 
     def _run_fasttb(self):
-        from .fast.local_ui import app as local_ui_app
-        from .fast.tray_api import (
+        from toolboxv2.utils.workers.fast.local_ui import app as local_ui_app
+        from toolboxv2.utils.workers.fast.tray_api import (
             mount_tray_api, register_command_handler, TrayClient, register_collective_commands
         )
-        from .fast_tb_handler import FastTBHandler
+        from toolboxv2.utils.workers.fast_tb_handler import FastTBHandler
         from waitress import create_server
 
         # 1) Mount tray API onto local_ui's FastTB app
@@ -176,14 +176,14 @@ class TauriWorker:
     async def _run_broker_and_ws(self):
         """Start ZMQ broker and WS worker. Mirrors the original tauri_integration."""
         try:
-            from .config import load_config
+            from toolboxv2.utils.workers.config import load_config
             config = load_config()
         except Exception as e:
             logger.error(f"[tauri-worker] config load failed, broker+ws disabled: {e}")
             return
 
         # ZMQ Broker
-        from .event_manager import ZMQEventManager
+        from toolboxv2.utils.workers.event_manager import ZMQEventManager
         logger.info("[tauri-worker] starting ZMQ broker…")
         self._broker = ZMQEventManager(
             worker_id="internal_broker",
@@ -205,14 +205,14 @@ class TauriWorker:
 
         # WS Worker
         if self.ws_enabled:
-            from .ws_worker import WSWorker
+            from toolboxv2.utils.workers.ws_worker import WSWorker
             self._ws_worker = WSWorker("tauri_ws", config)
             logger.info(
                 f"[tauri-worker] WS worker on {config.ws_worker.host}:{config.ws_worker.port}"
             )
             # Publish WS into the tray
             try:
-                from .fast.tray_api import TrayClient
+                from toolboxv2.utils.workers.fast.tray_api import TrayClient
                 ws_tray = TrayClient(
                     worker_id="tauri_ws", label="WS Worker",
                     category="core", base_url=os.environ.get("TB_TRAY_URL", ""),

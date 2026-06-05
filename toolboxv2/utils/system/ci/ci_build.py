@@ -157,7 +157,7 @@ def pack_feature(name: str, config: dict) -> Path | None:
                     for fp in src_dir.rglob("*"):
                         if fp.is_file() and "__pycache__" not in str(fp):
                             rel = fp.relative_to(TOOLBOXV2_DIR)
-                            zf.write(fp, f"files/{rel}")
+                            zf.write(fp, f"files/{rel.as_posix()}")
                             file_count += 1
             else:
                 src_file = TOOLBOXV2_DIR / pattern
@@ -167,7 +167,7 @@ def pack_feature(name: str, config: dict) -> Path | None:
 
         zf.writestr(
             "_metadata.yaml",
-            f"feature: {name}\nversion: {version}\n"
+            f"feature_name: {name}\nversion: {version}\n"
             f"packed_at: {datetime.now().isoformat()}\nfiles: {file_count}\n",
         )
 

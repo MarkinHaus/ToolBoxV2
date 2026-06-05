@@ -60,11 +60,8 @@ EXECUTABLE_NAMES = {
 
 def get_project_root() -> Path:
     """Get ToolBoxV2 project root."""
-    current = Path(__file__).resolve()
-    for parent in current.parents:
-        if (parent / "pyproject.toml").exists() and (parent / "toolboxv2").exists():
-            return parent
-    return Path.cwd()
+    from toolboxv2 import tb_root_dir
+    return tb_root_dir.parent
 
 
 def get_target_triple() -> str:
@@ -352,7 +349,7 @@ def download_app(source: str = "auto", version: str = "latest",
         tmp_path = Path(tmpdir)
         download_path = tmp_path / asset_name
 
-        print_status(f"Downloading from: {download_url[:60]}...", "progress")
+        print_status(f"Downloading from: {download_url}", "progress")
         if not download_file(download_url, download_path):
             return False
 

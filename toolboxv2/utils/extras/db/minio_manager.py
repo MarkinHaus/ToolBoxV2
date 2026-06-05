@@ -189,7 +189,7 @@ class MinIOInstaller:
             return False
 
         try:
-            get_logger().info(f"Downloading from {url}...")
+            get_logger().info(f"Downloading from {url}")
             response = requests.get(url, stream=True, timeout=300)
             response.raise_for_status()
 
