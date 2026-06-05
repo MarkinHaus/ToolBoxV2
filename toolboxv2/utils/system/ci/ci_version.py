@@ -116,7 +116,7 @@ def update_init_py(old: str, new: str) -> bool:
         return False
     text = INIT_PY.read_text(encoding="utf-8")
     updated = re.sub(
-        r'^(__version__\s*=\s*)["\'][^"\']+["\']',
+        r'^(VERSION\s*=\s*)["\'][^"\']+["\']',
         rf"\g<1>'{new}'",
         text,
         count=1,

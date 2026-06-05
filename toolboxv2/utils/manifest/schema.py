@@ -75,7 +75,7 @@ class ProfileType(str, Enum):
 class AppConfig(BaseModel):
     """Application identity configuration."""
     name: str = Field(default="ToolBoxV2", description="Application name")
-    version: str = Field(default="0.1.0", description="Application version")
+    version: str = Field(default="0.1.27", description="Application version")
     instance_id: str = Field(default="tbv2_main", description="Unique instance identifier")
     environment: Environment = Field(default=Environment.DEVELOPMENT)
     debug: bool = Field(default=False)
