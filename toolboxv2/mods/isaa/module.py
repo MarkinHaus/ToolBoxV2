@@ -719,7 +719,7 @@ class Tools(MainTool):
                     name="AgentUI",
                     title="FlowAgent Chat",
                     description="Chat with your FlowAgents",
-                    path="/api/Minu/render?view=agent_ui&ssr=true",
+                    path="/",
                 )
 
             Path(f"{get_app('isaa-initIsaa').data_dir}/Agents/").mkdir(

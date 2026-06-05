@@ -203,6 +203,19 @@
 
 /* --- LIGHT THEME (Water Machine - Blaugrün/Cyan) --- */
 [data-theme="light"] {
+    --primary: oklch(72% 0.12 230);   /* etwas grünlicher, mittlerer Blauton */
+
+  /* Accent (z.B. der "Simple"-Text) */
+  --color-accent: oklch(63% 0.15 230);
+
+  --color-primary-100:  rgb(255, 255, 255);
+  --color-primary-300: oklch(90% 0.05 230);
+  --color-primary-400: oklch(72% 0.12 230);
+  --color-primary-500: oklch(63% 0.15 230);
+  --color-primary-600: oklch(55% 0.18 230);
+  --color-primary-700: oklch(48% 0.18 230);
+  --color-primary-900: oklch(40% 0.16 230);
+
   color-scheme: light;
 
   /* Backgrounds - Water Machine Blaugrün/Cyan */
