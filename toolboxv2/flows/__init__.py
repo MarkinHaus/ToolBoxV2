@@ -44,7 +44,7 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None, ui=False)
 
         # 1. root-level files
         collect_files(flows_dict_, root_files, remote, s, dir_path, ui)
-        if gezielt and flows_dict_:
+        if gezielt in flows_dict_:
             return flows_dict_
 
         # 2. subordner in priorität, früher abbruch bei gezielter suche
@@ -53,7 +53,7 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None, ui=False)
             sub_files = [(sub, f) for f in os.listdir(sub_path)
                          if os.path.isfile(os.path.join(sub_path, f))]
             collect_files(flows_dict_, sub_files, remote, s, dir_path, ui)
-            if gezielt and flows_dict_:
+            if gezielt in flows_dict_:
                 break
 
         return flows_dict_

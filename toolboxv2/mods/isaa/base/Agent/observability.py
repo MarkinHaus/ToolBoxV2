@@ -21,6 +21,7 @@ Author: Observability V1
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -34,6 +35,31 @@ logger = get_logger()
 
 # Type alias for the external streaming callback
 OnStepCallback = Callable[[dict], Awaitable[None]]
+
+# Active run_id for the current async context. Each run (parent or sub-agent)
+# runs in its own asyncio context, so this var routes every record_* call to
+# the correct slot WITHOUT changing any call-site signature. Sub-agent tasks
+# inherit a copied context at creation, so setting this inside a sub-agent run
+# never leaks into the parent — proven by the parallel no-crosstalk test.
+_active_run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "obs_active_run_id", default=None
+)
+
+
+@dataclass
+class _RunSlot:
+    """All per-run mutable state, isolated per run_id.
+
+    One slot per concurrently-active run. The observer keeps a dict of these
+    keyed by run_id; the active run is resolved via the _active_run_id
+    ContextVar. This is what makes parallel sub-agents safe: each gets its
+    own slot, and every record_* method routes through self._slot().
+    """
+    run: RunRecord | None = None
+    step: StepRecord | None = None
+    llm: LLMCallRecord | None = None
+    tools: dict[str, ToolCallRecord] = field(default_factory=dict)
+    live_fd: Any = None
 
 
 # =============================================================================
@@ -142,6 +168,11 @@ class RunRecord:
     persona: str = ""
     skills_matched: list[str] = field(default_factory=list)
 
+    # Sub-agent lineage (captured live at begin_run, not at cleanup)
+    parent_run_id: str = ""              # spawning parent's run_id ("" = top-level)
+    sub_agent_runs: list[dict] = field(default_factory=list)
+    # each: {"run_id": str, "task": str, "output_dir": str, "status": "running"|...}
+
     def aggregate(self):
         """Compute aggregated metrics from steps. Call once after all steps recorded."""
         ttfts = []
@@ -186,6 +217,8 @@ class RunRecord:
             "files_modified": self.files_modified,
             "persona": self.persona,
             "skills_matched": self.skills_matched,
+            "parent_run_id": self.parent_run_id,
+            "sub_agent_runs": self.sub_agent_runs,
             "steps": [s.to_dict() for s in self.steps],
         }
 
@@ -211,6 +244,8 @@ class RunRecord:
             files_modified=d.get("files_modified", {}),
             persona=d.get("persona", ""),
             skills_matched=d.get("skills_matched", []),
+            parent_run_id=d.get("parent_run_id", ""),
+            sub_agent_runs=d.get("sub_agent_runs", []),
         )
         # Steps without ctx_snapshot (those are only in live files)
         for sd in d.get("steps", []):
@@ -270,12 +305,59 @@ class ObservabilityLayer:
         # Ensure dir exists
         os.makedirs(obs_dir, exist_ok=True)
 
-        # Current run state (active during execution)
-        self._current_run: RunRecord | None = None
-        self._current_step: StepRecord | None = None
-        self._current_llm: LLMCallRecord | None = None
-        self._current_tools: dict[str, ToolCallRecord] = {}
-        self._live_fd: Any = None  # open file handle for live JSONL
+        # Per-run state, keyed by run_id. The active run is resolved via the
+        # _active_run_id ContextVar (set in begin_run). This makes parallel
+        # sub-agents safe: each run has its own _RunSlot.
+        self._slots: dict[str, _RunSlot] = {}
+
+    def _slot(self, run_id: str | None = None) -> _RunSlot | None:
+        """Return the slot for the active run (or a given run_id).
+
+        The ONE uniform line every record_* method starts with. Returns None
+        when no run is active in this context, so callers guard with `if slot`.
+        """
+        rid = run_id if run_id is not None else _active_run_id.get()
+        if rid is None:
+            return None
+        return self._slots.get(rid)
+
+    def active_runs(self) -> list[RunRecord]:
+        """All currently-active runs (parent + any live sub-agents).
+
+        Public accessor for external consumers (live obs server, UI). Never
+        touch _slots / the old _current_run from outside — with parallel
+        sub-agents there can be several active runs at once.
+        """
+        return [s.run for s in self._slots.values() if s.run is not None]
+
+    def active_run(self, run_id: str | None = None) -> RunRecord | None:
+        """The active run for a given run_id, or the context-active one.
+
+        With no argument returns the run active in the current async context
+        (the top-level run for the main thread). Returns None if none active.
+        """
+        slot = self._slot(run_id)
+        return slot.run if slot else None
+
+    def top_level_active_run(self) -> RunRecord | None:
+        """The active run with no parent (the user-facing top-level run).
+
+        live_obs_server / UI want 'the run the user started', not whichever
+        sub-agent happens to be active in some task's context.
+        """
+        for s in self._slots.values():
+            if s.run is not None and not s.run.parent_run_id:
+                return s.run
+        return None
+
+    def needs_first_token(self) -> bool:
+        """True if the active run has an in-flight LLM call without a TTFT yet.
+
+        Lets external callers (the stream loop) decide whether to call
+        record_llm_first_token() without touching internal slot state.
+        """
+        slot = self._slot()
+        return bool(slot and slot.llm and slot.llm.t_first_token == 0)
 
     # =========================================================================
     # RUN LIFECYCLE
@@ -283,29 +365,33 @@ class ObservabilityLayer:
 
     def begin_run(self, run_id: str, query: str, session_id: str = "",
                   persona: str = "", skills: list[str] | None = None,
-                  is_resume: bool = False):
+                  is_resume: bool = False, parent_run_id: str = ""):
+
+        slot = _RunSlot()
+        self._slots[run_id] = slot
+        _active_run_id.set(run_id)
 
         resume_step = None
         if is_resume:
             # Memory-State aus bestehendem Live-Log laden, um Historie zu behalten
             resumable = self.get_resumable_run(run_id)
             if resumable and resumable[0]:
-                self._current_run = resumable[0]
+                slot.run = resumable[0]
 
                 # Marker-Step hinzufügen
-                last_step_id = self._current_run.steps[-1].step_id if self._current_run.steps else 0
+                last_step_id = slot.run.steps[-1].step_id if slot.run.steps else 0
                 resume_step = StepRecord(
                     step_id=last_step_id,
                     is_resume_point=True,
                     t_start=time.time(),
                     t_end=time.time()
                 )
-                self._current_run.steps.append(resume_step)
+                slot.run.steps.append(resume_step)
             else:
                 is_resume = False  # Fallback falls nicht gefunden
 
         if not is_resume:
-            self._current_run = RunRecord(
+            slot.run = RunRecord(
                 run_id=run_id,
                 agent_name=self.agent_name,
                 query=query,
@@ -313,21 +399,36 @@ class ObservabilityLayer:
                 t_start=time.time(),
                 persona=persona,
                 skills_matched=skills or [],
+                parent_run_id=parent_run_id,
             )
+
+        # Live lineage: register this run with its parent's slot RIGHT NOW,
+        # so the parent (still running, waiting on its sub-agents) sees the
+        # child immediately — not at cleanup. Status starts "running".
+        if parent_run_id:
+            parent_slot = self._slots.get(parent_run_id)
+            if parent_slot and parent_slot.run:
+                parent_slot.run.sub_agent_runs.append({
+                    "run_id": run_id,
+                    "task": query[:200],
+                    "session_id": session_id,
+                    "status": "running",
+                })
 
         # Open live JSONL file ("a" = append-only, crash-safe log)
         live_path = os.path.join(self.obs_dir, f"live_{run_id}.jsonl")
         try:
-            self._live_fd = open(live_path, "a", encoding="utf-8")
+            slot.live_fd = open(live_path, "a", encoding="utf-8")
             # Wenn es ein Resume war, den Marker-Step direkt ins live File pushen
             if resume_step:
                 self._write_live_step(resume_step)
         except OSError as e:
             logger.warning(f"[Obs] Cannot open live file: {e}")
-            self._live_fd = None
+            slot.live_fd = None
 
         self._audit("RUN_RESUME" if is_resume else "RUN_START", run_id, details={
             "query": query, "session_id": session_id, "persona": persona,
+            "parent_run_id": parent_run_id,
         })
 
         # Cap stale live files to max_runs
@@ -371,11 +472,12 @@ class ObservabilityLayer:
                 pass
 
     def end_run(self, success: bool, final_answer: str = ""):
-        run = self._current_run
-        if run is None:
+        slot = self._slot()
+        if slot is None or slot.run is None:
             return
+        run = slot.run
 
-        if self._current_step is not None:
+        if slot.step is not None:
             self.end_step()
 
         run.t_end = time.time()
@@ -383,13 +485,23 @@ class ObservabilityLayer:
         run.final_answer_summary = final_answer
         run.aggregate()
 
+        # Live lineage: flip our entry in the parent's slot to the final status,
+        # so the parent sees the child finished without re-reading from disk.
+        if run.parent_run_id:
+            parent_slot = self._slots.get(run.parent_run_id)
+            if parent_slot and parent_slot.run:
+                for entry in parent_slot.run.sub_agent_runs:
+                    if entry.get("run_id") == run.run_id:
+                        entry["status"] = "completed" if success else "failed"
+                        break
+
         # Close live file
-        if self._live_fd:
+        if slot.live_fd:
             try:
-                self._live_fd.close()
+                slot.live_fd.close()
             except OSError:
                 pass
-            self._live_fd = None
+            slot.live_fd = None
 
         # Persist completed run
         self._persist_run(run)
@@ -413,25 +525,36 @@ class ObservabilityLayer:
             "avg_ttft_s": run.avg_ttft_s,
         })
 
-        self._current_run = None
-        self._current_step = None
+        # Drop this run's slot and restore the context pointer. For a sub-agent
+        # awaited synchronously (wait=True) in the parent's own context, restore
+        # the PARENT's run_id — not None — so the parent keeps recording after
+        # the sub finishes. For a top-level run, parent_run_id is "" → None.
+        self._slots.pop(run.run_id, None)
+        if _active_run_id.get() == run.run_id:
+            _active_run_id.set(run.parent_run_id or None)
 
     # =========================================================================
     # STEP LIFECYCLE
     # =========================================================================
 
     def begin_step(self, iteration: int):
-        self._current_step = StepRecord(step_id=iteration, t_start=time.time())
+        slot = self._slot()
+        if slot is None:
+            return
+        slot.step = StepRecord(step_id=iteration, t_start=time.time())
         vfs = getattr(self, "_hooked_vfs", None)
         if vfs is not None:
             vfs._current_step_id = iteration
 
     def end_step(self, ctx_checkpoint: dict | None = None):
         """Finalize step, persist to live file, fire callback."""
-        step = self._current_step
+        slot = self._slot()
+        if slot is None:
+            return
+        step = slot.step
         if step is None:
             return
-        run = self._current_run
+        run = slot.run
 
         step.t_end = time.time()
         step.duration_s = round(step.t_end - step.t_start, 4)
@@ -459,28 +582,35 @@ class ObservabilityLayer:
             except RuntimeError:
                 pass  # no event loop
 
-        self._current_step = None
+        slot.step = None
 
     # =========================================================================
     # LLM RECORDING
     # =========================================================================
 
     def record_llm_start(self, model: str = "", messages: list | None = None):
-        self._current_llm = LLMCallRecord(
+        slot = self._slot()
+        if slot is None:
+            return
+        slot.llm = LLMCallRecord(
             model=model, t_start=time.time(),
             input_messages=messages,
         )
 
     def record_llm_first_token(self):
-        if self._current_llm and self._current_llm.t_first_token == 0:
-            self._current_llm.t_first_token = time.time()
-            self._current_llm.ttft_s = round(
-                self._current_llm.t_first_token - self._current_llm.t_start, 4
+        slot = self._slot()
+        if slot and slot.llm and slot.llm.t_first_token == 0:
+            slot.llm.t_first_token = time.time()
+            slot.llm.ttft_s = round(
+                slot.llm.t_first_token - slot.llm.t_start, 4
             )
 
     def record_llm_end(self, tokens_in: int = 0, tokens_out: int = 0,
                         model: str = "", output_text: str | None = None):
-        llm = self._current_llm
+        slot = self._slot()
+        if slot is None:
+            return
+        llm = slot.llm
         if llm is None:
             return
         llm.t_end = time.time()
@@ -493,17 +623,20 @@ class ObservabilityLayer:
             llm.output_text = output_text
         if llm.duration_s > 0 and tokens_out > 0:
             llm.tokens_per_sec = round(tokens_out / llm.duration_s, 2)
-        if self._current_step:
-            self._current_step.llm = llm
-        self._current_llm = None
+        if slot.step:
+            slot.step.llm = llm
+        slot.llm = None
 
     # =========================================================================
     # TOOL RECORDING
     # =========================================================================
 
     def record_tool_start(self, name: str, args_summary: str = "", call_id: str = ""):
+        slot = self._slot()
+        if slot is None:
+            return ""
         key = call_id or f"{name}_{time.time()}"
-        self._current_tools[key] = ToolCallRecord(
+        slot.tools[key] = ToolCallRecord(
             name=name,
             args_summary=args_summary,
             t_start=time.time(),
@@ -512,13 +645,16 @@ class ObservabilityLayer:
 
     def record_tool_end(self, name: str, result_summary: str = "",
                         status: str = "ok", error: str = "", call_id: str = ""):
-        tool = self._current_tools.pop(call_id, None) if call_id else None
+        slot = self._slot()
+        if slot is None:
+            return
+        tool = slot.tools.pop(call_id, None) if call_id else None
 
         # Fallback: suche nach name (für alte Call-Sites ohne call_id)
         if tool is None:
-            for k, t in list(self._current_tools.items()):
+            for k, t in list(slot.tools.items()):
                 if t.name == name:
-                    tool = self._current_tools.pop(k)
+                    tool = slot.tools.pop(k)
                     break
 
         if tool is None:
@@ -530,12 +666,12 @@ class ObservabilityLayer:
         tool.status = status
         tool.error = error if error else ""
 
-        if self._current_step:
-            self._current_step.tool_calls.append(tool)
+        if slot.step:
+            slot.step.tool_calls.append(tool)
 
         self._audit("TOOL_CALL", name, details={
             "duration_s": tool.duration_s, "status": status,
-            "run_id": self._current_run.run_id if self._current_run else "",
+            "run_id": slot.run.run_id if slot.run else "",
         })
 
     # =========================================================================
@@ -551,19 +687,21 @@ class ObservabilityLayer:
         verbatim — including before_content/after_content for revert support.
         Otherwise falls back to the legacy metadata-only format.
         """
-        if self._current_step is None:
+        slot = self._slot()
+        if slot is None or slot.step is None:
             return
         if delta_dict is not None:
-            self._current_step.vfs_deltas.append(delta_dict)
+            slot.step.vfs_deltas.append(delta_dict)
         else:
-            self._current_step.vfs_deltas.append({
+            slot.step.vfs_deltas.append({
                 "path": path, "action": action,
                 "lines_added": lines_added, "lines_removed": lines_removed,
             })
 
     def record_compression(self, stats: dict):
-        if self._current_step:
-            self._current_step.compression = stats
+        slot = self._slot()
+        if slot and slot.step:
+            slot.step.compression = stats
 
     def hook_vfs(self, vfs: "VirtualFileSystemV2") -> None:
         """Wire VFS on_change → obs delta recording.
@@ -925,16 +1063,17 @@ class ObservabilityLayer:
 
     def _write_live_step(self, step: StepRecord):
         """Append step to live JSONL. Includes ctx_snapshot when present."""
-        if self._live_fd is None:
+        slot = self._slot()
+        if slot is None or slot.live_fd is None:
             return
         try:
             d = step.to_dict()
             if step.ctx_snapshot:
                 d["ctx_snapshot"] = step.ctx_snapshot
             line = json.dumps(d, ensure_ascii=False, separators=(",", ":"))
-            self._live_fd.write(line + "\n")
-            self._live_fd.flush()
-            os.fsync(self._live_fd.fileno())
+            slot.live_fd.write(line + "\n")
+            slot.live_fd.flush()
+            os.fsync(slot.live_fd.fileno())
         except (OSError, ValueError) as e:
             logger.warning(f"[Obs] live write failed: {e}")
 
@@ -950,8 +1089,9 @@ class ObservabilityLayer:
 
         # 1. Run ermitteln (Live Agent, Letzter Run oder spezifizierter Run)
         if run_id is None:
-            if self._current_run:
-                run = self._current_run
+            _slot = self._slot()
+            if _slot and _slot.run:
+                run = _slot.run
             else:
                 index = self._load_index()
                 if index:

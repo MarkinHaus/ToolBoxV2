@@ -901,7 +901,7 @@ class FlowAgent:
                                 result_obj, current_usage, finish_reason = data
                             else:
                                 chunk = data
-                                if _obs and _obs._current_llm and _obs._current_llm.t_first_token == 0:
+                                if _obs and _obs.needs_first_token():
                                     _obs.record_llm_first_token()
 
                                 yield chunk

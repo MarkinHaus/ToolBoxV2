@@ -42,6 +42,7 @@ from toolboxv2.mods.isaa.base.Agent.agent_live_state import (
     TokenStream,
     ToolExecution,
 )
+from toolboxv2.mods.isaa.base.Agent.observability import _active_run_id
 from toolboxv2.mods.isaa.base.Agent.narrator import AgentLiveNarrator
 
 # Import Skills System
@@ -1959,7 +1960,7 @@ BEISPIELE:
         finally:
             # OBS: IMMER end_run, auch bei crash
             _obs = getattr(self.agent, 'obs', None)
-            if _obs and _obs._current_run:
+            if _obs and _obs.active_run():
                 _obs.end_run(success=success, final_answer=(final_response if isinstance(final_response, str) else final_response.final_text_content) if final_response is not None else "CRASH")
         if get_ctx:
             return final_response, ctx
@@ -2437,7 +2438,7 @@ BEISPIELE:
             finally:
                 # OBS: IMMER end_run, auch bei crash
                 _obs = getattr(self.agent, 'obs', None)
-                if _obs and _obs._current_run:
+                if _obs and _obs.active_run():
                     _obs.end_run(success=success, final_answer=final_response or "CRASH")
             yield enrich(
                 {"type": "done", "success": success, "final_answer": final_response}
@@ -2833,7 +2834,7 @@ BEISPIELE:
             finally:
                 # OBS: IMMER end_run, auch bei crash
                 _obs = getattr(self.agent, 'obs', None)
-                if _obs and _obs._current_run:
+                if _obs and _obs.active_run():
                     _obs.end_run(success=success, final_answer=final_response or "CRASH")
 
             ctx.status = "paused"
@@ -2943,11 +2944,16 @@ BEISPIELE:
         if self.agent.obs is None:
             await self.agent.post_init()
         if self.agent.obs:
+            # Sub-agents run in a task that inherited the parent's context, so
+            # the active run_id at this point IS the parent's run_id. Capture it
+            # before our own begin_run overwrites it — gives live lineage.
+            parent_run_id = _active_run_id.get() or "" if self.is_sub_agent else ""
             self.agent.obs.begin_run(
                 ctx.run_id, query, session.session_id,
                 persona=ctx.active_persona.name,
                 skills=[s.name for s in ctx.matched_skills] if ctx.matched_skills else [],
-                is_resume=is_resume
+                is_resume=is_resume,
+                parent_run_id=parent_run_id,
             )
 
         # Narrator

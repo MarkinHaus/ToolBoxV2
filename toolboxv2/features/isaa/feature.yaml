@@ -1,35 +1,31 @@
-name: isaa
-version: "0.1.27"
-enabled: false
-immutable: false
-description: "ISAA agent system — LLM integration, coding agents, MCP server, ContainerManager"
-files:
-  # ── ISAA Agent ─────────────────────────────────────────────
-  - "mods/isaa/*"
-  # ── MCP Server ─────────────────────────────────────────────
-  - "mcp_server/*"
-  # ── Container Manager ──────────────────────────────────────
-  - "mods/ContainerManager/*"
-  # ── ISAA CLI ───────────────────────────────────────────────
-  - "utils/clis/tcm_p2p_cli.py"
-  - "flows/isaa/*"
-imports: []
-dependencies:
-    - "networkx"
-    - "numpy"
-    - "litellm"
-    - "dill"
-    - "groq"
-    - "pypdf2"
-    - "nest-asyncio"
-    - "pyvis"
-    - "mcp"
-    - "tenacity"
-    - "html2text"
-    - "chardet"
-    - "faiss-cpu"
-    - "playwright"
-requires:
-  - "core"
 commands:
-  - "mcp"
+- mcp
+dependencies:
+- networkx
+- numpy
+- litellm
+- dill
+- groq
+- pypdf2
+- nest-asyncio
+- pyvis
+- mcp
+- tenacity
+- html2text
+- chardet
+- faiss-cpu
+- playwright
+description: ISAA agent system — LLM integration, coding agents, MCP server, ContainerManager
+enabled: true
+files:
+- mods/isaa/*
+- mcp_server/*
+- mods/ContainerManager/*
+- utils/clis/tcm_p2p_cli.py
+- flows/isaa/*
+immutable: false
+imports: []
+name: isaa
+requires:
+- core
+version: 0.1.27

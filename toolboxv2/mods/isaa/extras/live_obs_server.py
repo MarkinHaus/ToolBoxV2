@@ -103,9 +103,11 @@ class LiveObsHub:
         # ---- begin_run wrap ----
         prev_begin = obs.begin_run
 
-        def hub_begin(run_id, query, session_id="", persona="", skills=None, is_resume=False):
-            prev_begin(run_id, query, session_id, persona, skills)
-            current = obs._current_run
+        def hub_begin(run_id, query, session_id="", persona="", skills=None,
+                      is_resume=False, parent_run_id=""):
+            prev_begin(run_id, query, session_id, persona, skills,
+                       is_resume=is_resume, parent_run_id=parent_run_id)
+            current = obs.active_run(run_id)
             self._fire({
                 "type": "run_start",
                 "agent_name": agent,
@@ -116,6 +118,8 @@ class LiveObsHub:
                 "skills_matched": skills or [],
                 "t_start": current.t_start if current else time.time(),
                 "is_resume": is_resume,
+                "parent_run_id": parent_run_id,
+                "is_sub_agent": bool(parent_run_id),
             })
 
         obs.begin_run = hub_begin
@@ -124,8 +128,9 @@ class LiveObsHub:
         prev_end = obs.end_run
 
         def hub_end(success: bool, final_answer: str = ""):
-            run = obs._current_run
+            run = obs.active_run()
             rid = run.run_id if run else None
+            parent_rid = run.parent_run_id if run else ""
             prev_end(success, final_answer)
             final_dict = None
             if rid:
@@ -136,6 +141,8 @@ class LiveObsHub:
                 "type": "run_end",
                 "agent_name": agent,
                 "success": success,
+                "parent_run_id": parent_rid,
+                "is_sub_agent": bool(parent_rid),
                 "run": final_dict or {"run_id": rid, "success": success, "steps": []},
             })
 
@@ -153,16 +160,23 @@ class LiveObsHub:
                         ir["mtime"] = os.path.getmtime(ir.get("live_file", ""))
                     except OSError:
                         ir["mtime"] = 0
-                active = obs._current_run.to_dict() if obs._current_run else None
+                # Active runs: with parallel sub-agents there can be several.
+                # Expose the top-level run as active_run (back-compat) and the
+                # full set as active_runs so the UI can nest sub-agents.
+                _actives = obs.active_runs()
+                _top = next((r for r in _actives if not r.parent_run_id), None)
+                active = _top.to_dict() if _top else None
+                active_all = [r.to_dict() for r in _actives]
             except Exception as e:
                 logger.warning(f"[LiveObsHub] snapshot {name} failed: {e}")
-                runs, interrupted, active = [], [], None
+                runs, interrupted, active, active_all = [], [], None, []
             agents[name] = {
                 "agent_name": name,
                 "obs_dir": obs.obs_dir,
                 "runs": runs,
                 "interrupted": interrupted,
                 "active_run": active,
+                "active_runs": active_all,
             }
         return {"agents": agents, "ts": time.time(),
                 "vfs_capable": list(self._vfs_map.keys())}
@@ -422,10 +436,13 @@ class LiveObsHub:
                 except (OSError, json.JSONDecodeError) as e:
                     logger.debug(f"[LiveObsHub] read {fname} failed: {e}")
                     continue
+                _prid = run_dict.get("parent_run_id", "")
                 await self._broadcast({
                     "type": "run_end",
                     "agent_name": name,
                     "success": run_dict.get("success", False),
+                    "parent_run_id": _prid,
+                    "is_sub_agent": bool(_prid),
                     "run": run_dict,
                 })
 
@@ -709,6 +726,8 @@ body{display:grid;grid-template-columns:42ch 1fr;height:100vh;padding-bottom:0;o
 .run-li{padding:5px 12px 5px 24px;cursor:pointer;border-left:2px solid transparent;font-size:11px;display:flex;align-items:center;gap:6px}
 .run-li:hover{background:var(--sel)}
 .run-li.sel{background:var(--sel);border-left-color:var(--primary)}
+.run-li.is-sub{padding-left:36px;border-left-color:var(--primary);opacity:.92}
+.run-li .sub-badge{font-size:9px;color:var(--primary);border:1px solid var(--primary);border-radius:3px;padding:0 4px;margin-left:5px;letter-spacing:.5px}
 .run-li .gl{width:10px;flex-shrink:0;text-align:center;font-size:11px}
 .run-li .gl.run{color:var(--warning);animation:pulse 1.2s linear infinite}
 .run-li .gl.ok{color:var(--success)}
@@ -884,9 +903,16 @@ function analyzeRun(r){
 }
 
 // ── LLM message renderers (from obs_viewer) ──
+function decodeMaybe(s){
+  if(typeof s!=='string') return s;
+  if(s.indexOf('\n')!==-1) return s;
+  if(!/\\[ntr"\\]/.test(s)) return s;
+  return s.replace(/\\n/g,'\n').replace(/\\t/g,'\t').replace(/\\r/g,'\r')
+          .replace(/\\"/g,'"').replace(/\\\\/g,'\\');
+}
 function renderLlmMessages(msgs){
   if(!msgs) return '<span style="color:var(--fg2)">no input data captured</span>';
-  if(typeof msgs==='string') return '<pre>'+esc(msgs)+'</pre>';
+  if(typeof msgs==='string') return '<pre>'+esc(decodeMaybe(msgs))+'</pre>';
   if(!Array.isArray(msgs)) return '<pre>'+esc(fmtJson(msgs))+'</pre>';
   return msgs.map(m=>{
     const role=m.role||'unknown';
@@ -894,12 +920,12 @@ function renderLlmMessages(msgs){
     if(typeof m.content==='string') content=m.content;
     else if(Array.isArray(m.content)) content=m.content.map(c=>typeof c==='string'?c:(c.text||JSON.stringify(c))).join('\n');
     else content=fmtJson(m.content);
-    return `<div class="msg role-${role}"><div class="msg-role ${role}">${esc(role)}</div>${esc(content)}</div>`;
+    return `<div class="msg role-${role}"><div class="msg-role ${role}">${esc(role)}</div><div class="msg-content">${esc(decodeMaybe(content))}</div></div>`;
   }).join('');
 }
 function renderLlmOutput(out){
   if(!out) return '<span style="color:var(--fg2)">no output data captured</span>';
-  if(typeof out==='string') return '<pre>'+esc(out)+'</pre>';
+  if(typeof out==='string') return '<pre>'+esc(decodeMaybe(out))+'</pre>';
   return '<pre>'+esc(fmtJson(out))+'</pre>';
 }
 
@@ -1145,9 +1171,10 @@ function renderSidebar(){
       const fresh=isFreshLive(r);
       const stepCount=(r.steps||[]).length || r.step_count || 0;
       const tref=r.mtime||r.t_start||0;
-      h+=`<div class="run-li${sel?' sel':''}" onclick="selectRun('${esc(name)}','${esc(r.run_id)}','live')">
+      const subBadge=r.is_sub_agent?`<span class="sub-badge" title="sub-agent of ${esc(r.parent_run_id||'?')}">⊕ sub</span>`:'';
+      h+=`<div class="run-li${sel?' sel':''}${r.is_sub_agent?' is-sub':''}" onclick="selectRun('${esc(name)}','${esc(r.run_id)}','live')">
         <span class="gl ${fresh?'run':'int'}">◐</span>
-        <span class="id">${esc(r.run_id)}${r._fromDisk&&!fresh?' <span style="color:var(--fg2)">(stale)</span>':''}</span>
+        <span class="id">${esc(r.run_id)}${subBadge}${r._fromDisk&&!fresh?' <span style="color:var(--fg2)">(stale)</span>':''}</span>
         <span class="dur">${stepCount} st</span>
         ${tref?`<span class="ts">${F.ts(tref)} · ${F.tsRel(tref)}</span>`:''}
       </div>`;
@@ -1213,6 +1240,7 @@ function onRunStart(msg){
     query:msg.query||'', persona:msg.persona||'',
     skills_matched:msg.skills_matched||[], session_id:msg.session_id||'',
     t_start:msg.t_start||Date.now()/1000,
+    parent_run_id:msg.parent_run_id||'', is_sub_agent:!!msg.parent_run_id,
     steps:keepSteps, _agent:agent, _live:true,
   };
   if(!STATE.agents[agent]) STATE.agents[agent]={agent_name:agent,runs:[],interrupted:[],active_run:null};
@@ -1314,13 +1342,18 @@ function handleMsg(msg){
     case 'snapshot':
       STATE.agents=msg.agents||{};
       STATE.vfsCapable = new Set(msg.vfs_capable||[]);
-      // Re-hydrate active_run into liveRuns
+      // Re-hydrate all active runs (parent + parallel sub-agents) into liveRuns
       STATE.liveRuns={};
       Object.entries(STATE.agents).forEach(([name,ag])=>{
-        if(ag.active_run){
-          const r=ag.active_run;
-          STATE.liveRuns[name+'::'+r.run_id]={...r,_agent:name,_live:true};
-        }
+        const actives = (ag.active_runs && ag.active_runs.length)
+          ? ag.active_runs
+          : (ag.active_run ? [ag.active_run] : []);
+        actives.forEach(r=>{
+          STATE.liveRuns[name+'::'+r.run_id]={
+            ...r,_agent:name,_live:true,
+            is_sub_agent:!!r.parent_run_id,
+          };
+        });
       });
       renderSidebar();
       break;

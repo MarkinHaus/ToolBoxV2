@@ -265,6 +265,24 @@ body{font-family:var(--mono);font-size:12px;line-height:1.4;min-height:100vh;pad
 ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.15)}
 
 @media(max-width:640px){.stats-row{grid-template-columns:repeat(2,1fr)}.run-grid{grid-template-columns:1fr}.calc-grid{grid-template-columns:1fr}}
+/* Sub-agent nested rendering */
+.subagent-wrap{margin:4px 0 6px;border-left:2px solid var(--primary);padding-left:8px}
+.subagent-row{font-size:11px;padding:4px 6px;cursor:pointer;display:flex;gap:8px;align-items:center;background:rgba(120,120,255,0.05);border-radius:3px}
+.subagent-row:hover{background:rgba(120,120,255,0.10)}
+.sa-badge{color:var(--primary);font-weight:600;white-space:nowrap}
+.sa-status{white-space:nowrap;font-size:10px;padding:1px 6px;border-radius:3px}
+.sa-completed{color:var(--success)}
+.sa-failed{color:var(--error)}
+.sa-running,.sa-unknown{color:var(--warning)}
+.sa-task{flex:1;color:var(--fg1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sa-meta{color:var(--fg2);font-size:10px;white-space:nowrap}
+.subagent-detail{display:none;padding:4px 0 4px 8px;margin-top:4px;border-top:1px dashed var(--bd)}
+.substep{margin:4px 0;padding:4px 6px;background:var(--bg2);border-radius:3px}
+.substep-hdr{font-size:10px;color:var(--fg2);margin-bottom:2px}
+.substep-tool{font-size:11px;display:grid;grid-template-columns:1fr 70px;gap:8px;padding:2px 0;color:var(--fg1)}
+.substep-tool.terr{color:var(--error)}
+.sa-missing{font-size:11px;color:var(--warning);padding:6px}
+.msg-content{white-space:pre-wrap;word-break:break-word}
 </style>
 </head>
 <body>
@@ -293,6 +311,21 @@ const interrupted = (DATA.interrupted||[]).map(r=>({...r,_src:'interrupted'}));
 const allRuns = [...runs,...interrupted];
 document.getElementById('nav-agent').textContent = DATA.agent_name||'unknown';
 
+// ── Sub-agent lineage helpers ──
+const RUN_BY_ID = {};
+allRuns.forEach(r => { if (r.run_id) RUN_BY_ID[r.run_id] = r; });
+const SPAWN_TOOLS = new Set(['spawn_sub_agent','wait_for','resume_sub_agent']);
+// Match a spawn-type tool call to the next unconsumed sub_agent_runs entry of
+// its parent run. The obs layer records sub_agent_runs in spawn order, so we
+// walk them positionally per render.
+function makeSubMatcher(run){
+  const queue = (run && run.sub_agent_runs ? run.sub_agent_runs.slice() : []);
+  return function(toolName){
+    if (!SPAWN_TOOLS.has(toolName)) return null;
+    return queue.length ? queue.shift() : null;
+  };
+}
+
 // ── Utils ──
 const F = {
   dur(s){if(s==null||s===0) return '—'; return s<1?`${(s*1000).toFixed(0)}ms`:`${s.toFixed(2)}s`},
@@ -302,6 +335,54 @@ const F = {
   pct(v,t){return t>0?`${((v/t)*100).toFixed(1)}%`:'0%'},
 };
 function el(t,c,h){const e=document.createElement(t);if(c)e.className=c;if(h!==undefined)e.innerHTML=h;return e}
+
+// ── Render a linked sub-agent run, collapsed under its spawn tool-call ──
+function renderSubAgentRun(subEntry, depth){
+  if (!subEntry) return '';
+  const rid = subEntry.run_id || '';
+  const sub = RUN_BY_ID[rid];
+  const status = subEntry.status || (sub ? (sub.success ? 'completed' : 'failed') : 'unknown');
+  const task = esc((subEntry.task || (sub && sub.query) || '').substring(0,100));
+  const subId = 'subrun-'+rid;
+  const statusIcon = status==='completed' ? '✓' : (status==='failed' ? '✕' : '◷');
+  const nSteps = sub ? (sub.steps||[]).length : 0;
+  const nTools = sub ? (sub.tool_call_count||0) : 0;
+  let h = `<div class="subagent-wrap" style="margin-left:${depth*8}px">`;
+  h += `<div class="subagent-row" onclick="event.stopPropagation();toggleDetail('${subId}')" title="click to expand sub-agent">`;
+  h += `<span class="sa-badge">⊕ sub-agent</span><span class="sa-status sa-${status}">${statusIcon} ${status}</span>`;
+  h += `<span class="sa-task">${task||'(no task)'}</span>`;
+  h += sub ? `<span class="sa-meta">${nSteps} steps · ${nTools} tools · ${F.dur(sub.duration_s)}</span>`
+           : `<span class="sa-meta">run ${rid} not persisted</span>`;
+  h += `</div>`;
+  h += `<div class="subagent-detail" id="${subId}">`;
+  if (sub) {
+    const sra = analyzeRun(sub);
+    sra.analyzed.forEach(({step, a}) => {
+      h += renderSubStep(sub, step, a, depth+1);
+    });
+  } else {
+    h += `<div class="sa-missing">Sub-agent run ${esc(rid)} is not in this snapshot. Open the live obs viewer for its full trajectory.</div>`;
+  }
+  h += `</div></div>`;
+  return h;
+}
+
+// Compact step render for nested sub-agent steps (tools + recursive sub-agents)
+function renderSubStep(run, step, a, depth){
+  let h = `<div class="substep">`;
+  h += `<div class="substep-hdr">step ${step.step_id} · ${F.dur(a.total)}</div>`;
+  const matchSub = makeSubMatcher(run);
+  if (step.tool_calls?.length){
+    step.tool_calls.forEach(tc => {
+      const isErr = tc.status==='error';
+      h += `<div class="substep-tool${isErr?' terr':''}"><span>${isErr?'✕':'▸'} ${esc(tc.name)}</span><span>${F.dur(tc.duration_s)}</span></div>`;
+      const childSub = matchSub(tc.name);
+      if (childSub) h += renderSubAgentRun(childSub, depth+1);
+    });
+  }
+  h += `</div>`;
+  return h;
+}
 
 // ── Deep step analysis ──
 function analyzeStep(step, runStart) {
@@ -458,6 +539,7 @@ function openReplay(run) {
 
   const c = document.getElementById('replay-c');
   const ra = analyzeRun(run);
+  const matchSub = makeSubMatcher(run);
   const steps = run.steps||[];
 
   let h = `<div style="padding:12px 0;border-bottom:1px solid var(--bd);margin-bottom:16px">
@@ -588,6 +670,9 @@ function openReplay(run) {
           h += `<div class="tool-detail-l">${isErr?'Error':'Result'}</div><pre>${esc(fmtJson(tc.result||tc.output||tc.result_summary||tc.error))}</pre>`;
         }
         h += `</div></div>`;
+        // Linked sub-agent run — nested, collapsed, under its spawn tool-call
+        const subEntry = matchSub(tc.name);
+        if (subEntry) h += renderSubAgentRun(subEntry, 1);
       });
       h += '</div>';
     } else if (a.pre > 1) {
@@ -846,6 +931,17 @@ function fmtJson(v) {
   }
   try { return JSON.stringify(v, null, 2); } catch(e) { return String(v); }
 }
+// Decode strings that were double-serialized (literal \n \t \" \\ but no
+// real newlines). Leaves genuine multi-line content untouched, so real code
+// with actual newlines is never mangled.
+function decodeMaybe(s) {
+  if (typeof s !== 'string') return s;
+  if (s.indexOf('\n') !== -1) return s;            // already has real newlines → leave it
+  if (!/\\[ntr"\\]/.test(s)) return s;             // no escape sequences → nothing to do
+  return s
+    .replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r')
+    .replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+}
 function renderLlmMessages(msgs) {
   if (!msgs) return '<span style="color:var(--fg2)">no input data captured</span>';
   if (typeof msgs === 'string') return '<pre>'+esc(msgs)+'</pre>';
@@ -856,12 +952,12 @@ function renderLlmMessages(msgs) {
     if (typeof m.content === 'string') content = m.content;
     else if (Array.isArray(m.content)) content = m.content.map(c => typeof c === 'string' ? c : (c.text || JSON.stringify(c))).join('\n');
     else content = fmtJson(m.content);
-    return `<div class="msg role-${role}"><div class="msg-role ${role}">${esc(role)}</div>${esc(content)}</div>`;
+    return `<div class="msg role-${role}"><div class="msg-role ${role}">${esc(role)}</div><div class="msg-content">${esc(decodeMaybe(content))}</div></div>`;
   }).join('');
 }
 function renderLlmOutput(out) {
   if (!out) return '<span style="color:var(--fg2)">no output data captured</span>';
-  if (typeof out === 'string') return '<pre>'+esc(out)+'</pre>';
+  if (typeof out === 'string') return '<pre>'+esc(decodeMaybe(out))+'</pre>';
   return '<pre>'+esc(fmtJson(out))+'</pre>';
 }
 function toggleStep(id) {
