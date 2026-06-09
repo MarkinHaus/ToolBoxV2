@@ -60,6 +60,7 @@ class AuthProvider(str, Enum):
 
 class ProfileType(str, Enum):
     """User profile — controls bare 'tb' default behavior."""
+    LOCAL = "local"  # auto-set on silent first init — zero-friction default
     CONSUMER  = "consumer"   # tb → tb gui
     HOMELAB   = "homelab"    # tb → interactive dashboard
     SERVER    = "server"     # tb → ASCII status overview + exit

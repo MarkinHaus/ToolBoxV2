@@ -335,7 +335,12 @@
     return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   }
 
-  async function init() {
+async function init() {
+    // Load global widget variables (server-wide, not per chat)
+    try {
+      const gv = await get("/api/global-vars");
+      if (gv) Store.globalVars = gv;
+    } catch (_) {}
     bindInput();
     bindStore();
     window.ISAA.Sidebar.bind();

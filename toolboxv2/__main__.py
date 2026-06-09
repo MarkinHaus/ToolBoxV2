@@ -2476,12 +2476,15 @@ def main_runner():
                 if runner_name is None and not '--test' in sys.argv:
                     profile = _get_profile()
 
-                    if profile is None and not len(sys.argv) < 2:
-                        # First Run
-                        from toolboxv2.utils.clis.first_run import run_first_run
-                        profile = run_first_run()
-
-                    if profile == "consumer":
+                    if profile is None:
+                        # Silent auto-init: create minimal manifest, no interaction
+                        from toolboxv2.utils.manifest import ManifestLoader
+                        from toolboxv2 import tb_root_dir
+                        _m = ManifestLoader(tb_root_dir).load_or_create_default()
+                        profile = _m.app.profile.value if _m.app.profile else "local"
+                    if profile == "local":
+                        runner_name = "local-cli"  # zero-friction default (F1)
+                    elif profile == "consumer":
                         runner_name = "gui"  # web UI in Tauri
                     elif profile == "homelab":
                         runner_name = "gui"  # web UI in Tauri/browser — same surface

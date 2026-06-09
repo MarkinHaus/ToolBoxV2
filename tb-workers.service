@@ -9,7 +9,7 @@ User=www-data
 Environment=ADMIN_UI_PASSWORD=dein_passwort
 Environment=CLUSTER_SECRET=dein_cluster_secret
 ExecStartPre=tb workers nginx-check
-ExecStart=tb workers start --no-ui
+ExecStart=tb workers start
 ExecStop=tb workers stop
 Restart=on-failure
 RestartSec=5

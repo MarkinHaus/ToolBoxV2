@@ -172,7 +172,8 @@ async def get_user_data(app: App = None, request=None, user_id: str = None, data
 @export(mod_name=Name, version=version, api=True)
 async def update_user_data(
     app: App = None, user_id: str = None, settings: dict = None,
-    level: int = None, mod_data: dict = None, data: dict = None,
+    level: int = None, mod_data: dict = None, username: str = None,
+    data: dict = None,
 ) -> ApiResult:
     """Update user profile fields."""
     if app is None:
@@ -182,11 +183,15 @@ async def update_user_data(
         settings = settings or data.get("settings")
         level = level if level is not None else data.get("level")
         mod_data = mod_data or data.get("mod_data")
+        username = username or data.get("username")
     if not user_id:
         return Result.default_user_error("User ID required")
     user = await _load_user(app, user_id)
     if not user:
         return Result.default_user_error("User not found")
+    if username:
+        user.username = username
+        user.settings["anonymous"] = False  # named user — anon status removed
     if settings is not None:
         user.settings.update(settings)
     if level is not None:

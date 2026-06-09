@@ -92,6 +92,9 @@ from .auth.oauth import (  # noqa: F401, E402
     _exchange_oauth_code, _get_discord_user, _get_google_user,
 )
 
+# Local admin (zero-friction local root)
+from .auth.local_admin import ensure_local_admin, get_local_admin  # noqa: F401, E402
+
 # =================== API endpoints (decorated with @export) ===================
 # These must be imported so the @export decorators register the functions.
 

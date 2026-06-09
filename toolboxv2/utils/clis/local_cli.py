@@ -36,7 +36,7 @@ from toolboxv2.mods.CloudM.LogInSystem import (
 # Shared helpers (mirror local_ui semantics)
 # =============================================================================
 
-LOCAL_ADMIN_EMAIL = "local-admin@toolbox.local"
+from toolboxv2.mods.CloudM.auth.config import LOCAL_ADMIN_EMAIL
 
 
 def _features_dir() -> Path:
@@ -86,27 +86,6 @@ async def _has_any_user() -> bool:
     except Exception:
         return False
 
-_global_token = [None]
-
-async def _emit_first_run_token() -> Optional[str]:
-    if _global_token[0] is not None:
-        return _global_token[0]
-    try:
-        from toolboxv2.mods.CloudM.auth.db_helpers import _db_set, _db_get
-    except Exception as e:
-        print_status(f"Cannot import auth db_helpers: {e}", "error")
-        return None
-    tb_app = get_app("local_cli.first_run_token")
-    token = secrets.token_urlsafe(32)
-    r =await _db_set(tb_app, f"AUTH_MAGIC_LINK::{token}", {
-        "email": LOCAL_ADMIN_EMAIL,
-        "created_at": time.time(),
-        "verified": False,
-        "local_admin": True,
-    })
-    c_print(r.print(show=False))
-    _global_token[0] = token
-    return token
 
 def _is_remote() -> bool:
     return bool(os.environ.get("TOOLBOXV2_REMOTE_BASE"))
@@ -255,23 +234,29 @@ async def _finalize(sess: CLISession, payload, tb_app, remote: bool) -> bool:
 async def login_screen(sess: CLISession) -> bool:
     tb_app = get_app("local_cli.auth")
     remote = _is_remote()
-    first_run = (not remote) and (not await _has_any_user())
 
-    mode = "remote" if remote else "local"
-    print_box_header("ToolBox · Sign in" + (" · first run" if first_run else "") + f" · {mode}", "🔐")
+    if not remote:
+        # Zero-friction local mode: auto-login as the local root admin.
+        # No token shown or required locally — tokens are remote-only (E3).
+        from toolboxv2.mods.CloudM.auth.local_admin import ensure_local_admin
+        from toolboxv2.mods.CloudM.auth.jwt_tokens import _generate_tokens
+        user = await ensure_local_admin(tb_app)
+        tokens = _generate_tokens(user, "local_admin")
+        payload = {
+            "authenticated": True,
+            "user_id": user.user_id,
+            "username": user.username,
+            "email": user.email,
+            "level": user.level,
+            "provider": "local_admin",
+            **tokens,
+        }
+        return await _finalize(sess, payload, tb_app, remote=False)
 
-    if first_run:
-        token = await _emit_first_run_token()
-        if token:
-            print_box_content("First run — local setup token (single-use, 10 min):", "info")
-            print()
-            c_print(f"    {Colors.BOLD}{token}{Colors.RESET}")
-            print()
-            print_box_content("Pick 'Local token' to create the local admin.", "info")
-        print_separator()
+    print_box_header("ToolBox · Sign in · remote", "🔐")
 
     options = [
-        ("token",   "Local token"),
+        ("token",   "Magic token (paste)"),
         ("magic",   "Magic link by email"),
         ("invite",  "Device invite code"),
         ("discord", "Discord OAuth (browser)"),

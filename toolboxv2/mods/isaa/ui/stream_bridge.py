@@ -77,12 +77,13 @@ class StreamBridge:
     """Owns the running streams. One running stream per chat allowed."""
 
     def __init__(self, isaa_mod, chat_store, broadcaster: BridgeBroadcaster):
+def __init__(self, isaa_mod, chat_store, broadcaster: BridgeBroadcaster, global_vars=None):
         self.isaa = isaa_mod
         self.store = chat_store
+        self.global_vars = global_vars
         self.broadcast = broadcaster.send
         self._running: dict[str, RunningStream] = {}
         self._lock = asyncio.Lock()
-
     def is_running(self, chat_id: str) -> bool:
         rs = self._running.get(chat_id)
         return rs is not None and rs.task is not None and not rs.task.done()
@@ -138,7 +139,7 @@ class StreamBridge:
             await self._emit(chat_id, {"type": "error", "error": f"register_agent_obs: {e}"})
 
         # Register UI tools (idempotent per agent instance)
-        try:
+_register_ui_tools(agent, self, self.store, self.global_vars)
             _register_ui_tools(agent, self, self.store)
         except Exception:
             logger.exception("[bridge] register_ui_tools failed (non-fatal)")
@@ -264,7 +265,7 @@ class StreamBridge:
 # UI Tools on the agent (tasks 20, 21, 22)
 # ============================================================================
 
-def _register_ui_tools(agent, bridge: "StreamBridge", store) -> None:
+def _register_ui_tools(agent, bridge: "StreamBridge", store, global_vars=None) -> None:
     """Register create_widget / update_widget / close_widget / set_var / get_var
     / define_template on the agent. Idempotent — flag-guarded per instance.
 
@@ -323,34 +324,27 @@ def _register_ui_tools(agent, bridge: "StreamBridge", store) -> None:
         return True
 
     async def set_var(scope: str, key: str, value) -> bool:
-        """Set a variable. scope is 'agent' (per chat) or 'global' (cross-chat).
+        """Set a variable. scope is 'agent' or 'global'. Both are server-wide.
         Broadcast to all widgets so they can re-render.
         """
         chat_id = getattr(agent, "active_session", None)
         if not chat_id:
             return False
-        scope_key = "vars_" + ("agent" if scope == "agent" else "global")
-        meta = store.get_meta(chat_id)
-        if meta:
-            current = dict(meta.ui.get(scope_key, {}))
-            current[key] = value
-            store.update_meta(chat_id, ui={scope_key: current})
+        # Persist to global store (not per-chat)
+        if global_vars is not None:
+            global_vars.set(scope, key, value)
         await bridge._emit(chat_id, {
             "type": "var_set", "scope": scope, "key": key, "value": value,
         })
         return True
+        })
+        return True
 
     async def get_var(scope: str, key: str):
-        """Read a variable. scope is 'agent' or 'global'."""
-        chat_id = getattr(agent, "active_session", None)
-        if not chat_id:
-            return None
-        scope_key = "vars_" + ("agent" if scope == "agent" else "global")
-        meta = store.get_meta(chat_id)
-        if not meta:
-            return None
-        return meta.ui.get(scope_key, {}).get(key)
-
+        """Read a variable. scope is 'agent' or 'global'. Reads from global store."""
+        if global_vars is not None:
+            return global_vars.get(scope, key)
+        return None
     async def define_template(name: str, adapter: str, schema: dict,
                                render_js: str | None = None) -> str:
         """Register a custom widget template.

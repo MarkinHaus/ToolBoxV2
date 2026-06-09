@@ -167,7 +167,8 @@ async def render_user_dashboard(app: App, request: RequestData):
             or getattr(current_user, "name", "Benutzer"),
             "email": getattr(current_user, "email", ""),
             "level": getattr(current_user, "level", 1),
-            "uid": getattr(current_user, "uid", None)
+            "uid": getattr(current_user, "user_id", None)
+            or getattr(current_user, "uid", None)
             or getattr(current_user, "cloudm_user_id", ""),
             "settings": getattr(current_user, "settings", {}) or {},
             "mod_data": getattr(current_user, "mod_data", {}) or {},
@@ -248,7 +249,8 @@ async def render_admin_dashboard(app: App, request: RequestData):
             "name": username,
             "email": getattr(current_user, "email", ""),
             "level": user_level,
-            "uid": getattr(current_user, "uid", None)
+            "uid": getattr(current_user, "user_id", None)
+            or getattr(current_user, "uid", None)
             or getattr(current_user, "cloudm_user_id", ""),
             "settings": getattr(current_user, "settings", {}) or {},
         }
@@ -584,15 +586,15 @@ async def _handle_update_setting(app: App, user, payload: dict):
 
 async def _handle_request_magic_link(app: App, user):
     """Magic Link anfordern"""
-    username = getattr(user, "username", None) or getattr(user, "name", None)
+    email = getattr(user, "email", None)
 
-    if not username:
-        return Result.default_user_error(info="Benutzername nicht gefunden")
+    if not email or "@" not in email:
+        return Result.default_user_error(info="E-Mail-Adresse nicht gefunden")
 
     try:
-        from toolboxv2.mods.CloudM.auth.AuthHelpers import get_magic_link_email
+        from toolboxv2.mods.CloudM.auth.api_magic_link import request_magic_link
 
-        result = await get_magic_link_email(app, username=username)
+        result = await request_magic_link(app, email=email)
 
         if not result.as_result().is_error():
             return Result.ok(info="Magic Link wurde an Ihre E-Mail gesendet")

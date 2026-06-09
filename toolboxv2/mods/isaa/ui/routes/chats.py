@@ -10,8 +10,11 @@ from typing import Any
 
 def register(app, ctx):
     """ctx provides: store, bridge, isaa."""
+def register(app, ctx):
+    """ctx provides: store, bridge, isaa, global_vars."""
     store = ctx["store"]
     bridge = ctx["bridge"]
+    global_vars = ctx.get("global_vars")
     isaa = ctx["isaa"]
 
     @app.get("/api/chats")
@@ -80,8 +83,17 @@ def register(app, ctx):
         # the ObservabilityLayer cleans stale live_*.jsonl on next begin_run.
         store.update_meta(chat_id, run_id=None)
         return {"ok": True, "new_last_seq": new_last}
+return {"ok": True, "new_last_seq": new_last}
+
+    # --- Global variables endpoint ---
+    @app.get("/api/global-vars")
+    async def get_global_vars():
+        if global_vars is None:
+            return {"vars_agent": {}, "vars_global": {}}
+        return global_vars.get_all()
 
 
+def _default_agent_name(isaa) -> str:
 def _default_agent_name(isaa) -> str:
     """Pick an existing agent or fall back to 'self'."""
     try:

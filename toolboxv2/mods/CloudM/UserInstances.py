@@ -385,18 +385,35 @@ def close_cli_session(cli_session_id: str) -> str:
 
 @e
 def get_user_cli_sessions(uid: str) -> List[dict]:
-    """Get all CLI sessions for a user"""
+    """Get all CLI sessions for a user (in-memory + DB for cross-process visibility)"""
     if uid is None:
         return []
 
-    active_sessions = [
-        session_data
+    sessions: Dict[str, dict] = {
+        session_data.get('cli_session_id', session_id): session_data
         for session_id, session_data in UserInstances().cli_sessions.items()
         if session_data.get('uid') == uid
-    ]
+    }
 
-    return active_sessions
+    # DB fallback: sessions registered by other processes (CLI vs. web worker)
+    db_res = app.run_any('DB', 'get', query=f"CLI::Session::{uid}::*", get_results=True)
+    if not db_res.is_error() and db_res.is_data():
+        raw = db_res.get()
+        entries = raw if isinstance(raw, list) else [raw]
+        for entry in entries:
+            if isinstance(entry, bytes):
+                entry = entry.decode()
+            if isinstance(entry, str):
+                try:
+                    entry = json.loads(entry)
+                except Exception:
+                    continue
+            if isinstance(entry, dict) and entry.get('uid') == uid:
+                sid = entry.get('cli_session_id')
+                if sid and sid not in sessions:
+                    sessions[sid] = entry
 
+    return list(sessions.values())
 
 @e
 def get_cli_session_by_clerk_id(cloudm_user_id: str) -> Optional[dict]:

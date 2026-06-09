@@ -38,7 +38,7 @@ from toolboxv2.mods.isaa.base.audio_io.omni import (
 )
 from toolboxv2.mods.isaa.base.audio_io.audio_recorder import LocalMicRecorder
 from toolboxv2.mods.isaa.base.audio_io.audioIo import LocalPlayer, NullPlayer, StreamingLocalPlayer
-from utils.extras.blobs import BlobFile
+from toolboxv2.utils.extras.blobs import BlobFile
 
 NAME = "isaa_voice"
 ICON = "mic"

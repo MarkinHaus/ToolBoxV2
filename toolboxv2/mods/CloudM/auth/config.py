@@ -69,4 +69,7 @@ def get_passkey_config() -> dict:
         "origin": os.getenv("PASSKEY_ORIGIN", get_base_url()),
     }
 
+# =================== Local Admin (zero-friction local root) ===================
 
+LOCAL_ADMIN_EMAIL = "local-admin@toolbox.local"
+LOCAL_ADMIN_USERNAME = "root"

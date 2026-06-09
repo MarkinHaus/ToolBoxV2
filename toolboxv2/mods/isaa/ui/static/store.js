@@ -45,7 +45,11 @@
     // ui per chat
     expandedSteps: new Set(),
     l2Steps: new Set(),
-    ioOpen: new Set(),   // `${stepId}::${toolId}` — expanded tool i/o
+ioOpen: new Set(),   // `${stepId}::${toolId}` — expanded tool i/o
+    rawOpen: new Set(),  // stepId — expanded raw frames
+
+    // global widget variables (server-wide, not per chat)
+    globalVars: { vars_agent: {}, vars_global: {} },
     rawOpen: new Set(),  // stepId — expanded raw frames
 
     // ----- emit/on -----

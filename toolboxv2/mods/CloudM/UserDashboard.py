@@ -2723,7 +2723,7 @@ async def get_my_active_instances(app: App, request: RequestData):
     if not current_user:
         return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
 
-    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
+    uid = getattr(current_user, 'user_id', None) or getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
     if not uid:
         return Result.default_user_error(info="Benutzer-ID nicht gefunden")
 
@@ -2765,7 +2765,7 @@ async def add_module_to_instance(app: App, request: RequestData, data: dict=None
     if not module_name:
         return Result.default_user_error(info="Modulname erforderlich")
 
-    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
+    uid = getattr(current_user, 'user_id', None) or getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
 
     try:
         instance = get_user_instance_internal(uid, hydrate=False)
@@ -2804,7 +2804,7 @@ async def remove_module_from_instance(app: App, request: RequestData, data: dict
     if not module_name:
         return Result.default_user_error(info="Modulname erforderlich")
 
-    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
+    uid = getattr(current_user, 'user_id', None) or getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
 
     try:
         instance = get_user_instance_internal(uid, hydrate=False)
@@ -2838,7 +2838,7 @@ async def add_module_to_saved(app: App, request: RequestData, data: dict=None, m
     if not module_name:
         return Result.default_user_error(info="Modulname erforderlich")
 
-    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
+    uid = getattr(current_user, 'user_id', None) or getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
 
     try:
         instance = get_user_instance_internal(uid, hydrate=False)
@@ -2879,7 +2879,7 @@ async def remove_module_from_saved(app: App, request: RequestData, data: dict):
     if not module_name:
         return Result.default_user_error(info="Modulname erforderlich")
 
-    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
+    uid = getattr(current_user, 'user_id', None) or getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
 
     try:
         instance = get_user_instance_internal(uid, hydrate=False)
@@ -2928,11 +2928,11 @@ async def request_my_magic_link(app: App, request: RequestData):
     if not current_user:
         return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
 
-    username = getattr(current_user, 'username', None) or getattr(current_user, 'name', None)
-    if not username:
-        return Result.default_user_error(info="Benutzername nicht gefunden")
+    email = getattr(current_user, 'email', None)
+    if not email or "@" not in email:
+        return Result.default_user_error(info="E-Mail-Adresse nicht gefunden")
 
-    magic_link_result = await request_magic_link(app, username=username)
+    magic_link_result = await request_magic_link(app, email=email)
 
     if not magic_link_result.as_result().is_error():
         email = getattr(current_user, 'email', 'Ihre E-Mail')
@@ -2979,7 +2979,7 @@ async def close_cli_session(app: App, request: RequestData, data: dict):
 
     from .UserInstances import close_cli_session as close_cli_session_internal, UserInstances
 
-    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
+    uid = getattr(current_user, 'user_id', None) or getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
 
     # Überprüfen ob Sitzung dem Benutzer gehört
     if cli_session_id in UserInstances().cli_sessions:
@@ -3025,7 +3025,7 @@ async def list_user_files(app: App, request: RequestData, data: dict = None):
     if not current_user:
         return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
 
-    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
+    uid = getattr(current_user, 'user_id', None) or getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
     if not uid:
         return Result.default_user_error(info="Benutzer-ID nicht gefunden")
 
@@ -3069,7 +3069,7 @@ async def upload_user_file(app: App, request: RequestData, data: dict = None, **
     if not current_user:
         return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
 
-    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
+    uid = getattr(current_user, 'user_id', None) or getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
     if not uid:
         return Result.default_user_error(info="Benutzer-ID nicht gefunden")
 
@@ -3125,7 +3125,7 @@ async def download_user_file(app: App, request: RequestData, data: dict = None, 
     if data is None:
         data = kwargs
 
-    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
+    uid = getattr(current_user, 'user_id', None) or getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
     if not uid:
         return Result.default_user_error(info="Benutzer-ID nicht gefunden")
 
@@ -3196,7 +3196,7 @@ async def delete_user_file(app: App, request: RequestData, data: dict = None, pa
     if not current_user:
         return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
 
-    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
+    uid = getattr(current_user, 'user_id', None) or getattr(current_user, 'uid', None) or getattr(current_user, 'cloudm_user_id', None)
     if not uid:
         return Result.default_user_error(info="Benutzer-ID nicht gefunden")
 

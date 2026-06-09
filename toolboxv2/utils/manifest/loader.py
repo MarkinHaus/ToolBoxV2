@@ -165,7 +165,7 @@ class ManifestLoader:
         """
         manifest = TBManifest(
             manifest_version="1.0.0",
-            app={"name": "ToolBoxV2", "environment": "development"},
+            app={"name": "ToolBoxV2", "environment": "development", "profile": "local"},
             mods={
                 "installed": {"CloudM": "^0.1.0", "DB": "^0.0.3"},
                 "init_modules": ["CloudM", "DB"],
