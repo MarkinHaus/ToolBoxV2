@@ -570,12 +570,11 @@
   const varCache = { agent: {}, global: {} };
 
   // Seed parent var cache from this chat's persisted meta.ui (read path for B).
-function seedVarCache() {
-    // Read from server-wide globalVars (not per-chat meta.ui)
-    const gv = Store.globalVars || {};
-    const a = gv.vars_agent || {};
+  function seedVarCache() {
+    const ui = (Store.chatMeta && Store.chatMeta.ui) || {};
+    const a = ui.vars_agent || {};
     for (const k in a) if (!(k in varCache.agent)) varCache.agent[k] = a[k];
-    const g = gv.vars_global || {};
+    const g = ui.vars_global || {};
     for (const k in g) if (!(k in varCache.global)) varCache.global[k] = g[k];
   }
 
@@ -602,16 +601,10 @@ function seedVarCache() {
     if (frame.type === 'template_register') {
       registerTemplate(frame.template_id, frame.adapter, frame.render_js, frame.name, frame.schema);
       return true;
-if (frame.type === var_set) {
-      const scope = frame.scope === global ? global : agent;
+    }
+    if (frame.type === 'var_set') {
+      const scope = frame.scope === 'global' ? 'global' : 'agent';
       const prev = varCache[scope][frame.key];
-      const changed = JSON.stringify(prev) !== JSON.stringify(frame.value);
-      varCache[scope][frame.key] = frame.value;
-      // Mirror into global Store so other chats / re-opens see latest values
-      const storeKey = scope === global ? vars_global : vars_agent;
-      if (!Store.globalVars) Store.globalVars = { vars_agent: {}, vars_global: {} };
-      Store.globalVars[storeKey] = Store.globalVars[storeKey] || {};
-      Store.globalVars[storeKey][frame.key] = frame.value;
       const changed = JSON.stringify(prev) !== JSON.stringify(frame.value);
       varCache[scope][frame.key] = frame.value;
       for (const [wid, w] of widgets) {

@@ -318,11 +318,15 @@ class ServiceManager:
             # Save new args for future restarts
             self.configure_service(name, args=args)
 
-        # Build command - use tb CLI for actual start
-        if name != "custom":
-            cmd = [sys.executable, "-m", "toolboxv2", name] + (args or [])
-        else:
+        # Build command - use tb CLI for actual start.
+        # The built-in "custom" slot and any config-flagged custom service run
+        # `tb <args>` (the user defines args); registered services run `tb <name>`.
+        cfg = self.load_config().get("services", {}).get(name, {})
+        is_custom = name == "custom" or cfg.get("custom", False)
+        if is_custom:
             cmd = [sys.executable, "-m", "toolboxv2"] + (args or [])
+        else:
+            cmd = [sys.executable, "-m", "toolboxv2", name] + (args or [])
 
         if IS_WINDOWS:
             # Windows: CREATE_NO_WINDOW für headless
@@ -465,8 +469,15 @@ class ServiceManager:
 
     def configure_service(self, name: str, auto_start: Optional[bool] = None,
                           auto_restart: Optional[bool] = None,
-                          args: Optional[List[str]] = None) -> None:
-        """Konfiguriere einen Service"""
+                          args: Optional[List[str]] = None,
+                          custom: Optional[bool] = None,
+                          description: Optional[str] = None) -> None:
+        """Konfiguriere einen Service.
+
+        custom=True marks a user-defined service: it is not in ServiceRegistry
+        and is started as `tb <args>` (python -m toolboxv2 <args>), with the
+        user defining the args. description is stored for display only.
+        """
         config = self.load_config()
         if "services" not in config:
             config["services"] = {}
@@ -479,6 +490,10 @@ class ServiceManager:
             config["services"][name]["auto_restart"] = auto_restart
         if args is not None:
             config["services"][name]["args"] = args
+        if custom is not None:
+            config["services"][name]["custom"] = custom
+        if description is not None:
+            config["services"][name]["description"] = description
 
         self.save_config(config)
 

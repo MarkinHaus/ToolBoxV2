@@ -153,7 +153,7 @@ class App(AppType, metaclass=Singleton):
         from toolboxv2.utils.manifest.loader import ManifestLoader
         loader = ManifestLoader(self.start_dir)
         if not loader.exists():
-            self.print("No manifest found run tb manifest init / current using defaults")
+            self.print("No manifest found — creating minimal default (profile: local)")
 
         try:
             manifest = loader.load()

@@ -89,7 +89,39 @@ class Tools(MainTool, FileHandler):
         self.load_file_handler()
         from toolboxv2.mods.Minu.examples import initialize
         initialize(self.app)
-        await self.app.session.login()
+
+        # Zero-friction local root: ensure the anonymous local admin exists and
+        # is reflected in app.session — local contexts only, never on servers.
+        is_remote = bool(os.environ.get("TOOLBOXV2_REMOTE_BASE"))
+        profile = getattr(getattr(self.app.manifest, "app", None), "profile", None)
+        is_server = profile is not None and profile.value == "server"
+
+        if not is_remote and not is_server:
+            try:
+                from .auth.local_admin import ensure_local_admin
+                user = await ensure_local_admin(self.app)
+                self._apply_local_admin_to_session(user)
+            except Exception as e:
+                self.logger.warning(f"local_admin init skipped: {e}")
+        else:
+            # Remote/server: keep the existing remote-login behaviour.
+            await self.app.session.login()
+
+    def _apply_local_admin_to_session(self, user) -> None:
+        """Mark app.session as the local root without any remote round-trip.
+
+        The local session never talks to a remote validate_session endpoint;
+        it is authoritative on the owner's machine (level -1). Tokens stay
+        remote-only — none are minted or stored here.
+        """
+        s = self.app.session
+        s.username = user.username
+        s.user_id = user.user_id
+        s.valid = True
+        # No remote base for a purely local session — prevents accidental
+        # remote validate_session calls on later login() attempts.
+        if not os.environ.get("TOOLBOXV2_REMOTE_BASE"):
+            s.base = None
 
     def s_version(self):
         return self.version

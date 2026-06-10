@@ -75,17 +75,6 @@ def _all_user_facing_mods() -> List[Dict[str, Any]]:
     return out
 
 
-async def _has_any_user() -> bool:
-    try:
-        tb_app = get_app("local_cli.has_user")
-        result = tb_app.run_any(("CloudM.Auth", "list_users"), get_results=True)
-        if hasattr(result, "is_error") and result.is_error():
-            return False
-        data = result.get() if hasattr(result, "get") else result
-        return bool(data) and len(data) > 0
-    except Exception:
-        return False
-
 
 def _is_remote() -> bool:
     return bool(os.environ.get("TOOLBOXV2_REMOTE_BASE"))
@@ -94,46 +83,6 @@ def _is_remote() -> bool:
 def _err_text(result) -> str:
     info = getattr(result, "info", None)
     return getattr(info, "help_text", "invalid") if info else "invalid"
-
-
-async def _local_auth(tb_app, choice: str) -> Optional[dict]:
-    """In-process auth (no remote). Returns auth payload or None."""
-    if choice == "token":
-        token = _global_token[0] or _prompt("Token").strip()
-        if not token:
-            print_status("Token required", "error"); return None
-        result = await tb_app.a_run_any(("CloudM.Auth", "verify_magic_link"),
-                                        token=token, get_results=True)
-    elif choice == "magic":
-        email = _prompt("Email").strip()
-        if "@" not in email:
-            print_status("Valid email required", "error"); return None
-        req = await tb_app.a_run_any(("CloudM.Auth", "request_magic_link"),
-                                     email=email, get_results=True)
-        if hasattr(req, "is_error") and req.is_error():
-            print_status(f"Could not send: {_err_text(req)}", "error"); return None
-        print_status("Magic link sent — paste the token from the email.", "info")
-        token = _prompt("Token").strip()
-        if not token:
-            return None
-        result = await tb_app.a_run_any(("CloudM.Auth", "verify_magic_link"),
-                                        token=token, get_results=True)
-    elif choice == "invite":
-        code = _prompt("Device invite code (6 digits)").strip().replace(" ", "").replace("-", "")
-        if not code:
-            return None
-        result = await tb_app.a_run_any(("CloudM.Auth", "verify_device_invite"),
-                                        code=code, get_results=True)
-    else:
-        return None
-
-    if hasattr(result, "is_error") and result.is_error():
-        print_status(f"Auth failed: {_err_text(result)}", "error"); return None
-    payload = result.get() if hasattr(result, "get") else result
-    if isinstance(payload, dict) and payload.get("authenticated"):
-        return payload
-    print_status("Authentication failed", "error"); return None
-
 
 async def _remote_auth(tb_app, choice: str) -> Optional[dict]:
     """Auth via the aiohttp Session (session.py) against TOOLBOXV2_REMOTE_BASE."""
@@ -291,7 +240,7 @@ async def login_screen(sess: CLISession) -> bool:
             payload["username"] = s.username or payload.get("username", "")
         return await _finalize(sess, payload, tb_app, remote=True)
 
-    payload = await (_remote_auth(tb_app, choice) if remote else _local_auth(tb_app, choice))
+    payload = await _remote_auth(tb_app, choice)
     return await _finalize(sess, payload, tb_app, remote)
 
 # =============================================================================
@@ -319,6 +268,48 @@ def _list_services() -> List[Dict[str, Any]]:
     except Exception as e:
         print_status(f"Service list failed: {e}", "error")
         return []
+
+async def _add_custom_service():
+    """Register a named custom service where the user defines the tb command.
+
+    Each custom service has its own name (own PID + own config entry), so
+    multiple can coexist. The command is whatever the user types after 'tb'
+    (python -m toolboxv2 <args>). Persisted via configure_service(custom=True).
+    """
+    name = _prompt("Service name (unique)").strip()
+    if not name:
+        print_status("Name required", "error"); return
+    if name in ("custom", "workers", "db", "gui", "api"):
+        print_status(f"'{name}' is reserved — pick another name", "error"); return
+
+    from .service_manager import ServiceManager
+    mgr = ServiceManager()
+    if name in (mgr.load_config().get("services", {}) or {}):
+        print_status(f"Service '{name}' already exists", "error"); return
+
+    c_print(f"  {Colors.DIM}You define the tb command. Enter the part after 'tb' — "
+            f"e.g. 'run my-flow' or 'api start --port 9000'.{Colors.RESET}")
+    raw = _prompt("tb").strip()
+    if not raw:
+        print_status("Command required", "error"); return
+    args = raw.split()
+    auto_raw = _prompt("Auto-start on boot? [y/N]").strip().lower()
+    auto_start = auto_raw in ("y", "yes", "j", "ja")
+
+    try:
+        mgr.configure_service(
+            name, args=args, auto_start=auto_start,
+            custom=True, description=f"tb {raw}",
+        )
+        print_status(f"Custom service '{name}' added: tb {raw}", "success")
+        result = mgr.start_service(name, args=args)
+        if result.success:
+            print_status(f"Started (pid {result.pid})", "success")
+        else:
+            print_status(f"Not started: {result.error}", "error")
+    except Exception as e:
+        print_status(f"Could not add service: {e}", "error")
+    await asyncio.sleep(0.8)
 
 
 async def services_screen(sess: CLISession):
@@ -356,10 +347,14 @@ async def services_screen(sess: CLISession):
                     c_print(f"       {Colors.DIM}{svc['description']}{Colors.RESET}")
 
         print_box_footer()
-        c_print(f"  {Colors.DIM}Enter a number to act on a service, or 'b' to go back.{Colors.RESET}")
+        c_print(
+            f"  {Colors.DIM}Enter a number to act on a service · 'a' add custom tb command · 'b' back.{Colors.RESET}")
         choice = _prompt("Service #").strip().lower()
         if choice in ("b", "back", "q"):
             return
+        if choice in ("a", "add", "+"):
+            await _add_custom_service()
+            continue
         try:
             sel = flat[int(choice) - 1]
         except (ValueError, IndexError):
@@ -465,12 +460,12 @@ async def root_menu(sess: CLISession):
         print_box_content(f"{'remote' if _is_remote() else 'local'} · provider: {sess.provider or 'magic_link'}", "info")
         print_box_footer()
         choice = await menu_select_async([
-            ("apps",     "Apps"),
-            ("services", "Services"),
-            ("web",      "Open web UI (browser)"),
+            ("apps", "Apps"),
+            ("services", "Services  (start/stop · auto-start · add custom tb command)"),
+            ("web", "Open web UI (browser)"),
             ("passkey_reg", "Register passkey (browser)"),
-            ("logout",   "Logout"),
-            ("quit",     "Quit"),
+            ("logout", "Logout"),
+            ("quit", "Quit"),
         ], hint="\u2191/\u2193 or W/S \u00b7 Enter \u00b7 q to quit")
 
         if choice == "apps":
@@ -490,6 +485,7 @@ async def root_menu(sess: CLISession):
             await asyncio.sleep(0.8)
         elif choice == "web":
             import webbrowser
+            # TODO encur local ui is running and get the current port- rework local ui
             port = os.getenv("TB_HTTP_PORT", "8080")
             webbrowser.open(f"http://127.0.0.1:{port}/")
             print_status("Opened in browser", "success")
@@ -527,29 +523,35 @@ async def login():
             continue
         else:
             break
+
 async def main():
     sess = CLISession()
     while True:
         if not sess.is_auth():
             app = get_app("local_cli.login")
             os.system("cls" if sys.platform == "win32" else "clear")
-            status = False
-            ok = False
-            if not app.session.valid:
-                status = await app.session.login()
-            if status:
-                sess.username = app.session.username
-                sess.access_token = app.session.access_token
-                sess.refresh_token = app.session.refresh_token
-                sess.user_id = app.session.user_id
-                sess.provider = "app.session"
+
+            # Local profile (User A): sign in straight as the local root admin.
+            # No token, no menu — ensure_local_admin already ran at CloudM start
+            # and mirrored the user into app.session (see CloudM.module).
+            if not _is_remote():
+                from toolboxv2.mods.CloudM.auth.local_admin import ensure_local_admin
+                from toolboxv2.mods.CloudM.auth.jwt_tokens import _generate_tokens
+                user = await ensure_local_admin(app)
+                tokens = _generate_tokens(user, "local_admin")
+                sess.username = user.username
+                sess.user_id = user.user_id
+                sess.access_token = tokens["access_token"]
+                sess.refresh_token = tokens["refresh_token"]
+                sess.provider = "local_admin"
             else:
                 ok = await login_screen(sess)
-            if not ok:
-                _prompt("Login failed (press enter)", False)
-                os.system("cls" if sys.platform == "win32" else "clear")
-                continue
+                if not ok:
+                    _prompt("Login failed (press enter)", False)
+                    os.system("cls" if sys.platform == "win32" else "clear")
+                    continue
         await root_menu(sess)
+
 _async_main = main
 
 if __name__ == "__main__":

@@ -1615,6 +1615,27 @@ class HTTPWorker:
             app=self._app,
         )
 
+        # Loopback trust: local installs (no remote base, non-production,
+        # non-server profile) auto-authenticate loopback requests as the
+        # local root admin — Tauri tray/HUD and the local web UI need no token.
+        if (
+            not os.environ.get("TOOLBOXV2_REMOTE_BASE")
+            and self.config.environment != "production"
+        ):
+            profile = getattr(getattr(getattr(self._app, "manifest", None), "app", None), "profile", None)
+            if profile is None or profile.value != "server":
+                try:
+                    import asyncio
+                    from toolboxv2.mods.CloudM.auth.local_admin import ensure_local_admin
+                    user = asyncio.new_event_loop().run_until_complete(
+                        ensure_local_admin(self._app)
+                    )
+                    self._session_manager.enable_local_trust(user.to_dict())
+                except RuntimeError as e:
+                    logger.warning(f"Loopback trust not enabled (event loop busy): {e}")
+                except Exception as e:
+                    logger.warning(f"Loopback trust not enabled: {e}")
+
     def _init_access_controller(self):
         """Initialize access controller."""
         self._access_controller = AccessController(self.config)

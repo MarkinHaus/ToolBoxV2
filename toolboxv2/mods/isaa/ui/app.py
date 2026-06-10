@@ -18,9 +18,7 @@ from typing import Any
 
 from toolboxv2.utils.workers.fast_tb import FastTB
 from toolboxv2.utils.workers.upload_manager import get_upload_manager
-from .chat_store import ChatStore
-from .global_var_store import GlobalVarStore
-from .stream_bridge import StreamBridge, BridgeBroadcaster
+
 from .chat_store import ChatStore
 from .stream_bridge import StreamBridge, BridgeBroadcaster
 from .routes import chats as chats_routes
@@ -81,10 +79,9 @@ class ChatWSHandler:
         self._contexts: dict[str, Any] = {}
 
     def attach(self, bridge: StreamBridge, store: ChatStore) -> None:
-def attach(self, bridge: StreamBridge, store: ChatStore, global_vars: GlobalVarStore) -> None:
         self.bridge = bridge
         self.store = store
-        self.global_vars = global_vars
+
     async def on_connect(self, ctx) -> None:
         self._contexts[ctx.conn_id] = ctx
         logger.info("[ws] connect %s", ctx.conn_id)
@@ -160,9 +157,10 @@ def attach(self, bridge: StreamBridge, store: ChatStore, global_vars: GlobalVarS
                 "type": "rollback_done",
                 "new_last_seq": new_last,
             })
-elif op == "widget_action":
+
+        elif op == "widget_action":
             # Widget emitted an action back to us. Three sub-actions:
-            #   - "set_var": persist globally + broadcast (no agent involvement needed)
+            #   - "set_var": persist + broadcast (no agent involvement needed)
             #   - others: persist as event frame; the agent can pick it up next turn
             widget_id = payload.get("widget_id", "")
             action = payload.get("action", "")
@@ -173,11 +171,11 @@ elif op == "widget_action":
                 value = (data or {}).get("value")
                 if not key:
                     return
-                # Persist to GLOBAL store (not per-chat)
-                self.global_vars.set(scope, key, value)
-                await self.broadcast(chat_id, {
-                    "type": "var_set", "scope": scope, "key": key, "value": value,
-                })
+                scope_key = "vars_" + ("agent" if scope == "agent" else "global")
+                meta = self.store.get_meta(chat_id) if self.store else None
+                if meta:
+                    current = dict(meta.ui.get(scope_key, {}))
+                    current[key] = value
                     self.store.update_meta(chat_id, ui={scope_key: current})
                 await self.broadcast(chat_id, {
                     "type": "var_set", "scope": scope, "key": key, "value": value,
@@ -226,20 +224,14 @@ def build_app(tb_app=None) -> FastTB:
     store = ChatStore(ui_root)
     uploads = get_upload_manager(tb_app)
 
-# Storage paths
-    ui_root = Path(str(tb_app.data_dir)) / "isaa_ui" / "chats"
-    store = ChatStore(ui_root)
-    global_vars = GlobalVarStore(ui_root)
-    uploads = get_upload_manager(tb_app)
-
     # WS handler (need it now so bridge can broadcast through it)
     ws_handler = ChatWSHandler()
 
     async def _broadcast(chat_id: str, frame: dict) -> None:
         await ws_handler.broadcast(chat_id, frame)
 
-bridge = StreamBridge(isaa, store, BridgeBroadcaster(send=_broadcast), global_vars)
-    ws_handler.attach(bridge, store, global_vars)
+    bridge = StreamBridge(isaa, store, BridgeBroadcaster(send=_broadcast))
+    ws_handler.attach(bridge, store)
 
     app = FastTB(title="ISAA UI", app_instance=tb_app)
     app.inject_style = False
@@ -247,13 +239,13 @@ bridge = StreamBridge(isaa, store, BridgeBroadcaster(send=_broadcast), global_va
     static_dir = Path(__file__).parent / "static"
     app.mount_static("/static", str(static_dir))
 
-ctx = {
+    ctx = {
         "isaa": isaa,
         "store": store,
         "bridge": bridge,
         "uploads": uploads,
-        "global_vars": global_vars,
     }
+
     # Routes
     chats_routes.register(app, ctx)
     vfs_routes.register(app, ctx)
