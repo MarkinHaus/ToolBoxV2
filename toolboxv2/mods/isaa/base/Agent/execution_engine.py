@@ -1685,6 +1685,10 @@ BEISPIELE:
                 try:
                     app = get_app()
                     _nm = getattr(self._narrator, "_mini", None)
+                    try:
+                        _main_loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        _main_loop = None
                     app.run_bg_task_advanced(
                         self._background_learning_task,
                         query=query,
@@ -1700,6 +1704,7 @@ BEISPIELE:
                             "repeat": bool(_nm and _nm.repeat),
                             "plan_summary": (_nm.plan_summary if _nm else ""),
                         },
+                        main_loop=_main_loop,
                     )
                 except Exception as e:
                     self.live.log(
@@ -3248,8 +3253,29 @@ BEISPIELE:
         run_id: str = "",
         vfs=None,
         narrator_snapshot: dict | None = None,
+        main_loop=None,
     ):
-        """Runs learning and recording in background to not block the UI"""
+        """Runs learning and recording in background to not block the UI.
+
+        Runs inside run_bg_task_advanced → own thread + own event loop.
+        LLM calls MUST NOT execute in this loop: litellm caches its aiohttp
+        ClientSession process-wide (owned by the main loop); running/closing
+        it here raises 'attached to a different loop' on loop teardown.
+        All LLM coroutines are therefore dispatched back to main_loop.
+        """
+        llm_func = self.agent.a_run_llm_completion
+        if main_loop is not None and main_loop.is_running():
+            try:
+                _own_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                _own_loop = None
+            if _own_loop is not main_loop:
+                async def _llm_on_main_loop(*a, **kw):
+                    cfut = asyncio.run_coroutine_threadsafe(
+                        self.agent.a_run_llm_completion(*a, **kw), main_loop
+                    )
+                    return await asyncio.wrap_future(cfut)
+                llm_func = _llm_on_main_loop
         try:
             # 1. Record usage stats (Fast)
             self.skills_manager.record_matched_skills_usage(
@@ -3266,7 +3292,7 @@ BEISPIELE:
                     tools_used=tools_used,
                     final_answer=final_response,
                     success=success,
-                    llm_completion_func=self.agent.a_run_llm_completion,
+                    llm_completion_func=llm_func,
                 )
             # 3-5. Task-Map aggregation: classify (fast model) + VFS task map
             #      Quelle: obs RunRecord (strukturiert) — kein Log-Regex.
@@ -3280,10 +3306,12 @@ BEISPIELE:
                         from toolboxv2.mods.isaa.base.dreamer.run_aggregator import RunAggregator
                         self._run_aggregator = RunAggregator(
                             vfs=vfs,
-                            llm_completion_func=self.agent.a_run_llm_completion,
+                            llm_completion_func=llm_func,
                         )
                     else:
-                        self._run_aggregator.vfs = vfs  # session may have changed
+                        # session/loop may have changed since last bg task
+                        self._run_aggregator.vfs = vfs
+                        self._run_aggregator.llm = llm_func
                     await self._run_aggregator.aggregate(
                         run_record,
                         query=query,
@@ -5605,4 +5633,3 @@ if __name__ == "__main__":
             )
         )
     )
-

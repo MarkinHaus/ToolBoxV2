@@ -2094,6 +2094,37 @@ class FlowAgent:
             last_run_ts=None,  # TODO: read from VFS /global/.memory/dreamer/last_run
         )
         records = harvest_from_vfs(vfs, "/global/.memory/logs", cutoff)
+        if not records:
+            # Alte Logs liegen meist VOR dem 72h-Default-Cutoff (es entstehen
+            # keine neuen .md mehr) — einmalig ohne Cutoff laden.
+            records = harvest_from_vfs(vfs, "/global/.memory/logs", None)
+
+        # Einmalige Migration: alte .md-Logs → Task Map (letzter parse_log-Einsatz).
+        # Fuzzy-only Klassifizierung (kein LLM): billig, Unklares landet in 'new'.
+        _mig_marker = "/global/.memory/taskmap/.migrated"
+        if records and not vfs.read(_mig_marker).get("success"):
+            try:
+                from toolboxv2.mods.isaa.base.dreamer.run_aggregator import RunAggregator
+                _mig_agg = RunAggregator(vfs=vfs, llm_completion_func=None)
+                _mig_n = 0
+                for _rec in records:
+                    _rr = {
+                        "run_id": _rec.run_id, "success": _rec.success,
+                        "duration_s": 0.0, "total_iterations": 0,
+                        "files_modified": [], "skills_matched": [],
+                        "parent_run_id": "", "sub_agent_runs": [],
+                        "steps": [{"tool_calls": [
+                            {"name": _t, "duration_s": 0.0, "status": "ok"}
+                            for _t in _rec.tools_used
+                        ], "is_resume_point": False, "user_provided_content": ""}],
+                    }
+                    await _mig_agg.aggregate(_rr, query=_rec.query)
+                    _mig_n += 1
+                vfs.write(_mig_marker, json.dumps(
+                    {"migrated": _mig_n, "ts": time.time()}))
+            except Exception as _mig_err:
+                logging.getLogger("isaa.dreamer_v3").warning(
+                    f"taskmap migration failed: {_mig_err}")
 
         # Snapshots
         sm = self.session_manager.skills_manager if hasattr(self.session_manager, 'skills_manager') else None
@@ -2355,7 +2386,7 @@ class FlowAgent:
             "dream_extract_memories": lambda memories=None, **kw:
             handler.handle_extract_memories(memories or []),
             "dream_persist_checkpoint": lambda **kw:
-            handler.handle_persist_checkpoint(None),  # VFS injected at call time
+            handler.handle_persist_checkpoint(handler._taskmap_vfs()),
         }
 
         # Keep handler reachable — dream() reads handler._report for the

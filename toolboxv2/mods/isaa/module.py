@@ -2185,7 +2185,7 @@ class Tools(MainTool):
     ):
         if mini_task is None:
             return None
-        self.print(f"Running formatted mini task, {mini_task[15:]}... volume {len(mini_task)} {user_task[34:]}...")
+        self.print(f"Running formatted mini task")#  {mini_task[15:]}... volume {len(mini_task)} {user_task[34:]}...")
 
         agent = await self.get_agent(agent_name)
 

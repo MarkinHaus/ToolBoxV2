@@ -71,6 +71,14 @@ from toolboxv2.mods.isaa.base.audio_io.audio_live import (
     LiveModeConfig, EndMode,
     SpeakerProfileStore,
 )
+from toolboxv2.mods.isaa.base.audio_io.omni import (
+    OmniSession, JobManager, VoiceModeConfig,
+    make_agent_tools, make_vfs_peek_tools,
+    StubOmniBackend, BlobStateStore, make_world_model_tools, OMNI_SYSTEM_INSTRUCTION,
+)
+from toolboxv2.mods.isaa.base.audio_io.audio_recorder import LocalMicRecorder
+from toolboxv2.mods.isaa.base.audio_io.audioIo import LocalPlayer, NullPlayer, StreamingLocalPlayer
+from toolboxv2.utils.extras.blobs import BlobFile
 import os
 os.environ["NARRATOR_CONSOLE_PRINT"] = "false"
 def ensure_utf8_stdout():
@@ -621,628 +629,136 @@ def _append_task_line(out: list, tv: TaskView, focused: bool, pad: str = " " * 1
         out.append((bg + "bg:#f472b6", f"✦{len(tv.sub_agents)} "))
 
     out.append((bg + fg_dim, pad))
+
+class _OmniLevelTap:
+    """Schiebt RMS-Pegel (0..1) in einen ring-buffer (deque). Numpy lokal."""
+    def __init__(self, levels):
+        self.levels = levels
+
+    def push_pcm(self, pcm: bytes):
+        import numpy as np
+        a = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+        if a.size:
+            self.levels.append(float(np.sqrt(np.mean(a * a))) / 32768.0)
+
+    def push_wav(self, wav: bytes):
+        import io, wave as _wave, numpy as np
+        try:
+            with _wave.open(io.BytesIO(wav), "rb") as w:
+                pcm = w.readframes(w.getnframes())
+        except Exception:
+            return
+        a = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+        if not a.size:
+            return
+        step = max(1, a.size // 12)
+        for i in range(0, a.size, step):
+            seg = a[i:i + step]
+            if seg.size:
+                self.levels.append(float(np.sqrt(np.mean(seg * seg))) / 32768.0)
+
+
+class _OmniTapRecorder:
+    """Duck-typed AudioRecorder-Wrapper: misst Pegel, leitet Frames 1:1 weiter."""
+    def __init__(self, inner, levels):
+        self._inner = inner
+        self._tap = _OmniLevelTap(levels)
+    async def start(self): await self._inner.start()
+    async def stop(self):  await self._inner.stop()
+    async def frames(self):
+        async for f in self._inner.frames():
+            self._tap.push_pcm(f)
+            yield f
+    def __getattr__(self, k): return getattr(self._inner, k)
+
+
+class _OmniTapPlayer:
+    """Duck-typed AudioPlayer-Wrapper: misst Output-Pegel aus dem wav."""
+    def __init__(self, inner, levels):
+        self._inner = inner
+        self._tap = _OmniLevelTap(levels)
+    async def start(self): await self._inner.start()
+    async def stop(self):  await self._inner.stop()
+    async def queue_audio(self, wav, meta=None):
+        self._tap.push_wav(wav)
+        return await self._inner.queue_audio(wav, meta)
+    def __getattr__(self, k): return getattr(self._inner, k)
+
+from prompt_toolkit.formatted_text import FormattedText
+
+_OMNI_BLOCKS = " ▁▂▃▄▅▆▇█"
+_OMNI_SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+def _omni_wave(levels, cols, color):
+    vals = list(levels)[-cols:]
+    if not vals:
+        return (f"fg:{color}", " " + "▁" * cols)
+    m = max(vals) or 1e-6
+    bar = "".join(_OMNI_BLOCKS[min(8, int((v / m) * 8))] for v in vals)
+    return (f"fg:{color}", " " + bar)
+
+def render_omni_footer(host) -> FormattedText:
+    import shutil
+    width = max(40, shutil.get_terminal_size((80, 20)).columns)
+    C = {"grey": "#6b7280", "green": "#4ade80", "cyan": "#67e8f9",
+         "amber": "#fbbf24", "purple": "#a78bfa", "white": "#e5e7eb",
+         "deep": "#4b5563"}
+    sess = host._omni_session
+    phase = host._omni_phase
+    st = host._omni_state_store.state
+    user = st.world_model.user or host.active_agent_name or "—"
+    turns = getattr(sess, "turns", 0) if sess else 0
+    msgs = len(st.active_history)
+    try:
+        jobs = sum(1 for j in host._omni_jobs.live_state() if j["status"] == "running")
+    except Exception:
+        jobs = 0
+
+    dot_col = C["grey"]
+    if phase in ("speech_detected", "speaking"):
+        dot_col = C["green"]
+    elif phase in ("thinking", "audio_processing"):
+        dot_col = C["purple"]
+    elif phase == "audio_playing":
+        dot_col = C["cyan"]
+
+    f: list = [
+        (f"fg:{dot_col} bold", " ● OMNI "),
+        (f"fg:{C['grey']}", "│ "),
+        (f"fg:{C['white']}", f"{user} "),
+        (f"fg:{C['grey']}", "│ "),
+        (f"fg:{C['cyan']}", f"ctx {turns}t·{msgs}m "),
+        (f"fg:{C['grey']}", "│ "),
+        (f"fg:{C['amber']}", f"{jobs} job{'' if jobs == 1 else 's'} "),
+    ]
+
+    cols = max(8, width - 2)
+    if phase in ("speech_detected", "speaking"):
+        f.append(("", "\n"))
+        f.append(_omni_wave(host._omni_in_levels, cols, C["grey"]))
+        if host._omni_in_text:
+            f.append(("", "\n"))
+            f.append((f"fg:{C['green']}", " ‹ " + host._omni_in_text[-(width - 4):] + " ›"))
+    elif phase in ("thinking", "audio_processing"):
+        f.append(("", "\n"))
+        spin = _OMNI_SPIN[host._omni_anim_frame % len(_OMNI_SPIN)]
+        dots = "." * (1 + host._omni_anim_frame % 4)
+        f.append((f"fg:{C['purple']} bold", f" {spin} omni denkt{dots}"))
+    elif phase == "audio_playing":
+        f.append(("", "\n"))
+        f.append(_omni_wave(host._omni_out_levels, cols, C["deep"]))
+        if host._omni_out_text:
+            f.append(("", "\n"))
+            f.append((f"fg:{C['cyan']}", " » " + host._omni_out_text[-(width - 4):]))
+    else:  # waiting / idle — gate zu
+        f.append(("", "\n"))
+        f.append((f"fg:{C['grey']}", " idle · gate closed — waiting for speech"))
+
+    return FormattedText(f)
 # ── B: Fullscreen overlay ─────────────────────────────────────────────────────
 
 
-
-class TaskOverlay:
-    """Fullscreen task viewer. Exactly 2 views: 'overview' + 'detail'.
-    Navigation: arrow keys + Enter + Backspace + Esc only."""
-
-    def __init__(self, task_views: dict[str, TaskView]):
-        self._views = task_views
-        self._selected: str = ""
-        self._focus: str = "left"            # "left" | "right"
-        self._mode: str = "overview"         # "overview" | "detail"
-        self._selected_iter_n: Optional[int] = None
-        self._iter_cursor: int = 0           # cursor in iter list (overview)
-        self._overview_scroll: int = 0
-        self._detail_scroll: int = 0
-        self._app: Optional[Application] = None
-        self._viewport: int = 30             # rough visible lines for clamping
-
-    # ── data helpers ────────────────────────────────────────────────────
-    def _left_items(self) -> list[str]:
-        """Top-level task_ids in display order (parents + swarm-subs flat)."""
-        items: list[str] = []
-        seen: set[str] = set()
-        for tid, tv in self._views.items():
-            if tid in seen:
-                continue
-            if "__sub__" in tid and not tv.is_swarm_sub:
-                continue
-            if tv.is_swarm_sub:
-                continue
-            items.append(tid)
-            seen.add(tid)
-            if tv.is_swarm_summary:
-                for sub_tid in tv.sub_task_ids.values():
-                    if sub_tid in self._views and sub_tid not in seen:
-                        items.append(sub_tid)
-                        seen.add(sub_tid)
-        return items
-
-    def _effective_view(self) -> Optional[TaskView]:
-        return self._views.get(self._selected)
-
-    # ── lifecycle ───────────────────────────────────────────────────────
-    async def run(self, on_exit) -> None:
-        items = self._left_items()
-        for tid in items:
-            tv = self._views.get(tid)
-            if tv and tv.status == "running":
-                self._selected = tid
-                break
-        else:
-            if items:
-                self._selected = items[0]
-
-        left = Window(
-            FormattedTextControl(self._render_left, focusable=False),
-            width=Dimension(min=28, max=34),
-            style="bg:ansiblack",
-        )
-        right = Window(
-            FormattedTextControl(self._render_right, focusable=False),
-            style="bg:ansiblack",
-        )
-        divider = Window(width=1, char="│", style="fg:#374151 bg:ansiblack")
-        footer = Window(
-            FormattedTextControl(self._render_footer, focusable=False),
-            height=1,
-            style="bg:#111827",
-        )
-
-        self._app = Application(
-            layout=Layout(HSplit([VSplit([left, divider, right]), footer])),
-            key_bindings=self._build_keys(on_exit),
-            full_screen=True,
-            mouse_support=False,
-        )
-        await self._app.run_async()
-
-    def invalidate(self) -> None:
-        if self._app:
-            self._app.invalidate()
-
-    # ── render helpers ──────────────────────────────────────────────────
-    def _wrap_fragments(self, text: str, style: str, indent: str = "",
-                        width: int = 90) -> list[tuple[str, str]]:
-        """Wrap text to width but never truncate. Newlines preserved."""
-        frags: list[tuple[str, str]] = []
-
-        import textwrap
-        if not text:
-            return frags
-        for raw_line in str(text).split("\n"):
-            if not raw_line.strip():
-                frags.append((style, "\n"))
-                continue
-            wrapped = textwrap.wrap(raw_line, width=width,
-                                    break_long_words=True,
-                                    break_on_hyphens=False) or [raw_line]
-            for w in wrapped:
-                frags.append((style, f"{indent}{w}\n"))
-        return frags
-
-    def _try_parse_struct(self, text: str):
-        """Parse als JSON oder Python-literal. None wenn nicht parsebar."""
-        if not text or not text.strip():
-            return None
-        s = text.strip()
-        if not (s.startswith("{") or s.startswith("[")):
-            return None
-        try:
-            import json as _json
-            return _json.loads(s)
-        except Exception:
-            pass
-        try:
-            import ast as _ast
-            return _ast.literal_eval(s)
-        except Exception:
-            pass
-        return None
-
-    def _format_struct(self, val, indent: int = 0) -> list[tuple[str, str]]:
-        """Parsed object → farbige, eingerückte Fragmente."""
-        bg = "bg:ansiblack "
-        pad = "  " * indent
-        pad_inner = "  " * (indent + 1)
-        out: list[tuple[str, str]] = []
-
-        if isinstance(val, dict):
-            if not val:
-                out.append((bg + "fg:#6b7280", "{}"))
-                return out
-            out.append((bg + "fg:#6b7280", "{\n"))
-            items = list(val.items())
-            for i, (k, v) in enumerate(items):
-                out.append((bg + "fg:#67e8f9", f"{pad_inner}{k}"))
-                out.append((bg + "fg:#6b7280", ": "))
-                out.extend(self._format_struct(v, indent + 1))
-                if i < len(items) - 1:
-                    out.append((bg + "fg:#6b7280", ","))
-                out.append((bg, "\n"))
-            out.append((bg + "fg:#6b7280", f"{pad}}}"))
-        elif isinstance(val, list):
-            if not val:
-                out.append((bg + "fg:#6b7280", "[]"))
-                return out
-            out.append((bg + "fg:#6b7280", "[\n"))
-            for i, item in enumerate(val):
-                out.append((bg, pad_inner))
-                out.extend(self._format_struct(item, indent + 1))
-                if i < len(val) - 1:
-                    out.append((bg + "fg:#6b7280", ","))
-                out.append((bg, "\n"))
-            out.append((bg + "fg:#6b7280", f"{pad}]"))
-        elif isinstance(val, bool):
-            out.append((bg + "fg:#a78bfa", str(val)))
-        elif val is None:
-            out.append((bg + "fg:#a78bfa", "null"))
-        elif isinstance(val, (int, float)):
-            out.append((bg + "fg:#fbbf24", str(val)))
-        elif isinstance(val, str):
-            if "\n" in val:
-                lines = val.split("\n")
-                out.append((bg + "fg:#4ade80", "\""))
-                for i, line in enumerate(lines):
-                    if i == 0:
-                        out.append((bg + "fg:#4ade80", line))
-                    else:
-                        out.append((bg + "fg:#4ade80", f"\n{pad_inner}{line}"))
-                out.append((bg + "fg:#4ade80", "\""))
-            else:
-                out.append((bg + "fg:#4ade80", f"\"{val}\""))
-        else:
-            out.append((bg + "fg:#e5e7eb", str(val)))
-        return out
-
-    def _render_io(self, text: str, default_style: str,
-                   indent_str: str = "         ") -> list[tuple[str, str]]:
-        """Tool-I/O: pretty wenn parsebar, sonst plain wrap."""
-        if not text:
-            return []
-        obj = self._try_parse_struct(text)
-        if obj is None:
-            return self._wrap_fragments(text, default_style,
-                                        indent=indent_str, width=84)
-        bg = "bg:ansiblack "
-        raw = self._format_struct(obj, indent=0)
-        out: list[tuple[str, str]] = [(bg, indent_str)]
-        for style, frag_text in raw:
-            if "\n" not in frag_text:
-                out.append((style, frag_text))
-                continue
-            parts = frag_text.split("\n")
-            for i, part in enumerate(parts):
-                if i > 0:
-                    out.append((bg, "\n" + indent_str))
-                if part:
-                    out.append((style, part))
-        out.append((bg, "\n"))
-        return out
-
-    def _render_stats(self, tv: TaskView) -> list[tuple[str, str]]:
-        """Full stats block — nothing truncated. Used in both modes."""
-        bg = "bg:ansiblack "
-        out: list[tuple[str, str]] = []
-        sym, col = STATUS_SYM.get(tv.status, ("◯", "cyan"))
-
-        header = f" {sym} {tv.agent_name}"
-        if tv.is_swarm_summary:
-            header += f"   🐝 swarm summary ({tv.swarm_phase or 'init'})"
-        elif tv.is_swarm_sub:
-            header += "   🐝 swarm-sub"
-        out.append((bg + f"fg:{C[col]} bold", header + "\n"))
-
-        meta = [f"status: {tv.status}"]
-        if tv.persona and tv.persona != "default":
-            meta.append(f"persona: {tv.persona}")
-        if tv.max_iter:
-            meta.append(f"iter: {tv.iteration}/{tv.max_iter}")
-        if tv.tokens_max:
-            pct = min(100, int(100 * tv.tokens_used / tv.tokens_max))
-            meta.append(f"tokens: {tv.tokens_used:,}/{tv.tokens_max:,} ({pct}%)")
-        elapsed = (tv.completed_at or time.time()) - tv.started_at
-        meta.append(f"elapsed: {_fmt_elapsed(elapsed)}")
-        out.append((bg + "fg:#9ca3af", " " + " · ".join(meta) + "\n"))
-
-        if tv.query:
-            out.append((bg + "fg:#6b7280", " Query:\n"))
-            out.extend(self._wrap_fragments(tv.query,
-                                            bg + "fg:#e5e7eb", indent="   "))
-
-        if tv.narrator_msg:
-            out.append((bg + "fg:#6b7280", " Narrator:\n"))
-            out.extend(self._wrap_fragments(tv.narrator_msg,
-                                            bg + "fg:#89c9c0", indent="   "))
-
-        if tv.narrator_plan:
-            out.append((bg + "fg:#6b7280", " Plan:\n"))
-            out.extend(self._wrap_fragments(tv.narrator_plan,
-                                            bg + "fg:#fbbf24", indent="   "))
-
-        if tv.status_msg:
-            out.append((bg + "fg:#6b7280", " Status:\n"))
-            out.extend(self._wrap_fragments(tv.status_msg,
-                                            bg + "fg:#fbbf24", indent="   "))
-
-        if tv.skills:
-            out.append((bg + "fg:#6b7280", " Skills:\n"))
-            out.extend(self._wrap_fragments(" ".join(tv.skills),
-                                            bg + "fg:#60a5fa", indent="   "))
-
-        if tv.is_swarm_summary and tv.sub_agents:
-            done = sum(1 for s in tv.sub_agents.values() if s == 1)
-            running = sum(1 for s in tv.sub_agents.values() if s == 0)
-            err = sum(1 for s in tv.sub_agents.values() if s == 2)
-            out.append((bg + "fg:#f472b6",
-                        f" Swarm: {done}/{len(tv.sub_agents)} done"
-                        f"  ⟳{running} running  ✗{err} err\n"))
-        elif tv.sub_agents:
-            out.append((bg + "fg:#f472b6",
-                        f" Sub-Agents: {len(tv.sub_agents)}\n"))
-
-        out.append((bg + "fg:#374151", " " + "─" * 80 + "\n"))
-        return out
-
-    # ── left panel (task tree) ──────────────────────────────────────────
-    def _render_left(self) -> FormattedText:
-        bg = "bg:ansiblack "
-        sel_bg = "bg:#1a2035 "
-        out: list[tuple[str, str]] = [
-            (bg + "fg:#67e8f9 bold", " ◯ Tasks\n"),
-            (bg + "fg:#374151", " " + "─" * 30 + "\n"),
-        ]
-
-        for tid in self._left_items():
-            tv = self._views.get(tid)
-            if not tv:
-                continue
-            is_sel = (tid == self._selected)
-            row_bg = sel_bg if is_sel else bg
-            sym, col = STATUS_SYM.get(tv.status, ("◯", "cyan"))
-            arrow = "▸ " if (self._focus == "left" and is_sel) else "  "
-
-            name = tv.agent_name
-            indent = ""
-            if tv.is_swarm_summary:
-                name = f"🐝 {name}"
-            elif tv.is_swarm_sub:
-                parts = name.split("_")
-                name = parts[0] if len(parts) > 1 else name
-                indent = "  "
-
-            display = (indent + name)[:26]
-            out.append((row_bg + f"fg:{C[col]}", f" {arrow}{sym} "))
-            out.append((row_bg + ("fg:#ffffff bold" if is_sel
-                                  else "fg:#e5e7eb"), f"{display}\n"))
-            if tv.iteration or tv.max_iter:
-                out.append((row_bg + "fg:#6b7280",
-                            f"      {tv.iteration}/{tv.max_iter} iter\n"))
-
-        out.append((bg + "fg:#374151", " " + "─" * 30 + "\n"))
-        if self._focus == "left":
-            out.append((bg + "fg:#6b7280", " ↑↓ nav  → right\n"))
-            out.append((bg + "fg:#6b7280", " ← / Esc close\n"))
-        else:
-            out.append((bg + "fg:#6b7280", " ← back to tasks\n"))
-        return FormattedText(out)
-
-    # ── right panel router ─────────────────────────────────────────────
-    def _render_right(self) -> FormattedText:
-        tv = self._effective_view()
-        if not tv:
-            return FormattedText([
-                ("bg:ansiblack fg:#6b7280", " No task selected\n")
-            ])
-        if self._mode == "detail" and self._selected_iter_n is not None:
-            return self._render_detail(tv)
-        return self._render_overview(tv)
-
-    # ── view 1: overview (stats + iter mini-list) ──────────────────────
-    def _render_overview(self, tv: TaskView) -> FormattedText:
-        bg = "bg:ansiblack "
-        sel_bg = "bg:#1a2035 "
-        frags = self._render_stats(tv)
-
-        iters = list(reversed(tv.iterations))
-        if not iters:
-            frags.append((bg + "fg:#6b7280",
-                          "   waiting for first iteration...\n"))
-
-        for idx, iv in enumerate(iters):
-            is_cursor = (self._focus == "right" and idx == self._iter_cursor)
-            row_bg = sel_bg if is_cursor else bg
-            arrow = "▸ " if is_cursor else "  "
-            is_run = (iv.n == tv.iteration and tv.status == "running")
-            tag = " ▸ running" if is_run else ""
-            color = "fg:#ffffff bold" if is_cursor else "fg:#fbbf24 bold"
-
-            frags.append((row_bg + color,
-                          f" {arrow}── Iter {iv.n}{tag} " + "─" * 30 + "\n"))
-
-            # Thoughts: first line preview only (mini)
-            for thought in iv.thoughts:
-                first = thought.replace("\n", " ").strip()
-                if not first:
-                    continue
-                preview = first[:90] + "…" if len(first) > 90 else first
-                frags.append((row_bg + "fg:#6b7280", "      ◎ "))
-                frags.append((row_bg + "fg:#e5e7eb", preview + "\n"))
-
-            # Tools: display name (incl. vfs_{ls:grep}) + ok + elapsed + info
-            for tname, tok, elapsed, info in iv.tools:
-                ok_col = C["green"] if tok else C["red"]
-                ok_sym = SYM["ok"] if tok else SYM["fail"]
-                elapsed_s = f"{elapsed:.2f}s" if elapsed > 0 else "     "
-                frags.append((row_bg + "fg:#60a5fa", "      ◇ "))
-                frags.append((row_bg + "fg:#e5e7eb", f"{tname[:28]:<28} "))
-                frags.append((row_bg + f"fg:{ok_col}", f"{ok_sym}  "))
-                frags.append((row_bg + "fg:#6b7280", f"{elapsed_s:>7}  "))
-                if info:
-                    frags.append((row_bg + "fg:#9ca3af", info[:50]))
-                frags.append((row_bg, "\n"))
-
-            for p_name, _p_args in iv.pending_tools.items():
-                frags.append((row_bg + "fg:#60a5fa", "      ◇ "))
-                frags.append((row_bg + "fg:#fbbf24",
-                              f"{p_name[:28]:<28} ⋯ running\n"))
-
-            if not iv.thoughts and not iv.tools and not iv.pending_tools:
-                frags.append((row_bg + "fg:#6b7280", "      (empty)\n"))
-
-        # Final answer — FULL, no truncation
-        if tv.final_answer:
-            frags.append((bg + "fg:#374151", "\n " + "─" * 80 + "\n"))
-            frags.append((bg + "fg:#4ade80 bold", " ● Final Answer:\n\n"))
-            frags.extend(self._wrap_fragments(
-                tv.final_answer, bg + "fg:#e5e7eb", indent="   ", width=88))
-
-        return FormattedText(self._apply_scroll(frags, self._overview_scroll))
-
-    # ── view 2: detail (one iter, full I/O) ────────────────────────────
-    def _render_detail(self, tv: TaskView) -> FormattedText:
-        bg = "bg:ansiblack "
-        frags = self._render_stats(tv)
-
-        iv = tv._iter_map.get(self._selected_iter_n)
-        if not iv:
-            frags.append((bg + "fg:#f87171",
-                          f"   Iter {self._selected_iter_n} not found\n"))
-            return FormattedText(self._apply_scroll(frags, self._detail_scroll))
-
-        is_run = (iv.n == tv.iteration and tv.status == "running")
-        tag = " ▸ running" if is_run else ""
-        frags.append((bg + "fg:#fbbf24 bold",
-                      f" ── Iter {iv.n}{tag} " + "─" * 60 + "\n\n"))
-
-        # Thoughts — full, wrapped
-        if iv.thoughts:
-            frags.append((bg + "fg:#a78bfa bold", " ◎ Thoughts:\n"))
-            for i, thought in enumerate(iv.thoughts, 1):
-                frags.append((bg + "fg:#6b7280", f"   [{i}]\n"))
-                frags.extend(self._wrap_fragments(
-                    thought, bg + "fg:#d1d5db", indent="   ", width=88))
-                frags.append((bg, "\n"))
-
-        # Tools — full input + full output, nothing truncated
-        if iv.tools:
-            frags.append((bg + "fg:#60a5fa bold",
-                          f" ◇ Tools ({len(iv.tools)}):\n\n"))
-            for idx, (tname, tok, elapsed, info) in enumerate(iv.tools):
-                ok_col = C["green"] if tok else C["red"]
-                ok_sym = SYM["ok"] if tok else SYM["fail"]
-
-                frags.append((bg + "fg:#60a5fa bold",
-                              f"   [{idx + 1}] ◇ {tname}"))
-                frags.append((bg + f"fg:{ok_col}", f"   {ok_sym}  "))
-                frags.append((bg + "fg:#6b7280", f"{elapsed:.3f}s\n"))
-                if info:
-                    frags.append((bg + "fg:#9ca3af",
-                                  f"       info: {info}\n"))
-
-                raw_input = raw_result = ""
-                if idx < len(iv.tools_raw):
-                    _, raw_result, raw_input = iv.tools_raw[idx]
-
-                if raw_input:
-                    frags.append((bg + "fg:#a78bfa bold",
-                                  "       → Input:\n"))
-                    frags.extend(self._render_io(
-                        raw_input, bg + "fg:#d1d5db",
-                        indent_str="         "))
-
-                if raw_result:
-                    frags.append((bg + "fg:#4ade80 bold",
-                                  "       ← Output:\n"))
-                    frags.extend(self._render_io(
-                        raw_result, bg + "fg:#e5e7eb",
-                        indent_str="         "))
-
-                frags.append((bg + "fg:#374151", "       " + "─" * 72 + "\n\n"))
-
-        # Pending tools (running)
-        for p_name, p_args in iv.pending_tools.items():
-            frags.append((bg + "fg:#fbbf24 bold",
-                          f"   ◇ {p_name} ⋯ running\n"))
-            if p_args:
-                frags.append((bg + "fg:#a78bfa bold",
-                              "       → Input (pending):\n"))
-                frags.extend(self._render_io(
-                    p_args, bg + "fg:#d1d5db",
-                    indent_str="         "))
-
-        # Final answer (only on last iter) — FULL
-        last_n = max((i.n for i in tv.iterations), default=0)
-        if tv.final_answer and iv.n == last_n:
-            frags.append((bg + "fg:#374151", "\n " + "─" * 80 + "\n"))
-            frags.append((bg + "fg:#4ade80 bold", " ● Final Answer:\n\n"))
-            frags.extend(self._wrap_fragments(
-                tv.final_answer, bg + "fg:#e5e7eb", indent="   ", width=88))
-
-        if not iv.thoughts and not iv.tools and not iv.pending_tools \
-                and not tv.final_answer:
-            frags.append((bg + "fg:#6b7280", "   (no data yet)\n"))
-
-        return FormattedText(self._apply_scroll(frags, self._detail_scroll))
-
-    # ── scroll ─────────────────────────────────────────────────────────
-    def _apply_scroll(self, frags: list[tuple[str, str]],
-                      scroll: int) -> list[tuple[str, str]]:
-        if scroll <= 0:
-            return frags
-        out: list[tuple[str, str]] = []
-        skipped = 0
-        for style, text in frags:
-            if skipped >= scroll:
-                out.append((style, text))
-                continue
-            nl = text.count("\n")
-            if skipped + nl <= scroll:
-                skipped += nl
-                continue
-            parts = text.split("\n")
-            need = scroll - skipped
-            out.append((style, "\n".join(parts[need:])))
-            skipped = scroll
-        return out
-
-    # ── footer ─────────────────────────────────────────────────────────
-    def _render_footer(self) -> FormattedText:
-        tv = self._effective_view()
-        n_run = sum(1 for v in self._views.values() if v.status == "running")
-
-        if self._mode == "detail":
-            iter_s = f"iter {self._selected_iter_n}"
-            hint = " ↑↓ scroll   ← / Backspace back   Esc close"
-        elif self._focus == "left":
-            iter_s = f"iter {tv.iteration}/{tv.max_iter}" if tv else ""
-            hint = " ↑↓ tasks   → right   ← / Esc close"
-        else:
-            iter_s = f"iter {tv.iteration}/{tv.max_iter}" if tv else ""
-            hint = " ↑↓ iters   → / Enter drill   ← back"
-
-        return FormattedText([(
-            "bg:#111827 fg:#9ca3af",
-            f"{hint}   │   {n_run} running   │   {iter_s}   │   Esc/F2 close "
-        )])
-
-    # ── keys (arrows + Enter + Backspace + Esc only) ──────────────────
-    def _build_keys(self, on_exit) -> KeyBindings:
-        kb = KeyBindings()
-        ov = self
-
-        @kb.add("escape")
-        @kb.add("f2")
-        def _close(event):
-            event.app.exit()
-            on_exit()
-
-        @kb.add("up")
-        @kb.add("w")
-        def _up(event):
-            if ov._mode == "detail":
-                ov._detail_scroll = max(0, ov._detail_scroll - 1)
-                return
-            if ov._focus == "right":
-                tv = ov._effective_view()
-                if not tv or not tv.iterations:
-                    ov._overview_scroll = max(0, ov._overview_scroll - 1)
-                    return
-                if ov._iter_cursor > 0:
-                    ov._iter_cursor -= 1
-                ov._overview_scroll = max(0, ov._overview_scroll - 2)
-                return
-            items = ov._left_items()
-            if not items:
-                return
-            idx = items.index(ov._selected) if ov._selected in items else 0
-            ov._selected = items[(idx - 1) % len(items)]
-            ov._iter_cursor = 0
-            ov._overview_scroll = 0
-
-        @kb.add("down")
-        @kb.add("s")
-        def _down(event):
-            if ov._mode == "detail":
-                ov._detail_scroll += 1
-                return
-            if ov._focus == "right":
-                tv = ov._effective_view()
-                if not tv or not tv.iterations:
-                    ov._overview_scroll += 1
-                    return
-                max_cursor = len(tv.iterations) - 1
-                if ov._iter_cursor < max_cursor:
-                    ov._iter_cursor += 1
-                ov._overview_scroll += 2
-                return
-            items = ov._left_items()
-            if not items:
-                return
-            idx = items.index(ov._selected) if ov._selected in items else -1
-            ov._selected = items[(idx + 1) % len(items)]
-            ov._iter_cursor = 0
-            ov._overview_scroll = 0
-
-        @kb.add("right")
-        @kb.add("enter")
-        @kb.add("d")
-        def _right(event):
-            if ov._mode == "detail":
-                return
-            if ov._focus == "left":
-                ov._focus = "right"
-                ov._iter_cursor = 0
-                ov._overview_scroll = 0
-                return
-            tv = ov._effective_view()
-            if not tv or not tv.iterations:
-                return
-            iters_rev = list(reversed(tv.iterations))
-            idx = min(ov._iter_cursor, len(iters_rev) - 1)
-            ov._mode = "detail"
-            ov._selected_iter_n = iters_rev[idx].n
-            ov._detail_scroll = 0
-
-        @kb.add("left")
-        @kb.add("backspace")
-        @kb.add("a")
-        def _left(event):
-            if ov._mode == "detail":
-                ov._mode = "overview"
-                ov._selected_iter_n = None
-                ov._detail_scroll = 0
-                return
-            if ov._focus == "right":
-                ov._focus = "left"
-                return
-            event.app.exit()
-            on_exit()
-
-        @kb.add("pageup")
-        def _pup(event):
-            if ov._mode == "detail":
-                ov._detail_scroll = max(0, ov._detail_scroll - 10)
-            elif ov._focus == "right":
-                ov._iter_cursor = max(0, ov._iter_cursor - 3)
-                ov._overview_scroll = max(0, ov._overview_scroll - 10)
-
-        @kb.add("pagedown")
-        def _pdn(event):
-            if ov._mode == "detail":
-                ov._detail_scroll += 10
-            elif ov._focus == "right":
-                tv = ov._effective_view()
-                if tv:
-                    max_c = max(0, len(tv.iterations) - 1)
-                    ov._iter_cursor = min(max_c, ov._iter_cursor + 3)
-                ov._overview_scroll += 10
-
-        return kb
+from toolboxv2.flows.isaa.task_overlay import TaskOverlay
 
 # =================== Helpers & Setup ===================
 MODEL_MAPPING = {
@@ -2016,6 +1532,7 @@ class ExecutionTask:
     kind: str                                   # 'chat' | 'task' | 'job' | 'delegate'
     async_task: asyncio.Task
     run_id: str = ""
+    session_id: str = ""
     stream: Any = None
     started_at: float = field(default_factory=time.time)
     status: str = "running"
@@ -4443,6 +3960,25 @@ class ISAA_Host:
         self.verbose_audio = False
         self.audio_player = self._build_audio_player()
 
+        # ── Omni Session State (1:1 from isaa_voice.py) ──────────────────────
+        self._omni_session = None
+        self._omni_jobs = JobManager()
+        self._omni_recorder = None
+        self._omni_player = NullPlayer()
+        self._omni_state_store = BlobStateStore("isaa/omni/omni_state.json", BlobFile)
+        self._omni_vad = None
+        self._world_model_agents: set[str] = set()
+
+        from collections import deque
+        self._omni_phase = "waiting"
+        self._omni_phase_meta = {}
+        self._omni_in_text = ""
+        self._omni_out_text = ""
+        self._omni_in_levels = deque(maxlen=160)
+        self._omni_out_levels = deque(maxlen=160)
+        self._omni_anim_frame = 0
+        self._omni_ui_task = None
+
         self.active_coder: CoderAgent | None = None
         from toolboxv2 import init_cwd
         self.init_dir = init_cwd
@@ -4551,6 +4087,45 @@ class ISAA_Host:
 
         except Exception as e:
             print_status(f"Audio setup für '{name}' fehlgeschlagen: {e}", "warning")
+            return False
+
+    async def _ensure_world_model(self, agent) -> bool:
+        name = getattr(getattr(agent, "amd", None), "name", "") or ""
+        if name in self._world_model_agents:
+            return True
+        try:
+            store = self._omni_state_store
+
+            # 1) Edit-Tool (1:1) + Read-Tool (damit sie es FRISCH sehen)
+            agent.add_tools(make_world_model_tools(store))
+
+            async def world_model_get() -> str:
+                """Read the always-on World Model (user/agent_role/routines).
+                Call before editing or when you need the latest stable facts."""
+                return json.dumps(store.state.world_model.to_dict(), ensure_ascii=False)
+
+            agent.add_tools([{
+                "tool_func": world_model_get,
+                "name": "world_model_get",
+                "description": ("Read the current always-on World Model "
+                                "(user/agent_role/routines). Use before editing or "
+                                "when you need the latest stable facts."),
+                "category": ["world_model", "memory", "read"],
+            }])
+
+            # 2) Context-Injection: Snapshot + Usage-Hinweis ins System-Prompt
+            attr = "system_message" if hasattr(agent.amd, "system_message") else "system_prompt"
+            existing = getattr(agent.amd, attr, "") or ""
+            if "ALWAYS-ON WORLD MODEL" not in existing:
+                wm = store.state.world_model.render() or "(empty — learn & save stable facts)"
+                block = ("[ALWAYS-ON WORLD MODEL — stable facts about the user. "
+                         "Refresh with world_model_get; update with world_model_edit.]\n" + wm)
+                setattr(agent.amd, attr, existing + "\n\n" + block)
+
+            self._world_model_agents.add(name)
+            return True
+        except Exception as e:
+            print_status(f"world_model inject '{name}': {e}", "warning")
             return False
 
     def _ingest_chunk(self, task_id: str, chunk: dict) -> None:
@@ -5021,18 +4596,21 @@ class ISAA_Host:
                 async def _run_overlay():
                     def _on_exit():
                         self.zen_plus_mode = False
+                        self._overlay.invalidate()
                         self._overlay = None
-                        if self.prompt_session and self.prompt_session.app:
-                            try:
-                                self.prompt_session.app.invalidate()
-                            except Exception:
-                                pass
+                        # if self.prompt_session and self.prompt_session.app:
+                        #     try:
+                        #         self.prompt_session.app.invalidate()
+                        #     except Exception:
+                        #         pass
 
-                    await overlay.run(on_exit=_on_exit)
+                    await overlay.show(on_exit=_on_exit)#(on_exit=_on_exit)
 
                 asyncio.create_task(_run_overlay())
             else:
                 # Toggle off — nothing to close (Esc does it from inside)
+                # if self._overlay:
+                #     self._overlay.invalidate()
                 self._overlay = None
 
         @kb.add("tab")
@@ -5218,6 +4796,8 @@ class ISAA_Host:
         )
         self._self_agent_initialized = True
         print_status("Self Agent initialized", "success")
+        agent = await self.isaa_tools.get_agent("self")
+        await self._ensure_world_model(agent)
 
         # Restore persisted resumable executions into engines
         await self._restore_resumable_executions()
@@ -5848,48 +5428,33 @@ class ISAA_Host:
 
         return "\n".join(result)
 
-    async def _tool_delegate(
-        self, agent_name: str, task: str, wait: bool, session_id: str
-    ) -> str:
-        """Delegate task — jetzt MIT Stream + Ingest-Hook für beide Modi."""
+    async def _start_delegation(self, agent_name: str, task: str, session_id: str) -> ExecutionTask:
+        """Existing delegation path — returns the ExecutionTask handle."""
+        agent = await self.isaa_tools.get_agent(agent_name)
+        await self._ensure_world_model(agent)
+        run_id = uuid.uuid4().hex[:8]
+        stream = agent.a_stream(query=task, session_id=session_id)
+        exc = self._create_execution(
+            kind="delegate", agent_name=agent_name, query=task,
+            async_task=None, run_id=run_id, stream=stream, take_focus=False,
+        )
+        exc.session_id = session_id
+        async_task = asyncio.create_task(self._drain_agent_stream(exc.task_id, stream, False))
+        exc.async_task = async_task
+        async_task.add_done_callback(lambda fut: self._on_agent_task_done(exc.task_id, fut))
+        return exc
+
+    async def _tool_delegate(self, agent_name: str, task: str, wait: bool, session_id: str) -> str:
+        """Delegate task — unverändertes Verhalten, nutzt _start_delegation."""
         try:
-            agent = await self.isaa_tools.get_agent(agent_name)
-            run_id = uuid.uuid4().hex[:8]
-
-            # ── STREAM starten (statt a_run) ──────────────────────────────────
-            stream = agent.a_stream(query=task, session_id=session_id)
-
-            exc = self._create_execution(
-                kind="delegate",
-                agent_name=agent_name,
-                query=task,
-                async_task=None,
-                run_id=run_id,
-                stream=stream,
-                take_focus=False,
-            )
-            task_id = exc.task_id
-
-            async_task = asyncio.create_task(
-                self._drain_agent_stream(task_id, stream, False)
-            )
-            exc.async_task = async_task
-
-            async_task.add_done_callback(
-                lambda fut: self._on_agent_task_done(task_id, fut)
-            )
-
-            # ── WAIT=True: Caller blockiert, Stream läuft trotzdem durch ──────
+            exc = await self._start_delegation(agent_name, task, session_id)
             if wait:
                 try:
-                    result = await asyncio.shield(async_task)
+                    result = await asyncio.shield(exc.async_task)
                     return str(result) if result else ""
                 except asyncio.CancelledError:
                     return ""
-
-            # ── WAIT=False: sofort zurück, task läuft im Hintergrund ──────────
-            return f"✓ Background task started: {task_id} (RunID: {run_id})"
-
+            return f"✓ Background task started: {exc.task_id} (RunID: {exc.run_id})"
         except Exception as e:
             return f"✗ Delegation failed: {e}"
 
@@ -6272,7 +5837,7 @@ class ISAA_Host:
             "/agent": None, "/audio": None, "/coder": None, "/job": None,
             "/mcp": None,"/cli": None, "/session": None, "/skill": None, "/task": None,
             "/tools": None, "/vfs": None, "/feature": None, "/chain": None,
-            "/set_max_iterations": None, "/prompt": None,
+            "/set_max_iterations": None, "/prompt": None, "/omni": None,
         }
 
         # Die spezifischen Hilfe-Kategorien
@@ -6358,6 +5923,12 @@ class ISAA_Host:
                 "remove": {s: None for s in getattr(self, 'current_mcp_servers', [])},
                 "reload": None,  # Re-connectet alle Server
                 "info": None,  # Details zu einem Server
+            },
+            "/omni": {
+                "start": {"omni_cloud": None, "omni_local": None, "pipeline": None, "stub": None},
+                "stop": None,
+                "status": None,
+                "jobs": None,
             },
             "/cli": {
                 "list": None,
@@ -6496,6 +6067,8 @@ class ISAA_Host:
         )
 
     def _get_bottom_toolbar(self):
+        if self._omni_session and getattr(self._omni_session, "_running", False):
+            return render_omni_footer(self)
         if self.zen_plus_mode or self._overlay is not None:
             return []
         off_set = 0
@@ -7195,6 +6768,9 @@ class ISAA_Host:
         elif cmd == "/coder":
             await self._cmd_coder(args)
 
+
+        elif cmd == "/omni":
+            await self._handle_omni_command(args)
         elif cmd == "/audio":
             await self._handle_audio_command(args)
 
@@ -7263,6 +6839,7 @@ class ISAA_Host:
 
         action = args[0].lower()
         agent = await self.isaa_tools.get_agent(self.active_agent_name)
+        await self._ensure_world_model(agent)
         tool_mgr = agent.tool_manager
         agent_cfg_path = Path(self.app.data_dir) / "Agents" / self.active_agent_name / "agent.json"
 
@@ -8151,7 +7728,7 @@ class ISAA_Host:
         async def _run_job():
             try:
                 agent = await host_ref.isaa_tools.get_agent(job.agent_name)
-
+                await host_ref._ensure_world_model(agent)
                 # ── Live state step-callback ──────────────────────────────
                 _scheduler = host_ref.job_scheduler
                 _iter = [0]
@@ -9801,6 +9378,294 @@ class ISAA_Host:
 
         else:
             print_status(f"Unknown audio command: {cmd}", "error")
+
+    def _tool_specs_for_backend(self, agent) -> list:
+        """1:1 aus isaa_voice — Tool-Schemas fürs Omni-Modell."""
+        tm = getattr(agent, "tool_manager", None)
+        if tm is None:
+            return []
+        try:
+            schemas = tm.get_all_litellm()
+            if schemas:
+                return schemas
+        except Exception:
+            pass
+        try:
+            return [{"name": e.name, "description": getattr(e, "description", "")} for e in tm.get_all()]
+        except Exception:
+            return []
+
+    def _omni_lookup(self, task_id: str):
+        return self.all_executions.get(task_id) or next(
+            (t for t in self.all_executions.values() if t.task_id.startswith(task_id)), None
+        )
+
+    def _make_omni_tools(self) -> list:
+        """delegate/agent_status/agent_result/vfs_peek/vfs_tree_peek — auf der
+        icli-EIGENEN Delegation (all_executions), nicht auf JobManager."""
+        host = self
+
+        async def delegate(query: str, agent: str = "default") -> str:
+            """Delegate a heavy task to an icli agent (runs in background)."""
+            target = agent if agent != "default" else host.active_agent_name
+            sid = f"omni_deleg_{uuid.uuid4().hex[:6]}"
+            exc = await host._start_delegation(target, query, sid)
+
+            def _speak_when_done(_fut):
+                e = host.all_executions.get(exc.task_id)
+                txt = (e.result_text if e else "") or ""
+                b = host._omni_session.backend if host._omni_session else None
+                if b and txt:
+                    asyncio.create_task(b.send_text(
+                        f"[system] Task '{exc.task_id}' finished. Tell the user briefly "
+                        f"and summarize:\n{txt[:1500]}"
+                    ))
+
+            exc.async_task.add_done_callback(_speak_when_done)
+            return f"Delegated → {exc.task_id} (running on '{target}'; you'll be notified when done)."
+
+        def agent_status(task_id: str = "") -> str:
+            """Status of a delegated task (or all running)."""
+            if task_id:
+                e = host._omni_lookup(task_id)
+                return f"{e.task_id}: {e.status}" if e else f"unknown task {task_id}"
+            running = [f"{t.task_id}: {t.status}" for t in host.all_executions.values()
+                       if t.kind == "delegate" and t.status == "running"]
+            return "\n".join(running) or "no running delegations"
+
+        def agent_result(task_id: str) -> str:
+            """Result text of a finished delegated task."""
+            e = host._omni_lookup(task_id)
+            if not e:
+                return f"unknown task {task_id}"
+            if e.status == "running":
+                return f"{e.task_id} still running"
+            return e.result_text or f"{e.task_id}: {e.status} (no text)"
+
+        async def _peek_vfs(task_id: str):
+            e = host._omni_lookup(task_id)
+            if not e or not e.session_id:
+                return None, f"no session for task {task_id}"
+            ag = await host.isaa_tools.get_agent(e.agent_name)
+            sess = ag.session_manager.get(e.session_id)
+            vfs = getattr(sess, "vfs", None) if sess else None
+            return (vfs, None) if vfs else (None, "no vfs")
+
+        async def vfs_peek(task_id: str, path: str) -> str:
+            """Read-only peek a file in a delegated agent's VFS."""
+            vfs, err = await _peek_vfs(task_id)
+            if err:
+                return err
+            r = vfs.read(path)
+            return r.get("content", "") if isinstance(r, dict) else str(r)
+
+        async def vfs_tree_peek(task_id: str) -> str:
+            """Read-only tree of a delegated agent's VFS."""
+            vfs, err = await _peek_vfs(task_id)
+            return err or vfs.file_tree_string(max_depth=4)
+
+        return [
+            {"tool_func": delegate, "name": "delegate", "description": delegate.__doc__, "category": ["omni"]},
+            {"tool_func": agent_status, "name": "agent_status", "description": agent_status.__doc__,
+             "category": ["omni"]},
+            {"tool_func": agent_result, "name": "agent_result", "description": agent_result.__doc__,
+             "category": ["omni"]},
+            {"tool_func": vfs_peek, "name": "vfs_peek", "description": vfs_peek.__doc__, "category": ["omni"]},
+            {"tool_func": vfs_tree_peek, "name": "vfs_tree_peek", "description": vfs_tree_peek.__doc__,
+             "category": ["omni"]},
+        ]
+
+    async def _handle_omni_command(self, args: list[str]) -> None:
+        """Vollständige Omni-Integration (1:1 aus isaa_voice.py).
+        Nutzt _tool_delegate für Agent-Aufrufe."""
+        if not args:
+            print_box_header("Omni Voice Control", "🎙️")
+            print_box_content("/omni start [mode]  - Start (omni_cloud|omni_local|pipeline|stub)", "")
+            print_box_content("/omni stop          - Stop Session", "")
+            print_box_content("/omni status        - Session Status", "")
+            print_box_content("/omni jobs          - Active JobManager Jobs", "")
+            print_box_footer()
+            return
+
+        cmd = args[0].lower()
+
+        if cmd == "start":
+            if self._omni_session and getattr(self._omni_session, "is_active", False):
+                print_status("Omni session already active", "warning")
+                return
+            mode = args[1] if len(args) > 1 else "omni_cloud"
+            print_status(f"Starting Omni Session ({mode})...", "info")
+            try:
+                agent = await self.isaa_tools.get_agent(self.active_agent_name)
+                await self._ensure_world_model(agent)
+                agent.add_tools(self._make_omni_tools())
+
+                cfg = VoiceModeConfig(
+                    mode=mode, device="cuda", agent=agent,
+                    kwargs=({"voice": "Algenib", "input_transcription": True,
+                             "output_transcription": True, "thinking_level": None}
+                            if mode == "omni_cloud" else {}),
+                )
+
+                def _make_backend():
+                    b = cfg.build_backend()
+                    if b is not None and hasattr(b, "system_instruction"):
+                        b.system_instruction = OMNI_SYSTEM_INSTRUCTION
+                    return b
+
+                backend = _make_backend()
+                if backend is None:
+                    print_status("mode=pipeline → no OmniSession", "warning")
+                    return
+                print_status(f"Backend: {backend.backend_name}", "info")
+
+                # SHARED audio config: device aus /audio
+                dev = getattr(self, "_audio_device", None)
+                self._omni_recorder = LocalMicRecorder(device=dev)
+                stream_audio = backend.backend_name == "GeminiLiveBackend"
+                if stream_audio:
+                    output_sr = 24000
+                    self._omni_player = StreamingLocalPlayer(device=dev, sample_rate=24000)
+                else:
+                    output_sr = None
+                    self._omni_player = LocalPlayer(device=dev or 0)
+
+                self._omni_vad = None
+                try:
+                    from toolboxv2.mods.isaa.base.audio_io.audio_live import SileroVAD
+                    self._omni_vad = SileroVAD(threshold=0.5)
+                except Exception as e:
+                    print_status(f"[vad] unavailable, streaming continuously: {e}", "warning")
+
+                self._omni_recorder = _OmniTapRecorder(self._omni_recorder, self._omni_in_levels)
+                self._omni_player = _OmniTapPlayer(self._omni_player, self._omni_out_levels)
+                self._omni_session = OmniSession(
+                    backend,
+                    backend_factory=_make_backend,
+                    recorder=self._omni_recorder,
+                    player=self._omni_player,
+                    tools=agent.tool_manager,
+                    jobs=self._omni_jobs,
+                    background_tools=set(),
+                    output_sample_rate=output_sr,
+                    buffer_audio=not stream_audio,
+                    vad=self._omni_vad,
+                    state_store=self._omni_state_store,
+                    summarizer_agent=agent,  # compression-fix: IMMER
+                    on_phase=self._omni_on_phase,
+                    on_text=self._omni_on_text,
+                    on_job_done=self._omni_announce,
+                )
+                agent.add_tools(self._omni_session.compress_tool)
+
+                self._omni_session.is_active = True
+                self._omni_in_text = self._omni_out_text = ""
+                self._omni_in_levels.clear()
+                self._omni_out_levels.clear()
+                self._omni_phase = "waiting"
+                self._omni_ui_task = asyncio.create_task(self._omni_ui_loop())
+
+                await self._omni_session.start(
+                    tool_specs=self._tool_specs_for_backend(agent)
+                )
+                print_status("Omni Session active — speak now. (/omni stop to end)", "success")
+
+            except Exception as e:
+                import traceback
+                print_status(f"Failed to start Omni: {e}", "error")
+                c_print(traceback.format_exc())
+                if self._omni_ui_task:
+                    self._omni_ui_task.cancel()
+                    self._omni_ui_task = None
+                self._omni_phase = "waiting"
+                self._omni_session = None
+
+        elif cmd == "stop":
+            if self._omni_session:
+                await self._omni_session.stop()
+                self._omni_session.is_active = False
+                if self._omni_ui_task:
+                    self._omni_ui_task.cancel()
+                    self._omni_ui_task = None
+                self._omni_phase = "waiting"
+                self._omni_session = None
+                print_status("Omni Session stopped", "success")
+            else:
+                print_status("No active Omni session", "warning")
+
+        elif cmd == "status":
+            if self._omni_session and getattr(self._omni_session, 'is_active', False):
+                backend_name = getattr(self._omni_session.backend, 'backend_name', 'unknown')
+                print_status(f"Omni Session Active (Backend: {backend_name})", "info")
+            else:
+                print_status("Omni Session Inactive", "info")
+
+        elif cmd == "jobs":
+            jobs = self._omni_jobs.live_state()
+            if jobs:
+                print_box_header("Active Omni Jobs", "⚙️")
+                for jid, info in jobs.items():
+                    print_box_content(f"{jid}: {info['status']} - {info['label'][:40]}", "")
+                print_box_footer()
+            else:
+                print_status("No active jobs", "info")
+
+        else:
+            print_status(f"Unknown omni command: {cmd}", "error")
+
+    async def _omni_announce(self, state: dict) -> None:
+        """on_job_done hook (falls JobManager doch genutzt wird) — Modell spricht Ergebnis."""
+        label = state.get("label", state.get("job_id"))
+        result = state.get("result", "")
+        print_status(f"[omni] {label} → {state.get('status')}", "info")
+        b = self._omni_session.backend if self._omni_session else None
+        if b:
+            try:
+                await b.send_text(
+                    f"[system] Task '{label}' finished. Tell the user briefly and "
+                    f"summarize:\n{result[:1500]}"
+                )
+            except Exception as e:
+                print_status(f"[announce] {e}", "warning")
+
+    def _omni_invalidate(self):
+        if self.prompt_session and self.prompt_session.app:
+            try:
+                self.prompt_session.app.invalidate()
+            except Exception:
+                pass
+
+    def _omni_on_phase(self, phase, meta=None):
+        """Ersetzt PhaseCallback im icli: füttert den Footer statt zu printen."""
+        val = phase.value if hasattr(phase, "value") else str(phase)
+        self._omni_phase = val
+        self._omni_phase_meta = meta or {}
+        if val == "speech_detected":
+            self._omni_in_text = ""
+            self._omni_in_levels.clear()
+        elif val in ("speech_end", "thinking"):
+            self._omni_out_text = ""  # neuer Antwort-Zyklus
+        self._omni_invalidate()
+
+    def _omni_on_text(self, text):
+        """Transkript nach aktueller Phase in Input- bzw. Output-Puffer routen."""
+        if not text:
+            return
+        if self._omni_phase in ("waiting", "speech_detected", "speaking"):
+            self._omni_in_text = (self._omni_in_text + text)[-200:]
+        else:  # thinking / audio_processing / audio_playing
+            self._omni_out_text = (self._omni_out_text + text)[-200:]
+        self._omni_invalidate()
+
+    async def _omni_ui_loop(self):
+        """12fps Repaint für Waveform-Lauf + Denk-Animation."""
+        try:
+            while self._omni_session and getattr(self._omni_session, "_running", False):
+                self._omni_anim_frame += 1
+                self._omni_invalidate()
+                await asyncio.sleep(0.12)
+        except asyncio.CancelledError:
+            pass
 
     async def _record_speaker_profile(self, name: str):
         """Record 5s of mic audio, extract embedding, store as speaker profile."""

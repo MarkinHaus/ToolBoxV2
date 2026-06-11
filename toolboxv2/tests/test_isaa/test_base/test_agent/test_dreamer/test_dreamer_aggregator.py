@@ -7,6 +7,7 @@ from run_aggregator import (
     RunAggregator, RunMetrics, extract_metrics,
     fuzzy_preselect, parse_classify_guide, update_classify_guide,
     default_classify_guide, TASKMAP_ROOT, CLASSIFY_GUIDE_PATH, NEW_TYPE,
+    _sanitize_class,
 )
 
 
@@ -105,6 +106,19 @@ class TestClassifyGuide(unittest.TestCase):
         guide = default_classify_guide()
         self.assertEqual(update_classify_guide(guide, NEW_TYPE, "general", "whatever stuff"), guide)
 
+    def test_sanitize_splits_slash(self):
+        self.assertEqual(_sanitize_class("coding/toolbox", "general"), ("coding", "toolbox"))
+        self.assertEqual(_sanitize_class("coding/isaa", "general"), ("coding", "isaa"))
+
+    def test_sanitize_slash_preserves_explicit_subtype(self):
+        self.assertEqual(_sanitize_class("coding/toolbox", "isaa"), ("coding", "isaa"))
+
+    def test_sanitize_no_slash(self):
+        self.assertEqual(_sanitize_class("coding", "toolbox"), ("coding", "toolbox"))
+
+    def test_sanitize_empty(self):
+        self.assertEqual(_sanitize_class("", ""), (NEW_TYPE, "general"))
+
 
 class TestAggregator(unittest.TestCase):
     def setUp(self):
@@ -139,6 +153,12 @@ class TestAggregator(unittest.TestCase):
             return '{"task_type": "coding", "subtype": "isaa"}'
         m = run(self._agg(llm=llm).aggregate(make_run_record(), query="whatever"))
         self.assertEqual((m.task_type, m.subtype), ("coding", "isaa"))
+
+    def test_llm_slash_in_task_type_splits_correctly(self):
+        async def llm(messages, **kw):
+            return '{"task_type": "coding/toolbox", "subtype": "general"}'
+        m = run(self._agg(llm=llm).aggregate(make_run_record(), query="whatever"))
+        self.assertEqual((m.task_type, m.subtype), ("coding", "toolbox"))
 
     def test_llm_failure_falls_back_to_fuzzy_or_new(self):
         async def llm(messages, **kw):

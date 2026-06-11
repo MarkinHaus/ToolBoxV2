@@ -232,6 +232,28 @@ def default_classify_guide() -> str:
     )
 
 
+def _sanitize_class(raw_tt: str, raw_st: str) -> tuple[str, str]:
+    """Normalize LLM classification output.
+
+    LLMs often return 'coding/toolbox' as task_type instead of splitting
+    into task_type='coding', subtype='toolbox'.  Without this the regex
+    sanitizer strips the '/' and produces 'codingtoolbox' as a top-level
+    directory — the root cause of the malformed task map.
+    """
+    raw_tt = str(raw_tt or "").lower().strip()
+    raw_st = str(raw_st or "general").lower().strip()
+    # Split on / if the LLM merged task_type/subtype into one field
+    if "/" in raw_tt:
+        parts = raw_tt.split("/", 1)
+        raw_tt = parts[0]
+        # Only override subtype if LLM left it at default
+        if raw_st in ("general", ""):
+            raw_st = parts[1]
+    tt = re.sub(r"[^a-z0-9_-]", "", raw_tt) or NEW_TYPE
+    st = re.sub(r"[^a-z0-9_-]", "", raw_st) or "general"
+    return tt, st
+
+
 def _top_keywords(query: str, n: int = 4) -> list[str]:
     words = [w for w in re.findall(r"[a-zA-ZäöüÄÖÜß_]{4,}", (query or "").lower()) if w not in _STOPWORDS]
     seen = list(dict.fromkeys(words))
@@ -343,9 +365,8 @@ class RunAggregator:
                 model_preference="fast", with_context=False, stream=False,
             )
             data = json.loads(re.search(r"\{.*\}", str(raw), re.DOTALL).group(0))
-            tt = re.sub(r"[^a-z0-9_-]", "", str(data.get("task_type", NEW_TYPE)).lower()) or NEW_TYPE
-            st = re.sub(r"[^a-z0-9_-]", "", str(data.get("subtype", "general")).lower()) or "general"
-            return tt, st
+            return _sanitize_class(data.get("task_type", NEW_TYPE),
+                                   data.get("subtype", "general"))
         except Exception as e:
             _log.debug(f"fast-model classify failed ({e}), fuzzy fallback")
             if candidates and candidates[0][2] >= 2:
@@ -532,9 +553,8 @@ async def classify_for_injection(query: str, guide: str, narrator_call=None) -> 
     try:
         data = await narrator_call(system, query)
         if isinstance(data, dict) and data.get("task_type"):
-            tt = re.sub(r"[^a-z0-9_-]", "", str(data["task_type"]).lower()) or NEW_TYPE
-            st = re.sub(r"[^a-z0-9_-]", "", str(data.get("subtype", "general")).lower()) or "general"
-            return tt, st
+            return _sanitize_class(data["task_type"],
+                                   data.get("subtype", "general"))
     except Exception as e:
         _log.debug(f"narrator classify failed: {e}")
     if candidates and candidates[0][2] >= 2:
