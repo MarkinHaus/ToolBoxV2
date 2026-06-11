@@ -5,7 +5,7 @@ Generates a standalone HTML file with embedded JSON data.
 TBJS Terminal style — mono, dark, phosphor, zero decoration.
 
 Usage:
-    from obs_viewer import generate_viewer
+    from toolboxv2.mods.isaa.extras.obs_viewer import generate_viewer
     generate_viewer(agent=my_agent, output="obs_report.html")
     generate_viewer(obs_dir="/path/to/Agents/MyAgent/obs", output="obs_report.html")
     generate_viewer(runs=[run1.to_dict()], output="obs_report.html")
@@ -936,12 +936,16 @@ function fmtJson(v) {
 // with actual newlines is never mangled.
 function decodeMaybe(s) {
   if (typeof s !== 'string') return s;
-  if (s.indexOf('\n') !== -1) return s;            // already has real newlines → leave it
-  if (!/\\[ntr"\\]/.test(s)) return s;             // no escape sequences → nothing to do
-  return s
-    .replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r')
-    .replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+  for (let i = 0; i < 3; i++) {
+    const lit = (s.match(/\\n/g) || []).length;
+    const real = (s.match(/\n/g) || []).length;
+    if (!lit || lit <= real) break;
+    s = s.replace(/\\(n|t|r|"|\\)/g, (m, c) =>
+      ({n:'\n', t:'\t', r:'\r', '"':'"', '\\':'\\'}[c]));
+  }
+  return s;
 }
+
 function renderLlmMessages(msgs) {
   if (!msgs) return '<span style="color:var(--fg2)">no input data captured</span>';
   if (typeof msgs === 'string') return '<pre>'+esc(msgs)+'</pre>';

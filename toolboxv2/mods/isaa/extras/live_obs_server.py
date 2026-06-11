@@ -905,10 +905,13 @@ function analyzeRun(r){
 // ── LLM message renderers (from obs_viewer) ──
 function decodeMaybe(s){
   if(typeof s!=='string') return s;
-  if(s.indexOf('\n')!==-1) return s;
-  if(!/\\[ntr"\\]/.test(s)) return s;
-  return s.replace(/\\n/g,'\n').replace(/\\t/g,'\t').replace(/\\r/g,'\r')
-          .replace(/\\"/g,'"').replace(/\\\\/g,'\\');
+  for(let i=0;i<3;i++){
+    const lit=(s.match(/\\n/g)||[]).length;
+    const real=(s.match(/\n/g)||[]).length;
+    if(!lit||lit<=real) break;
+    s=s.replace(/\\(n|t|r|"|\\)/g,(m,c)=>({n:'\n',t:'\t',r:'\r','"':'"','\\':'\\'}[c]));
+  }
+  return s;
 }
 function renderLlmMessages(msgs){
   if(!msgs) return '<span style="color:var(--fg2)">no input data captured</span>';

@@ -23,7 +23,13 @@ Ohne aktives Pruning bloated sich das gesamte System über Zeit.
 ═══ WORKFLOW ═══
 
 1. DATEN SICHTEN
-   - dream_get_records(query?, limit?) → gefilterte RunRecords aus dem Harvest
+   - dream_get_taskmap() → PRIMÄRE Datenbasis: Multi-Run-Intel aus dem
+     Background-Learning (Überblick). Dann pro Klasse:
+     dream_get_taskmap(task_type, subtype, limit) → formatted rows mit
+     Tool-Sequenzen, Fehler-Tools, drift/effort und Resume-Fakten.
+     PRIORITÄT: Klassen mit is_new=true und Runs mit resume.type=user_content
+     (user_content = explizite User-Korrektur — werte sie IMMER aus).
+   - dream_get_records(query?, limit?) → gefilterte RunRecords aus dem Harvest (Legacy/Migration)
    - dream_get_skills() → aktuelle Skills mit Stats
    - dream_get_rules() → aktuelle RuleSet-Regeln
    - dream_get_personas() → aktuelle Personas mit Stats
@@ -52,6 +58,17 @@ Ohne aktives Pruning bloated sich das gesamte System über Zeit.
 
 6. MEMORY-EXTRAKTION
    - dream_extract_memories(analyses) → Dauerhafte Fakten in Memory speichern
+
+6b. TASK-GUIDES (Multi-Run-Auswertung der Task Map)
+   - Pro Klasse mit genug Evidence (entry_count ≥ 3): vergleiche rows,
+     leite die optimale Tool-Route ab (Breakpoints: wo failen Tools, wo
+     steigt effort, was korrigierten User via resume.user_content)
+   - dream_write_taskmap_guide(task_type, subtype, content) → guid.md
+     KOMPAKT halten (~400 Token): optimale Route, bekannte Fallen,
+     framework-spezifischer Weg. NIE für task_type=new.
+   - Neue Labels: pflege Zeilen in /global/.memory/taskmap/classify_guide.md
+     (Format: task_type/subtype: keyword keyword ...) — der Fuzzy-Match
+     und die Schnell-Klassifikation arbeiten direkt damit.
 
 7. CLEANUP & PRUNING ⚠️ KRITISCH — NICHT ÜBERSPRINGEN!
    - dream_cleanup_skills() → LÖSCHEN: conf<0.15+≥5 uses, DEAKTIVIEREN: 3+ Cycles ohne Match, MERGEN: Duplikate, COMPRIMIEREN: bloat>70%

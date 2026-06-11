@@ -37,6 +37,31 @@ DREAM_DATA_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "dream_get_taskmap",
+            "description": (
+                "Lade Multi-Run-Intel aus der Task Map (/global/.memory/taskmap), "
+                "die das Background-Learning nach JEDEM Run schreibt. "
+                "Ohne Argumente: Überblick aller task_types/subtypes mit Indexes "
+                "(performance, avg_trace_length, improvement_trend, entry_count, is_new). "
+                "Mit task_type+subtype: die letzten formatted rows (Tool-Sequenzen, "
+                "Fehler-Tools, Resume-Fakten inkl. user_content-Korrekturen, drift/effort) "
+                "+ happypath + guid-Status. Klassen mit is_new=true und Runs mit "
+                "resume.type=user_content haben PRIORITÄT. Nutze dies als primäre "
+                "Datenbasis für die Auswertung über mehrere Runs."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_type": {"type": "string", "description": "z.B. coding (leer = Überblick)"},
+                    "subtype": {"type": "string", "description": "z.B. toolbox (default: general)"},
+                    "limit": {"type": "integer", "description": "max rows (default 20)", "default": 20}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "dream_get_records",
             "description": (
                 "Lade geparste RunRecords aus dem Harvest. "
@@ -518,6 +543,27 @@ DREAM_PERSIST_TOOLS = [
                     }
                 },
                 "required": ["memories"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "dream_write_taskmap_guide",
+            "description": (
+                "Schreibe/ersetze guid.md für eine Task-Map-Klasse — dein per-Task-Guide "
+                "aus der Multi-Run-Analyse. Wird beim nächsten Run als Pre-Context "
+                "injiziert (max ~400 Token — halte ihn KOMPAKT: optimale Tool-Route, "
+                "bekannte Fallen, framework-spezifischer Weg). Niemals für task_type=new."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_type": {"type": "string"},
+                    "subtype": {"type": "string", "description": "default: general"},
+                    "content": {"type": "string", "description": "Markdown-Guide, kompakt"}
+                },
+                "required": ["task_type", "content"]
             }
         }
     },

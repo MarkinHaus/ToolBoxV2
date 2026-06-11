@@ -3186,30 +3186,17 @@ async def bench(self) -> dict:
     from toolboxv2.mods.isaa.base.bench.main import main as b_main
     await b_main()
 
-@export(mod_name="isaa", name="app")
-async def serve_app(self, app=None, host: str = "127.0.0.1", port: int = 8000, ws_port: int = 8100) -> dict:
-    from toolboxv2.mods.isaa.app.main import wsgi_app, isc, app as isaa_app
-    from waitress import serve as waitress_serve
-    if app is None:
-        app = get_app()
 
-    print(f"\nISAA App  step 2")
-    print(f"  http  http://{host}:{port}")
-    print(f"  ws    ws://{host}:{ws_port}/ws")
-    print(f"  isaa: {'available' if isc.get_isaa() else 'unavailable'}")
-    print(f"  {len(isaa_app.list_routes())} routes registered\n")
-    try:
-        waitress_serve(wsgi_app, host=host, port=port)
-    except KeyboardInterrupt:
-        self.print("Interrupted")
+@export(mod_name="isaa", name="staticObs")
+async def staticObs(self, app=None, agent_name="self", output="obs_report.html", is_abs=False):
+    from toolboxv2.mods.isaa.extras.obs_viewer import generate_viewer
+    agent = await self.get_agent(agent_name)
 
-@export(mod_name="isaa", name="ui_open")
-async def serve_app(self, app=None, host: str = "0.0.0.0", port: int = 8080):
-    from toolboxv2.mods.isaa.ui.app import main as isaa_ui
-    from toolboxv2.mods.isaa.extras.live_obs_server import main as obs_ui
-    self.print(f"[ISAA UI] serving on http://{host}:{port}")
-    # await obs_ui(host, port, isaa_ui)
-    isaa_ui(host, port)
+    if not is_abs:
+        from toolboxv2 import __init_cwd__
+        output = __init_cwd__ / output
+
+    self.print(generate_viewer(agent=agent, output=str(output)))
 
 
 # Stable identities for the owner's mount registry (unmount/reload-from-src).

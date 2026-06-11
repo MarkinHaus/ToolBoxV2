@@ -35,8 +35,6 @@ from toolboxv2.utils.extras.Style import Spinner
 from toolboxv2.utils.extras.pt_spinner_patch import apply_prompt_toolkit_patch_safe, get_spinner_toolbar_fragment, register_app
 
 # Suppress noisy loggers
-logging.getLogger("LiteLLM").setLevel(logging.WARNING)
-logging.getLogger("litellm").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 from prompt_toolkit import PromptSession, ANSI

@@ -49,6 +49,7 @@ class DreamerToolHandler:
         personas: Dict[str, Any],
         records: List[Any] = None,
         dream_cycle_count: int = 1,
+        vfs_provider=None,
     ):
         self._skills = skills          # {id: Skill}
         self._rules = rules            # {id: SituationRule}
@@ -56,6 +57,8 @@ class DreamerToolHandler:
         self._personas = personas      # {key: persona_entry}
         self._records = records or []
         self._dream_cycle_count = dream_cycle_count
+        # callable -> VFS (taskmap lives in /global, any session vfs works)
+        self._vfs_provider = vfs_provider
 
         self._report = {
             "skills_evolved": [], "skills_created": [], "skills_merged": [],
@@ -64,6 +67,106 @@ class DreamerToolHandler:
             "patterns_added": [], "patterns_pruned": [], "personas_evolved": [],
             "personas_pruned": [], "memories_added": [],
         }
+
+
+    # ═══════════════════════════════════════════════════════════════
+    # TASK MAP ACCESS (multi-run intel from background learning)
+    # ═══════════════════════════════════════════════════════════════
+
+    _TASKMAP_ROOT = "/global/.memory/taskmap"
+
+    def _taskmap_vfs(self):
+        if self._vfs_provider is None:
+            return None
+        try:
+            return self._vfs_provider()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _vfs_read(vfs, path: str) -> str:
+        try:
+            r = vfs.read(path)
+            return r.get("content", "") if r.get("success") else ""
+        except Exception:
+            return ""
+
+    def handle_get_taskmap(self, task_type: str = "", subtype: str = "", limit: int = 20) -> str:
+        """
+        Multi-run intel from the task map (written by background learning
+        after every run). Without args: overview of all classes (_index).
+        With task_type+subtype: the last `limit` formatted rows + sub index
+        + happypath/guid status — THE data basis for cross-run evaluation.
+        """
+        vfs = self._taskmap_vfs()
+        if vfs is None:
+            return json.dumps({"error": "no VFS available for task map access"})
+
+        root = self._TASKMAP_ROOT
+        top_raw = self._vfs_read(vfs, f"{root}/_index.json")
+        if not top_raw:
+            return json.dumps({"error": "task map empty — no background-learning data yet"})
+
+        if not task_type:
+            try:
+                top = json.loads(top_raw)
+            except Exception:
+                return json.dumps({"error": "corrupt taskmap _index.json"})
+            # enrich overview with per-subtype indexes (new flags = Dreamer priority)
+            for tt, info in (top.get("task_types") or {}).items():
+                subs = {}
+                for st in info.get("subtypes", []):
+                    raw = self._vfs_read(vfs, f"{root}/{tt}/{st}/_index.json")
+                    if raw:
+                        try:
+                            subs[st] = json.loads(raw)
+                        except Exception:
+                            pass
+                info["subtype_indexes"] = subs
+            return json.dumps(top, indent=2, default=str)
+
+        sub = subtype or "general"
+        base = f"{root}/{task_type}/{sub}"
+        rows_raw = self._vfs_read(vfs, f"{base}/formatted_row.jsonl")
+        rows = []
+        for line in rows_raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except Exception:
+                continue
+        idx_raw = self._vfs_read(vfs, f"{base}/_index.json")
+        out = {
+            "task_type": task_type,
+            "subtype": sub,
+            "index": json.loads(idx_raw) if idx_raw else {},
+            "rows": rows[-max(1, int(limit)):],
+            "row_count_total": len(rows),
+            "happypath": self._vfs_read(vfs, f"{base}/happypath.md")[:2000],
+            "guid_exists": bool(self._vfs_read(vfs, f"{base}/guid.md")),
+        }
+        return json.dumps(out, indent=2, default=str)
+
+    def handle_write_taskmap_guide(self, task_type: str, subtype: str, content: str) -> str:
+        """Write/replace guid.md for a class — the Dreamer's per-task guide."""
+        vfs = self._taskmap_vfs()
+        if vfs is None:
+            return json.dumps({"error": "no VFS available"})
+        if not task_type or not content:
+            return json.dumps({"error": "task_type and content required"})
+        sub = subtype or "general"
+        path = f"{self._TASKMAP_ROOT}/{task_type}/{sub}/guid.md"
+        try:
+            vfs.mkdir(f"{self._TASKMAP_ROOT}/{task_type}/{sub}", parents=True)
+        except Exception:
+            pass
+        r = vfs.write(path, content)
+        ok = bool(r.get("success", True)) if isinstance(r, dict) else True
+        if ok:
+            self._report.setdefault("taskmap_guides_written", []).append(f"{task_type}/{sub}")
+        return json.dumps({"success": ok, "path": path})
 
     # ═══════════════════════════════════════════════════════════════
     # BLOAT CALCULATION

@@ -898,8 +898,8 @@ class MinIOManager:
         config = MinIOConfig(
             mode=MinIOMode.DESKTOP,
             data_dir=str(self.base_dir / "data" / name),
-            port=port,  # Different port from server
-            console_port=port+1,
+            port=int(port),  # Different port from server
+            console_port=int(port)+1,
             access_key=os.getenv("MINIO_ACCESS_KEY", "admin"),
             secret_key=os.getenv("MINIO_SECRET_KEY", "SecurePass123"),
             host=host,

@@ -886,251 +886,40 @@ class VirtualFileSystemV2:
 
     def _build_vfs_guide(self) -> str:
         """Build the VFS usage guide that is injected as /vfs_guide.md."""
-        return (
-            fr"""# VFS — Schnellreferenz
+        return (fr"""# VFS (Virtual File System) — System- & Wissensstruktur
 
-## Die zwei Kern-Tools
+## ⚠️ Wichtigste Grundregel: VFS ist keine Arbeitsumgebung!
 
-| Tool | Zweck |
-|------|-------|
-| `vfs_shell(reason, command)` | Alle Datei-Operationen (lesen, schreiben, suchen, navigieren) |
-| `vfs_view(path, ...)` | Kontext-Fenster {self.max_window_lines} steuern — was du im nächsten Prompt **siehst** |
+Das VFS dient **nicht** zum Ausführen von Code, zur aktiven Softwareentwicklung oder zur temporären Dateibearbeitung.
+* **Sandbox-Tools:** Jegliche produktive Arbeit, das Umsetzen, Ausführen, Testen und Validieren von Aufgaben findet ausschließlich in deinen dafür vorgesehenen **Sandbox-Tools** statt.
+* **VFS-Zweck:** Das VFS ist eine reine Wissensdatenbank. Es dient dem Verwalten von Fähigkeiten (Skills), Anleitungen und dem Wissen darüber, wie du Aufgaben bewältigst.
 
 ---
 
-## Kontext-Fenster — Konzept
+## 📂 Zugriffsrechte & Mount-Punkte
 
-Offene Dateien erscheinen in **jedem folgenden Prompt** (= Token-Kosten!).
-Geschlossene Dateien sind unsichtbar — nur Metadaten bleiben erhalten.
+Du hast auf das VFS primär **lesenden Zugriff**, um dich über deine Fähigkeiten und Systemvorgaben zu informieren.
 
-**Regel**: Öffne immer nur den Bereich, der für deine aktuelle Aufgabe direkt relevant ist.
+### Schreibrechte (Streng limitiert)
+Manuelles Schreiben im VFS ist nur in folgenden Ausnahmen gestattet:
+1. Der Benutzer verlangt es explizit.
+2. Du hast eine wichtige, neue Erkenntnis darüber gewonnen, wie etwas funktioniert, oder einen nützlichen Ablauf (Skill) entwickelt, der für zukünftige Sitzungen persistent gesichert werden soll.
 
-dein fester pro file ist {self.max_window_lines}.
-sache dier als indeterminists "oder genauer" diese größe an sektionen an {self.max_window_lines}.
----
+### Verzeichnisstruktur
 
-## Fokussierter Recherche-Workflow (x und y finden)
-
-```
-# 1. x suchen
-vfs_shell("find specif section to work focussed and persist.", "grep -rn 'ClassX' /src")
-# → /src/models.py:42:class ClassX:
-
-# 2. Auf x einzoomen  →  models.py erscheint ab jetzt im Kontext
-vfs_view("/src/models.py", scroll_to="ClassX", context_lines=60)
-
-# 3. y suchen
-vfs_shell("initial find locations and information abut method_y","grep -rn 'method_y' /src")
-# → /src/services.py:88:    def method_y(self):
-
-# 4. y zum Kontext hinzufügen  →  jetzt sind BEIDE Abschnitte sichtbar
-vfs_view("/src/services.py", scroll_to="method_y", context_lines=40)
-
-# 5. Antwort geben — du siehst genau x und y, nichts Überflüssiges
-
-# 6. Aufräumen  →  alles schließen, neu starten
-vfs_view("/src/neue_datei.py", scroll_to="...", close_others=True)
-# ODER einzeln:
-vfs_shell("I done wit working on models and do not need any references to this files or ist information's","close /src/models.py")
-vfs_shell("focusing on the next section this file is project relayed i'm now working on an web research as requested by the user","close /src/services.py")
-```
+| Pfad | Typ | Beschreibung |
+|------|-----|--------------|
+| `/global/` | **Persistent** | Host-weit geteilt für alle Agenten auf diesem System. Enthält globale Anweisungen, geteilte Skills und systemrelevante Informationen. |
+| `/shared/{{id}}/` | **Temporär** | Cross-Session/Agent Shares für den flüchtigen Informationsaustausch via `vfs_share_*`. |
+| Eigene Ordner | **Temporär** | Dienen nur dem Halten von Live-Informationen und allgemeinem Kontext während der aktuellen Session. |
 
 ---
 
-## vfs_shell Referenz
+## 🔍 Navigation & Tool-Parameter
 
-```
-# Navigation
-ls [-la] [-R] [path]         tree [path] [-L depth]      pwd
+Nutze primär das Lese-Tool, um deine Systeminfos abzurufen.
 
-# Lesen
-cat <path>                   head -n N <path>            tail -n N <path>
-wc -l <path>                 stat <path>
-
-# Suchen
-find [path] -name "*.py"     find [path] -type f -name pattern
-grep -rn "pattern" /src      grep -in "pattern" /file.py
-
-# Schreiben (klein)
-touch <path>
-echo "content" > <path>      echo "line" >> <path>
-
-# Heredoc — für Content mit beliebigen Quotes/Sonderzeichen (bevorzugt)
-write <path> <<'_VFS_END_a799'
-content with '''triple quotes''' and "mixed" quotes
-_VFS_END_a799
-# Funktioniert auch mit: write_mini, write_chunk, edit, echo
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WICHTIG: SCHREIB-LIMITS & CHUNK-PROTOKOLL
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Ein einzelner Tool-Call darf max ~40 Zeilen Content enthalten.
-Grund: JSON-Tool-Calls können bei Längenbeschränkung abbrechen.
-Ein abgebrochener Call = keine Wirkung. Kein partial-write.
-
-REGEL:
-  < 750 Zeilen  →  write <path> "..."   (ein Call)
-  ≥ 750 Zeilen  →  write_chunk          (ein Call pro Block)
-
-CHUNK-PROTOKOLL:
-  write_chunk <path> 0 <N> "<block_0_content>"   ← erzeugt/überschreibt Datei
-  write_chunk <path> 1 <N> "<block_1_content>"   ← hängt an
-  ...
-  write_chunk <path> N-1 <N> "<block_N-1>"       ← finalisiert
-
-Nach Abbruch / Wiederaufnahme:
-  write_chunk_status <path>   →  zeigt welche Blöcke fehlen
-  Dann nur die fehlenden Blöcke erneut senden.
-
-Content-Encoding:
-  "line1\nline2"    ← echter Newline im JSON-String (STANDARD)
-  NIEMALS: \\n      ← erzeugt LITERAL Backslash+n im File, KEINEN Zeilenumbruch!
-  NIEMALS: \\\\n    ← erzeugt ebenfalls Backslash+n im File!
-  NIEMALS: \\|      ← das ürde nun | als literal anshen was Fasch ist!
-  NIEMALS: \|      ← das ürde nun | als literal anshen was Fasch ist!
-
-WICHTIG: Der JSON-Parser wandelt \n in echte Newlines um BEVOR
-der Command das VFS erreicht. Das System decodiert NICHT nochmal.
-Nur echte Newlines (JSON-Standard) funktionieren als Zeilenumbruch.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Das LLM muss echte Newlines via JSON senden
-
-# Zeilen ersetzen (präzises Editieren)
-edit <path> <start> <end> "neuer inhalt"
-⚠️ **edit schreibt Content 1:1 — keine Escape-Verarbeitung.**
-Mehrzeilige Replacements: echte Newlines im JSON-String verwenden.
-
-# Verzeichnisse
-mkdir -p /src/components      rm -rf /old_dir/
-
-# Dateien
-rm /file.py                   mv /old.py /new.py          cp /src.py /dst.py
-
-# Kontext
-close <path>                  (entfernt Datei aus dem Kontext-Fenster)
-
-# Ausführen
-exec <path> [args...]
-
-## grep — Hinweise für zuverlässige Suche
-
-**Backend:** grep nutzt ripgrep (`rg`) für alle disk-backed Bereiche (Mounts, `/global/`, `/shared/`).
-Das eliminiert Memory-Spikes bei großen Projekten. Reine In-Memory-Files werden per Python-Regex durchsucht.
-Die Syntax bleibt identisch — das Backend ist transparent.
-
-**Exakte Patterns:** grep ist Regex-basiert. Spaces, Sonderzeichen und Groß/Kleinschreibung
-zählen. `grep "x=y+z"` matcht NICHT `x = y + z`.
-
-| Wenn kein Match | Lösung |
-|-----------------|--------|
-| Spaces im Code | Kürzeres Pattern: `grep "lastPlatX"` statt `grep "lastPlatX=px+pw"` |
-| Groß/Klein | `-i` Flag: `grep -in "debug" /src` |
-| Sonderzeichen `+.*[]()` | Escapen: `grep "x\+y"` oder kürzeres Pattern ohne Sonderzeichen |
-| Alternation (`\|` oder `\\|`) | **NIEMALS** `\\|` oder `\|` — nutze `|` direkt: `grep -rn 'class|def |async def ' /path` |
-
-**⚠️ ALTERNATION — HÄUFIGSTER FEHLER:**
-VFS-grep nutzt ERE/PCRE-Syntax. `|` ist direkt Alternation, KEIN Escaping nötig.
-- ✅ `grep -rn 'class|def |async def ' /src`
-- ✅ `grep -rn 'minio|redis|host_network' /src`
-- ❌ `grep -n 'class\|def \|async def ' /file`  ← matcht NICHTS, `\|` ist Literal !!
-- ❌ `grep -n 'class\\|def ' /file`  ← matcht NICHTS, selbes Problem eifac nein nicht machen tu so las ob duch nach dem str "def |class" suchst genau so und nicht ander s !!!!!!!!!!
-
-
-**grep in Pipes vs. direkt:**
-- `grep -rn "pattern" /src` → durchsucht Dateien via ripgrep, Output: `datei:zeile:match`
-- `cat /f.py | grep "pattern"` → durchsucht Text-Stream (Python), Output: `match` (kein Dateiname)
-- `-l` (nur Dateinamen) funktioniert nur bei direktem grep, NICHT in Pipes
-
-**Kein Match ≠ Tool-Fehler.** Wenn grep rc=1 zurückgibt, existiert das Pattern nicht exakt so im Code.
-Prüfe Whitespace und verwende ein kürzeres, eindeutiges Pattern.
-```
----
-
-
-## Chunk-Protokoll (Beispiel für 750 Zeilen Datei)
-
-Wenn eine Datei zu groß für einen Call ist, teile sie in Blöcke à ~250 Zeilen:
-
-1. `vfs_shell("init big file", "write_chunk /src/big.py 0 3 '...zeile 1-250...'")`
-2. `vfs_shell("add chunk 1", "write_chunk /src/big.py 1 3 '...zeile 251-500...'")`
-3. `vfs_shell("finalize", "write_chunk /src/big.py 2 3 '...zeile 501-750...'")`
-
-pythonBei Verbindungsabbruch: `write_chunk_status /src/big.py` prüft, welche Indizes fehlen.
-
-## Heredoc-Syntax (empfohlen für komplexen Content)
-
-Wenn Content Quotes, Triple-Quotes oder Sonderzeichen enthält → Heredoc:
-write /src/app.py <<'_VFS_END_a799'
-class App:
-TEMPLATE = """
-            + r'''"""<html>{content}</html>"""
-def run(self):
-print('it's working')
-_VFS_END_a799
-
-- Bevorzugter Delimiter: `_VFS_END_a799`
-- Delimiter darf NICHT im Content vorkommen
-- Content wird 1:1 übernommen, keine Escape-Verarbeitung
-- Ohne Heredoc wird normal geparst; bei Fehler → Hint in der Fehlermeldung
-
----
-```
-
-## Mehrere Befehle in einem Aufruf (Batch-Syntax)
-
-`vfs_shell` versteht Shell-Operatoren um mehrere Befehle in **einem einzigen Aufruf** zu kombinieren.
-
-| Operator | Semantik | Beispiel |
-|----------|----------|---------|
-| `;` | Immer ausführen (Sequenz) | `mkdir /out; touch /out/f.txt` |
-| `&&` | Nur wenn vorheriger **erfolgreich** | `mkdir /out && write /out/f.py "x=1"` |
-| `||` | Nur wenn vorheriger **fehlgeschlagen** | `cat /cfg.py || write /cfg.py "DEBUG=True"` |
-| `|` | Pipe — stdout links wird stdin rechts | `cat /f.py | grep def | wc -l` |
-
-**Pipe-fähige Rechts-Befehle:** `grep [-invC]`, `wc [-l|-w|-c]`, `head [-n N]`, `tail [-n N]`, `sort [-r]`, `uniq`
-
-```
-# Typische Workflows
-
-# Verzeichnis anlegen und Datei schreiben (nur wenn mkdir klappt)
-"mkdir -p /src/utils && write /src/utils/helper.py 'def f(): pass'"
-
-# Fallback: Datei lesen, falls nicht vorhanden anlegen
-"cat /config.py || write /config.py 'DEBUG = True'"
-
-# Drei Schritte in einem Aufruf
-"mkdir /out; write /out/app.py 'x=1'; cat /out/app.py"
-
-# Pipeline: alle Klassen zählen
-"grep -rn 'class ' /src | grep -v '#' | wc -l"
-
-# Pipeline: nur Dateinamen mit Matches
-"grep -rl 'TODO' /src | sort"
-
-# Sync nach manuellen Bulk-Schreiboperationen
-"sync"
-```
-
-# Alternation — ERE-Syntax direkt (ohne \|):
-grep -rn 'minio|redis|external|host_network' /tb/.../__init__.py
-
-# Oder einzeln:
-grep -rn 'minio' /path && grep -rn 'redis' /path
-
-# Statt find -exec:
-grep -rn 'create_container|network|docker' /tb/toolboxv2/mods/ContainerManager
-
-
-> ⚠️ **Wichtig — Zeilenumbrüche (`\n`) sind kein Separator.**
-> Echter Newline in Datei-Inhalten bleibt erhalten:
-> `write /f.py "class Foo:\n    pass"` → eine Datei, kein Batch.
-> Für Batches immer `;` oder `&&` verwenden.
-```
-
----
-
-## vfs_view Parameter
+### `vfs_view` Parameter
 
 ```
 vfs_view(
@@ -1145,23 +934,18 @@ vfs_view(
 
 ---
 
-## Mount-Punkte
+## 💡 Kontext-Fenster & Token-Sparen
 
-| Pfad | Beschreibung |
-|------|-------------|
-| `/global/` | Geteilt zwischen allen Sessions (persistent auf Disk) |
-| `/shared/{id}/` | Cross-Session/Agent Shares  →  `vfs_share_*` Tools |
-| `/project/` | Typischer Einhängepunkt für lokale Projektordner  →  `vfs_mount` |
+Offene Dateien erscheinen in **jedem folgenden Prompt** und verursachen kontinuierliche Token-Kosten. Schließe Dokumente, die du nicht mehr aktiv liest.
 
+* Dein festes Limit pro Datei-Ansicht beträgt **{self.max_window_lines} Zeilen**.
+* Nutze gezielt den Parameter `scroll_to`, um relevante Abschnitte innerhalb dieses Limits zu fokussieren.
 
-**⚠️ ALTERNATION — HÄUFIGSTER FEHLER:**
-VFS-grep nutzt ERE/PCRE-Syntax. `|` ist direkt Alternation, KEIN Escaping nötig.
-- ✅ `grep -rn 'class|def |async def ' /src`
-- ✅ `grep -rn 'minio|redis|host_network' /src`
-- ❌ `grep -n 'class\|def \|async def ' /file`  ← matcht NICHTS, `\|` ist Literal
-- ❌ `grep -n 'class\\|def ' /file`  ← matcht NICHTS, selbes Problem
-'''
-        )
+> ⚠️ **Hinweis zu Zeilenumbrüchen (`\n`):**
+> Ein echter Zeilenumbruch in geschriebenen VFS-Dateien bleibt erhalten.
+> `write /f.py "class Foo:\n    pass"` erzeugt eine formatierte Datei, keinen Batch-Befehl.
+""")
+
 
     def _init_system_files(self):
         """Initialize read-only system files"""
@@ -1213,12 +997,10 @@ Session: {self.session_id}
     def set_memory_index_file(self, content: str, agent_name="default"):
         """Set the memory_index.md file content (from RuleSet)"""
         path = "/memory_index.md"
-        global_path = f"/global/{agent_name}/memory_index.md"
         if path not in self.files:
-            self.write(global_path, content)
-            self.open(global_path)
-            if global_path in self.files:
-                self.files[global_path].show_full = True
+            self.files[path] = VFSFile(
+                filename="memory_index.md", _content=content, state="open", readonly=True, show_full=True
+            )
         else:
             self.files[path].content = content
             self.files[path].updated_at = datetime.now().isoformat()

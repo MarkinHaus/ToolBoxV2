@@ -2106,6 +2106,15 @@ class FlowAgent:
             "persona_snapshot": {},  # loaded from VFS by dreamer tools
         }
 
+        # Report: before-snapshot (counts + capabilities) for the dashboard
+        from toolboxv2.mods.isaa.base.dreamer.report import (
+            collect_system_snapshot, collect_taskmap_overview,
+            build_dream_report_html, write_dream_report,
+        )
+        import time as _rtime
+        _report_before = collect_system_snapshot(sm, rule_set, {})
+        _dream_t0 = _rtime.time()
+
         # Setup dreamer session + VFS
         import time as _time
         dreamer_session_id = f"dreamer_{self.amd.name}_{int(_time.time())}"
@@ -2141,6 +2150,7 @@ class FlowAgent:
         )
 
         # Stream the dream run like any other agent run
+        _final_answer = ""
         async for chunk in dreamer_agent.a_stream(
             query=query,
             session_id=dreamer_session_id,
@@ -2150,7 +2160,48 @@ class FlowAgent:
             chunk["_dream"] = True
             chunk["_dream_id"] = dreamer_session_id
             chunk["_parent_agent"] = self.amd.name
+            if chunk.get("type") == "final_answer":
+                _final_answer = chunk.get("answer", "") or _final_answer
+            elif chunk.get("type") == "done":
+                _final_answer = chunk.get("final_answer", "") or _final_answer
             yield chunk
+
+        # ── End-of-dream HTML dashboard report for the user ──
+        try:
+            from datetime import datetime as _dt
+            _handler = getattr(self, "_dreamer_tool_handler", None)
+            _actions = dict(getattr(_handler, "_report", {}) or {}) if _handler else {}
+            _report_after = collect_system_snapshot(sm, rule_set, {})
+            _taskmap = collect_taskmap_overview(vfs)
+            _html = build_dream_report_html(
+                meta={
+                    "agent": self.amd.name,
+                    "timestamp": _dt.now().strftime("%Y-%m-%d %H:%M"),
+                    "duration_s": _rtime.time() - _dream_t0,
+                },
+                before=_report_before,
+                after=_report_after,
+                actions_report=_actions,
+                taskmap=_taskmap,
+                final_answer=_final_answer,
+            )
+            _report_path = write_dream_report(vfs, _html, agent_name=self.amd.name)
+            yield {
+                "type": "dream_report",
+                "path": _report_path,
+                "_dream": True,
+                "_dream_id": dreamer_session_id,
+                "_parent_agent": self.amd.name,
+            }
+        except Exception as _rep_err:
+            yield {
+                "type": "dream_report",
+                "path": "",
+                "error": str(_rep_err),
+                "_dream": True,
+                "_dream_id": dreamer_session_id,
+                "_parent_agent": self.amd.name,
+            }
 
     async def _get_or_create_dreamer_agent(self):
         """Get or create the DreamerAgent (a standalone FlowAgent)."""
@@ -2248,12 +2299,21 @@ class FlowAgent:
         sm = self.session_manager.skills_manager if hasattr(self.session_manager, 'skills_manager') else None
 
         # Create handler with current parent data
+        def _taskmap_vfs():
+            # taskmap lebt unter /global (shared store) — jede Session-VFS reicht
+            try:
+                session = self.session_manager.get(self.active_session or "default")
+                return getattr(session, "vfs", None)
+            except Exception:
+                return None
+
         handler = DreamerToolHandler(
             skills=dict(sm.skills) if sm else {},
             rules={},
             patterns=[],
             personas={},
             records=[],
+            vfs_provider=_taskmap_vfs,
         )
 
         # Map tool names to handler methods
@@ -2264,6 +2324,10 @@ class FlowAgent:
             "dream_get_skills": lambda **kw: handler.handle_get_skills(),
             "dream_get_rules": lambda **kw: handler.handle_get_rules(),
             "dream_get_personas": lambda **kw: handler.handle_get_personas(),
+            "dream_get_taskmap": lambda task_type="", subtype="", limit=20, **kw:
+            handler.handle_get_taskmap(task_type, subtype, limit),
+            "dream_write_taskmap_guide": lambda task_type="", subtype="", content="", **kw:
+            handler.handle_write_taskmap_guide(task_type, subtype, content),
             "dream_cluster_records": lambda record_ids=None, threshold=0.65, **kw:
             handler.handle_cluster_records(record_ids, threshold),
             "dream_evolve_skill": lambda **kw: handler.handle_evolve_skill(**kw),
@@ -2293,6 +2357,10 @@ class FlowAgent:
             "dream_persist_checkpoint": lambda **kw:
             handler.handle_persist_checkpoint(None),  # VFS injected at call time
         }
+
+        # Keep handler reachable — dream() reads handler._report for the
+        # end-of-dream HTML dashboard.
+        self._dreamer_tool_handler = handler
 
         # Get tool definitions for descriptions
         from toolboxv2.mods.isaa.base.dreamer.tools import get_all_dream_tool_definitions
@@ -2937,6 +3005,7 @@ class FlowAgent:
                 "suggestion": suggestions.get(result.status, "Unknown status."),
             }
 
+
         # ══════════════════════════════════════════════════════════════════
         # TOOL REGISTRY
         # ══════════════════════════════════════════════════════════════════
@@ -3234,16 +3303,16 @@ class FlowAgent:
 
         tools = [
             # ── PRIMARY (replaces ~18 individual vfs_* tools) ─────────────
-            {
-                "tool_func": vfs_shell_fn,
-                "name": "vfs_shell",
-                "category": ["vfs", "shell"],
-                "description": (
-                    "Unix-like shell for VFS: ls cat head tail wc stat tree "
-                    "find grep touch write edit echo mkdir rm mv cp close exec. "
-                    "Returns {success, stdout, stderr, returncode}."
-                ),
-            },
+            # {
+            #     "tool_func": vfs_shell_fn,
+            #     "name": "vfs_shell",
+            #     "category": ["vfs", "shell"],
+            #     "description": (
+            #         "Unix-like shell for VFS: ls cat head tail wc stat tree "
+            #         "find grep touch write edit echo mkdir rm mv cp close exec. "
+            #         "Returns {success, stdout, stderr, returncode}."
+            #     ),
+            # },
             {
                 "tool_func": vfs_view_fn,
                 "name": "vfs_view",
@@ -3405,6 +3474,7 @@ class FlowAgent:
                  ),
              },
         ]
+
         if self.amd.web_config.enable_web:
             tools.append({
                 "tool_func": web_shell_fn,
@@ -3419,6 +3489,16 @@ class FlowAgent:
                     "Returns {success, stdout, stderr, returncode}."
                 ),
             })
+
+
+        # ── SandBox tools ────────────────────────────────────────────
+        from toolboxv2.mods.isaa.base.patch.sandbox_tools import (
+            build_sandbox_tools,
+            SANDBOX_TOOL_HEALTH,
+        )
+        sandbox_tools = build_sandbox_tools(session)
+        tools.extend(sandbox_tools)
+        _TOOL_HEALTH_EXTENSIONS.update(SANDBOX_TOOL_HEALTH)
 
         # ── Optional: Google Tools ────────────────────────────────────────
         if os.getenv("WITH_GOOGLE_TOOLS", "false") == "true":

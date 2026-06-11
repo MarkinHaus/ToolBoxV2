@@ -1404,6 +1404,14 @@ class ExecutionEngine(SubAgentResumeExtension):
             live=self.live, agent=agent, do_narator=do_narrator
         )
 
+        # Background-learning aggregator (lazy — created on first bg task)
+        self._run_aggregator = None
+        # Flag: task-map pre-injection at run start (happypath+guid few-shot).
+        # Opt-in via env or set engine.taskmap_preinject = True at runtime.
+        self.taskmap_preinject = (
+            os.getenv("ISAA_TASKMAP_PREINJECT", "false").lower() == "true"
+        )
+
         # Sub-agent state
         self.is_sub_agent = is_sub_agent
         self.sub_agent_output_dir = sub_agent_output_dir
@@ -1676,6 +1684,7 @@ BEISPIELE:
             if success:
                 try:
                     app = get_app()
+                    _nm = getattr(self._narrator, "_mini", None)
                     app.run_bg_task_advanced(
                         self._background_learning_task,
                         query=query,
@@ -1684,6 +1693,13 @@ BEISPIELE:
                         success=success,
                         matched_skills=ctx.matched_skills,
                         iterations_used=ctx.current_iteration,
+                        run_id=ctx.run_id,
+                        vfs=getattr(session, "vfs", None),
+                        narrator_snapshot={
+                            "drift": bool(_nm and _nm.drift),
+                            "repeat": bool(_nm and _nm.repeat),
+                            "plan_summary": (_nm.plan_summary if _nm else ""),
+                        },
                     )
                 except Exception as e:
                     self.live.log(
@@ -2915,6 +2931,35 @@ BEISPIELE:
                 ctx, session, query, max_iterations
             )
             system_prompt = self._build_static_system_prompt(ctx, session)
+
+            # Task-map pre-injection (flag): fuzzy preselect + one narrator
+            # call classify; task_type=new injects NOTHING by design.
+            if self.taskmap_preinject and not self.is_sub_agent:
+                try:
+                    from toolboxv2.mods.isaa.base.dreamer.run_aggregator import (
+                        build_preinjection,
+                    )
+
+                    async def _narrator_classify(_system: str, _query: str):
+                        return await self._narrator.blitz(
+                            system=_system,
+                            messages=[{"role": "user", "content": _query[:1500]}],
+                            schema={"task_type": str, "subtype": str},
+                        )
+
+                    _pre = await build_preinjection(
+                        session.vfs, query, narrator_call=_narrator_classify
+                    )
+                    if _pre:
+                        system_prompt = system_prompt + "\n\n" + _pre
+                        self.live.log(
+                            f"Task-map pre-context injected ({len(_pre)} chars)"
+                        )
+                except Exception as _pre_err:
+                    self.live.log(
+                        f"Pre-injection skipped: {_pre_err}", logging.DEBUG
+                    )
+
             history_depth = 2 if self.is_sub_agent else 6
             permanent_history = session.get_history_for_llm(last_n=history_depth)
             ctx.working_history = [
@@ -3200,6 +3245,9 @@ BEISPIELE:
         success: bool,
         matched_skills: list,
         iterations_used: int = 0,
+        run_id: str = "",
+        vfs=None,
+        narrator_snapshot: dict | None = None,
     ):
         """Runs learning and recording in background to not block the UI"""
         try:
@@ -3220,19 +3268,27 @@ BEISPIELE:
                     success=success,
                     llm_completion_func=self.agent.a_run_llm_completion,
                 )
-            # 3. clasify task für memory system
-            # 4. colectct programict data on how the gola was acaeved. and waht didaet worked. ( consomed unessasary time )
-            # 5. inital build or extend golbal vfs task map. mit global index
-            # datt structure for the task map  first layer classes name like [codeing, conversational, brainstoming, homwork, freelancing, ... mor spesifc]
-            # jede kategorie hat dann seinen eigenen ordern. beispel für codeing. diser order hat wider classen spezifische unter order [genral, toolbox, isaa, etc]
-            # jeder dieser unter order hat dann die filgenden unter order. history. experianace. so wie die datei _index.json
-            # in hostry werden die informationen aus step 4 gespeichert und aktumulirt.
-            # um einen ord zu ershaffen der genau sagt das gibt es das habe ich gemacht. so hat es fuctoniert. und was nicht fuktoniert hatte.
-            # zusammen brainstomen wie entwder direkt hier mit minimaler latens sinvolle experianaces erstellt werden können. und wie der dreamer dann dise informationen verwendet um experianxes zu erstellen.
-            # und dann nicht vergessen in dem setup gucken ob dieser task typneu ist oder existirt. dann ob der type |sein untertype neu ist oder exsitert.
-            # und wenn er neu ist. schonmal den neuen order anlagen. wenn er exitiert die experiances "für die task" kopiliren. so wie den order
-            # dann als pre context mit dem aent gaben. damit isaa wirklich aitomatisch adaptive lernt.
-            # mien isaa agent kennt den toolbox weg wie man sachen macht nicht. alo wider wie der agent toolbox spezifschen code schriben kann so wie wie man mit dem framwork richtig um geht. die lösung coprest foschot lerning auto agrgation.
+            # 3-5. Task-Map aggregation: classify (fast model) + VFS task map
+            #      Quelle: obs RunRecord (strukturiert) — kein Log-Regex.
+            #      Klassifizierung post-run = fast model; Run-Start macht der
+            #      Narrator (fuzzy_preselect über classify_guide im global VFS).
+            if run_id and vfs is not None:
+                _obs = getattr(self.agent, "obs", None)
+                run_record = _obs.get_run(run_id) if _obs and hasattr(_obs, "get_run") else None
+                if run_record is not None:
+                    if self._run_aggregator is None:
+                        from toolboxv2.mods.isaa.base.dreamer.run_aggregator import RunAggregator
+                        self._run_aggregator = RunAggregator(
+                            vfs=vfs,
+                            llm_completion_func=self.agent.a_run_llm_completion,
+                        )
+                    else:
+                        self._run_aggregator.vfs = vfs  # session may have changed
+                    await self._run_aggregator.aggregate(
+                        run_record,
+                        query=query,
+                        narrator_snapshot=narrator_snapshot,
+                    )
         except Exception as e:
             self.live.log(f"Background Learning Error: {e}", logging.WARNING)
 
@@ -5039,52 +5095,10 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         zentralisiert (unter globalen Locks). Hier NICHT mehr doppelt.
         """
 
-        # 1. Archivierung: Speichere den vollen Verlauf im VFS
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_dir = "/global/.memory/logs"
-        log_file = f"{log_dir}/{timestamp}_{ctx.run_id}.md"
-
+        # 1. Archivierung entfällt: die Task Map (/global/.memory/taskmap/)
+        #    ist die einzige Wahrheit. Keine neuen .md-Logs mehr; alte Logs
+        #    bleiben liegen (Migration via parse_log, einmalig).
         summary = HistoryCompressor.compress_to_summary(ctx.working_history, ctx.run_id)
-
-        try:
-            # Sicherstellen, dass Verzeichnis existiert
-            session.vfs.mkdir(log_dir, parents=True)
-
-            # Log formatieren
-            full_log = [f"# Execution Log: {ctx.run_id}", f"Query: {query}", "-" * 40]
-
-            for msg in ctx.working_history[1:]:
-                role = msg.get("role", "unknown")
-                content = msg.get("content", "")
-                content = f"{content}"
-                full_log.append(f"\n### {role.upper()}")
-                if "tool_calls" in msg:
-                    for tc in msg["tool_calls"]:
-                        fn = (
-                            tc.get("function", {})
-                            if isinstance(tc, dict)
-                            else tc.function
-                        )
-                        name = fn.get("name", "") if isinstance(fn, dict) else fn.name
-                        full_log.append(f"`Tool Call: {name}`")
-
-                full_log.append(content)
-            if ctx.active_persona.name != "default":
-                full_log.append(
-                    f"Persona: {ctx.active_persona.name} (source: {ctx.active_persona.source})"
-                )
-
-            def helper(__full_log):
-                session.vfs.write(log_file, "\n".join(__full_log))
-
-            helper(full_log)
-        except Exception as e:
-            import traceback
-
-            self.live.log(
-                f"Failed to write execution log: {e} {traceback.format_exc()}",
-                logging.WARNING,
-            )
 
         # 2. LLM Summarization (Dynamisch statt Regelbasiert)
         summary_text = "Keine Zusammenfassung."
@@ -5155,7 +5169,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         # System Summary mit Referenz auf Log-Datei
         summary_msg = {
             "role": "system",
-            "content": f"⚡ RUN SUMMARY [{ctx.run_id}]: {summary_text}\n(Full Log: {log_file})",
+            "content": f"⚡ RUN SUMMARY [{ctx.run_id}]: {summary_text}\n(Task Map: /global/.memory/taskmap/)",
         }
 
         await session.add_message(
@@ -5169,7 +5183,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         # Final response
         await session.add_message({"role": "assistant", "content": final_response})
 
-        self.live.log(f"Run {ctx.run_id} archived to {log_file}")
+        self.live.log(f"Run {ctx.run_id} committed (task map aggregation in bg)")
 
         # ── Notify idle tracker ──
         try:
@@ -5591,3 +5605,4 @@ if __name__ == "__main__":
             )
         )
     )
+

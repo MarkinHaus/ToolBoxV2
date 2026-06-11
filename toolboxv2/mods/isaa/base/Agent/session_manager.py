@@ -117,11 +117,6 @@ class SessionManager:
         enable_docker: bool | None = None,
         docker_config: DockerConfig | None = None,
         personal_skills: bool = False,
-
-        enable_web: bool | None = None,
-        web_headless: bool = False,
-        web_single_site: str | None = None,
-        web_trusted_sites: list[str] | None = None,
     ) -> AgentSessionV2:
         """
         Get existing session or create new one.
@@ -166,10 +161,6 @@ class SessionManager:
             docker_config=docker_config or self.docker_config,
             toolboxv2_wheel_path=self.toolboxv2_wheel_path,
             skills_manager=self.skills_manager if not personal_skills else None,
-            enable_web= enable_web or self.enable_web,
-            web_headless= web_headless or self.web_headless,
-            web_single_site= web_single_site or self.web_single_site,
-            web_trusted_sites= web_trusted_sites or self.web_trusted_sites,
         )
 
         await session.initialize()

@@ -770,7 +770,7 @@ class PersonaConfig:
 
 @dataclass
 class AgentWebConfig:
-    enable_web: bool | None = True
+    enable_web: bool | None = False
     web_headless: bool = False
     web_single_site: str | None = None
     web_trusted_sites: list[str] | None = None
