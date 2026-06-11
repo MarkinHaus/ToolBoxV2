@@ -91,17 +91,22 @@ class AgentCheckpoint:
             tool_count = len(self.tool_registry_data.get('tools', {}))
             parts.append(f"{tool_count} tools")
 
+        def fmt(n):
+            for unit in ("", "k", "M", "B", "T"):
+                if abs(n) < 1000:
+                    return f"{n:.1f}{unit}".rstrip("0").rstrip(".") + unit
+                n /= 1000
+            return f"{n:.1f}P"
+
         if self.statistics:
             tokens_in = self.statistics.get('total_tokens_in', 0)
             tokens_out = self.statistics.get('total_tokens_out', 0)
             if tokens_in > 0 or tokens_out > 0:
-                in_k = round(tokens_in / 1000, 1)
-                out_k = round(tokens_out / 1000, 1)
-                parts.append(f"Tokens I/O: {in_k}k/{out_k}k")
+                parts.append(f"Tokens I/O: {fmt(tokens_in)}/{fmt(tokens_out)}")
 
             cost = self.statistics.get('total_cost', 0)
             if cost > 0:
-                parts.append(f"${cost:.4f} spent")
+                parts.append(f"${fmt(cost)} spent")
 
         # --- 1. FIRST USED ---
         first_used_dt = None
@@ -116,9 +121,6 @@ class AgentCheckpoint:
                 first_used_dt = datetime.fromisoformat(raw_first_used)
             except ValueError:
                 pass
-
-        if first_used_dt and self._get_age_string(first_used_dt) != "Just now":
-            parts.append(f"F used: {self._get_age_string(first_used_dt)}")
 
         # --- 2. LAST USE ---
         # self.timestamp ist der Zeitpunkt, an dem dieser Checkpoint erstellt/gespeichert wurde

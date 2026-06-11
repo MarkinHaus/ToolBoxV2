@@ -40,7 +40,6 @@ def add_ui(app: App, name: str, title: str, path: str, description: str, auth: b
         app = get_app("add_ui")
 
     uis = json.loads(app.config_fh.get_file_handler("CloudM::UI", "{}"))
-    print(f"ADDING UI: {name}")
     uis[name] = {
         "auth": auth,
         "path": path,

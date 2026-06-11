@@ -1916,7 +1916,7 @@ class Tools(MainTool):
 
         config_path = Path(f"{get_app().data_dir}/Agents/{agent_name}/agent.json")
         agent_builder.save_config(str(config_path), format="json")
-        self.print(f"Saved FlowAgentBuilder config for '{agent_name}' to {config_path}")
+        self.print(f"Saved FlowAgentBuilder config for {agent_name}")
 
         self.agent_data[agent_name] = agent_builder.config.model_dump()
 

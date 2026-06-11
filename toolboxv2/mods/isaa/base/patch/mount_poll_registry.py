@@ -27,7 +27,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from toolboxv2.mods.isaa.base.Agent.vfs_v2 import VirtualFileSystemV2
 
-logger = logging.getLogger("vfs.poll")
+from toolboxv2 import get_logger
+logger = get_logger()
 
 # =============================================================================
 # CONFIG

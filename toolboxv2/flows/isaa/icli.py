@@ -3624,6 +3624,11 @@ F6 during execution       - Move agent to background
     --no-sync    - Manual sync only
     """,
 
+    "omni": """/omni start [mode]                           - Startet die Omni-Sitzung (omni_cloud|omni_local|pipeline|stub)
+/omni stop                                   - Stoppt die aktive Omni-Sitzung und schließt alle Audiokanäle
+/omni status                                 - Zeigt den aktuellen Verbindungs- und Backend-Status an
+/omni jobs                                   - Zeigt alle aktiven Hintergrund-Schnittstellen-Jobs des JobManagers an""",
+
     # Skill Management
     "skill": """/skill list               - List skills of active agent
 /skill list --inactive    - List inactive skills
@@ -3671,33 +3676,33 @@ F6 during execution       - Move agent to background
     # Audio Settings
     # ─── HELP SECTION UPDATE ─────────────────────────────────────────────────────
     "audio": """/audio on                    - Enable verbose audio (all responses spoken)
-    /audio off                   - Disable verbose audio
-    /audio voice <v>             - Set TTS voice
-    /audio backend <b>           - groq_tts / piper / elevenlabs / index_tts
-    /audio lang <l>              - de / en / fr / ...
-    /audio device                - Interactive output device picker
-    /audio device <idx>          - Set output device by index
-    /audio device default        - Reset to system default
-    /audio devices               - List all output devices
-    /audio stop                  - Stop current playback
-    /audio restart               - Rebuild player with current settings
+/audio off                   - Disable verbose audio
+/audio voice <v>             - Set TTS voice
+/audio backend <b>           - groq_tts / piper / elevenlabs / index_tts
+/audio lang <l>              - de / en / fr / ...
+/audio device                - Interactive output device picker
+/audio device <idx>          - Set output device by index
+/audio device default        - Reset to system default
+/audio devices               - List all output devices
+/audio stop                  - Stop current playback
+/audio restart               - Rebuild player with current settings
 
-    /audio live                  - Start hands-free live mode (VAD + wake word)
-    /audio live stop             - Stop live mode
-    /audio live status           - Show live mode state
-    /audio live keyword <word>   - Set wake word (default: "hey computer")
-    /audio live sensitivity <f>  - Wake word sensitivity 0.0–1.0 (default: 0.5)
-    /audio live end <mode>       - End-detection: silence / keyword / intent / auto
-    /audio live silence <ms>     - Silence timeout before send (default: 800ms)
+/audio live                  - Start hands-free live mode (VAD + wake word) -> use /omni for live
+/audio live stop             - Stop live mode
+/audio live status           - Show live mode state
+/audio live keyword <word>   - Set wake word (default: "hey computer")
+/audio live sensitivity <f>  - Wake word sensitivity 0.0–1.0 (default: 0.5)
+/audio live end <mode>       - End-detection: silence / keyword / intent / auto
+/audio live silence <ms>     - Silence timeout before send (default: 800ms)
 
-    /audio speaker               - Speaker profile menu
-    /audio speaker list          - List registered speaker profiles
-    /audio speaker add <name>    - Register your voice as <name> (5s sample)
-    /audio speaker remove <name> - Remove a speaker profile
-    /audio speaker who           - Show who is currently detected
+/audio speaker               - Speaker profile menu
+/audio speaker list          - List registered speaker profiles
+/audio speaker add <name>    - Register your voice as <name> (5s sample)
+/audio speaker remove <name> - Remove a speaker profile
+/audio speaker who           - Show who is currently detected
 
-    Tip: Append  #audio  to any message for one-time spoken response.
-    Tip: In live mode — say wake word, speak, then stop talking or say "fertig".
+Tip: Append  #audio  to any message for one-time spoken response.
+Tip: In live mode — say wake word, speak, then stop talking or say "fertig".
     """,
 
     "chain": """/chain list               - Alle gespeicherten Chains auflisten
@@ -3710,7 +3715,6 @@ F6 during execution       - Move agent to background
 /chain import <file.json> - Chain aus JSON importieren
 
   Aktivierung:  /feature enable chain
-  Agent-Tools (für LLM):
     create_validate_chain  - Chain aus DSL erstellen & validieren
     run_chain              - Gespeicherte Chain ausführen
     list_auto_get_fitting  - Chains auflisten & passende für Task finden
@@ -3841,6 +3845,13 @@ async def _resume_as_stream(engine, run_id, max_iterations, content):
         yield {"type": "final_answer", "answer": str(result)}
         yield {"type": "done", "success": True, "final_answer": str(result)}
 
+def _deleg_session_id(query: str) -> str:
+    """Stable, FILESYSTEM-SAFE session id for a delegated query. The id becomes a
+    memory filename, so strip to [A-Za-z0-9]; quotes/spaces/etc. raise OSError
+    [Errno 22] on Windows. Single source of truth for delegate + VFS-peek tools."""
+    import re
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", (query or "").strip()).strip("-")[:12] or "task"
+    return f"deleg-{slug}"
 # =============================================================================
 # ISAA HOST - MAIN CLASS
 # =============================================================================
@@ -3908,6 +3919,7 @@ class ISAA_Host:
 
         # Get ISAA Tools module - THE source of truth for agent management
         self.isaa_tools: 'IsaaTools' = self.app.get_mod("isaa")
+        self.isaa_tools.stuf = True
 
         # Host state
         self.started_at = datetime.now()
@@ -4468,8 +4480,9 @@ class ISAA_Host:
             """Show status dashboard with F5."""
             async def __():
                 await self._print_status_dashboard()
-                await self._cmd_vfs([])
-                await self._cmd_session(["show"])
+                self._print_help_guide()
+                # await self._cmd_vfs([])
+                # await self._cmd_session(["show"])
             asyncio.create_task(__())
 
         @kb.add("f6")
@@ -5837,7 +5850,7 @@ class ISAA_Host:
             "/agent": None, "/audio": None, "/coder": None, "/job": None,
             "/mcp": None,"/cli": None, "/session": None, "/skill": None, "/task": None,
             "/tools": None, "/vfs": None, "/feature": None, "/chain": None,
-            "/set_max_iterations": None, "/prompt": None, "/omni": None,
+            "/set_max_iterations": None, "/prompt": None,
         }
 
         # Die spezifischen Hilfe-Kategorien
@@ -6066,7 +6079,7 @@ class ISAA_Host:
             f"\n<style fg='ansiblue'>></style> "
         )
 
-    def _get_bottom_toolbar(self):
+    def __get_bottom_toolbar(self):
         if self._omni_session and getattr(self._omni_session, "_running", False):
             return render_omni_footer(self)
         if self.zen_plus_mode or self._overlay is not None:
@@ -6088,6 +6101,38 @@ class ISAA_Host:
             set_interval=self.set_dynamic_interval,
             off_set=off_set
         )
+
+    def _get_bottom_toolbar(self):
+        if self.zen_plus_mode or self._overlay is not None:
+            return []
+
+        off_set = 0
+        if self._focused_task_id and self._focused_task_id in self._task_views:
+            # reversed list = neueste zuerst, offset muss in reversed space sein
+            keys_reversed = list(self._task_views.keys())[::-1]
+            try:
+                off_set = keys_reversed.index(self._focused_task_id)
+            except ValueError:
+                off_set = 0
+
+        # Berechne immer die normale Toolbar
+        normal_bar = render_footer_toolbar(
+            task_views=self._task_views,
+            focused_id=self._focused_task_id,
+            audio_recording=self._audio_recording,
+            audio_processing=self._was_recording_is_prossesing_audio,
+            overlay_open=self._overlay is not None,
+            set_interval=self.set_dynamic_interval,
+            off_set=off_set
+        )
+
+        # Wenn die Omni-Session läuft, packen wir sie mit einer Newline über die normale Bar
+        if self._omni_session and getattr(self._omni_session, "_running", False):
+            omni_bar = list(render_omni_footer(self))
+            omni_bar.append(("", "\n"))
+            return omni_bar + normal_bar
+
+        return normal_bar
 
     def _get_keybinding_indicator(self) -> str:
         """
@@ -6300,57 +6345,75 @@ class ISAA_Host:
             print_box_footer()
             return
 
-        # Wenn nicht exakt, nach Teil‑Übereinstimmung suchen (z. B. "/agent list")
-        for key, txt in _help_text.items():
-            if sub.startswith(key):
-                print_box_header(f"\n=== Hilfe für {key} (Teil‑Befehl: {sub}) ===\n")
-                for line in txt.strip().splitlines():
-                    print_box_content(line, "")
-                print_box_footer()
-                return
         else:
-            # Suche nach spezifischer Hilfe für einen Befehl (z.B. /help vfs)
-            print_status(f"Detail-Hilfe für {sub} folgt (Nutze /help all für alles)", "info")
+            # Wenn nicht exakt, nach Teil‑Übereinstimmung suchen (z. B. "/agent list")
+            for key, txt in _help_text.items():
+                if sub.startswith(key):
+                    print_box_header(f"\n=== Hilfe für {key} (Teil‑Befehl: {sub}) ===\n")
+                    for line in txt.strip().splitlines():
+                        print_box_content(line, "")
+                    print_box_footer()
+                    return
+            else:
+                # Suche nach spezifischer Hilfe für einen Befehl (z.B. /help vfs)
+                print_status(f"Detail-Hilfe für {sub} folgt (Nutze /help all für alles)", "info")
 
-            if not args:
-                return
-            self._print_help_min()
+                if not args:
+                    return
+                self._print_help_min()
 
     def _print_help_keys(self):
         """F-Key und Shortcut Referenz."""
         print_box_header("Keyboard Shortcuts", "⌨")
-        print_box_content("F2   ZEN/ZEN+ mode toggle", "")
-        print_box_content("F4   Start/stop audio recording", "")
-        print_box_content("F5   Status dashboard", "")
-        print_box_content("F6   Minimize/maximize focused agent", "")
-        print_box_content("F7   Cycle focus → next running agent", "")
-        print_box_content("F8   Cancel focused agent task", "")
+        print_box_content("F2   ZEN / ZEN+ Modus wechseln (Vollbild-Task-Dashboard)", "")
+        print_box_content("F4   Audio-Aufnahme starten / stoppen", "")
+        print_box_content("F5   Status-Dashboard und Quick-Help drucken", "")
+        print_box_content("F6   Fokus auf Agenten-Hintergrund-Task setzen oder minimieren", "")
+        print_box_content("F7   Fokus durch alle aktuell laufenden Hintergrundtasks rotieren", "")
+        print_box_content("F8   Fokussierten Hintergrundtask sofort abbrechen", "")
+        print_box_content("F9   Alle beendeten/abgebrochenen Tasks aus dem Dashboard aufräumen", "")
         print_separator()
-        print_box_content("TAB     Command autocompletion", "")
-        print_box_content("Ctrl+C  Safe stop (continue/quit)", "")
-        print_box_content("!cmd    Execute shell command", "")
+        print_box_content("TAB         Befehls- und VFS-Autovervollständigung aktivieren", "")
+        print_box_content("Shift+TAB   Durch Vorschläge rückwärts navigieren", "")
+        print_box_content("Ctrl+C      Sicherer Abbruch (Schnittstelle stoppen / Kette anhalten)", "")
+
+        # Literaler String (print_box_content esc_t automatisch und HTML wandelt &lt;/&gt; zurück in </>)
+        print_box_content("!<cmd>      Direkter interaktiver Durchgriff auf die Host-Shell", "")
         print_box_footer()
 
     def _print_help_min(self):
-        """Kompakte Hilfe für den schnellen Überblick."""
-        print_box_header("ISAA Quick Help", "🚀")
-        print_box_content("Basics:", "bold")
-        print_box_content("/status          - Dashboard (F5)", "")
-        print_box_content("/agent switch    - Agent wechseln", "")
-        print_box_content("/tools list      - Tools verwalten", "")
-        print_box_content("/chain list      - Gespeicherte Chains", "")
-        print_box_content("/chain run <id>  - Chain ausführen", "")
+        """Zeigt die strukturierte, mehrschichtige Hauptübersicht."""
+        print_box_header("ISAA SYSTEM HELP REFERENCE", "🚀")
 
-        print_box_content("F4               - Voice Recording Start/Stop", "")
-        print_box_content("F2               - toggel the Live View Overlay.", "")
-        print_box_content("F6/F7/F8         - Minimize/Focus/Cancel Agent Tasks", "")
-        print_box_content("! <cmd>          - Shell Befehl direkt ausführen", "")
-        print_separator()
-        print_box_content("Erweiterte Hilfe:", "info")
-        print_box_content("/help all        - Alle Befehle (Referenz)", "")
-        print_box_content("/help chain      - Chain DSL Referenz", "")
-        print_box_content("/help guide      - Beispiele & Start-Prompts", "")
-        print_box_content("/help discord    - Discord Integration Guide", "")
+        # Schicht 1: Top 3 Core-Befehle
+        c_print(HTML(
+            f"  <style font-weight='bold' fg='{PTColors.ZEN_CYAN}'>[EBENE 1] TOP 3 CORE UTILITIES (Hauptsteuerung)</style>"))
+        print_box_content("  /status                 - Haupt-Dashboard öffnen (fortlaufende Überwachung)", "")
+        print_box_content("  /agent                  - Agenten-Sitzung, LLM-Modelle und Zustände verwalten", "")
+        print_box_content("  /coder                  - Software-Entwicklungs-Sandbox auf Ordnern aufsetzen", "")
+        print_separator(char="·")
+
+        # Schicht 2: Best 7 Sub-Befehle
+        c_print(HTML(
+            f"  <style font-weight='bold' fg='{PTColors.ZEN_AMBER}'>[EBENE 2] BEST 7 SUB-COMMANDS (Häufige Aktionen)</style>"))
+        print_box_content("  /vfs mount              - Projekt-Verzeichnisse für den Agenten kontextualisieren", "")
+        print_box_content("  /tools health           - Alle registrierten Fähigkeiten auf syntaktische Richtigkeit testen", "")
+        print_box_content("  /coder accept           - Erstellten Code aus dem Worktree permanent auf den Host mergen", "")
+        print_box_content("  /chain run              - Validierte DSL-Automatisierungs-Workflows starten", "")
+        print_box_content("  /context stats          - Context X-Ray zur tiefen Token-Analyse aufrufen", "")
+        print_box_content("  /omni start [mode]      - Latenzoptimierte Freisprech-Sprachsteuerung aktivieren", "")
+        print_box_content("  /feature enable         - Capability-Suiten (autodoc, autotest, web) dynamisch laden", "")
+        print_separator(char="·")
+
+        # Schicht 3: Drill-down Anleitung (Direkte Ausgabe per c_print/HTML zur Vermeidung von Doppel-Escaping)
+        c_print(
+            HTML(f"  <style font-weight='bold' fg='{PTColors.ZEN_GREEN}'>[EBENE 3] GRANULAR DRILL-DOWN GUIDE</style>"))
+        c_print(HTML(
+            "    Nutze <style fg='ansicyan'>/help &lt;befehl&gt;</style> für tiefe Parameter-Details (z.B. <style fg='ansigreen'>/help coder</style>)."))
+        c_print(
+            HTML("    Nutze <style fg='ansicyan'>/help all</style> für eine vollständige Liste aller Steuerbefehle."))
+        c_print(HTML("    Nutze <style fg='ansicyan'>/help shortcuts</style> für Terminal-Tastenkombinationen."))
+        c_print(HTML("    Nutze <style fg='ansicyan'>/help guide</style> für praktische Start-Szenarien."))
         print_box_footer()
 
     def _print_help_guide(self):
@@ -6359,17 +6422,21 @@ class ISAA_Host:
         print_status("Beispiel-Szenarien:", "info")
 
         print_box_content("1. Coding Projekt starten:", "bold")
-        print_box_content("   > /vfs mount ./my_project /src", "")
-        print_box_content("   > /coder start /src", "")
+        print_box_content("   > /coder start ./my_project", "")
         print_box_content("   Prompt: 'Analysiere die main.py und füge Logging hinzu.'", "")
 
-        print_box_content("2. Web Recherche:", "bold")
-        print_box_content("   > /feature enable full_web_auto", "")
-        print_box_content("   Prompt: 'Suche nach den neuesten KI-News und fasse sie zusammen.'", "")
+        print_status("2. Automatische Generierung von Unit-Tests", "info")
+        print_box_content("   > /feature enable autotest", "")
+        print_box_content("   > /chain run autotest_logic app::src/app.py", "")
+        print_box_content("   Erstellt und führt unittests im Hintergrund aus und korrigiert Fehler.", "")
 
-        print_box_content("3. Langzeit-Tasks (Jobs):", "bold")
+        print_status("3. Langzeit-Tasks (Jobs):", "info")
         print_box_content("   > /job add (Interaktiver Modus)", "")
         print_box_content("   Prompt: 'Prüfe jede Stunde ob der Server online ist.'", "")
+
+        print_status("4. JARVIS like ISAA starten:", "info")
+        print_box_content("   > /omni start [mdoe] ", "")
+        print_box_content("   Prompt: 'Kannst du mich hören?'", "")
 
         print_separator()
         print_status("Tipp: Nutze #audio am Ende einer Nachricht für Sprachausgabe!", "success")
@@ -6389,230 +6456,14 @@ class ISAA_Host:
         print_box_content("Hinweis: Der Bot reagiert in Discord auf @Mentions", "info")
         print_box_footer()
 
-
     def _print_help_all(self, args):
-        """Print help information."""
-        print_box_header("ISAA Host Commands", "❓")
-
-        print_status("Navigation", "info")
-        print_box_content("/help                                        - Show this help", "")
-        print_box_content("/status                                      - Show status dashboard (or F5)", "")
-        print_box_content("/clear                                       - Clear screen", "")
-        print_box_content("/set_max_iterations", "")
-        print_box_content("/quit, /exit - Exit CLI", "")
-        print_box_content("F2                                           - Switch between ZEN and ZEN+ interaction mode",
-                          "")
-        print_box_content("F4                                           - Start / stop audio recording pipeline", "")
-        print_box_content("F5                                           - Display status dashboard (VFS, Skills, MCP, Session)", "")
-        print_box_content("F6                                           - Minimize/maximize focused agent stream", "")
-        print_box_content("F7                                           - Cycle focus to next running agent task", "")
-        print_box_content("F8                                           - Cancel focused agent task", "")
-        print_box_content("TAB                                          - Activate or confirm command autocompletion",
-                          "")
-        print_box_content("Ctrl+C                                       - Safe stop agent (continue/fresh/quit)", "")
-        print_separator()
-
-        print_status("Agent Management", "info")
-        print_box_content("/agent list                                  - List all agents", "")
-        print_box_content("/agent switch <name>                         - Switch active agent", "")
-        print_box_content("/agent spawn <name> <persona>                - Create new agent", "")
-        print_box_content("/agent stop <name>                           - Stop agent tasks", "")
-        print_box_content("/agent model <fast|complex> <name>           - Change LLM model on the fly", "")
-        print_box_content("/agent checkpoint <save|load> [name]         - Manage state persistence", "")
-        print_box_content("/agent checkpoint help                       - list information's about addition args like path", "")
-        print_box_content("/agent load-all                              - Initialize all agents from disk", "")
-        print_box_content("/agent save-all                              - Save checkpoints for all active agents", "")
-        print_box_content("/agent stats [name]                          - Show token usage and cost metrics", "")
-        print_box_content("/agent delete <name>                         - Remove agent and its data", "")
-        print_box_content("/agent config <name>                         - View raw JSON configuration", "")
-
-        print_separator()
-
-        print_status("Session Management", "info")
-        print_box_content("/session list                                 - List sessions", "")
-        print_box_content("/session switch <id>                          - Switch session", "")
-        print_box_content("/session new                                  - Create new session", "")
-        print_box_content("/session show [n]                             - Show last n messages (default 10)", "")
-        print_box_content("/session clear                                - Clear current session history", "")
-        print_box_content("/session working                              - Show working history", "")
-
-        print_separator()
-
-        print_status("MCP Management (Live)", "info")
-        print_box_content("/mcp list                                    - Zeige aktive MCP Verbindungen", "")
-        print_box_content("/mcp add <n> <cmd> [args]                    - Server hinzufügen & Tools laden", "")
-        print_box_content("/mcp remove <name>                           - Server trennen & Tools löschen", "")
-        print_box_content("/mcp reload                                  - Alle MCP Tools neu indizieren", "")
-
-        print_separator()
-
-        print_status("CLI Tools Management (Live)", "info")
-        print_box_content("/cli list                                    - Zeige registrierte CLI Tools", "")
-        print_box_content("/cli add                                     - Interaktiver Wizard für neues CLI Tool", "")
-        print_box_content("/cli remove <name>                           - CLI Tool entfernen", "")
-        print_box_content("/cli reload                                  - CLI Tools aus agent.json neu laden", "")
-
-        print_separator()
-
-        print_status("Task Management", "info")
-        print_box_content("/task                                        - Show all background tasks", "")
-        print_box_content("/task view [id]                              - Live view of task (auto-selects if 1)", "")
-        print_box_content("/task cancel <id>                            - Cancel a running task", "")
-        print_box_content("/task clean                                  - Remove finished tasks", "")
-        print_box_content("/task log                                    - Vew tasks internal execution hisotry", "")
-        print_box_content("F6 during execution                          - Move agent to background", "")
-
-        print_separator()
-
-        print_status("Job Scheduler", "info")
-        print_box_content("/job list                                    - List all scheduled jobs", "")
-        print_box_content("/job add                                     - Add a new job (interactive)", "")
-        print_box_content("/job remove <id>                             - Remove a job", "")
-        print_box_content("/job pause <id>                              - Pause a job", "")
-        print_box_content("/job resume <id>                             - Resume a paused job", "")
-        print_box_content("/job fire <id>                               - Manually fire a job now", "")
-        print_box_content("/job detail <id>                             - Show job details", "")
-        print_box_content("/job autowake <cmd>                          - Manage OS auto-wake (install/remove/status)", "")
-        print_status("Dreamer Job", "info")
-        print_box_content("/job dream create [agent]                    - Create nightly dream job (default: self, 03:00)", "")
-        print_box_content("/job dream status                            - Show all configured dream jobs", "")
-        print_box_content("/job dream live                              - Run dream process now with visualization", "")
-
-        print_separator()
-
-        print_status("Advanced", "info")
-        print_box_content("/bind <agent_a> <agent_b> - Bind agents", "")
-        print_box_content("/teach <agent> <skill_name> - Teach skill", "")
-        print_box_content("/context stats - Show context stats", "")
-        print_separator()
-        print_status("History Management", "info")
-        print_box_content("/history show [n]                            - Show last n messages (default 10)", "")
-        print_box_content("/history clear                               - Clear current session history", "")
-        print_separator()
-        print_status("VFS Management", "info")
-        print_box_content("/vfs                                         - Show VFS tree", "")
-        print_box_content("/vfs <path>                                  - Show file content or dir listing", "")
-        print_box_content("/vfs mount <path> [vfs_path]                 - Mount local folder", "")
-        print_box_content("/vfs unmount <vfs_path>                      - Unmount folder", "")
-        print_box_content("/vfs sync [path]                             - Sync file/dir to disk", "")
-        print_box_content("/vfs save <vfs_path> <local>                 - Save file/dir to local path", "")
-        print_box_content("/vfs refresh <mount>                         - Re-scan mount for changes", "")
-        print_box_content("/vfs pull <path>                             - Reload file/dir from disk", "")
-        print_box_content("/vfs mounts                                  - List active mounts", "")
-        print_box_content("/vfs dirty                                   - Show modified files", "")
-        print_box_content("/vfs rm/remove                               - Remove Folder or File", "")
-        print_separator()
-        print_status("System Files (Read-Only)", "info")
-        print_box_content("/vfs sys-add <local> [path]                  - Add file as read-only system file", "")
-        print_box_content("/vfs sys-remove <vfs_path>                   - Remove a system file", "")
-        print_box_content("/vfs sys-refresh <vfs_path>                  - Reload system file from disk", "")
-        print_box_content("/vfs sys-list                                - List all system files", "")
-        print_separator()
-        print_status("Mount Options", "info")
-        print_box_content("  --readonly                                 - No write operations", "")
-        print_box_content("  --no-sync                                  - Manual sync only", "")
-        print_separator()
-        print_status("Skill Management", "info")
-        print_box_content("/skill list                                  - List skills of active agent", "")
-        print_box_content("/skill list --inactive                       - List inactive skills ", "")
-        print_box_content("/skill show <id>                             - Show details/instruction", "")
-        print_box_content("/skill edit <id>                             - Edit skill instruction", "")
-        print_box_content("/skill delete <id>                           - Delete a skill", "")
-        print_box_content("/skill merge <keep_id> <remove_id>", "")
-        print_box_content("/skill boost <skill_id> 0.3                  - Delete a skill", "")
-        print_box_content("/skill import <path>                         - import skills from directory/skill file", "")
-        print_box_content("/skill export <id> <path>                    - id=all Extprt skill or all skills", "")
-        print_separator()
-
-        print_status("Tool Management", "info")
-        print_box_content("/tools list [cat]        - List all tools, optional filter by category", "")
-        print_box_content("/tools all               - Compact table of every tool (active + disabled)", "")
-        print_box_content("/tools info <name>       - Detailed info incl. health status for one tool", "")
-        print_box_content("/tools enable <name/cat> - Enable a tool or entire category", "")
-        print_box_content("/tools disable <name/cat>- Disable a tool or entire category", "")
-        print_box_content("/tools enable-all        - Re-enable all disabled tools", "")
-        print_box_content("/tools disable-all       - Disable all non-system tools", "")
-        print_box_content("/tools health            - Run health-check on ALL tools (summary)", "")
-        print_box_content("/tools health <name>     - Run health-check on a single tool", "")
-
-        print_separator()
-        print_status("Chain Management", "info")
-        print_box_content("/chain list                                  - Alle Chains auflisten", "")
-        print_box_content("/chain show <id|name>                        - DSL + Metadaten anzeigen", "")
-        print_box_content("/chain accept <id|name>                      - Chain einmalig akzeptieren", "")
-        print_box_content("/chain run <id|name> [input]                 - Chain ausführen", "")
-        print_box_content("/chain edit <id|name>                        - DSL interaktiv bearbeiten", "")
-        print_box_content("/chain delete <id|name>                      - Chain löschen", "")
-        print_box_content("/chain export <id> <file.json>               - Als JSON exportieren", "")
-        print_box_content("/chain import <file.json>                    - Aus JSON importieren", "")
-        print_separator()
-        print_box_content("Agent-Tools (via LLM nutzbar):", "bold")
-        print_box_content("  create_validate_chain  name dsl [desc] [tags]", "")
-        print_box_content("  run_chain  name_or_id [input] [accept=true]", "")
-        print_box_content("  list_auto_get_fitting  [task_description]", "")
-        print_separator()
-
-        print_status("AutoFix CI Pipeline", "info")
-        print_box_content("/feature enable autofix                      - AutoFix + Tools aktivieren", "")
-        print_box_content("/chain accept autofix_test_fixer             - Einmalig freigeben", "")
-        print_box_content("/chain run autofix_test_fixer [/pfad]        - Pipeline starten", "")
-        print_box_content("  Flow: tb -x → analyse → 2x fix parallel → best pick → re-test → PR", "")
-        print_separator()
-        print_status("AutoTest — Test Generator", "info")
-        print_box_content("/feature enable autotest                     - Tools + Chains aktivieren", "")
-        print_box_content("/chain run autotest_logic   <optional_class_Name[::file]>   - Logic Tests (bestehender Code)", "")
-        print_box_content("/chain run autotest_tdd     <optional_class_Name[::file]>   - TDD Future Tests (Vertrag)", "")
-        print_box_content("/chain run autotest_coverage <file.py>       - Full-File Coverage", "")
-        print_box_content("  Analyse: Datenfluss, Side-Effects, Edge-Cases → unittest → run → fix", "")
-
-        print_separator()
-        print_status("Additional Features", "info")
-        print_box_content("/feature list                                - List all features", "")
-        print_box_content("/feature disable <feature>                   - Disable a feature", "")
-        print_box_content("/feature enable <feature>                    - Enable a feature", "")
-        print_box_content("/feature enable desktop                      - Enable Desktop Automation", "")
-        print_box_content("/feature enable web <headless>               - Enable Desktop Web Automation", "")
-        print_separator()
-
-        print_separator()
-        print_status("AutoDoc — Docs Generator", "info")
-        print_box_content("/feature enable autodoc                      - Tools + Chains aktivieren", "")
-        print_box_content("/chain run autodoc_unguided                  - Batch: ganzes Repo scannen", "")
-        print_box_content("/chain run autodoc_guided <Name[::file]>     - Single: gezielt dokumentieren", "")
-        print_box_content("  Regel: nur getesteter Code. Format: Part1=How to Use, Part2=Internals.", "")
-
-        print_status("Audio Commands", "info")
-        print_box_content("/audio on                    - All responses spoken", "")
-        print_box_content("/audio off                   - Disable verbose audio", "")
-        print_box_content("/audio voice <v>             - Set voice", "")
-        print_box_content("/audio backend <b>           - groq_tts / piper / elevenlabs / index_tts", "")
-        print_box_content("/audio lang <l>              - de / en / ...", "")
-        print_box_content("/audio device                - Interactive device picker", "")
-        print_box_content("/audio device <idx>          - Set by index", "")
-        print_box_content("/audio device default        - Reset to system default", "")
-        print_box_content("/audio devices               - List all output devices", "")
-        print_box_content("/audio stop                  - Stop current playback", "")
-        print_box_content("/audio restart               - Rebuild player with current settings", "")
-        print_box_content("", "")
-        print_box_content("Tip: append  #audio  to any message for one-time spoken response", "info")
-        print_separator()
-
-        print_box_content("/audio live                  - Start hands-free live mode", "")
-        print_box_content("/audio live stop             - Stop live mode", "")
-        print_box_content("/audio live preset <name>    - default/speed_local/speed_api/quality_local/quality_api", "")
-        print_box_content("/audio live presets          - Show preset availability", "")
-
-        print_separator()
-
-        print_status("Shortcuts", "info")
-        print_box_content("F2 - ZEN/ZEN+ mode toggle", "")
-        print_box_content("F4 - Toggle audio recording", "")
-        print_box_content("F5 - Show status dashboard", "")
-        print_box_content("F6 - Minimize/maximize agent stream", "")
-        print_box_content("F7 - Cycle focus between running agents", "")
-        print_box_content("F8 - Cancel focused agent task", "")
-        print_box_content("!<cmd> - Execute shell command", "")
-
+        """Vollständiges Referenz-Datenblatt aller Befehle."""
+        print_box_header("ISAA Complete Command Reference", "❓")
+        for key, txt in sorted(_help_text.items()):
+            print_status(f"Befehlsklasse: /{key}", "info")
+            for line in txt.strip().splitlines():
+                print_box_content(f"  {line}", "")
+            print_separator(char="·")
         print_box_footer()
 
     async def _handle_command(self, cmd_str: str):
@@ -9401,53 +9252,171 @@ class ISAA_Host:
         )
 
     def _make_omni_tools(self) -> list:
-        """delegate/agent_status/agent_result/vfs_peek/vfs_tree_peek — auf der
-        icli-EIGENEN Delegation (all_executions), nicht auf JobManager."""
+        """delegate/agent_status/agent_result/vfs_peek/vfs_tree_peek — fully integrated
+        with both self._omni_jobs (JobManager) and host.all_executions (icli)."""
         host = self
+        jobs = self._omni_jobs
+
+        def lookup_task(task_id: str):
+            """Robust lookup helper for both task_id and job_id."""
+            if not task_id:
+                return None
+            return host.all_executions.get(task_id) or next(
+                (t for t in host.all_executions.values()
+                 if t.task_id.startswith(task_id) or t.run_id == task_id or t.session_id == task_id),
+                None
+            )
 
         async def delegate(query: str, agent: str = "default") -> str:
-            """Delegate a heavy task to an icli agent (runs in background)."""
-            target = agent if agent != "default" else host.active_agent_name
-            sid = f"omni_deleg_{uuid.uuid4().hex[:6]}"
-            exc = await host._start_delegation(target, query, sid)
+            """Delegate a heavy task to a background agent run. Returns a job_id immediately
+            (nonblocking). Poll with agent_result(job_id) / agent_status()."""
+            target_name = agent if agent != "default" else host.active_agent_name
+            target = await host.isaa_tools.get_agent(target_name)
+            await host._ensure_world_model(target)
 
-            def _speak_when_done(_fut):
-                e = host.all_executions.get(exc.task_id)
-                txt = (e.result_text if e else "") or ""
-                b = host._omni_session.backend if host._omni_session else None
-                if b and txt:
-                    asyncio.create_task(b.send_text(
-                        f"[system] Task '{exc.task_id}' finished. Tell the user briefly "
-                        f"and summarize:\n{txt[:1500]}"
-                    ))
+            session_id = _deleg_session_id(query)
+            run_id = uuid.uuid4().hex[:8]
 
-            exc.async_task.add_done_callback(_speak_when_done)
-            return f"Delegated → {exc.task_id} (running on '{target}'; you'll be notified when done)."
+            # Register execution in icli
+            host._task_counter += 1
+            task_id = f"delegate_{host._task_counter}_{target_name}"
+
+            exc = host._create_execution(
+                kind="delegate",
+                agent_name=target_name,
+                query=query,
+                async_task=None,  # Will be populated inside the generator on stream start
+                run_id=run_id,    # Temporary fallback, mapped to job_id below
+                take_focus=False,
+            )
+            exc.session_id = session_id
+
+            # Combined stream factory driven by JobManager but reporting to icli
+            def _factory():
+                async def combined_stream():
+                    import asyncio
+                    # Dynamically bind the background Task driving this generator to icli
+                    current_task = asyncio.current_task()
+                    exc.async_task = current_task
+
+                    # Notify the user via Omni voice backend when completed
+                    def _speak_when_done(fut):
+                        try:
+                            txt = exc.result_text or ""
+                            b = host._omni_session.backend if host._omni_session else None
+                            if b and txt and exc.status == "completed":
+                                asyncio.create_task(b.send_text(
+                                    f"[system] Task '{task_id}' finished. Tell the user briefly "
+                                    f"and summarize:\n{txt[:1500]}"
+                                ))
+                        except Exception:
+                            pass
+
+                    if current_task:
+                        current_task.add_done_callback(_speak_when_done)
+
+                    agent_stream = target.a_stream(query, session_id=session_id)
+                    result_text = ""
+                    try:
+                        async for chunk in agent_stream:
+                            # Feed live chunk to icli (Live View, footer, logs, etc.)
+                            host._ingest_chunk(task_id, chunk)
+
+                            if chunk.get("type") == "content":
+                                result_text += chunk.get("chunk", "")
+                            elif chunk.get("type") == "final_answer":
+                                result_text = chunk.get("answer", result_text)
+
+                            yield chunk
+
+                        # Mark as completed
+                        exc.status = "completed"
+                        exc.result_text = result_text
+                        tv = host._task_views.get(task_id)
+                        if tv:
+                            tv.status = "completed"
+                            tv.final_answer = result_text
+
+                    except asyncio.CancelledError:
+                        exc.status = "cancelled"
+                        tv = host._task_views.get(task_id)
+                        if tv:
+                            tv.status = "cancelled"
+                        raise
+                    except Exception as e:
+                        exc.status = "failed"
+                        tv = host._task_views.get(task_id)
+                        if tv:
+                            tv.status = "failed"
+                        raise e
+
+                return combined_stream()
+
+            job_id = jobs.spawn_stream("agent", query, _factory, session_id=session_id)
+            exc.run_id = job_id  # Link the ExecutionTask to JobManager's job_id
+            return f"Delegated → {job_id} (icli task: {task_id}, running on '{target_name}')"
 
         def agent_status(task_id: str = "") -> str:
-            """Status of a delegated task (or all running)."""
+            """Status of a delegated task (or all running). Returns JSON for Omni, or status string."""
             if task_id:
-                e = host._omni_lookup(task_id)
-                return f"{e.task_id}: {e.status}" if e else f"unknown task {task_id}"
-            running = [f"{t.task_id}: {t.status}" for t in host.all_executions.values()
-                       if t.kind == "delegate" and t.status == "running"]
-            return "\n".join(running) or "no running delegations"
+                e = lookup_task(task_id)
+                if e:
+                    return f"{e.task_id}: {e.status}"
+                st = jobs.status(task_id)
+                if st:
+                    return f"{task_id}: {st}"
+                return f"unknown task {task_id}"
+
+            # Return raw JSON of all JobManager states as expected by Omni
+            import json
+            return json.dumps(jobs.live_state(), ensure_ascii=False)
 
         def agent_result(task_id: str) -> str:
-            """Result text of a finished delegated task."""
-            e = host._omni_lookup(task_id)
-            if not e:
-                return f"unknown task {task_id}"
-            if e.status == "running":
-                return f"{e.task_id} still running"
-            return e.result_text or f"{e.task_id}: {e.status} (no text)"
+            """Result text of a finished delegated task or job."""
+            e = lookup_task(task_id)
+            if e:
+                if e.status == "running":
+                    return f"{e.task_id} still running"
+                return e.result_text or f"{e.task_id}: {e.status} (no text)"
+
+            # Fallback to JobManager directly
+            res = jobs.result(task_id)
+            if res is not None:
+                return res
+            st = jobs.status(task_id)
+            if st == "running":
+                return "<running>"
+            return f"Error: unknown task or job {task_id!r}"
+
+        async def agent_stop(task_id: str) -> str:
+            """Stop (cancel) a running delegated task or job."""
+            e = lookup_task(task_id)
+            if e and e.async_task:
+                e.async_task.cancel()
+                e.status = "cancelled"
+                tv = host._task_views.get(e.task_id)
+                if tv:
+                    tv.status = "cancelled"
+                return f"stopped task {e.task_id}"
+
+            ok = await jobs.cancel(task_id)
+            return "stopped" if ok else f"task or job {task_id!r} not running or unknown"
 
         async def _peek_vfs(task_id: str):
-            e = host._omni_lookup(task_id)
-            if not e or not e.session_id:
-                return None, f"no session for task {task_id}"
-            ag = await host.isaa_tools.get_agent(e.agent_name)
-            sess = ag.session_manager.get(e.session_id)
+            e = lookup_task(task_id)
+            if e:
+                session_id = e.session_id
+                agent_name = e.agent_name
+            else:
+                session_id = jobs.session_id(task_id)
+                if session_id:
+                    job_state = jobs.live_state().get(task_id, {})
+                    agent_name = job_state.get("agent_name", host.active_agent_name)
+                else:
+                    return None, f"no session for task {task_id}"
+
+            ag = await host.isaa_tools.get_agent(agent_name)
+            sess = ag.session_manager.get(session_id)
             vfs = getattr(sess, "vfs", None) if sess else None
             return (vfs, None) if vfs else (None, "no vfs")
 
@@ -9466,13 +9435,11 @@ class ISAA_Host:
 
         return [
             {"tool_func": delegate, "name": "delegate", "description": delegate.__doc__, "category": ["omni"]},
-            {"tool_func": agent_status, "name": "agent_status", "description": agent_status.__doc__,
-             "category": ["omni"]},
-            {"tool_func": agent_result, "name": "agent_result", "description": agent_result.__doc__,
-             "category": ["omni"]},
+            {"tool_func": agent_status, "name": "agent_status", "description": agent_status.__doc__, "category": ["omni"]},
+            {"tool_func": agent_result, "name": "agent_result", "description": agent_result.__doc__, "category": ["omni"]},
+            {"tool_func": agent_stop, "name": "agent_stop", "description": agent_stop.__doc__, "category": ["omni"]},
             {"tool_func": vfs_peek, "name": "vfs_peek", "description": vfs_peek.__doc__, "category": ["omni"]},
-            {"tool_func": vfs_tree_peek, "name": "vfs_tree_peek", "description": vfs_tree_peek.__doc__,
-             "category": ["omni"]},
+            {"tool_func": vfs_tree_peek, "name": "vfs_tree_peek", "description": vfs_tree_peek.__doc__, "category": ["omni"]},
         ]
 
     async def _handle_omni_command(self, args: list[str]) -> None:
@@ -9537,6 +9504,19 @@ class ISAA_Host:
                 except Exception as e:
                     print_status(f"[vad] unavailable, streaming continuously: {e}", "warning")
 
+                speakers_obj = None
+                try:
+                    from toolboxv2.mods.isaa.base.audio_io.omni import (
+                        SpeakerRegistry, StubSpeakerEmbedder,
+                    )
+                    speakers_obj = SpeakerRegistry(
+                        "isaa/omni/speakers.json", BlobFile,
+                        embedder=StubSpeakerEmbedder(),  # swap for a real .embed(pcm)
+                        label_hook=lambda emb, score: None,  # app names unknown voices here
+                    )
+                except Exception as e:
+                    print_status(f"[speakers] unavailable, streaming continuously: {e}", "warning")
+
                 self._omni_recorder = _OmniTapRecorder(self._omni_recorder, self._omni_in_levels)
                 self._omni_player = _OmniTapPlayer(self._omni_player, self._omni_out_levels)
                 self._omni_session = OmniSession(
@@ -9550,6 +9530,7 @@ class ISAA_Host:
                     output_sample_rate=output_sr,
                     buffer_audio=not stream_audio,
                     vad=self._omni_vad,
+                    speakers=speakers_obj,
                     state_store=self._omni_state_store,
                     summarizer_agent=agent,  # compression-fix: IMMER
                     on_phase=self._omni_on_phase,
@@ -9623,7 +9604,7 @@ class ISAA_Host:
             try:
                 await b.send_text(
                     f"[system] Task '{label}' finished. Tell the user briefly and "
-                    f"summarize:\n{result[:1500]}"
+                    f"summarize:\n{result}"
                 )
             except Exception as e:
                 print_status(f"[announce] {e}", "warning")
@@ -12089,31 +12070,33 @@ class ISAA_Host:
                 import traceback
                 c_print(traceback.format_exc())
 
-        # Cleanup
-        self._save_state()
-        if hasattr(self, "client_sop"):
-            self.client_sop()
+        with Spinner("Clening isaa State", symbols="a"):
+            # Cleanup
+            self._save_state()
+            if hasattr(self, "client_sop"):
+                self.client_sop()
 
-        # Stop job scheduler
-        if self.job_scheduler:
-            await self.job_scheduler.fire_lifecycle("on_cli_exit")
-            # Remove OS autowake only when no persistent jobs remain
-            if not self.job_scheduler.has_persistent_jobs():
-                try:
-                    from toolboxv2.mods.isaa.extras.jobs.os_scheduler import remove_autowake
-                    remove_autowake()
-                    c_print("Removed OS autowake (no persistent jobs left)")
-                except Exception:
-                    pass
-            await self.job_scheduler.stop()
-            self.job_scheduler._fire_callback = sto_fire_callback
+            # Stop job scheduler
+            if self.job_scheduler:
+                await self.job_scheduler.fire_lifecycle("on_cli_exit")
+                # Remove OS autowake only when no persistent jobs remain
+                if not self.job_scheduler.has_persistent_jobs():
+                    try:
+                        from toolboxv2.mods.isaa.extras.jobs.os_scheduler import remove_autowake
+                        remove_autowake()
+                        c_print("Removed OS autowake (no persistent jobs left)")
+                    except Exception:
+                        pass
+                await self.job_scheduler.stop()
+                self.job_scheduler._fire_callback = sto_fire_callback
 
-            # Cancel in-flight background tasks
-        for _, bg_task in self.all_executions.items():
-            if bg_task.status == "running":
-                bg_task.async_task.cancel()
-
-        await self.app.a_exit()
+                # Cancel in-flight background tasks
+            for _, bg_task in self.all_executions.items():
+                if bg_task.status == "running":
+                    bg_task.async_task.cancel()
+        self.isaa_tools.stuf = False
+        with Spinner("Closing app", symbols="o"):
+            await self.app.a_exit()
         print_status("Goodbye!", "success")
 
         # monitor.stop()

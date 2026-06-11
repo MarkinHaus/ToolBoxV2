@@ -108,4 +108,3 @@ def apply_prompt_toolkit_patch_safe() -> None:
     Spinner.__aenter__             = _pt_spinner_aenter
     Spinner.__aexit__              = _pt_spinner_aexit
     SpinnerManager._pt_patched     = True
-    print("[pt_spinner_patch] Patch applied.")

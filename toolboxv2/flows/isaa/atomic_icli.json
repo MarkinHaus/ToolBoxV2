@@ -1,0 +1,764 @@
+{
+  "modules": {
+    "toolboxv2.utils.workers": {
+      "path": "toolboxv2/utils/workers/__init__.py",
+      "sha256": "87f1edb56e67df49db2c9450eca8f103e4f07d8ece23e6575b222fdfcc08ed0f",
+      "is_package": true
+    },
+    "toolboxv2.utils.extras.Style": {
+      "path": "toolboxv2/utils/extras/Style.py",
+      "sha256": "22c5b774a66856bbc4c7a99fc01a7a9adf1624df1c2d2fc6d89fdc0e7fe1f4e9"
+    },
+    "toolboxv2.utils.extras.pt_spinner_patch": {
+      "path": "toolboxv2/utils/extras/pt_spinner_patch.py",
+      "sha256": "6138cf0dab8b0c58a2ae8150408e88115c982a4be467f367c654627d1ab1db5f"
+    },
+    "toolboxv2": {
+      "path": "toolboxv2/__init__.py",
+      "sha256": "82d616654bc4a22d6b64bb3f1703935cf035bbfc024d13581dc53e5644d760ec",
+      "is_package": true
+    },
+    "toolboxv2.mods": {
+      "path": "toolboxv2/mods/__init__.py",
+      "sha256": "896cfe99622d5b3e414a6adfe5bd079289ca622455aa167e8e80dc38c65e6290",
+      "is_package": true
+    },
+    "toolboxv2.utils.toolbox": {
+      "path": "toolboxv2/utils/toolbox.py",
+      "sha256": "0525b276b0e2c0dee94c4ec855c633ca05e40e4fa1927f01fd4502205957b6e8"
+    },
+    "toolboxv2.utils.manifest.loader": {
+      "path": "toolboxv2/utils/manifest/loader.py",
+      "sha256": "4b091432bddcc2e9fc73b7e3ae9e48d7f3d23a17380db73f2d1f792c8d312ac6"
+    },
+    "toolboxv2.utils.system.tb_logger": {
+      "path": "toolboxv2/utils/system/tb_logger.py",
+      "sha256": "ff10f8b8bd258b4ca53cc12f9424eda9483aa10866c1faa8561062a0ff357820"
+    },
+    "toolboxv2.utils.extras.live_debugger": {
+      "path": "toolboxv2/utils/extras/live_debugger.py",
+      "sha256": "5d0abba20bdd516c7634061bc4f2c6ec0d0611faf55789688943027c39b90d69"
+    },
+    "toolboxv2.utils.manifest.schema": {
+      "path": "toolboxv2/utils/manifest/schema.py",
+      "sha256": "86714fbdf2add6d252a6d536b015c201a4e3dd7b3f62c59b796e8175c5e69874"
+    },
+    "toolboxv2.utils.system.observability_adapter": {
+      "path": "toolboxv2/utils/system/observability_adapter.py",
+      "sha256": "0541325b5800325365c8609224ab4faf412204c59a982f19b873a7787588b37d"
+    },
+    "toolboxv2.utils.extras.db.minio_helper": {
+      "path": "toolboxv2/utils/extras/db/minio_helper.py",
+      "sha256": "04fa15acc9bef833f6410849e0979fd4b86bdbcf156ff3f768ff388ca38ac3fe"
+    },
+    "toolboxv2.mods.isaa.base.Agent.builder": {
+      "path": "toolboxv2/mods/isaa/base/Agent/builder.py",
+      "sha256": "3aafb950f32ba3492ead8937844173b38912a1dc7c7a35b540d37c29f4b5db0a"
+    },
+    "toolboxv2.mods.isaa.base.Agent.docker_vfs": {
+      "path": "toolboxv2/mods/isaa/base/Agent/docker_vfs.py",
+      "sha256": "72193115791b9f104fc55565890e13647721bbe01ceef6062b43a8267f150914"
+    },
+    "toolboxv2.mods.isaa.base.Agent.vfs_v2": {
+      "path": "toolboxv2/mods/isaa/base/Agent/vfs_v2.py",
+      "sha256": "6d4e9892758479b07cb68c0e190e396b844fe3424c0b2f0dba6832e5c2e45af7"
+    },
+    "toolboxv2.mods.isaa.base.Agent.lsp_manager": {
+      "path": "toolboxv2/mods/isaa/base/Agent/lsp_manager.py",
+      "sha256": "5e2222243eabf14c6ce83a114c5eb38c1a022de8bc0560350d542670a7126a6e"
+    },
+    "toolboxv2.utils.extras.code_analyzer.tb_analyze_static": {
+      "path": "toolboxv2/utils/extras/code_analyzer/tb_analyze_static.py",
+      "sha256": "f36f23d9ba7418793440a9933ebe4bbf7e6df2ddb55346ed0b88b152762b4b64"
+    },
+    "toolboxv2.utils.system.getting_and_closing_app": {
+      "path": "toolboxv2/utils/system/getting_and_closing_app.py",
+      "sha256": "7c9da109eefaa22c2d05b7f8057b22066c2a7853a9e04eb8c77e2a01c4e110a7"
+    },
+    "toolboxv2.utils.proxy.proxy_app": {
+      "path": "toolboxv2/utils/proxy/proxy_app.py",
+      "sha256": "27c33273fd3778a87a5a304359e95d0b5e9a3e1b605e910d9ac9639cc31901c4"
+    },
+    "toolboxv2.mods.isaa.base.patch.vfs_shell_tool": {
+      "path": "toolboxv2/mods/isaa/base/patch/vfs_shell_tool.py",
+      "sha256": "f3cc2f65eabf6ccaa7209cc694445e9fd23245abdccbdf8f0f6dccc3468aa06a"
+    },
+    "toolboxv2.mods.isaa.base.patch.power_vfs": {
+      "path": "toolboxv2/mods/isaa/base/patch/power_vfs.py",
+      "sha256": "19d292e261a117cacfb2cd8d375b4cf30aba8acabeea194dc184ed8c4b2153b7"
+    },
+    "toolboxv2.mods.isaa.base.Agent.agent_session_v2": {
+      "path": "toolboxv2/mods/isaa/base/Agent/agent_session_v2.py",
+      "sha256": "4dfd7a2eb32896b1ba3eeb1d83379fc6d5857546d5ff7303a028bd418f6c05bc"
+    },
+    "toolboxv2.mods.isaa.base.Agent.rule_set": {
+      "path": "toolboxv2/mods/isaa/base/Agent/rule_set.py",
+      "sha256": "32e5983fc044cc77d282d6e3ca999d923270329c049c9431e47da9d1a4976c6d"
+    },
+    "toolboxv2.mods.isaa.base.Agent.skills": {
+      "path": "toolboxv2/mods/isaa/base/Agent/skills.py",
+      "sha256": "2086bb13dcb602fdc8f26c143194fc4bb80814bab5be991ff06cf858c7ff606e"
+    },
+    "toolboxv2.mods.isaa.extras.adapter": {
+      "path": "toolboxv2/mods/isaa/extras/adapter.py",
+      "sha256": "09d412faab809537e475dedfc6f51fdac73fc0ebc97a4a109ab4756950041775"
+    },
+    "toolboxv2.mods.isaa.base.llm_router.router": {
+      "path": "toolboxv2/mods/isaa/base/llm_router/router.py",
+      "sha256": "870b5ee1ec0bebeb86fe18fac31c04c16bad87f1b513782712e996b43bb81e52"
+    },
+    "toolboxv2.utils.system.session": {
+      "path": "toolboxv2/utils/system/session.py",
+      "sha256": "8d70fcfcf70158fc7f4bba8cebd84b2675da7f28ddb0b2390ec2344a40284e12"
+    },
+    "toolboxv2.utils.singelton_class": {
+      "path": "toolboxv2/utils/singelton_class.py",
+      "sha256": "3a0799b07cfe24616f5004202cee1b13887708503f28ef30a8debe461f5a287e"
+    },
+    "toolboxv2.utils.system.types": {
+      "path": "toolboxv2/utils/system/types.py",
+      "sha256": "bdc0e103af3c6e5fc0f08829120cd2c84918cf1d2752cd2b7342265a03e67105"
+    },
+    "toolboxv2.utils.manifest": {
+      "path": "toolboxv2/utils/manifest/__init__.py",
+      "sha256": "3cfbc9e8c7bf3d5ddbbb3988100a1eec4c71db7871449629141260b64dd76448",
+      "is_package": true
+    },
+    "toolboxv2.utils.clis.cli_worker_manager": {
+      "path": "toolboxv2/utils/clis/cli_worker_manager.py",
+      "sha256": "c67a9dfb1ec90e4e7a8e18a98141393215f6678e1cc6b2a340c1044b2b0af766"
+    },
+    "toolboxv2.utils.workers.debug_runner": {
+      "path": "toolboxv2/utils/workers/debug_runner.py",
+      "sha256": "17017b057a56ba382728ec8877fdff942911d22d8383be1dd16b7f944cbef311"
+    },
+    "toolboxv2.utils.workers.config": {
+      "path": "toolboxv2/utils/workers/config.py",
+      "sha256": "b576d634cd665b4dcb2deee3ce527651003479ffdbc4264306f447d554086a00"
+    },
+    "toolboxv2.utils.workers.event_manager": {
+      "path": "toolboxv2/utils/workers/event_manager.py",
+      "sha256": "0be05b76fccccb10d18839aa7d9e684ae928f7c50ded322cb40d45d9c656f6a6"
+    },
+    "toolboxv2.utils.extras.blobs": {
+      "path": "toolboxv2/utils/extras/blobs.py",
+      "sha256": "9227c254369989c131cea63b3e22006d8aaac30490c5718c707352efbfd71e55"
+    },
+    "toolboxv2.utils.extras.db.mobile_db": {
+      "path": "toolboxv2/utils/extras/db/mobile_db.py",
+      "sha256": "20f1edc575e1b79ebbfca87de96c3361dc426080753bf9465f06eb3be1fd4966"
+    },
+    "toolboxv2.utils.extras.db.minio_manager": {
+      "path": "toolboxv2/utils/extras/db/minio_manager.py",
+      "sha256": "6e488654025eab2907b18e5a561fb1f89308400624a5203339d1689ab7454ea7"
+    },
+    "toolboxv2.utils.workers.server_worker": {
+      "path": "toolboxv2/utils/workers/server_worker.py",
+      "sha256": "54e449abfa21292875d1f7fd49267539597e87ac9cf757b7392200c79ab20013"
+    },
+    "toolboxv2.utils.workers.ws_bridge": {
+      "path": "toolboxv2/utils/workers/ws_bridge.py",
+      "sha256": "fe874d9c971afca2d696caf1ad5c5d0d62edf0a3b13bc7a7efdf203a375efc5a"
+    },
+    "toolboxv2.utils.extras.notification": {
+      "path": "toolboxv2/utils/extras/notification.py",
+      "sha256": "c5a21a5c203af2dff17e5bdeaa3e1972ccf8075b548443eb6dbbf3516f5cc7c5"
+    },
+    "toolboxv2.utils.security.cryp": {
+      "path": "toolboxv2/utils/security/cryp.py",
+      "sha256": "f8c1220529c23962c06aaa7984071737ab485c8c214cc95eadbedc324e77563e"
+    },
+    "toolboxv2.mods.CloudM.auth.local_admin": {
+      "path": "toolboxv2/mods/CloudM/auth/local_admin.py",
+      "sha256": "cbb41fe0d43b0f32abc5aea96d41a872267f3ada019e64245801d001b23191fb"
+    },
+    "toolboxv2.utils.workers.ws_worker": {
+      "path": "toolboxv2/utils/workers/ws_worker.py",
+      "sha256": "081387cb48c7f59b178a1c4f24adfb6690fb79d81a89c171fc4f578ed63150b9"
+    },
+    "toolboxv2.utils.workers.session": {
+      "path": "toolboxv2/utils/workers/session.py",
+      "sha256": "6f065601fc2ea0b855b5293bd43e728605c5be22b6bc96b40fdd174623fa19ff"
+    },
+    "toolboxv2.mods.icli_web.voice": {
+      "path": "toolboxv2/mods/icli_web/voice.py",
+      "sha256": "5706f502269a59fd78084624bcfd92cdaf4b077dfda392da17af4e4c49fc4910"
+    },
+    "toolboxv2.utils.workers.fast.local_ui": {
+      "path": "toolboxv2/utils/workers/fast/local_ui.py",
+      "sha256": "8120260397f37f428157b3059ad2599431841704564d854378dc3921c9cba64d"
+    },
+    "toolboxv2.utils.workers.fast_tb": {
+      "path": "toolboxv2/utils/workers/fast_tb.py",
+      "sha256": "c62a1718b3ebeacb54a4c59486cb38b0631c581af3263fa7d5176fe8f2203529"
+    },
+    "toolboxv2.utils.workers.fast_tb_handler": {
+      "path": "toolboxv2/utils/workers/fast_tb_handler.py",
+      "sha256": "68d742e589f6653544dcd1a117a6d51d2d40bf23038877d974fb76155b858614"
+    },
+    "toolboxv2.utils.workers.fast_tb_defaults": {
+      "path": "toolboxv2/utils/workers/fast_tb_defaults.py",
+      "sha256": "3e1c6d5ce7e88ec853ffd2b2afa09fc9cb75b007d7b619041da796eb3458516a"
+    },
+    "toolboxv2.mods.Minu.core": {
+      "path": "toolboxv2/mods/Minu/core.py",
+      "sha256": "884faa55490e416251f3c602ad945643dddc90c8c7681fcdf2582a2b9bed5cff"
+    },
+    "toolboxv2.mods.Minu.shared": {
+      "path": "toolboxv2/mods/Minu/shared.py",
+      "sha256": "a2aa6ac6bca9707b97d60f87705ae9ec6671888934587656cd858c6ef43e1d94"
+    },
+    "toolboxv2.mods.Minu.user": {
+      "path": "toolboxv2/mods/Minu/user.py",
+      "sha256": "b372f7f6a3d01cb84ff3c19a752303ef35de889d0ab93b8cc740e54c334803e0"
+    },
+    "toolboxv2.mods.CloudM.UserDataAPI": {
+      "path": "toolboxv2/mods/CloudM/UserDataAPI.py",
+      "sha256": "b01cdc3a4d5554956a0f5785ba8f166c3b26f7ae792731c39af921f08e8d4bf0"
+    },
+    "toolboxv2.utils.extras.db.scoped_storage": {
+      "path": "toolboxv2/utils/extras/db/scoped_storage.py",
+      "sha256": "de2dad25c1dc896fc99e2365619c64e27e6b4bc3c52e68145ea89a8f6b20d6e2"
+    },
+    "toolboxv2.mods.CloudM.UserAccountManager": {
+      "path": "toolboxv2/mods/CloudM/UserAccountManager.py",
+      "sha256": "85fd401386351b970c515daa58be484b1a9eec47b21b7cc68d66a84704884571"
+    },
+    "toolboxv2.mods.CloudM.auth.AuthHelpers": {
+      "path": "toolboxv2/mods/CloudM/auth/AuthHelpers.py",
+      "sha256": "50e50590c4df6db62451d56a407365169cef67c10ce2058d87187bd130da0de4"
+    },
+    "toolboxv2.mods.CloudM.email_services": {
+      "path": "toolboxv2/mods/CloudM/email_services.py",
+      "sha256": "0500ea4c0499be7bddb17356a8c4e4ba4e6ee654af41daa0022fe7dcf8894fc7"
+    },
+    "toolboxv2.mods.CloudM.types": {
+      "path": "toolboxv2/mods/CloudM/types.py",
+      "sha256": "163bac7241684093c296f6adc5744b3340f382defcd38a25429851ba7d7ecd16"
+    },
+    "toolboxv2.mods.CloudM.auth.db_helpers": {
+      "path": "toolboxv2/mods/CloudM/auth/db_helpers.py",
+      "sha256": "bb9d056719fb24074428ed985e4d5a1e07a1bdbe26a0f2a62e82b00ae9280156"
+    },
+    "toolboxv2.utils.clis.service_manager": {
+      "path": "toolboxv2/utils/clis/service_manager.py",
+      "sha256": "cff2178bf9187fa0e52b08aa7a3d0eb5f712a4b6df1a2b622d9df381c1032c0b"
+    },
+    "toolboxv2.utils.clis.cli_printing": {
+      "path": "toolboxv2/utils/clis/cli_printing.py",
+      "sha256": "9535ea5d98f69ad8b539c22768014c57efcb798c6204eca7baf8e2f1bd609366"
+    },
+    "toolboxv2.feature_loader": {
+      "path": "toolboxv2/feature_loader.py",
+      "sha256": "46c39ce0336303d0429cce2f8274ca1f1a986f41ff3a3ef5e4c00ed919e9975c"
+    },
+    "toolboxv2.feature_loader_registry": {
+      "path": "toolboxv2/feature_loader_registry.py",
+      "sha256": "5e31b876e2ccb14504d29d244c5e450b29bb64ab9bc77f4612400516240d1b2a"
+    },
+    "toolboxv2.mods.CloudM.LogInSystem": {
+      "path": "toolboxv2/mods/CloudM/LogInSystem.py",
+      "sha256": "d56fa321259dd483a2ae0ee7ef28d86450a4fa9d5273a68c90a82c62c2d5dd0c"
+    },
+    "toolboxv2.utils.clis.local_cli": {
+      "path": "toolboxv2/utils/clis/local_cli.py",
+      "sha256": "0be1ce373153401e79c784cf63173035f158024aea5f6d82f0f737b68f4a2dc3"
+    },
+    "toolboxv2.mods.CloudM.auth.config": {
+      "path": "toolboxv2/mods/CloudM/auth/config.py",
+      "sha256": "bad33106be7330113951f6658e40476325d4578d3807f03f402e66d2d969a882"
+    },
+    "toolboxv2.mods.CloudM.auth.jwt_tokens": {
+      "path": "toolboxv2/mods/CloudM/auth/jwt_tokens.py",
+      "sha256": "6badbda302f404094fcaf16d4bd3d9bf35293ac5247ad6a3b54dafc8cb9489ac"
+    },
+    "toolboxv2.utils.extras.registry_client": {
+      "path": "toolboxv2/utils/extras/registry_client.py",
+      "sha256": "205fc3fff742d79f61136f4f1260a570d85caf18e3482c2fd8ec2d7bd4674a2e"
+    },
+    "toolboxv2.utils.system.feature_manager": {
+      "path": "toolboxv2/utils/system/feature_manager.py",
+      "sha256": "b32160e393d9c98a4626f7b2c26d22d0e7a9036843d54a382a71187fe24c0fe9"
+    },
+    "toolboxv2.utils.system.state_system": {
+      "path": "toolboxv2/utils/system/state_system.py",
+      "sha256": "fd6c139839fa4763aeb79f1f6f76f0b6d8146d625b7f26736b2d4848106a2c09"
+    },
+    "toolboxv2.utils.workers.fast.tray_api": {
+      "path": "toolboxv2/utils/workers/fast/tray_api.py",
+      "sha256": "392c6f4f88dc7865a7f46982fbfe0d5d3056d0a0475ace110983bea44f59350f"
+    },
+    "toolboxv2.mods.isaa.base.llm_router.adapters.setup": {
+      "path": "toolboxv2/mods/isaa/base/llm_router/adapters/setup.py",
+      "sha256": "abfdd67c7f6c5b1f77b94ae472c7286ed29f993d67d35906f133b8b2ac0fa5f6"
+    },
+    "toolboxv2.mods.isaa.base.llm_router.embeddings": {
+      "path": "toolboxv2/mods/isaa/base/llm_router/embeddings.py",
+      "sha256": "51bb26a595a5df6835d526d81623e1fc337cbf7a2da332c363bc10f43080bc1f"
+    },
+    "toolboxv2.mods.isaa.extras.session": {
+      "path": "toolboxv2/mods/isaa/extras/session.py",
+      "sha256": "35ffb6856ff2335d88f9011144a0f5003817aeaaf2b47f54dcb8be270b4f18fa"
+    },
+    "toolboxv2.mods.isaa.base.patch.mount_poll_registry": {
+      "path": "toolboxv2/mods/isaa/base/patch/mount_poll_registry.py",
+      "sha256": "73ede0c999eee6637a3c652e672751144b1131f3c7d9f50648ba125d0e7d1581"
+    },
+    "toolboxv2.mods.isaa.base.patch.web_shell_tool": {
+      "path": "toolboxv2/mods/isaa/base/patch/web_shell_tool.py",
+      "sha256": "a285f7f8edc138a89742fc75b59f6a0cfb8d2df459b5d8dde8bc10137d70b56e"
+    },
+    "toolboxv2.mods.isaa.extras.web_helper.web_agent": {
+      "path": "toolboxv2/mods/isaa/extras/web_helper/web_agent.py",
+      "sha256": "bb75a9edbd25d56c5aa312bc22e8a00afd09ac4d7ffd24e2e0ef2935a30f4246"
+    },
+    "toolboxv2.mods.isaa.extras.ocr_engine": {
+      "path": "toolboxv2/mods/isaa/extras/ocr_engine.py",
+      "sha256": "dfe1105df44db569f067ee5db5d2199e32af4fcf1c787d474da7d8469b0d9db2"
+    },
+    "toolboxv2.mods.isaa.base.Agent.flow_agent": {
+      "path": "toolboxv2/mods/isaa/base/Agent/flow_agent.py",
+      "sha256": "0fa14889cb11989d3d1b4836e3e2753aab753daed41cd339fa3573367191eeff"
+    },
+    "toolboxv2.mods.isaa.base.Agent.chain": {
+      "path": "toolboxv2/mods/isaa/base/Agent/chain.py",
+      "sha256": "87254517f17eafe59e8403c49638c8fac2bf0bd4893cdf28b7bb9dd5a15a43e3"
+    },
+    "toolboxv2.mods.isaa.base.Agent.types": {
+      "path": "toolboxv2/mods/isaa/base/Agent/types.py",
+      "sha256": "c5fbaa72776b7e771980ab3f05d15ec4afa9398ec507a24106627338d4d6fcef"
+    },
+    "toolboxv2.mods.isaa.base.audio_io.audioIo": {
+      "path": "toolboxv2/mods/isaa/base/audio_io/audioIo.py",
+      "sha256": "dcfc649535b5e68cdd30cc48734868d453608e5943c033157ef26a49f4b27093"
+    },
+    "toolboxv2.mods.isaa.base.audio_io.audio_live": {
+      "path": "toolboxv2/mods/isaa/base/audio_io/audio_live.py",
+      "sha256": "400ae79fd19996096e5f90b13bff704f0c1eb32cb5b5f4079f64885fd463f7fb"
+    },
+    "toolboxv2.mods.isaa.base.audio_io.audio_recorder": {
+      "path": "toolboxv2/mods/isaa/base/audio_io/audio_recorder.py",
+      "sha256": "b889fc6a8b72d29a702bd7124e38afa910812fff1edfd1f8eb408e190e0570ca"
+    },
+    "toolboxv2.mods.isaa.base.audio_io.Stt": {
+      "path": "toolboxv2/mods/isaa/base/audio_io/Stt.py",
+      "sha256": "99f6f3700b5e0ea213638a462a100764b1df3a2c89e2cdda7e875d6a5b51b747"
+    },
+    "toolboxv2.mods.isaa.base.audio_io.model_registry": {
+      "path": "toolboxv2/mods/isaa/base/audio_io/model_registry.py",
+      "sha256": "506d6dae9f242c5f77fb23c450c7c169d2ace913457da3799ca110e881d6f6fa"
+    },
+    "toolboxv2.mods.isaa.base.Agent.observability": {
+      "path": "toolboxv2/mods/isaa/base/Agent/observability.py",
+      "sha256": "b4bb4e132c119f69215fa3e85ed47932a0c5017ab3fffa31248bae3f8e6d367a"
+    },
+    "toolboxv2.mods.isaa.base.audio_io.Tts": {
+      "path": "toolboxv2/mods/isaa/base/audio_io/Tts.py",
+      "sha256": "b9dce44c91d04d0ecb452baf43689f7344efe3f4ce18570f6fcbafb29d793b59"
+    },
+    "toolboxv2.mods.isaa.base.llm_router.compat": {
+      "path": "toolboxv2/mods/isaa/base/llm_router/compat.py",
+      "sha256": "a6eb0776bb0fa4a0a03671f56efd0015ed0da47212d2306f6e13d6c4cb73d69b"
+    },
+    "toolboxv2.mods.isaa.base.llm_router.stream_accumulator": {
+      "path": "toolboxv2/mods/isaa/base/llm_router/stream_accumulator.py",
+      "sha256": "e6e813493a9667c8b8f792df0d317fa45a87f20f1e26ad588bc3858d48c18f54"
+    },
+    "toolboxv2.mods.isaa.base.llm_router.model_info": {
+      "path": "toolboxv2/mods/isaa/base/llm_router/model_info.py",
+      "sha256": "0167aa3f76d2393c7486587c27edeba16ef7d9534d5214ab337c66ef5f18bb57"
+    },
+    "toolboxv2.mods.isaa.base.llm_router.types": {
+      "path": "toolboxv2/mods/isaa/base/llm_router/types.py",
+      "sha256": "62b427d8ec507fcb5061fe983ed755783094a43d5209cd827d94ed47595da4bc"
+    },
+    "toolboxv2.mods.isaa.extras.toolkit.google_calendar_toolkit": {
+      "path": "toolboxv2/mods/isaa/extras/toolkit/google_calendar_toolkit.py",
+      "sha256": "944939ffffab6631d98de4fb07a7756bcef4a297f52aea8da30de8dfcc7dcf10"
+    },
+    "toolboxv2.mods.isaa.extras.toolkit.google_gmail_toolkit": {
+      "path": "toolboxv2/mods/isaa/extras/toolkit/google_gmail_toolkit.py",
+      "sha256": "d1f16cb32dc9069d1f13d92bc42b9db66f3e96d9847e012b5db076c8c991d5c6"
+    },
+    "toolboxv2.mods.isaa.base.Agent.bind_manager": {
+      "path": "toolboxv2/mods/isaa/base/Agent/bind_manager.py",
+      "sha256": "5545fe413f8dbc8f309dde9022a4a69a0c94f7de6ee295a23b84532333805a1e"
+    },
+    "toolboxv2.mods.isaa.base.Agent.checkpoint_manager": {
+      "path": "toolboxv2/mods/isaa/base/Agent/checkpoint_manager.py",
+      "sha256": "cfcdfceb8801d531bc2693456a2f7b5d066497b789046d66b4565eaf19df7269"
+    },
+    "toolboxv2.mods.isaa.base.Agent.session_manager": {
+      "path": "toolboxv2/mods/isaa/base/Agent/session_manager.py",
+      "sha256": "cb8c98dc643b5d8fda5feb646f63d16fc219b7eeb9649441fe6b6acf78e52f99"
+    },
+    "toolboxv2.mods.isaa.base.Agent.tool_manager": {
+      "path": "toolboxv2/mods/isaa/base/Agent/tool_manager.py",
+      "sha256": "cd22354cf4d9a05512c9f3f23b91184f91002adbd834d3b64dcf1786e14440ae"
+    },
+    "toolboxv2.mods.isaa.base.IntelligentRateLimiter.intelligent_rate_limiter": {
+      "path": "toolboxv2/mods/isaa/base/IntelligentRateLimiter/intelligent_rate_limiter.py",
+      "sha256": "b33af6660db5226f5bb2df9955f39a8496566108d8dfad381bf8f9ed5a5b665e"
+    },
+    "toolboxv2.mods.isaa.base.Agent.execution_engine": {
+      "path": "toolboxv2/mods/isaa/base/Agent/execution_engine.py",
+      "sha256": "01bd1e74844ca5d50ebfb0ab59665b1a051a5f7cf7c908c63a4fc4518173111b"
+    },
+    "toolboxv2.mods.isaa.base.Agent.ctx_cleaner": {
+      "path": "toolboxv2/mods/isaa/base/Agent/ctx_cleaner.py",
+      "sha256": "01591b58028f8b6d162ebb630c02ea9b70eaa35fa89e7b7bda8769d116d708c9"
+    },
+    "toolboxv2.mods.isaa.base.Agent.agent_live_state": {
+      "path": "toolboxv2/mods/isaa/base/Agent/agent_live_state.py",
+      "sha256": "db0df590e5749a27eb3cbfed7a6956f7f1480e3b5cd334e05dcd198eda6808f6"
+    },
+    "toolboxv2.mods.isaa.base.Agent.narrator": {
+      "path": "toolboxv2/mods/isaa/base/Agent/narrator.py",
+      "sha256": "cb7eb9fb048a92cd04044e2ac067bde6fe9ba97230849ef40d3e042e3309efd2"
+    },
+    "toolboxv2.mods.isaa.base.IntelligentRateLimiter": {
+      "path": "toolboxv2/mods/isaa/base/IntelligentRateLimiter/__init__.py",
+      "sha256": "57f68d54abfccca9abdadca9ad980ef6a0ec32eefcdf8647dc2370321b9a81ff",
+      "is_package": true
+    },
+    "toolboxv2.mods.isaa.base.Agent.sub_agent": {
+      "path": "toolboxv2/mods/isaa/base/Agent/sub_agent.py",
+      "sha256": "7c3b28c1b143bb1ab18df090d87449f764a030732d5ddb5a34de503d8ddd9327"
+    },
+    "toolboxv2.mods.isaa.base.Agent.sub_agent_resume_extension": {
+      "path": "toolboxv2/mods/isaa/base/Agent/sub_agent_resume_extension.py",
+      "sha256": "717241be48d598714ac910cc719853701b6c4078dccf7bcda1cf162b0129c7c5"
+    },
+    "toolboxv2.mods.isaa.base.Agent.default_personas": {
+      "path": "toolboxv2/mods/isaa/base/Agent/default_personas.py",
+      "sha256": "0f54932ccbdd371fc12cbe1e2e086fe47d719aa43e66f5ddfb07fd657c279100"
+    },
+    "toolboxv2.tests.test_isaa.test_base.test_agent.test_execution_engine": {
+      "path": "toolboxv2/tests/test_isaa/test_base/test_agent/test_execution_engine.py",
+      "sha256": "379bad5c5a28680007275d3d1a0643b44fa8aeffc294415315c87584010bb04b"
+    },
+    "toolboxv2.mods.isaa.base.Agent": {
+      "path": "toolboxv2/mods/isaa/base/Agent/__init__.py",
+      "sha256": "446e9e870d537649418e1c6d390bd081c7739890f67f64368d9779e907709e52",
+      "is_package": true
+    },
+    "toolboxv2.mods.isaa.base.dreamer.run_aggregator": {
+      "path": "toolboxv2/mods/isaa/base/dreamer/run_aggregator.py",
+      "sha256": "6ce7c88dfedb3656afe070f0d87d5a0025abe9c89952aeb7a4e6c6e74ce32298"
+    },
+    "toolboxv2.mods.isaa.base.dreamer.types": {
+      "path": "toolboxv2/mods/isaa/base/dreamer/types.py",
+      "sha256": "265e8448819e3e78f551acab6bc56e7f1a013b9ea34e5355d7d4f3cf569ac770"
+    },
+    "toolboxv2.mods.isaa.base.dreamer.harvest": {
+      "path": "toolboxv2/mods/isaa/base/dreamer/harvest.py",
+      "sha256": "81b664df19557356b8b81ce228c222a2dd582f970e7b7670a317d2c74db90632"
+    },
+    "toolboxv2.mods.isaa.base.dreamer.agent": {
+      "path": "toolboxv2/mods/isaa/base/dreamer/agent.py",
+      "sha256": "75f6edea996b9b9a9521684decaf3887c52a93dd02440d389debf8413bbeb88e"
+    },
+    "toolboxv2.mods.isaa.base.dreamer.prompts": {
+      "path": "toolboxv2/mods/isaa/base/dreamer/prompts.py",
+      "sha256": "c8ba9a454872bdbb9b47ff6d9747fe55f313c37c550500a82c08377dacb2aac9"
+    },
+    "toolboxv2.mods.isaa.base.dreamer.report": {
+      "path": "toolboxv2/mods/isaa/base/dreamer/report.py",
+      "sha256": "aabe3423390acd6b6132cc38e6c90a0237222aeba543ba2b1f0c1297437a3e05"
+    },
+    "toolboxv2.mods.isaa.base.dreamer.tools": {
+      "path": "toolboxv2/mods/isaa/base/dreamer/tools.py",
+      "sha256": "c82bc98fd2db034849a42771dbcd2b25b1b316e970d798c7499c1f5a7cde62bd"
+    },
+    "toolboxv2.mods.isaa.base.dreamer.tool_handler": {
+      "path": "toolboxv2/mods/isaa/base/dreamer/tool_handler.py",
+      "sha256": "7b043645fcebc156e709014ec9239f4648293bc6e463258faaa8932bc57cfc8e"
+    },
+    "toolboxv2.mods.isaa.base.patch.sandbox_tools": {
+      "path": "toolboxv2/mods/isaa/base/patch/sandbox_tools.py",
+      "sha256": "e78c0e43a25acf5d4003a20269e2ba6730f4e5e08d66e44ddd33ab9a371b67b4"
+    },
+    "toolboxv2.mods.isaa.base.patch.sandbox_backend": {
+      "path": "toolboxv2/mods/isaa/base/patch/sandbox_backend.py",
+      "sha256": "08667badbc665d2120416135fbf891f7ee700b062e111e5fafb1fb879d54d774"
+    },
+    "toolboxv2.mods.isaa.base.Agent.executors": {
+      "path": "toolboxv2/mods/isaa/base/Agent/executors.py",
+      "sha256": "d5db9a78a94ee4c6ee117b3ca6ccad86e94fd2d9cb51c6ccd79be05ad6a70ef8"
+    },
+    "toolboxv2.mods.isaa.CodingAgent.live": {
+      "path": "toolboxv2/mods/isaa/CodingAgent/live.py",
+      "sha256": "d94e5a79adef9b722d5aa82290e21d5cc3e4fbba03362bf8f8ad865bc08b3b2c"
+    },
+    "toolboxv2.mods.ContainerManager.docker_ops": {
+      "path": "toolboxv2/mods/ContainerManager/docker_ops.py",
+      "sha256": "80d18592aaea28b377e2a9dcbbf6770520d2b170f930f5f3321ea2dd1124d034"
+    },
+    "toolboxv2.mods.ContainerManager": {
+      "path": "toolboxv2/mods/ContainerManager/__init__.py",
+      "sha256": "33a414cfb9741a6c7c9986625ad01217edffb367d50c82668871356ebbba6fcc",
+      "is_package": true
+    },
+    "toolboxv2.utils.extras.base_widget": {
+      "path": "toolboxv2/utils/extras/base_widget.py",
+      "sha256": "a6f07ba324b762800e9eee175bef4d4ef97c8fb60b6f9fb65a2a0e5b520efd6d"
+    },
+    "toolboxv2.mods.CloudM": {
+      "path": "toolboxv2/mods/CloudM/__init__.py",
+      "sha256": "a4af113edbc03e66d22e32d30c6c3a678c167822bd5038def5dc0653e28ccf92",
+      "is_package": true
+    },
+    "toolboxv2.mods.ContainerManager.web_ui": {
+      "path": "toolboxv2/mods/ContainerManager/web_ui.py",
+      "sha256": "e3d51c4e840e8d478ad08ff05d83a1f47f23f8319ae8beff466dc6866477311f"
+    },
+    "toolboxv2.mods.CloudM.auth.user_store": {
+      "path": "toolboxv2/mods/CloudM/auth/user_store.py",
+      "sha256": "f87bba66dc2d60113ad8c8b57d885247daa3bf947863f4b765dd0c41072c3915"
+    },
+    "toolboxv2.mods.isaa.extras.mcp_session_manager": {
+      "path": "toolboxv2/mods/isaa/extras/mcp_session_manager.py",
+      "sha256": "ad002c7e82705f350651622b761ba3f8c4270e4a5d81eb11d85b88c9fb3b10e8"
+    },
+    "toolboxv2.mods.isaa.base.AgentUtils": {
+      "path": "toolboxv2/mods/isaa/base/AgentUtils.py",
+      "sha256": "d94681105064de68834e619d14b9356cea4617d1f00c03de92344eebe97b6d74"
+    },
+    "toolboxv2.mods.isaa.extras.zen.zen_renderer": {
+      "path": "toolboxv2/mods/isaa/extras/zen/zen_renderer.py",
+      "sha256": "0df8513ab2aa5c365a75fe337a488578200006e607612abc1cff892488e80440"
+    },
+    "toolboxv2.mods.isaa.extras.jobs": {
+      "path": "toolboxv2/mods/isaa/extras/jobs/__init__.py",
+      "sha256": "24c70a86e957e832659ced2008d17dec93d9217b8f8c35b50a42b9eda1cfd163",
+      "is_package": true
+    },
+    "toolboxv2.utils.extras.mkdocs": {
+      "path": "toolboxv2/utils/extras/mkdocs.py",
+      "sha256": "a6a29f97f1f6ed411e33e31ccf6082881c5202b247955b8938003d042550d64c"
+    },
+    "toolboxv2.mods.isaa.CodingAgent.coder": {
+      "path": "toolboxv2/mods/isaa/CodingAgent/coder.py",
+      "sha256": "cb02640a55c1f6101da842b375d32fc12d719f70c337a93861b596a21ae6c233"
+    },
+    "toolboxv2.mods.isaa.base.audio_io.omni": {
+      "path": "toolboxv2/mods/isaa/base/audio_io/omni.py",
+      "sha256": "2f3768f0fde642f8ee708e7323a786216abbddbe94e924d0544566e859ef3ae1"
+    },
+    "toolboxv2.utils.extras": {
+      "path": "toolboxv2/utils/extras/__init__.py",
+      "sha256": "bc1256c466e58213ede0083e4362013b5316a4dc2bafd07d941b4335c0341725",
+      "is_package": true
+    },
+    "toolboxv2.mods.isaa.base.audio_io.native.omni_gemini": {
+      "path": "toolboxv2/mods/isaa/base/audio_io/native/omni_gemini.py",
+      "sha256": "636d2de12b1ab38c933fc04333e0ed4fd36bd0c112865b32ee6e0387adf1efbc"
+    },
+    "toolboxv2.mods.isaa.base.audio_io": {
+      "path": "toolboxv2/mods/isaa/base/audio_io/__init__.py",
+      "sha256": "283cd83f846800eea9738ae429a844ecdec2e7bfc4ca0bb960b86df1b0af7393",
+      "is_package": true
+    },
+    "toolboxv2.utils.extras.code_analyzer.profiler": {
+      "path": "toolboxv2/utils/extras/code_analyzer/profiler.py",
+      "sha256": "1a5fd963b42df65adea877b7113363dad79457944907ab5a20cd2b943336d7e4"
+    },
+    "toolboxv2.flows.isaa.task_overlay": {
+      "path": "toolboxv2/flows/isaa/task_overlay.py",
+      "sha256": "90a858b33f0c7874c1c16ca04789e4e89936b93df257c6a344afa050f1fae074"
+    },
+    "toolboxv2.mods.isaa.extras.web_helper.tooklit": {
+      "path": "toolboxv2/mods/isaa/extras/web_helper/tooklit.py",
+      "sha256": "0878e6ea6bb7169d78dc4f77b5fc29f74823969d554d8e5a45b5e67ac0fd524a"
+    },
+    "toolboxv2.mods.isaa.extras.toolkit.isis_toolkit": {
+      "path": "toolboxv2/mods/isaa/extras/toolkit/isis_toolkit.py",
+      "sha256": "1a7457930c30572238b45ec652d876fe21e20e1e4f39d541729e436568c9df23"
+    },
+    "toolboxv2.mods.isaa.CodingAgent.coder_toolset": {
+      "path": "toolboxv2/mods/isaa/CodingAgent/coder_toolset.py",
+      "sha256": "fe6ddeb979d4f3fd7c1700269f6665b8948e20da848c39c4f2c887e07458e160"
+    },
+    "toolboxv2.mods.isaa.CodingAgent.manager": {
+      "path": "toolboxv2/mods/isaa/CodingAgent/manager.py",
+      "sha256": "c7a5862f166d154b03f39601a266e2c1232eea6036f79e54a724fcaaf555360e"
+    },
+    "toolboxv2.mods.isaa.base.chain.chain_tools": {
+      "path": "toolboxv2/mods/isaa/base/chain/chain_tools.py",
+      "sha256": "2a06cf90d17f650875a1b57d550ea961735d1a2f83ff0876d901c2e6cd43f121"
+    },
+    "toolboxv2.mods.isaa.extras.destop_auto": {
+      "path": "toolboxv2/mods/isaa/extras/destop_auto.py",
+      "sha256": "d6e88a9ac0fff01d57e8c9c80abf8a5891ffad908d8ff21719df0d2340928952"
+    },
+    "toolboxv2.mods.isaa.extras.isaa_branding": {
+      "path": "toolboxv2/mods/isaa/extras/isaa_branding.py",
+      "sha256": "320f2e0b9b4322645b1cbd64a2b8f98e2d8468ac47d9a5042c33acd89e7ddea4"
+    },
+    "toolboxv2.flows.isaa.icli": {
+      "path": "toolboxv2/flows/isaa/icli.py",
+      "sha256": "aae98da11a7ca5bafdb0c2e2203b705aa91180a4db4f720cfeea729b091b64c1"
+    },
+    "toolboxv2.mods.isaa.extras.discord_interface.integration_example": {
+      "path": "toolboxv2/mods/isaa/extras/discord_interface/integration_example.py",
+      "sha256": "ca96db6fc4f20c3f0cc9d674eba96d007a5b068659ad9b1f43c1a984ac04d5f2"
+    },
+    "toolboxv2.mods.isaa.module": {
+      "path": "toolboxv2/mods/isaa/module.py",
+      "sha256": "0205a5826816e0e4977e7133e1b793745cbb0bfa84eb6cb7f64cba6ef992f4e5"
+    },
+    "toolboxv2.mods.isaa.base.MemoryKnowledgeActor": {
+      "path": "toolboxv2/mods/isaa/base/MemoryKnowledgeActor.py",
+      "sha256": "2cf4e57c55959ea11b7ae2a78aab99cb8329c40daad569bf9856af19b0b5250a"
+    },
+    "toolboxv2.utils.system": {
+      "path": "toolboxv2/utils/system/__init__.py",
+      "sha256": "42b421db6049e8c672868c6149f93d9d5fe236898023744ffc98b8f83af21f89",
+      "is_package": true
+    },
+    "toolboxv2.mods.isaa.memory_index": {
+      "path": "toolboxv2/mods/isaa/memory_index.py",
+      "sha256": "bda6a6ac48ebb2636688e41cd0fe210fb278b25278e88009747156fa09bb2523"
+    },
+    "toolboxv2.mods.isaa.base.memory_graph_visualizer": {
+      "path": "toolboxv2/mods/isaa/base/memory_graph_visualizer.py",
+      "sha256": "4f8ffe27490a899669314a27157b0c0b668ffc7744dac9a471ff76f161107ae6"
+    },
+    "toolboxv2.mods.isaa.base.hybrid_memory": {
+      "path": "toolboxv2/mods/isaa/base/hybrid_memory.py",
+      "sha256": "3c2bf1a4e17d98ce8d48c310bc29f37e9ade8d8d83c6d8555ec49d750c42cd30"
+    },
+    "toolboxv2.mods.isaa.base.VectorStores.types": {
+      "path": "toolboxv2/mods/isaa/base/VectorStores/types.py",
+      "sha256": "61f02ae629f65cde65dfeda202ae086135123b4dee8c7cd4e364053e9a8acf36"
+    },
+    "toolboxv2.mods.isaa.base.VectorStores.FaissVectorStore": {
+      "path": "toolboxv2/mods/isaa/base/VectorStores/FaissVectorStore.py",
+      "sha256": "ca367705ea62fdc00f4ec8659a47c698ae3178638370f0fe1946673de66aa3b1"
+    },
+    "toolboxv2.mods.isaa.extras.jobs.job_live_state": {
+      "path": "toolboxv2/mods/isaa/extras/jobs/job_live_state.py",
+      "sha256": "e5fc0269c7745999f9189a9fc1483f760d229182c99df668eb77c873fba24583"
+    },
+    "toolboxv2.mods.isaa.base.bench.main": {
+      "path": "toolboxv2/mods/isaa/base/bench/main.py",
+      "sha256": "59ff8f0f79eb333f687d11d7a8db74559f290a903536aa621638eb688026d8e2"
+    },
+    "toolboxv2.mods.isaa.base.bench": {
+      "path": "toolboxv2/mods/isaa/base/bench/__init__.py",
+      "sha256": "031dced4cefd249710f554da3cb2f4064b638618d2d299b11149573215e0b583",
+      "is_package": true
+    },
+    "toolboxv2.mods.isaa.base.bench.core": {
+      "path": "toolboxv2/mods/isaa/base/bench/core.py",
+      "sha256": "c55203cf3fce07d57de260b1b02e4c18a21d6e41427ac820c86155b1301eb5f4"
+    },
+    "toolboxv2.mods.isaa.base.bench.loader": {
+      "path": "toolboxv2/mods/isaa/base/bench/loader.py",
+      "sha256": "47d741082586789475b606368c2cb22682cd56e7264c8195cefd21c3fed9b8ae"
+    },
+    "toolboxv2.mods.isaa.base.bench.runner": {
+      "path": "toolboxv2/mods/isaa/base/bench/runner.py",
+      "sha256": "9a627d83d3a0a5cb51e2a31b31ac653547df296be5cd583d6c2fe57ff2550d9a"
+    },
+    "toolboxv2.mods.isaa.base.bench.validators": {
+      "path": "toolboxv2/mods/isaa/base/bench/validators/__init__.py",
+      "sha256": "e2e45ba9451e3668f73d45da270ed0e8031a36374c499e421423bbedd89cbd64",
+      "is_package": true
+    },
+    "toolboxv2.mods.isaa.base.bench.adapters": {
+      "path": "toolboxv2/mods/isaa/base/bench/adapters.py",
+      "sha256": "2c75f7f9612dd0f85d63612d40651ed229d3a5ecf60a600f8e2bf2ee3a3d962e"
+    },
+    "toolboxv2.mods.isaa.base.bench.calibrator": {
+      "path": "toolboxv2/mods/isaa/base/bench/calibrator.py",
+      "sha256": "a6dbac2d561e0ee263227c57cbef266d3bacf045963507e46bcbedf75350554b"
+    },
+    "toolboxv2.mods.isaa.base.bench.validators.builtins": {
+      "path": "toolboxv2/mods/isaa/base/bench/validators/builtins.py",
+      "sha256": "5e0c20ecf9eaeda7fc6fd1c81a19a66a2bef3a5d272f0b57fe27399ae971bb91"
+    },
+    "toolboxv2.mods.isaa.base.bench.validators.judge": {
+      "path": "toolboxv2/mods/isaa/base/bench/validators/judge.py",
+      "sha256": "6541395d38f56cd3124b236dfb1204fc1d2490c7660f70e307c3df82d44ab2b0"
+    },
+    "toolboxv2.mods.isaa.base.bench.honesty": {
+      "path": "toolboxv2/mods/isaa/base/bench/honesty.py",
+      "sha256": "3babfbaaf1ec42ace7521caa3a164af111d1af7e331c08c0a076b9b8e72f388f"
+    },
+    "toolboxv2.mods.isaa.base.bench.multirun": {
+      "path": "toolboxv2/mods/isaa/base/bench/multirun.py",
+      "sha256": "9db8aa1255ecc3240456fe013abf7ecdef81fd647effbe45106a249120cec7e8"
+    },
+    "toolboxv2.mods.isaa.base.bench.dashboard": {
+      "path": "toolboxv2/mods/isaa/base/bench/dashboard.py",
+      "sha256": "08804e824bd0f19a3c422255fc048195b020bcbbfb24b324898fe45f1162f848"
+    },
+    "toolboxv2.mods.isaa.extras.obs_viewer": {
+      "path": "toolboxv2/mods/isaa/extras/obs_viewer.py",
+      "sha256": "3697c9c619a2945f958649b0d66fa76191d2770091456fcfa0b0e3fb4be48d7a"
+    },
+    "toolboxv2.mods.isaa.ui.app": {
+      "path": "toolboxv2/mods/isaa/ui/app.py",
+      "sha256": "44ae1d504710d83bcf51408823f0b8cb7783e745f7000beddafc0ca3a9bb34e7"
+    },
+    "toolboxv2.utils.workers.upload_manager": {
+      "path": "toolboxv2/utils/workers/upload_manager.py",
+      "sha256": "4b6f15470b4aeef9d56996d7ff60069722dda5e8a672347ca5c47e24a3e930c6"
+    },
+    "toolboxv2.mods.isaa.extras.live_obs_server": {
+      "path": "toolboxv2/mods/isaa/extras/live_obs_server.py",
+      "sha256": "75223305b397cee1c8099b2c970d0dd9fc9c5513cd9ee607c1cb83d9f33ae914"
+    },
+    "toolboxv2.mods.isaa.extras.web_helper.web_search": {
+      "path": "toolboxv2/mods/isaa/extras/web_helper/web_search.py",
+      "sha256": "a492f6eb5cb1c7d4469c5e23ad6012c5767652dbf2a9690335e7139276a1d3e9"
+    },
+    "toolboxv2.mods.isaa.extras.jobs.os_scheduler": {
+      "path": "toolboxv2/mods/isaa/extras/jobs/os_scheduler.py",
+      "sha256": "b44342521a015f808df7a721a89e0b2e793187464671811e7c285e4eca7ae958"
+    },
+    "toolboxv2.mods.isaa.extras.jobs.job_viewer": {
+      "path": "toolboxv2/mods/isaa/extras/jobs/job_viewer.py",
+      "sha256": "11ef051ec1215d1541b75463055f8704e7f57d9a60e6fb96f7156acfd1d577b2"
+    },
+    "toolboxv2.mods.isaa.model_tool_test": {
+      "path": "toolboxv2/mods/isaa/model_tool_test.py",
+      "sha256": "3b6f2ee92aeada4d8ccd563cbb9da67da5b499df710eceda14cefee5e951888e"
+    },
+    "toolboxv2.mods.isaa.extras.discord_interface.discord_cli_extension": {
+      "path": "toolboxv2/mods/isaa/extras/discord_interface/discord_cli_extension.py",
+      "sha256": "0ae9f865b62c714b0a32910325b7d9212b6b46dbed3641d86a5c19019ec0dec4"
+    },
+    "toolboxv2.mods.icli_web": {
+      "path": "toolboxv2/mods/icli_web/__init__.py",
+      "sha256": "f981cf4416ef6e99fd924990adba1ba709341338956675adbcc1c47196b680f0",
+      "is_package": true
+    },
+    "toolboxv2.mods.icli_web.server": {
+      "path": "toolboxv2/mods/icli_web/server.py",
+      "sha256": "ddbd582cca40178cc63d9c3a233185eab46433b228d5df8bafdfb36889a183fa"
+    },
+    "toolboxv2.mods.icli_web._icli_web_tool": {
+      "path": "toolboxv2/mods/icli_web/_icli_web_tool.py",
+      "sha256": "0b55d894263eedd4af2e42cace29eb5fa998b999c0f0477ec805ad5b83c0edf9"
+    },
+    "toolboxv2.mods.icli_web.client": {
+      "path": "toolboxv2/mods/icli_web/client.py",
+      "sha256": "c169112a5bdbc359360e4323c60635f42c9fe3c5fabb3d072ebbf65be9725009"
+    },
+    "toolboxv2.utils.workers.interface_registry": {
+      "path": "toolboxv2/utils/workers/interface_registry.py",
+      "sha256": "6ac1219b1bedcc17a3689a94b355cc5202d55a58b6a440f88a31e9253d6d726a"
+    },
+    "toolboxv2.flows.mini.toolbox_admin": {
+      "path": "toolboxv2/flows/mini/toolbox_admin.py",
+      "sha256": "adf69ab8879075ce5cd11f843e05252b87ff3602d427fa8b27191c3229a541c1"
+    },
+    "toolboxv2.utils.system.all_functions_enums": {
+      "path": "toolboxv2/utils/system/all_functions_enums.py",
+      "sha256": "94edd42cc83371d0da0f0e7bee24c1a8f6a3fe93ce3739278df7ac0ac7ffdc58"
+    }
+  },
+  "base_url": "https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/"
+}

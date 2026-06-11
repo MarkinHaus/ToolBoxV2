@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tb-atomic"
+version = "0.1.0"
+description = "Isolated, install-free import of individual ToolBoxV2 components from remote sources."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Markin" }]
+dependencies = ["requests>=2.25"]
+
+[project.scripts]
+tb-atomic = "tb_atomic:_main"
+
+[tool.setuptools]
+py-modules = ["tb_atomic"]
