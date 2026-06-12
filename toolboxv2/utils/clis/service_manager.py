@@ -95,13 +95,13 @@ class ServiceRegistry:
             runner_key="db"
         ))
         self.register(ServiceDefinition(
-            name="isaaK",
-            description="Discord & Telegram Kernel Agent",
-            category="core",
-            module="toolboxv2.mods.isaa.kernel.kernelin.run_unified_kernels",
+            name="icli",
+            description="ISAA Host CLI — startup ritual + daily jobs (service mode)",
+            category="extension",
+            module="toolboxv2.flows.isaa.icli",
             entry_point="run",
             is_async=True,
-            runner_key="isaaK"
+            runner_key="custom",
         ))
         #self.register(ServiceDefinition(
         #    name="user",

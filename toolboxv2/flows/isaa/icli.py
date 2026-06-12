@@ -15,6 +15,7 @@ Author: ISAA Team
 Version: 4.0.0
 """
 
+# etup auto start tb services config icli --auto-start true --args "--kwargs 0=--startup"
 import asyncio
 import dataclasses
 import logging
@@ -5851,6 +5852,7 @@ class ISAA_Host:
             "/mcp": None,"/cli": None, "/session": None, "/skill": None, "/task": None,
             "/tools": None, "/vfs": None, "/feature": None, "/chain": None,
             "/set_max_iterations": None, "/prompt": None,
+            "/onboarding": None, "/where": None,
         }
 
         # Die spezifischen Hilfe-Kategorien
@@ -6619,11 +6621,17 @@ class ISAA_Host:
         elif cmd == "/coder":
             await self._cmd_coder(args)
 
-
         elif cmd == "/omni":
             await self._handle_omni_command(args)
+
         elif cmd == "/audio":
             await self._handle_audio_command(args)
+
+        elif cmd == "/onboarding":
+            await self._handle_onboarding_command(args)
+
+        elif cmd == "/where":
+            await self._quick_status()
 
         elif cmd == "/job":
             await self._cmd_job(args)
@@ -8894,6 +8902,271 @@ class ISAA_Host:
         get_app("ci.audio.bg.task").run_bg_task_advanced(
             self.audio_player.queue_text, clean, emotion
         )
+
+    # ─── /onboarding + DAILY RITUAL ──────────────────────────────────────────────
+    def _ritual_config_path(self):
+        return Path(self.app.appdata) / "icli" / "ritual_config.json"
+
+    def _default_ritual_config(self) -> dict:
+        return {
+            "morning": {
+                "system_prompt": "",
+                "default_features": [],  # feature names auto-enabled at startup
+                "action_chain": [],  # "shell:<cmd>" | "delegate:<agent>:<task>" | "feature:<name>"
+                "omni": {"autostart": False, "mode": "omni_cloud"},
+                "enabled": True,
+            },
+            "evening": {"recap": True, "creative_prompt": "", "learning_eval": True, "enabled": True},
+        }
+
+    def _load_ritual_config(self) -> dict:
+        cfg = self._default_ritual_config()
+        p = self._ritual_config_path()
+        if p.exists():
+            try:
+                loaded = json.loads(p.read_text(encoding="utf-8"))
+                for k in cfg:
+                    if k in loaded:
+                        cfg[k] = loaded[k]
+            except Exception as e:
+                print_status(f"ritual_config load failed: {e}", "warning")
+        self._ritual_config = cfg
+        return cfg
+
+    def _save_ritual_config(self, cfg: dict | None = None) -> None:
+        cfg = cfg if cfg is not None else getattr(self, "_ritual_config", self._default_ritual_config())
+        p = self._ritual_config_path()
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+            self._ritual_config = cfg
+        except Exception as e:
+            print_status(f"ritual_config save failed: {e}", "warning")
+
+    def _world_model_context(self) -> str:
+        """Minimal WorldModel snapshot — injected at welcome and 'where am I' steps."""
+        try:
+            wm = self._omni_state_store.state.world_model
+            return wm.render() or "(world model empty)"
+        except Exception:
+            return "(world model unavailable)"
+
+    async def _ask_yes_no(self, question: str, default: bool = True) -> bool:
+        suffix = "[Y/n]" if default else "[y/N]"
+        try:
+            ans = (await self.prompt_session.prompt_async(
+                HTML(f"<style fg='cyan'>{esc(question)} {suffix} </style>"))).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return default
+        return default if not ans else ans in ("y", "yes", "j", "ja")
+
+    async def _run_action_chain(self, chain: list[str]) -> None:
+        """Step types: shell:<cmd> | delegate:<agent>:<task> | feature:<name>."""
+        for raw in chain:
+            step = (raw or "").strip()
+            if not step or ":" not in step:
+                continue
+            kind, _, rest = step.partition(":")
+            kind = kind.lower()
+            try:
+                if kind == "shell":
+                    print_status(f"shell: {rest}", "info")
+                    await self._handle_shell(rest)
+                elif kind == "delegate":
+                    agent, _, task = rest.partition(":")
+                    print_status(f"delegate {agent}: {task}", "info")
+                    await self._tool_delegate(agent.strip() or self.active_agent_name,
+                                              task.strip(), wait=True, session_id="ritual")
+                elif kind == "feature":
+                    print_status(f"feature: {rest}", "info")
+                    self.feature_manager.set_agent(await self.isaa_tools.get_agent(self.active_agent_name))
+                    await self.feature_manager.enable(rest.strip())
+                else:
+                    print_status(f"unknown step type: {kind}", "warning")
+            except Exception as e:
+                print_status(f"step failed [{step}]: {e}", "error")
+
+    async def _quick_status(self) -> None:
+        """Fast 'where am I / what's up' — always with WorldModel context."""
+        ctx = self._world_model_context()
+        running = [t for t in self.all_executions.values() if t.status == "running"]
+        jobs = self.job_scheduler.active_count if self.job_scheduler else 0
+        print_box_header("Where am I", "📍")
+        print_box_content(ctx, "")
+        print_box_content(f"running tasks: {len(running)}  |  scheduled jobs: {jobs}", "")
+        print_box_footer()
+
+    async def _run_startup_ritual(self) -> None:
+        """Headless morning ritual: welcome (+world model) → features → action chain → omni → briefing."""
+        await self._init_self_agent()
+        m = self._load_ritual_config().get("morning", {})
+        if not m.get("enabled", True):
+            return
+        print_box_header("Good morning", "🌅")
+        print_box_content(self._world_model_context(), "")  # always inject world model at welcome
+        print_box_footer()
+        for feat in m.get("default_features", []):
+            try:
+                self.feature_manager.set_agent(await self.isaa_tools.get_agent(self.active_agent_name))
+                await self.feature_manager.enable(feat)
+            except Exception as e:
+                print_status(f"feature {feat}: {e}", "warning")
+        await self._run_action_chain(m.get("action_chain", []))
+        omni = m.get("omni", {})
+        if omni.get("autostart"):
+            await self._handle_omni_command(["start", omni.get("mode", "omni_cloud")])
+        sp = (m.get("system_prompt") or "").strip()
+        if sp:
+            agent = await self.isaa_tools.get_agent(self.active_agent_name)
+            await self._ensure_world_model(agent)
+            await self._start_delegation(self.active_agent_name, sp, "ritual")
+
+    # ─── /onboarding sections ────────────────────────────────────────────────────
+    async def _handle_onboarding_command(self, args: list[str]):
+        """/onboarding -> all; /onboarding <section> -> one.
+        Sections: ratelimit | audio | selfagent | morning | evening | jobs."""
+        order = ["ratelimit", "audio", "selfagent", "morning", "evening", "jobs"]
+        target = args[0].lower() if args else "all"
+        cfg = self._load_ritual_config()
+        for sec in (order if target == "all" else [target]):
+            if sec == "ratelimit":
+                await self._onboard_ratelimit()
+            elif sec == "audio":
+                await self._onboard_audio()
+            elif sec == "selfagent":
+                await self._onboard_selfagent()
+            elif sec == "morning":
+                await self._onboard_morning(cfg)
+            elif sec == "evening":
+                await self._onboard_evening(cfg)
+            elif sec == "jobs":
+                await self._onboard_jobs(cfg)
+            else:
+                print_status(f"unknown onboarding section: {sec}", "warning")
+        self._save_ritual_config(cfg)
+        print_status("onboarding saved", "success")
+
+    async def _onboard_ratelimit(self):
+        """Set RateLimiter fallback chains: primary=fallback1,fallback2 (blank line = done)."""
+        print_box_header("RateLimiter Fallback Chain", "🔁")
+        print_box_content("Format: primary=fb1,fb2   (empty line to finish)", "")
+        print_box_footer()
+        chains = dict(self._rate_limiter_config.get("fallback_chains", {}))
+        while True:
+            try:
+                line = (await self.prompt_session.prompt_async(HTML("<style fg='cyan'>chain> </style>"))).strip()
+            except (EOFError, KeyboardInterrupt):
+                break
+            if not line:
+                break
+            if "=" not in line:
+                print_status("need primary=fallbacks", "warning");
+                continue
+            prim, _, fbs = line.partition("=")
+            chains[prim.strip()] = [f.strip() for f in fbs.split(",") if f.strip()]
+        self.update_rate_limiter_config({"fallback_chains": chains})
+        print_status("fallback chains updated", "success")
+
+    async def _onboard_audio(self):
+        """Pick audio in/out via the existing /audio command."""
+        await self._handle_audio_command(["devices"])  # list
+        await self._handle_audio_command(["device"])  # interactive picker -> self._audio_device
+
+    async def _onboard_selfagent(self):
+        """Set up the ISAA self agent with system env vars."""
+        # TODO(ritual): provision self agent + write system env vars (model keys, paths, gateway).
+        pass
+
+    async def _onboard_morning(self, cfg: dict):
+        m = cfg.setdefault("morning", self._default_ritual_config()["morning"])
+        m["enabled"] = await self._ask_yes_no("Enable morning ritual?", m.get("enabled", True))
+        sp = (await self.prompt_session.prompt_async(
+            HTML("<style fg='cyan'>system prompt (blank=keep)> </style>"))).strip()
+        if sp:
+            m["system_prompt"] = sp
+        feats = (await self.prompt_session.prompt_async(
+            HTML("<style fg='cyan'>default features (comma)> </style>"))).strip()
+        if feats:
+            m["default_features"] = [f.strip() for f in feats.split(",") if f.strip()]
+        print_status("chain steps — shell:<cmd> | delegate:<agent>:<task> | feature:<name> (blank=done)", "info")
+        chain = list(m.get("action_chain", []))
+        while True:
+            try:
+                line = (await self.prompt_session.prompt_async(HTML("<style fg='cyan'>step> </style>"))).strip()
+            except (EOFError, KeyboardInterrupt):
+                break
+            if not line:
+                break
+            chain.append(line)
+        m["action_chain"] = chain
+        if await self._ask_yes_no("Autostart Omni?", m.get("omni", {}).get("autostart", False)):
+            mode = (await self.prompt_session.prompt_async(
+                HTML(
+                    "<style fg='cyan'>omni mode [omni_cloud|omni_local|pipeline|stub]> </style>"))).strip() or "omni_cloud"
+            m["omni"] = {"autostart": True, "mode": mode}
+        else:
+            m["omni"] = {"autostart": False, "mode": m.get("omni", {}).get("mode", "omni_cloud")}
+
+    async def _onboard_evening(self, cfg: dict):
+        e = cfg.setdefault("evening", self._default_ritual_config()["evening"])
+        e["enabled"] = await self._ask_yes_no("Enable evening wrap-up?", e.get("enabled", True))
+        e["recap"] = await self._ask_yes_no("Daily recap (what did we do today)?", e.get("recap", True))
+        e["learning_eval"] = await self._ask_yes_no("Run learning eval (Dreamer)?", e.get("learning_eval", True))
+        cp = (await self.prompt_session.prompt_async(
+            HTML("<style fg='cyan'>creative prompt (blank=keep)> </style>"))).strip()
+        if cp:
+            e["creative_prompt"] = cp
+
+    async def _onboard_jobs(self, cfg: dict):
+        """Per-job y/n (no accept-all default). Registers on the live JobScheduler (SSOT)."""
+        if not self.job_scheduler:
+            print_status("job scheduler not ready", "warning");
+            return
+        agent = self.active_agent_name
+        suggested = [
+            ("morning_briefing", "Run the morning briefing — weather, news, today's tasks.", "0 8 * * *"),
+            ("midday_standup", "Where am I, what's up — short and concrete.", "0 13 * * *"),
+            ("evening_wrapup", "Daily recap of what we did + a creative nudge.", "0 20 * * *"),
+        ]
+        print_box_header("Standard Jobs", "⏰")
+        print_box_content("[a] accept all   [n] reject all   [s] select per job", "")
+        print_box_footer()
+        try:
+            bulk = (
+                await self.prompt_session.prompt_async(HTML("<style fg='cyan'>[a/n/s]> </style>"))).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            bulk = "s"
+        if bulk == "n":
+            print_status("no standard jobs added", "info")
+        else:
+            existing = {j.name for j in self.job_scheduler.list_jobs()}
+            for name, query, cron in suggested:
+                if name in existing:
+                    continue
+                if not (True if bulk == "a" else await self._ask_yes_no(f"{name} ({cron})?", True)):
+                    continue
+                expr = cron
+                if bulk != "a":
+                    custom = (await self.prompt_session.prompt_async(
+                        HTML(f"<style fg='cyan'>cron for {name} (blank={cron})> </style>"))).strip()
+                    if custom:
+                        expr = custom
+                trig = TriggerConfig(trigger_type="on_cron")
+                trig.cron_expression = expr
+                self.job_scheduler.add_job(JobDefinition(
+                    job_id=JobDefinition.generate_id(), name=name, agent_name=agent,
+                    query=query, trigger=trig, timeout_seconds=600,
+                ))
+                print_status(f"+ {name}", "success")
+        # Dreamer = first-class scheduler primitive (nightly 03:00)
+        if cfg.get("evening", {}).get("learning_eval", True) and \
+            await self._ask_yes_no("Add nightly Dreamer learning eval (03:00)?", True):
+            try:
+                self.job_scheduler.add_dream_job(agent)
+                print_status("+ dreamer_nightly", "success")
+            except Exception as e:
+                print_status(f"dreamer job failed: {e}", "warning")
+
 
     # ─── /audio COMMAND ──────────────────────────────────────────────────────────
     async def _handle_audio_command(self, args: list[str]):
@@ -12601,9 +12874,21 @@ if __name__ == "__main__":
             help="Session ID für ZMQ input channel (gui.input.<id>)"
         )
 
+        parser.add_argument(
+            "--startup",
+            action="store_true",
+            help="Run the configured morning ritual, then keep host alive (service mode)"
+        )
+
         args = parser.parse_args()
         app = get_app("isaa-host")
         host = ISAA_Host(app)
+
+        # ── Startup-Ritual / Service-Mode ──────────────────────────────
+        if args.startup:
+            await host._run_startup_ritual()
+            await host.run()  # keep process alive; JobScheduler handles recurring jobs
+            return
 
         # ── Normaler interaktiver Modus ────────────────────────────────
         if not args.query and not args.gui:
