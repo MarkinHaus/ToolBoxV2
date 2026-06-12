@@ -5,6 +5,8 @@ Session-isolated: Each agent session can have a different Google user.
 Credentials persist on disk and survive restarts.
 Agent-facing interface uses human-readable indices (#1, #2, ...)
 instead of opaque Google IDs.
+
+pip install google-api-python-client google-auth-oauthlib google-auth-httplib2 python-dateutil dateparser
 """
 
 import json

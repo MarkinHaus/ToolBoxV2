@@ -5852,7 +5852,6 @@ class ISAA_Host:
             "/mcp": None,"/cli": None, "/session": None, "/skill": None, "/task": None,
             "/tools": None, "/vfs": None, "/feature": None, "/chain": None,
             "/set_max_iterations": None, "/prompt": None,
-            "/onboarding": None, "/where": None,
         }
 
         # Die spezifischen Hilfe-Kategorien
@@ -5876,6 +5875,15 @@ class ISAA_Host:
             "/exit": None,
             "/clear": None,
             "/status": None,
+            "/onboarding": {
+                "ratelimit" : None,
+                "audio": None,
+                "selfagent": None,
+                "morning": None,
+                "evening": None,
+                "jobs": None,
+             },
+            "/where": None,
             "/vfs": {"init":None},
             "/tools": {
                 "list": tool_cats,
@@ -9550,19 +9558,16 @@ class ISAA_Host:
             session_id = _deleg_session_id(query)
             run_id = uuid.uuid4().hex[:8]
 
-            # Register execution in icli
-            host._task_counter += 1
-            task_id = f"delegate_{host._task_counter}_{target_name}"
-
             exc = host._create_execution(
                 kind="delegate",
                 agent_name=target_name,
                 query=query,
                 async_task=None,  # Will be populated inside the generator on stream start
-                run_id=run_id,    # Temporary fallback, mapped to job_id below
+                run_id=run_id,  # Temporary fallback, mapped to job_id below
                 take_focus=False,
             )
             exc.session_id = session_id
+            task_id = exc.task_id  # canonical id — _create_execution increments + registers itself
 
             # Combined stream factory driven by JobManager but reporting to icli
             def _factory():
