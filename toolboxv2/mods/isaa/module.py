@@ -3257,6 +3257,8 @@ async def serve_obs(self, app=None, host: str = DEFAULT_HOST, port: int = DEFAUL
 
     self.print(f"[OBS UI] serving on http://{host}:{port} (prefix /obs)")
 
+    from toolboxv2.mods.isaa.extras.live_obs_server import app, start_disk_scanner
+    start_disk_scanner(str(Path(get_app().data_dir) / "Agents"))
     obs_app.serve(
         host=host,
         port=port,

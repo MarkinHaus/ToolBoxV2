@@ -39,8 +39,6 @@ Ohne aktives Pruning bloated sich das gesamte System über Zeit.
        dream_act({"action":"migrate_logs"})               → einmalige Harvest→TaskMap-Übertragung (Legacy-Logs). Danach NIE WIEDER aufrufen.
 
 
-lese auch die /global/.memory/taskmap/.migrated wen sie exitiert.
-
 2. CLUSTERING & ANALYSE
    - Die TaskMap-Klassen (task_type/subtype) sind BEREITS Cluster. Kein dream_cluster_records nötig.
    - Für JEDEN Cluster: spawn_sub_agent() zur tieferen Analyse
@@ -57,16 +55,40 @@ lese auch die /global/.memory/taskmap/.migrated wen sie exitiert.
    - dream_act({"action":"compress_skill","payload":{"skill_id":"..."}})
 
 4. REGEL-EXTRAKTION
-   - dream_act({"action":"extract_rules","payload":{"rules":[{"situation":"...","intent":"...","instructions":[],"required_tool_groups":[],"confidence":0.5}]}})
+   - Erstelle Regeln NUR wenn sie aus wiederkehrenden Mustern abgeleitet sind.
+   - Nutze dafür:
+     dream_act({"action":"create_rule","payload":{"rules":[{"situation":"Kontext","intent":"Ziel","instructions":["Schritt 1","Schritt 2"],"required_tool_groups":["vfs"],"confidence":0.9}]}})
+   - Genau dieses Format ist Pflicht:
+     {
+       "rules": [
+         {
+           "situation": "Wann gilt die Regel?",
+           "intent": "Was soll erreicht werden?",
+           "instructions": ["konkreter Schritt 1", "konkreter Schritt 2"],
+           "required_tool_groups": ["vfs", "memory"],
+           "confidence": 0.5
+         }
+       ]
+     }
    - dream_act({"action":"learn_pattern","payload":{"pattern":"...","source_situation":"...","category":"general","tags":[]}})
 
 5. PERSONA-EVOLUTION
    - dream_act({"action":"create_persona","payload":{"name":"...","prompt_modifier":"...","model_preference":"fast","temperature":0.3,"verification_level":"basic","evidence_count":N}})
 
 6. MEMORY-EXTRAKTION
-   - Hinweis: aktuell blockiert (litellm_embed api_base bug). Versuche es trotzdem
-     via dream_act({"action":"create_persona","payload":{...}})  — oder überspringe
-     und dokumentiere im Report, dass der Memory-Pfad defekt ist.
+   - Extrahiere immer relevante Fakten als Memories, wenn sie für zukünftige Runs nützlich sind.
+   - Nutze dafür:
+     dream_act({"action":"create_memories","payload":{"memories":[{"text":"Kurzbeschreibung des Fakten-Texts","concepts":["Tag1","Tag2"]}]}})
+   - Genau dieses Format ist Pflicht:
+     {
+       "memories": [
+         {
+           "text": "Der eigentliche Fakten-Text",
+           "concepts": ["tag1", "tag2"]
+         }
+       ]
+     }
+   - Wenn `create_memories` nicht funktioniert, dokumentiere das explizit im Report.
 
 6b. TASK-GUIDES (Multi-Run-Auswertung der Task Map)
    - Pro Klasse mit genug Evidence (entry_count ≥ 3): vergleiche rows,

@@ -2124,7 +2124,7 @@ class FlowAgent:
 
         # Pre-harvest: parse logs + snapshot current state (no LLM needed)
         from toolboxv2.mods.isaa.base.dreamer.harvest import (
-            harvest_from_vfs, get_cutoff, filter_records,
+            harvest_from_vfs, get_cutoff,
         )
         from toolboxv2.mods.isaa.base.dreamer.agent import (
             build_dream_query, prepare_dreamer_vfs,
@@ -2236,7 +2236,7 @@ class FlowAgent:
         async for chunk in dreamer_agent.a_stream(
             query=query,
             session_id=dreamer_session_id,
-            max_iterations=50,
+            max_iterations=150,
         ):
             # Enrich chunks with dream metadata
             chunk["_dream"] = True
@@ -2421,7 +2421,7 @@ class FlowAgent:
             handler.handle_split_skill(skill_id, sub_intents or []),
             "dream_compress_skill": lambda skill_id="", **kw:
             handler.handle_compress_skill(skill_id),
-            "dream_extract_rules": lambda rules=None, **kw:
+            "dream_create_rules": lambda rules=None, **kw:
             handler.handle_extract_rules(rules or []),
             "dream_learn_pattern": lambda pattern="", source_situation="",
                                           category="general", tags=None, **kw: handler.handle_learn_pattern(
@@ -2434,7 +2434,7 @@ class FlowAgent:
             handler.handle_delete_skill(skill_id, reason),
             "dream_delete_rule": lambda rule_id="", reason="", **kw:
             handler.handle_delete_rule(rule_id, reason),
-            "dream_extract_memories": lambda memories=None, **kw:
+            "dream_create_memories": lambda memories=None, **kw:
             handler.handle_extract_memories(memories or []),
             "dream_persist_checkpoint": lambda **kw:
             handler.handle_persist_checkpoint(handler._taskmap_vfs()),
@@ -2456,6 +2456,43 @@ class FlowAgent:
                 description=desc,
                 category=["dream"],
             )
+
+    def _register_dream_tools(self, dreamer_agent):
+        """Register ONLY the master dream_act tool — defeats slot eviction."""
+
+        from toolboxv2.mods.isaa.base.dreamer.tool_handler import DreamerToolHandler
+        from toolboxv2.mods.isaa.base.dreamer.tools import DREAM_ACT_TOOL
+
+        sm = self.session_manager.skills_manager if hasattr(self.session_manager, 'skills_manager') else None
+
+        def _taskmap_vfs():
+            try:
+                session = self.session_manager.get(self.active_session or "default")
+                return getattr(session, "vfs", None)
+            except Exception:
+                return None
+        handler = DreamerToolHandler(
+            skills = dict(sm.skills) if sm else {},
+            rules = {},
+            patterns = [],
+            personas = {},
+            records = [],
+            vfs_provider = _taskmap_vfs,
+        )
+         # Handler für dream() Dashboard zugänglich machen
+        self._dreamer_tool_handler = handler
+         # EIN Wrapper → EIN Master-Tool
+
+        def dream_act_wrapper(action: str, payload: dict | None = None):
+            return handler.handle_act(action, payload)
+
+
+        dreamer_agent.add_tool(
+            tool_func = dream_act_wrapper,
+            name = DREAM_ACT_TOOL["function"]["name"],  # "dream_act"
+            description = DREAM_ACT_TOOL["function"]["description"],
+            category = ["dream"],
+        )
 
     # =========================================================================
     # audio processing
@@ -3673,7 +3710,8 @@ class FlowAgent:
         # 2. Exakte Komponenten generieren (DRY RUN)
 
         # A. System Prompt (Der echte String, den die Engine bauen würde)
-        sys_prompt_content = engine._build_system_prompt(ctx, session)
+        sys_prompt_content = engine._build_static_system_prompt(ctx, session)
+        sys_prompt_content += engine._build_dynamic_system_prompt(ctx)
 
         # B. History-Komponenten
         perm_history = session.get_history_for_llm(last_n=6)

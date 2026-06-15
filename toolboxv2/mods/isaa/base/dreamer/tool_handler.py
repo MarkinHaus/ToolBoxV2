@@ -80,7 +80,7 @@ class DreamerToolHandler:
 
     _VALID_ACTIONS = frozenset({
         "get_taskmap", "get_all_state", "migrate_logs",
-        "create_skill", "create_rule", "create_persona",
+        "create_skill", "create_rule", "create_persona", "create_memories",
         "evolve_skill", "merge_skills", "split_skill", "compress_skill",
         "cleanup", "delete_skill", "delete_rule",
         "extract_rules", "learn_pattern",
@@ -100,10 +100,10 @@ class DreamerToolHandler:
         payload = payload or {}
 
         if not isinstance(action, str):
-            return json.dumps({"ok": False, "error": "action must be a string"})
+            return json.dumps({'success': False, "error": "action must be a string"})
         if action not in self._VALID_ACTIONS:
             return json.dumps({
-                "ok": False,
+                'success': False,
                 "error": f"unknown action: {action!r}",
                 "valid_actions": sorted(self._VALID_ACTIONS),
             })
@@ -173,6 +173,15 @@ class DreamerToolHandler:
                     category=str(payload.get("category", "general")),
                     tags=list(payload.get("tags", []) or []),
                 )
+            # 2. Dispatcher-Case für create_memories (nach Zeile 133 ergänzen)
+            if action == "create_memories":
+                return self.handle_extract_memories(
+                    list(payload.get("memories", []) or []),
+                )
+            if action == "create_memories":
+                return self.handle_extract_memories(
+                    list(payload.get("memories", []) or []),
+                )
             if action == "write_taskmap_guide":
                 return self.handle_write_taskmap_guide(
                     task_type=str(payload.get("task_type", "")),
@@ -184,14 +193,14 @@ class DreamerToolHandler:
                 if vfs is None:
                     vfs = self._taskmap_vfs()
                 if vfs is None:
-                    return json.dumps({"ok": False, "error": "no vfs for persist"})
+                    return json.dumps({'success': False, "error": "no vfs for persist"})
                 return self.handle_persist_checkpoint(vfs)
         except Exception as exc:  # noqa: BLE001 — dispatcher must never break the cycle
             _log.warning(f"handle_act[{action}] failed: {exc}")
-            return json.dumps({"ok": False, "action": action, "error": str(exc)})
+            return json.dumps({'success': False, "action": action, "error": str(exc)})
 
         # Unreachable — keeps mypy happy
-        return json.dumps({"ok": False, "error": "unreachable"})
+        return json.dumps({'success': False, "error": "unreachable"})
 
     # ----- composite helpers for handle_act -----
 
@@ -203,7 +212,7 @@ class DreamerToolHandler:
         and can plan without juggling tool slots.
         """
         return json.dumps({
-            "ok": True,
+            'success': True,
             "skills": json.loads(self.handle_get_skills()),
             "rules": json.loads(self.handle_get_rules()),
             "personas": json.loads(self.handle_get_personas()),
@@ -222,7 +231,7 @@ class DreamerToolHandler:
             out["rules"] = self.handle_cleanup_rules()
         if scope in ("all", "personas"):
             out["personas"] = self.handle_prune_personas()
-        return json.dumps({"ok": True, "cleanup": out}, indent=2)
+        return json.dumps({'success': True, "cleanup": out}, indent=2)
 
     def _handle_migrate_logs(self, payload: dict) -> str:
         """One-time Harvest → TaskMap transfer.
@@ -235,7 +244,7 @@ class DreamerToolHandler:
         """
         vfs = self._taskmap_vfs()
         if vfs is None:
-            return json.dumps({"ok": False, "error": "no vfs for migration"})
+            return json.dumps({'success': False, "error": "no vfs for migration"})
 
         log_dir = payload.get("log_dir") or "/global/.memory/logs"
         # Lazy import — harvest stays importable but only here
@@ -245,17 +254,17 @@ class DreamerToolHandler:
             )
             from toolboxv2.mods.isaa.base.dreamer.run_aggregator import RunAggregator
         except Exception as exc:
-            return json.dumps({"ok": False, "error": f"harvest/run_aggregator import failed: {exc}"})
+            return json.dumps({'success': False, "error": f"harvest/run_aggregator import failed: {exc}"})
 
         cutoff = get_cutoff(max_history_time=payload.get("max_history_time"))
         try:
             records = harvest_from_vfs(vfs, log_dir, cutoff)
         except Exception as exc:
-            return json.dumps({"ok": False, "error": f"harvest failed: {exc}"})
+            return json.dumps({'success': False, "error": f"harvest failed: {exc}"})
 
         if not records:
             return json.dumps({
-                "ok": True,
+                'success': True,
                 "scanned": 0,
                 "written": 0,
                 "message": "no legacy records found",
@@ -274,7 +283,7 @@ class DreamerToolHandler:
                 errors.append(getattr(r, "run_id", "?"))
 
         return json.dumps({
-            "ok": True,
+            'success': True,
             "scanned": len(records),
             "written": migrated,
             "errors": errors[:20],
@@ -571,6 +580,13 @@ class DreamerToolHandler:
         if not name:
             return "ERROR: name is required"
 
+        if not isinstance(evidence_count, int):
+            evidence_count = int(evidence_count)
+        if not isinstance(temperature, float):
+            temperature = float(temperature)
+        if not isinstance(max_iterations_factor, float):
+            max_iterations_factor = float(max_iterations_factor)
+
         import re
         key = "learned_" + re.sub(r"\W+", "_", name[:25]).lower().strip("_")
 
@@ -637,6 +653,11 @@ class DreamerToolHandler:
         new_triggers: List[str] = None,
         success_tools: List[str] = None,
     ) -> str:
+
+        if not isinstance(cluster_size, int):
+            cluster_size = int(cluster_size)
+        if not isinstance(success_ratio, float):
+            success_ratio = float(success_ratio)
         skill = self._skills.get(skill_id)
         if not skill:
             return f"ERROR: Skill '{skill_id}' not found"

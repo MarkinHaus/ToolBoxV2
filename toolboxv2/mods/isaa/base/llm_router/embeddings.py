@@ -134,6 +134,7 @@ async def litellm_embed(
     dimensions: int = 256,
     base_url: str = None,
     api_key: str = None,
+    api_base: str = None,
     input_type: str | None = None,
     process_media: bool = True,
 ) -> np.ndarray:
@@ -142,7 +143,7 @@ async def litellm_embed(
         texts=texts,
         model=model,
         dimensions=dimensions,
-        api_base=base_url,
+        api_base=api_base or base_url,
         api_key=api_key,
         input_type=input_type,
     )
@@ -153,6 +154,7 @@ async def smart_embed(
     model: str = "ollama/nomic-embed-text",
     dimensions: int | None = None,
     api_key: str | None = None,
+    api_base: str = None,
     input_type: str | None = None,
     prefer_direct: bool = True,
 ) -> np.ndarray:
@@ -161,6 +163,7 @@ async def smart_embed(
         texts=texts,
         model=model,
         dimensions=dimensions,
+        api_base=api_base,
         api_key=api_key,
         input_type=input_type,
     )
