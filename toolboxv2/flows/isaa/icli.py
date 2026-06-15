@@ -80,7 +80,7 @@ from toolboxv2.mods.isaa.base.audio_io.omni import (
 from toolboxv2.mods.isaa.base.audio_io.audio_recorder import LocalMicRecorder
 from toolboxv2.mods.isaa.base.audio_io.audioIo import LocalPlayer, NullPlayer, StreamingLocalPlayer
 from toolboxv2.utils.extras.blobs import BlobFile
-import os
+import os, sys
 os.environ["NARRATOR_CONSOLE_PRINT"] = "false"
 def ensure_utf8_stdout():
     if sys.platform == "win32" and "pytest" not in sys.modules:
@@ -4183,19 +4183,21 @@ class ISAA_Host:
                 chunk_type = chunk.get("type", "")
 
                 # -- Content (LLM token stream) ------------------------------------
-                # if chunk_type == "content":
+                if chunk_type == "content":
+                    pass
                 #     if self._focused_task_id_needs_new_line:
                 #         c_print()
                 #         self._focused_task_id_needs_new_line = False
                 #     c_print(ANSI(renderer.render_content(chunk.get("chunk", ""))), end="", flush=True)
     #
                 # # -- Reasoning / CoT -----------------------------------------------
-                # elif chunk_type == "reasoning":
+                elif chunk_type == "reasoning":
+                    pass
                 #     self._focused_task_id_needs_new_line = True
                 #     c_print(ANSI(renderer.render_reasoning(chunk.get("chunk", ""))), end="", flush=True)
-    #
+
                 # -- Tool start ----------------------------------------------------
-                if chunk_type == "tool_start":
+                elif chunk_type == "tool_start":
                     c_print(ANSI(renderer.render_tool_start(
                         name=chunk.get("name", "unknown"),
                         args=chunk.get("args")
@@ -5978,13 +5980,36 @@ class ISAA_Host:
                     "piper": None,
                     "elevenlabs": None,
                 },
-                "live":{
-                    "presets": None,
-                    "preset": presets,
-                    "stop": None,
+                "devices": None,
+                "device": {
+                    "default": None,
+                    "<index>": None,
                 },
+                "restart": None,
                 "lang": None,
-            },
+                "live": {
+                    "start": None,
+                    "stop": None,
+                    "preset": None,
+                    "presets": None,
+                    "status": None,
+                    "keyword": None,
+                    "sensitivity": None,
+                    "silence": None,
+                    "end": {
+                        "silence": None,
+                        "keyword": None,
+                        "intent": None,
+                        "auto": None,
+                    }
+                },
+                "speaker": {
+                    "list": None,
+                    "add": None,
+                    "remove": None,
+                    "who": None,
+               },
+           },
             "/coder": {
                 "start": PathCompleter(only_directories=True, expanduser=True),
                 "stop": None,
@@ -10107,8 +10132,8 @@ class ISAA_Host:
         """Print output devices, prompt for index."""
         import sounddevice as sd
         output_devs = [
-            (i, dev) for i, dev in enumerate(sd.query_devices(kind="output"))
-            if dev["max_output_channels"] > 0
+            (i, dev) for i, dev in enumerate(sd.query_devices())
+            if isinstance(dev, dict) and dev["max_output_channels"] > 0
         ]
         print_box_header("Select Output Device", "🔊")
         for i, dev in output_devs:
@@ -10137,8 +10162,8 @@ class ISAA_Host:
             print_status("Not a number", "error")
 
         output_devs = [
-            (i, dev) for i, dev in enumerate(sd.query_devices(kind="input"))
-            if dev["max_output_channels"] > 0
+            (i, dev) for i, dev in enumerate(sd.query_devices())
+            if dev["max_input_channels"] > 0
         ]
         print_box_header("Select Input Device", "🔊")
         for i, dev in output_devs:

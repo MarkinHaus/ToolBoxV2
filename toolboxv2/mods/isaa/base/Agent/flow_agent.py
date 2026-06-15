@@ -2740,15 +2740,19 @@ class FlowAgent:
         # ── Web Shell (optional) ──────────────────────────────────────────
         web_shell_fn = None
         if self.amd.web_config.enable_web:
-            from toolboxv2.mods.isaa.base.patch.web_shell_tool import make_web_shell
-            web_shell_fn = make_web_shell(
-                session,
-                headless=self.amd.web_config.web_headless,
-                single_site=self.amd.web_config.web_single_site,
-                trusted_sites=self.amd.web_config.web_trusted_sites,
-                enable_ocr=True,
-            )
-            session._web_shell_fn = web_shell_fn
+            try:
+                from toolboxv2.mods.isaa.base.patch.web_shell_tool import make_web_shell
+                web_shell_fn = make_web_shell(
+                    session,
+                    headless=self.amd.web_config.web_headless,
+                    single_site=self.amd.web_config.web_single_site,
+                    trusted_sites=self.amd.web_config.web_trusted_sites,
+                    enable_ocr=True,
+                )
+                session._web_shell_fn = web_shell_fn
+            except Exception as e:
+                logger.error(e)
+                self.amd.web_config.enable_web = False
 
         # ── Filesystem copy helpers (real FS ↔ VFS) ───────────────────────
         def fs_copy_to_vfs(
@@ -3385,16 +3389,16 @@ class FlowAgent:
 
         tools = [
             # ── PRIMARY (replaces ~18 individual vfs_* tools) ─────────────
-            # {
-            #     "tool_func": vfs_shell_fn,
-            #     "name": "vfs_shell",
-            #     "category": ["vfs", "shell"],
-            #     "description": (
-            #         "Unix-like shell for VFS: ls cat head tail wc stat tree "
-            #         "find grep touch write edit echo mkdir rm mv cp close exec. "
-            #         "Returns {success, stdout, stderr, returncode}."
-            #     ),
-            # },
+            {
+                "tool_func": vfs_shell_fn,
+                "name": "vfs_shell",
+                "category": ["vfs", "shell"],
+                "description": (
+                    "Unix-like shell for VFS: ls cat head tail wc stat tree "
+                    "find grep touch write edit echo mkdir rm mv cp close exec. "
+                    "Returns {success, stdout, stderr, returncode}."
+                ),
+            },
             {
                 "tool_func": vfs_view_fn,
                 "name": "vfs_view",

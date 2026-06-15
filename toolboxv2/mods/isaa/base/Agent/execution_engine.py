@@ -665,7 +665,7 @@ class ExecutionContext:
 
     # Tool Management (dynamic tools, separate from static)
     dynamic_tools: List[ToolSlot] = field(default_factory=list)
-    max_dynamic_tools: int = int(os.getenv("MAX_DYNAMIC_TOOLS", 5))
+    max_dynamic_tools: int = int(os.getenv("MAX_DYNAMIC_TOOLS", 10))
     tool_relevance_cache: Dict[str, float] = field(default_factory=dict)
     tool_category_cache: Dict[str, Set[str]] = field(default_factory=dict)
 

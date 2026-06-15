@@ -124,6 +124,7 @@ async def litellm_embed(
     api_key: str = None,
     input_type: str | None = None,
     process_media: bool = True,
+    api_base: str =None,
 ) -> np.ndarray:
     """
     Generates embeddings for the given list of texts using LiteLLM.
@@ -134,6 +135,7 @@ async def litellm_embed(
         dimensions=dimensions,
         api_key=api_key,
         input_type=input_type,
+        api_base=api_base,
     )
     return res
 

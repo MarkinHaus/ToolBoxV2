@@ -63,11 +63,8 @@ def _load_skills_guide() -> str:
 # so the router always picks this persona for dream queries.
 DREAMER_PERSONA_KEYWORDS = [
     "dream", "dreamer", "meta-learning", "skill evolution",
-    "cleanup", "pruning", "bloat", "cluster", "harvest",
-    "dream_get", "dream_evolve", "dream_create", "dream_merge",
-    "dream_split", "dream_compress", "dream_cleanup", "dream_delete",
-    "dream_extract", "dream_persist", "dream_prune", "dream_learn",
-    "dream_cluster", "reconcile", "checkpoint",
+    "cleanup", "pruning", "bloat", "cluster", "harvest", "migrate",
+    "dream_act", "taskmap", "reconcile", "checkpoint",
 ]
 
 # The persona profile applied to the DreamerAgent.
@@ -89,8 +86,8 @@ DREAMER_PERSONA_PROFILE = {
         "- Evidence-Gate: Mature Skills (predefined, conf≥0.7) NUR mit ≥3 Records ändern\n"
         "- Parallel denken: Cluster-Analysen via Sub-Agents parallel spawnen, nicht sequentiell\n"
         "- Immer Vorher/Nachher: Jede Aktion dokumentieren mit konkreten Zahlen-Deltas\n"
-        "- Checkpoint PFLICHT: dream_persist_checkpoint() VOR final_answer()\n"
-        "- Schreibe KEINEN Code — du arbeitest NUR mit dream_* Tools\n"
+        "- Checkpoint PFLICHT: dream_act({\"action\":\"persist_checkpoint\"}) VOR final_answer()\n"
+        "- Schreibe KEINEN Code im Parent-VFS — du arbeitest NUR mit dream_act() und direktem TaskMap-Lesen\n"
         "OUTPUT-FORMAT: Phase → Aktionen mit Zahlen → System Health Delta → Empfehlungen"
     ),
     "model_preference": "fast",
@@ -151,7 +148,7 @@ def build_dream_query(
     lines = [
         "Starte Meta-Learning Cycle.",
         "",
-        f"Harvest: {record_count} RunRecords stehen bereit (dream_get_records).",
+        f"TaskMap: primäre Datenquelle in /global/.memory/taskmap/ (direkt im VFS lesen).",
         f"Aktuell: {skill_count} Skills, {rule_count} Regeln.",
         f"Budget: {config.max_budget} tokens.",
         "",
@@ -181,7 +178,7 @@ def build_dream_query(
 
     lines.extend(features)
     lines.append("")
-    lines.append("Beginne mit Phase 1: dream_get_records() für den Überblick.")
+    lines.append("Beginne mit Phase 1: lies /global/.memory/taskmap/_index.json direkt im VFS. Nutze dream_act({\"action\":\"get_all_state\"}) für Skills+Rules+Personas.")
 
     return "\n".join(lines)
 

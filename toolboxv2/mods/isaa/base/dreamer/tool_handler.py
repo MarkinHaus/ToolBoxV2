@@ -68,6 +68,219 @@ class DreamerToolHandler:
             "personas_pruned": [], "memories_added": [],
         }
 
+    # ═══════════════════════════════════════════════════════════════
+    # DREAM_ACT DISPATCHER (single master tool)
+    # ═══════════════════════════════════════════════════════════════
+    # All Dreamer actions go through handle_act(action, payload).
+    # It validates the payload defensively and routes to the
+    # existing handle_* methods. This is the ONLY entry the Tool
+    # runtime should call, so Tool-Slot-Manager eviction becomes
+    # irrelevant — there is just one slot to keep.
+    # ═══════════════════════════════════════════════════════════════
+
+    _VALID_ACTIONS = frozenset({
+        "get_taskmap", "get_all_state", "migrate_logs",
+        "create_skill", "create_rule", "create_persona",
+        "evolve_skill", "merge_skills", "split_skill", "compress_skill",
+        "cleanup", "delete_skill", "delete_rule",
+        "extract_rules", "learn_pattern",
+        "write_taskmap_guide", "persist_checkpoint",
+    })
+
+    def handle_act(self, action: str, payload: dict | None = None) -> str:
+        """Single dispatcher for all Dreamer actions.
+
+        Args:
+            action: one of self._VALID_ACTIONS
+            payload: action-specific parameters (dict or None)
+
+        Returns:
+            JSON string (success/error envelope).
+        """
+        payload = payload or {}
+
+        if not isinstance(action, str):
+            return json.dumps({"ok": False, "error": "action must be a string"})
+        if action not in self._VALID_ACTIONS:
+            return json.dumps({
+                "ok": False,
+                "error": f"unknown action: {action!r}",
+                "valid_actions": sorted(self._VALID_ACTIONS),
+            })
+
+        try:
+            if action == "get_taskmap":
+                return self.handle_get_taskmap(
+                    task_type=str(payload.get("task_type", "")),
+                    subtype=str(payload.get("subtype", "")),
+                    limit=int(payload.get("limit", 20)),
+                )
+            if action == "get_all_state":
+                return self._handle_get_all_state()
+            if action == "migrate_logs":
+                return self._handle_migrate_logs(payload)
+            if action == "create_skill":
+                return self.handle_create_skill(
+                    name=str(payload.get("name", "")),
+                    triggers=list(payload.get("triggers", []) or []),
+                    instruction=str(payload.get("instruction", "")),
+                    tools_used=list(payload.get("tools_used", []) or []),
+                    failure_patterns=list(payload.get("failure_patterns", []) or []),
+                )
+            if action == "create_rule":
+                return self.handle_extract_rules(
+                    list(payload.get("rules", []) or []),
+                )
+            if action == "create_persona":
+                return self.handle_evolve_persona(**payload)
+            if action == "evolve_skill":
+                return self.handle_evolve_skill(**payload)
+            if action == "merge_skills":
+                return self.handle_merge_skills(
+                    primary_skill_id=str(payload.get("primary_skill_id", "")),
+                    secondary_skill_id=str(payload.get("secondary_skill_id", "")),
+                    merged_instruction=str(payload.get("merged_instruction", "")),
+                )
+            if action == "split_skill":
+                return self.handle_split_skill(
+                    skill_id=str(payload.get("skill_id", "")),
+                    sub_intents=list(payload.get("sub_intents", []) or []),
+                )
+            if action == "compress_skill":
+                return self.handle_compress_skill(
+                    skill_id=str(payload.get("skill_id", "")),
+                )
+            if action == "cleanup":
+                return self._handle_cleanup(payload)
+            if action == "delete_skill":
+                return self.handle_delete_skill(
+                    skill_id=str(payload.get("skill_id", "")),
+                    reason=str(payload.get("reason", "")),
+                )
+            if action == "delete_rule":
+                return self.handle_delete_rule(
+                    rule_id=str(payload.get("rule_id", "")),
+                    reason=str(payload.get("reason", "")),
+                )
+            if action == "extract_rules":
+                return self.handle_extract_rules(
+                    list(payload.get("rules", []) or []),
+                )
+            if action == "learn_pattern":
+                return self.handle_learn_pattern(
+                    pattern=str(payload.get("pattern", "")),
+                    source_situation=str(payload.get("source_situation", "")),
+                    category=str(payload.get("category", "general")),
+                    tags=list(payload.get("tags", []) or []),
+                )
+            if action == "write_taskmap_guide":
+                return self.handle_write_taskmap_guide(
+                    task_type=str(payload.get("task_type", "")),
+                    subtype=str(payload.get("subtype", "")),
+                    content=str(payload.get("content", "")),
+                )
+            if action == "persist_checkpoint":
+                vfs = payload.get("vfs")
+                if vfs is None:
+                    vfs = self._taskmap_vfs()
+                if vfs is None:
+                    return json.dumps({"ok": False, "error": "no vfs for persist"})
+                return self.handle_persist_checkpoint(vfs)
+        except Exception as exc:  # noqa: BLE001 — dispatcher must never break the cycle
+            _log.warning(f"handle_act[{action}] failed: {exc}")
+            return json.dumps({"ok": False, "action": action, "error": str(exc)})
+
+        # Unreachable — keeps mypy happy
+        return json.dumps({"ok": False, "error": "unreachable"})
+
+    # ----- composite helpers for handle_act -----
+
+    def _handle_get_all_state(self) -> str:
+        """Return skills + rules + personas in one response.
+
+        This is the soft-equivalent of three separate dream_get_*
+        tool calls. The Dreamer gets the full state in one shot
+        and can plan without juggling tool slots.
+        """
+        return json.dumps({
+            "ok": True,
+            "skills": json.loads(self.handle_get_skills()),
+            "rules": json.loads(self.handle_get_rules()),
+            "personas": json.loads(self.handle_get_personas()),
+        }, indent=2, default=str)
+
+    def _handle_cleanup(self, payload: dict) -> str:
+        """Run all cleanup phases (skills, rules, personas) at once.
+
+        Avoids the user having to remember three separate calls.
+        """
+        scope = (payload.get("scope") or "all").lower()
+        out = {}
+        if scope in ("all", "skills"):
+            out["skills"] = self.handle_cleanup_skills()
+        if scope in ("all", "rules"):
+            out["rules"] = self.handle_cleanup_rules()
+        if scope in ("all", "personas"):
+            out["personas"] = self.handle_prune_personas()
+        return json.dumps({"ok": True, "cleanup": out}, indent=2)
+
+    def _handle_migrate_logs(self, payload: dict) -> str:
+        """One-time Harvest → TaskMap transfer.
+
+        The Dreamer usually should NOT use this; run_aggregator does it
+        after every run. Exposed here as a safety net for legacy data
+        sitting in /global/.memory/logs that never made it into the
+        taskmap. After the migration the harvest code can be removed
+        manually.
+        """
+        vfs = self._taskmap_vfs()
+        if vfs is None:
+            return json.dumps({"ok": False, "error": "no vfs for migration"})
+
+        log_dir = payload.get("log_dir") or "/global/.memory/logs"
+        # Lazy import — harvest stays importable but only here
+        try:
+            from toolboxv2.mods.isaa.base.dreamer.harvest import (
+                harvest_from_vfs, get_cutoff,
+            )
+            from toolboxv2.mods.isaa.base.dreamer.run_aggregator import RunAggregator
+        except Exception as exc:
+            return json.dumps({"ok": False, "error": f"harvest/run_aggregator import failed: {exc}"})
+
+        cutoff = get_cutoff(max_history_time=payload.get("max_history_time"))
+        try:
+            records = harvest_from_vfs(vfs, log_dir, cutoff)
+        except Exception as exc:
+            return json.dumps({"ok": False, "error": f"harvest failed: {exc}"})
+
+        if not records:
+            return json.dumps({
+                "ok": True,
+                "scanned": 0,
+                "written": 0,
+                "message": "no legacy records found",
+            })
+
+        aggregator = RunAggregator(vfs=vfs, llm_completion_func=None)
+        migrated = 0
+        errors = []
+        for r in records:
+            try:
+                import asyncio
+                asyncio.run(aggregator.aggregate(r, query=r.query if hasattr(r, "query") else ""))
+                migrated += 1
+            except Exception as exc:
+                _log.warning(f"migrate_logs aggregate failed for {getattr(r, 'run_id', '?')}: {exc}")
+                errors.append(getattr(r, "run_id", "?"))
+
+        return json.dumps({
+            "ok": True,
+            "scanned": len(records),
+            "written": migrated,
+            "errors": errors[:20],
+            "target": f"{self._TASKMAP_ROOT}",
+        }, indent=2)
+
 
     # ═══════════════════════════════════════════════════════════════
     # TASK MAP ACCESS (multi-run intel from background learning)
@@ -191,6 +404,11 @@ class DreamerToolHandler:
         limit: int = 50,
     ) -> str:
         """Return filtered RunRecords as JSON."""
+        if not isinstance(limit, int):
+            try:
+                limit = int(limit)
+            except ValueError:
+                limit = 50
         from toolboxv2.mods.isaa.base.dreamer.harvest import filter_records
         filtered = filter_records(
             self._records,
