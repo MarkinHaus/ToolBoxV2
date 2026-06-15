@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>llama_lab — Dashboard</title><link rel="stylesheet" href="/static/app.css">
+</head><body>
+<div class="wrap">
+  <header class="top">
+    <h1>llama_lab · Dashboard</h1>
+    <nav><a href="/">Home</a><a href="/playground/">Playground</a><a href="/admin/">Admin</a><a href="/docs/">Docs</a></nav>
+  </header>
+
+  <div class="card"><h2>Account</h2><div id="me" class="small mut">loading…</div></div>
+
+  <div class="card">
+    <h2>API keys</h2>
+    <div class="row" style="margin-bottom:.6rem">
+      <input id="keyName" placeholder="key name" value="default">
+      <button onclick="createKey()">Create key</button>
+      <span class="mut small">Use as <code>Authorization: Bearer sk-…</code></span>
+    </div>
+    <table><thead><tr><th>Name</th><th>Prefix</th><th>Active</th><th>Created</th><th></th></tr></thead><tbody id="keys"></tbody></table>
+  </div>
+
+  <div class="card">
+    <h2>Usage (7d)</h2>
+    <table><thead><tr><th>Model</th><th>Calls</th><th>Tokens in</th><th>Tokens out</th><th>Cost</th></tr></thead><tbody id="usage"></tbody></table>
+  </div>
+
+  <div class="card">
+    <h2>Available models</h2>
+    <div id="models" class="grid small"></div>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
+<script>
+const $=s=>document.querySelector(s);
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
+async function api(p,o={}){o.credentials='include';o.headers={'Content-Type':'application/json',...(o.headers||{})};
+  const r=await fetch(p,o);const d=await r.json().catch(()=>({}));if(d&&d.error)toast(d.error.message||'error');return d;}
+
+async function loadMe(){const d=await api('/user/api/me');
+  if(d.error)return $('#me').innerHTML='<a href="/web/assets/login.html?next=/user/">Please log in</a>';
+  $('#me').innerHTML=`<b>${d.email}</b> · tier <span class="tag">${d.tier}</span> · balance ${(d.balance||0).toFixed(2)}`;}
+async function loadKeys(){const d=await api('/user/api/keys');const tb=$('#keys');tb.innerHTML='';
+  (d.keys||[]).forEach(k=>tb.insertAdjacentHTML('beforeend',
+    `<tr><td>${k.name}</td><td><code>${k.key_prefix}…</code></td><td>${k.active?'✓':'✗'}</td>
+     <td class="small mut">${(k.created_at||'').slice(0,10)}</td>
+     <td>${k.active?`<button class="sm bad" onclick="revoke(${k.id})">Revoke</button>`:''}</td></tr>`));
+  if(!(d.keys||[]).length)tb.innerHTML='<tr><td colspan="5" class="mut small">no keys yet</td></tr>';}
+async function createKey(){const r=await api('/user/api/keys',{method:'POST',body:JSON.stringify({name:$('#keyName').value||'default'})});
+  if(r.key)prompt('Your new key (shown once):',r.key);loadKeys();}
+async function revoke(id){if(!confirm('Revoke key?'))return;await api(`/user/api/keys/${id}`,{method:'DELETE'});loadKeys();}
+async function loadUsage(){const d=await api('/user/api/usage?days=7');const tb=$('#usage');tb.innerHTML='';
+  (d.usage||[]).forEach(u=>tb.insertAdjacentHTML('beforeend',
+    `<tr><td>${u.model}</td><td>${u.calls}</td><td>${u.tin||0}</td><td>${u.tout||0}</td><td>${(u.cost||0).toFixed(4)}</td></tr>`));
+  if(!(d.usage||[]).length)tb.innerHTML='<tr><td colspan="5" class="mut small">no usage in range</td></tr>';}
+async function loadModels(){const d=await api('/user/api/models');const box=$('#models');box.innerHTML='';
+  (d.models||[]).forEach(m=>{const c=m.capabilities||{};const caps=Object.entries(c).filter(([,v])=>v).map(([k])=>k).join(', ');
+    box.insertAdjacentHTML('beforeend',`<div class="row"><span class="tag">${m.type}</span> <b>${m.name}</b> <span class="mut">${caps}</span></div>`);});
+  if(!(d.models||[]).length)box.innerHTML='<span class="mut">no models loaded — ask an admin</span>';}
+
+loadMe();loadKeys();loadUsage();loadModels();
+</script>
+</body></html>

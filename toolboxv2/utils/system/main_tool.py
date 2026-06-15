@@ -45,7 +45,7 @@ class MainTool:
     spec = "app"
     name = ""
     color = "Bold"
-    stuf = False
+    stuf = False # Shut The Up fuck
 
     def __init__(self, *args, **kwargs):
         """

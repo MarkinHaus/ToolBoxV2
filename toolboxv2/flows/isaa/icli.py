@@ -3917,6 +3917,8 @@ class ISAA_Host:
         # SSOT: single registry for ALL executions (chat / task / job / delegate)
         self.all_executions: dict[str, ExecutionTask] = {}
         self._focused_task_id: str | None = None
+        self._focused_task_id_needs_new_line: bool = False
+        self.zenrenderer = None
 
         # Get ISAA Tools module - THE source of truth for agent management
         self.isaa_tools: 'IsaaTools' = self.app.get_mod("isaa")
@@ -3936,9 +3938,6 @@ class ISAA_Host:
         # Session state
         self.active_agent_name = "self"
         self.active_session_id = "default"
-
-        # audio
-        self.audio_device_index = 0
 
         # File paths
         self.state_file = Path(self.app.appdata) / "icli" / "isaa_host_state.json"
@@ -3970,6 +3969,7 @@ class ISAA_Host:
         self._audio_voice = "autumn"
         self._audio_language = "de"
         self._audio_device = None  # None = system default
+        self._audio_device_i = None  # None = system default
         self.verbose_audio = False
         self.audio_player = self._build_audio_player()
 
@@ -4176,7 +4176,94 @@ class ISAA_Host:
                     if sub_tv and sub_tv.status == "running":
                         sub_tv.status = tv.status
                         sub_tv.completed_at = time.time()
+            if self._focused_task_id == task_id:
+                from toolboxv2.mods.isaa.extras.zen.zen_renderer import ZenRenderer
+                renderer = self.zenrenderer or ZenRenderer(term_width=os.get_terminal_size().columns - 5)
 
+                chunk_type = chunk.get("type", "")
+
+                # -- Content (LLM token stream) ------------------------------------
+                # if chunk_type == "content":
+                #     if self._focused_task_id_needs_new_line:
+                #         c_print()
+                #         self._focused_task_id_needs_new_line = False
+                #     c_print(ANSI(renderer.render_content(chunk.get("chunk", ""))), end="", flush=True)
+    #
+                # # -- Reasoning / CoT -----------------------------------------------
+                # elif chunk_type == "reasoning":
+                #     self._focused_task_id_needs_new_line = True
+                #     c_print(ANSI(renderer.render_reasoning(chunk.get("chunk", ""))), end="", flush=True)
+    #
+                # -- Tool start ----------------------------------------------------
+                if chunk_type == "tool_start":
+                    c_print(ANSI(renderer.render_tool_start(
+                        name=chunk.get("name", "unknown"),
+                        args=chunk.get("args")
+                    )))
+
+                # -- Tool result ---------------------------------------------------
+                elif chunk_type == "tool_result":
+                    result = chunk.get("result", "")
+                    duration = chunk.get("duration_ms")
+                    c_print(ANSI(renderer.render_tool_result(result, duration)))
+
+                # -- Tool error ----------------------------------------------------
+                elif chunk_type == "tool_error":
+                    c_print(ANSI(renderer.render_tool_error(chunk.get("error", "Unknown error"))))
+
+                # -- Final answer --------------------------------------------------
+                elif chunk_type == "final_answer":
+                    c_print(ANSI(renderer.render_final_answer(chunk.get("answer", ""))))
+
+                # -- Paused (human-in-the-loop) ------------------------------------
+                elif chunk_type == "paused":
+                    c_print(ANSI(renderer.render_paused(chunk.get("run_id", "unknown"))))
+
+                # -- Max iterations ------------------------------------------------
+                elif chunk_type == "max_iterations":
+                    c_print(ANSI(renderer.render_max_iterations(chunk.get("answer", ""))))
+
+                # -- Error ---------------------------------------------------------
+                elif chunk_type == "error":
+                    c_print(ANSI(renderer.render_error(chunk.get("error", "Unknown error"))))
+
+                # -- Status update -------------------------------------------------
+                elif chunk_type == "status":
+                    msg = chunk.get("status_msg", "")
+                    if msg:
+                        c_print(ANSI(renderer.render_status(msg)))
+
+                # -- Post-processing -----------------------------------------------
+                elif chunk_type == "post_processing":
+                    msg = chunk.get("status_msg", "")
+                    if msg:
+                        c_print(ANSI(renderer.render_post_processing(msg)))
+
+                # -- Narrator (inline thoughts) ------------------------------------
+                elif chunk_type == "narrator":
+                    nm = chunk.get("narrator_msg", "")
+                    if nm:
+                        c_print(ANSI(renderer.render_narrator(nm)))
+
+                # -- Iteration start -----------------------------------------------
+                elif chunk_type == "iteration_start":
+                    c_print(ANSI(renderer.render_iteration_start(
+                        iteration=chunk.get("iteration", 0),
+                        max_iter=chunk.get("max_iter", -1)
+                    )))
+
+                # -- Done / Complete -----------------------------------------------
+                elif chunk_type == "done":
+                    success = chunk.get("success", False)
+                    meta = chunk.get("meta")
+                    c_print(ANSI(renderer.render_done(success, meta)))
+
+                # -- Unknown chunk type --------------------------------------------
+                else:
+                    # Silently skip unknown types or log debug
+                    raw = str(chunk)[:200]
+                    from toolboxv2 import Style
+                    c_print(ANSI(f"\n  {Style.GREY('?')} {Style.GREYBG(f'unknown chunk: {raw}')}\n"))
         running = any(v.status == "running" for v in self._task_views.values())
         if str(self.dynamic_interval[0]) in ["0", "1"]:
             self.set_dynamic_interval(0.5 if running else 1.5)
@@ -4245,7 +4332,8 @@ class ISAA_Host:
                     state = json.load(f)
                     self.active_agent_name = state.get("active_agent", "self")
                     self.active_session_id = state.get("active_session", "default")
-                    self.audio_device_index = state.get("audio_device_index", 0)
+                    self.audio_device_i = state.get("audio_device_i", None)
+                    self.audio_device = state.get("audio_device", None)
                     # Prompt Enhancer
                     pe = state.get("prompt_enhancer", {})
                     self._prompt_enhancer_enabled = pe.get("enabled", False)
@@ -4300,7 +4388,8 @@ class ISAA_Host:
             state = {
                 "active_agent": self.active_agent_name,
                 "active_session": self.active_session_id,
-                "audio_device_index": self.audio_device_index,
+                "audio_device": self._audio_device,
+                "audio_device_i": self._audio_device_i,
                 "prompt_enhancer": {
                     "enabled": self._prompt_enhancer_enabled,
                     "mode": self._prompt_enhancer_mode,
@@ -4506,6 +4595,7 @@ class ISAA_Host:
         @kb.add("f7")
         def _(event):
             candidates = [tid for tid, t in self.all_executions.items() if t.status == "running"]
+            candidates.append(None)
             if not candidates:
                 return
 
@@ -4518,7 +4608,8 @@ class ISAA_Host:
             except (ValueError, TypeError):
                 next_id = candidates[0]
 
-            self.all_executions[next_id].is_focused = True
+            if next_id:
+                self.all_executions[next_id].is_focused = True
             self._focused_task_id = next_id
 
             c_print(HTML(f"<style fg='#67e8f9'>  ◎ Focus → {next_id}</style>"))
@@ -4619,7 +4710,7 @@ class ISAA_Host:
                         #         pass
 
                     await overlay.show(on_exit=_on_exit)#(on_exit=_on_exit)
-
+                self._focused_task_id = None
                 asyncio.create_task(_run_overlay())
             else:
                 # Toggle off — nothing to close (Esc does it from inside)
@@ -4691,25 +4782,6 @@ class ISAA_Host:
             print_status("🎤 Recording... Press F4 to stop", "info")
             asyncio.create_task(self._record_audio())
 
-    def _select_audio_device(self):
-        """Select audio input device."""
-        try:
-            import sounddevice as sd
-
-            devices = sd.query_devices()
-            devices_names = []
-            for i, device in enumerate(devices):
-                if device["name"] in devices_names:
-                    continue
-                devices_names.append(device["name"])
-                print(f"[{i}] {device['name']}")
-            device_index = int(input("Select device index: "))
-            self.audio_device_index = device_index
-        except ImportError:
-            print_status(
-                "Audio requires 'sounddevice'. Install: pip install sounddevice", "error"
-            )
-
     async def active_refresher(self):
         while self.app.alive:
             self.prompt_session.app.invalidate()
@@ -4736,7 +4808,7 @@ class ISAA_Host:
                 channels=channels,
                 dtype="int16",
                 callback=callback,
-                device=self.audio_device_index
+                device=self.audio_device_i
             ):
                 while self._audio_recording:
                     await asyncio.sleep(0.1)
@@ -5883,6 +5955,7 @@ class ISAA_Host:
                 "evening": None,
                 "jobs": None,
              },
+            "/morning": None,
             "/where": None,
             "/vfs": {"init":None},
             "/tools": {
@@ -6637,6 +6710,9 @@ class ISAA_Host:
 
         elif cmd == "/onboarding":
             await self._handle_onboarding_command(args)
+
+        elif cmd == "/morning":
+            await self._run_startup_ritual()
 
         elif cmd == "/where":
             await self._quick_status()
@@ -9077,7 +9153,6 @@ class ISAA_Host:
 
     async def _onboard_audio(self):
         """Pick audio in/out via the existing /audio command."""
-        await self._handle_audio_command(["devices"])  # list
         await self._handle_audio_command(["device"])  # interactive picker -> self._audio_device
 
     async def _onboard_selfagent(self):
@@ -9276,11 +9351,13 @@ class ISAA_Host:
                 await self._select_audio_device_interactive()
             elif args[1].lower() == "default":
                 self._audio_device = None
+                self._audio_device_i = None
                 await self._restart_audio_player()
                 print_status("Audio device → system default", "success")
             else:
                 try:
-                    idx = int(args[1])
+                    idx = int(args[1].split(".")[0])
+                    idx_o = int(args[1].split(".")[-1])
                     devs = sd.query_devices()
                     if idx < 0 or idx >= len(devs):
                         print_status(f"Device index out of range (0–{len(devs) - 1})", "error")
@@ -9292,6 +9369,17 @@ class ISAA_Host:
                     self._audio_device = idx
                     await self._restart_audio_player()
                     print_status(f"Audio device → [{idx}] {dev['name']}", "success")
+
+                    if idx_o < 0 or idx_o >= len(devs):
+                        print_status(f"Device index out of range (0–{len(devs) - 1})", "error")
+                        return
+                    dev = devs[idx_o]
+                    if dev["max_output_channels"] == 0:
+                        print_status(f"Device [{idx_o}] has no output channels", "error")
+                        return
+                    self._audio_device_i = idx_o
+                    await self._restart_audio_player()
+                    print_status(f"Audio device → [{idx_o}] {dev['name']}", "success")
                 except ValueError:
                     print_status("Usage: /audio device <index>  or  /audio device default", "error")
 
@@ -9413,7 +9501,6 @@ class ISAA_Host:
                     # Pause spinner during agent work; resume afterwards.
                     live_spinner.message = "🎤 processing…"
                     try:
-                        print(f"\n🎤 {full_query}")
                         await self._handle_agent_interaction(full_query)
                     finally:
                         live_spinner.message = "🎤 listening…"
@@ -9765,15 +9852,16 @@ class ISAA_Host:
                 print_status(f"Backend: {backend.backend_name}", "info")
 
                 # SHARED audio config: device aus /audio
-                dev = getattr(self, "_audio_device", None)
-                self._omni_recorder = LocalMicRecorder(device=dev)
+                dev_o = getattr(self, "_audio_device", None)
+                dev_i = getattr(self, "_audio_device_i", None)
+                self._omni_recorder = LocalMicRecorder(device=dev_i)
                 stream_audio = backend.backend_name == "GeminiLiveBackend"
                 if stream_audio:
                     output_sr = 24000
-                    self._omni_player = StreamingLocalPlayer(device=dev, sample_rate=24000)
+                    self._omni_player = StreamingLocalPlayer(device=dev_o, sample_rate=24000)
                 else:
                     output_sr = None
-                    self._omni_player = LocalPlayer(device=dev or 0)
+                    self._omni_player = LocalPlayer(device=dev_o or 0)
 
                 self._omni_vad = None
                 try:
@@ -10019,7 +10107,7 @@ class ISAA_Host:
         """Print output devices, prompt for index."""
         import sounddevice as sd
         output_devs = [
-            (i, dev) for i, dev in enumerate(sd.query_devices())
+            (i, dev) for i, dev in enumerate(sd.query_devices(kind="output"))
             if dev["max_output_channels"] > 0
         ]
         print_box_header("Select Output Device", "🔊")
@@ -10027,7 +10115,7 @@ class ISAA_Host:
             print_box_content(f"[{i:2d}] {dev['name']}", "")
         print_box_footer()
 
-        raw = await self._async_input("Device index (Enter = default): ")
+        raw = input("Device index (Enter = default): ")
         raw = raw.strip()
         if not raw:
             self._audio_device = None
@@ -10045,6 +10133,36 @@ class ISAA_Host:
             await self._restart_audio_player()
             dev_name = sd.query_devices()[idx]["name"]
             print_status(f"Audio device → [{idx}] {dev_name}", "success")
+        except ValueError:
+            print_status("Not a number", "error")
+
+        output_devs = [
+            (i, dev) for i, dev in enumerate(sd.query_devices(kind="input"))
+            if dev["max_output_channels"] > 0
+        ]
+        print_box_header("Select Input Device", "🔊")
+        for i, dev in output_devs:
+            print_box_content(f"[{i:2d}] {dev['name']}", "")
+        print_box_footer()
+
+        raw = input("Device index (Enter = default): ")
+        raw = raw.strip()
+        if not raw:
+            self._audio_device_i = None
+            await self._restart_audio_player()
+            print_status("Audio device → system default", "success")
+            return
+
+        try:
+            idx = int(raw)
+            valid_ids = [i for i, _ in output_devs]
+            if idx not in valid_ids:
+                print_status(f"Invalid index", "error")
+                return
+            self._audio_device_i = idx
+            await self._restart_audio_player()
+            dev_name = sd.query_devices()[idx]["name"]
+            print_status(f"Audio input device → [{idx}] {dev_name}", "success")
         except ValueError:
             print_status("Not a number", "error")
 
@@ -11910,7 +12028,12 @@ class ISAA_Host:
             user_input = await self._enhance_prompt(user_input)
             if not user_input.strip():
                 return
+        from toolboxv2.mods.isaa.extras.zen.zen_renderer import ZenRenderer
+        self.zenrenderer = ZenRenderer(term_width=os.get_terminal_size().columns - 5)
+        # -- User query header -------------------------------------------------
+        c_print(ANSI(self.zenrenderer.render_user_input(user_input)+'\n\n'))
 
+        c_print(ANSI(self.zenrenderer.render_agent_start()))
         try:
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
             engine = agent._get_execution_engine()
@@ -12853,151 +12976,152 @@ async def run(app=None, *args):
     await profile_code(override=False, blame_threshold=0.05, min_time=0.15)(host.run)()
 
 
-if __name__ == "__main__":
+async def main_cli():
+
     import argparse
-    import asyncio
     import sys
 
-    async def main_cli():
-        parser = argparse.ArgumentParser(description="ISAA iCLI")
-        parser.add_argument("query", nargs="?", help="Anfrage an den Agenten")
-        parser.add_argument("--agent", default="self")
-        parser.add_argument("--session", default="direct_run")
-        parser.add_argument("--remember", default="direct_run")
-        parser.add_argument("--feature", action="append")
-        parser.add_argument("--mcp", action="append")
-        parser.add_argument("--model")
-        # --- NEU ---
-        parser.add_argument(
-            "--gui",
-            action="store_true",
-            help="GUI mode: kein TUI, ZMQ I/O, wartet auf follow-up queries"
-        )
-        parser.add_argument(
-            "--gui-session",
-            default=None,
-            help="Session ID für ZMQ input channel (gui.input.<id>)"
-        )
-
-        parser.add_argument(
-            "--startup",
-            action="store_true",
-            help="Run the configured morning ritual, then keep host alive (service mode)"
-        )
-
-        args = parser.parse_args()
-        app = get_app("isaa-host")
-        host = ISAA_Host(app)
-
-        # ── Startup-Ritual / Service-Mode ──────────────────────────────
-        if args.startup:
-            await host._run_startup_ritual()
-            await host.run()  # keep process alive; JobScheduler handles recurring jobs
-            return
-
-        # ── Normaler interaktiver Modus ────────────────────────────────
-        if not args.query and not args.gui:
-            await host.run()
-            return
-
-        # ── Shared setup für single-run UND gui-mode ──────────────────
-        await host._init_self_agent()
-        agent = await host.isaa_tools.get_agent(args.agent)
-
-        if args.feature:
-            host.feature_manager.set_agent(agent)
-            for feat in args.feature:
-                await host.feature_manager.enable(feat)
-
-        if args.model and args.model in MODEL_MAPPING:
-            agent.amd.complex_llm_model = MODEL_MAPPING[args.model]
-
-        if args.mcp:
-            for mcp_json in args.mcp:
-                import json
-                m_cfg = json.loads(mcp_json)
-                await host._tool_mcp_connect(
-                    m_cfg['name'], m_cfg['command'],
-                    m_cfg.get('args', []), args.agent
-                )
-
-        # ── GUI Mode ───────────────────────────────────────────────────
-        if args.gui:
-            from toolboxv2.utils.workers.interface_registry import get_registry
-
-            gui_session = args.gui_session or args.session
-            reg = get_registry()
-            connected = await reg.start()
-
-            if not connected:
-                print("[icli --gui] ZMQ offline — running without stream", flush=True)
-                # Kein return — einfach single-run oder interaktiv ohne ZMQ
-                if args.query:
-                    result = await agent.a_run(args.query, session_id=gui_session)
-                    print(f"\n[RESULT]:\n{result}", flush=True)
-                else:
-                    await host.run()  # ← normaler interaktiver modus als fallback
-                await app.a_exit()
-                return
-
-            # Initial query ausführen falls mitgegeben
-            if args.query:
-                await agent.a_run(args.query, session_id=gui_session)
-
-            # Follow-up loop via ZMQ
-            input_channel = f"gui.input.{gui_session}"
-            follow_up_queue: asyncio.Queue = asyncio.Queue()
-
-            def _on_gui_input(payload: dict) -> None:
-                follow_up_queue.put_nowait(payload)
-
-            reg.register_sub(
-                id=input_channel,
-                callback=_on_gui_input,
-                filter_prefix=False  # exact match auf diese session
-            )
-
-            print(f"[icli --gui] Listening on {input_channel}", flush=True)
-
-            # Warte auf follow-up oder exit signal
-            while True:
-                try:
-                    msg = await asyncio.wait_for(follow_up_queue.get(), timeout=300.0)
-                except asyncio.TimeoutError:
-                    print("[icli --gui] Timeout — keine GUI activity, exit", flush=True)
-                    break
-
-                action = msg.get("action", "query")
-
-                if action == "exit":
-                    break
-
-                if action == "query":
-                    query_text = msg.get("query", "").strip()
-                    if not query_text:
-                        continue
-                    override_agent = msg.get("agent")
-                    if override_agent and override_agent != args.agent:
-                        agent = await host.isaa_tools.get_agent(override_agent)
-                    await agent.a_run(query_text, session_id=gui_session)
-
-            await reg.stop()
-            if not args.remember:
-                agent.clear_session_history(gui_session)
-            await app.a_exit()
-            return
-
-        # ── Single Run Modus (unveränderter bestehender Pfad) ──────────
-        print(f"[*] Agent {args.agent} denkt nach...", flush=True)
-        result = await agent.a_run(args.query, session_id=args.session)
-
-        if not args.remember:
-            agent.clear_session_history(args.session)
-        await app.a_exit()
-        print(f"\n[RESULT]:\n{result}", flush=True)
     # ZMQ benötigt SelectorEventLoop auf Windows
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+    parser = argparse.ArgumentParser(description="ISAA iCLI")
+    parser.add_argument("query", nargs="?", help="Anfrage an den Agenten")
+    parser.add_argument("--agent", default="self")
+    parser.add_argument("--session", default="direct_run")
+    parser.add_argument("--remember", default="direct_run")
+    parser.add_argument("--feature", action="append")
+    parser.add_argument("--mcp", action="append")
+    parser.add_argument("--model")
+    # --- NEU ---
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="GUI mode: kein TUI, ZMQ I/O, wartet auf follow-up queries"
+    )
+    parser.add_argument(
+        "--gui-session",
+        default=None,
+        help="Session ID für ZMQ input channel (gui.input.<id>)"
+    )
 
+    parser.add_argument(
+        "--startup",
+        action="store_true",
+        help="Run the configured morning ritual, then keep host alive (service mode)"
+    )
+
+    args = parser.parse_args()
+    app = get_app("isaa-host")
+    host = ISAA_Host(app)
+
+    # ── Startup-Ritual / Service-Mode ──────────────────────────────
+    if args.startup:
+        await host._run_startup_ritual()
+        await host.run()  # keep process alive; JobScheduler handles recurring jobs
+        return
+
+    # ── Normaler interaktiver Modus ────────────────────────────────
+    if not args.query and not args.gui:
+        await host.run()
+        return
+
+    # ── Shared setup für single-run UND gui-mode ──────────────────
+    await host._init_self_agent()
+    agent = await host.isaa_tools.get_agent(args.agent)
+
+    if args.feature:
+        host.feature_manager.set_agent(agent)
+        for feat in args.feature:
+            await host.feature_manager.enable(feat)
+
+    if args.model and args.model in MODEL_MAPPING:
+        agent.amd.complex_llm_model = MODEL_MAPPING[args.model]
+
+    if args.mcp:
+        for mcp_json in args.mcp:
+            import json
+            m_cfg = json.loads(mcp_json)
+            await host._tool_mcp_connect(
+                m_cfg['name'], m_cfg['command'],
+                m_cfg.get('args', []), args.agent
+            )
+
+    # ── GUI Mode ───────────────────────────────────────────────────
+    if args.gui:
+        from toolboxv2.utils.workers.interface_registry import get_registry
+
+        gui_session = args.gui_session or args.session
+        reg = get_registry()
+        connected = await reg.start()
+
+        if not connected:
+            print("[icli --gui] ZMQ offline — running without stream", flush=True)
+            # Kein return — einfach single-run oder interaktiv ohne ZMQ
+            if args.query:
+                result = await agent.a_run(args.query, session_id=gui_session)
+                print(f"\n[RESULT]:\n{result}", flush=True)
+            else:
+                await host.run()  # ← normaler interaktiver modus als fallback
+            await app.a_exit()
+            return
+
+        # Initial query ausführen falls mitgegeben
+        if args.query:
+            await agent.a_run(args.query, session_id=gui_session)
+
+        # Follow-up loop via ZMQ
+        input_channel = f"gui.input.{gui_session}"
+        follow_up_queue: asyncio.Queue = asyncio.Queue()
+
+        def _on_gui_input(payload: dict) -> None:
+            follow_up_queue.put_nowait(payload)
+
+        reg.register_sub(
+            id=input_channel,
+            callback=_on_gui_input,
+            filter_prefix=False  # exact match auf diese session
+        )
+
+        print(f"[icli --gui] Listening on {input_channel}", flush=True)
+
+        # Warte auf follow-up oder exit signal
+        while True:
+            try:
+                msg = await asyncio.wait_for(follow_up_queue.get(), timeout=300.0)
+            except asyncio.TimeoutError:
+                print("[icli --gui] Timeout — keine GUI activity, exit", flush=True)
+                break
+
+            action = msg.get("action", "query")
+
+            if action == "exit":
+                break
+
+            if action == "query":
+                query_text = msg.get("query", "").strip()
+                if not query_text:
+                    continue
+                override_agent = msg.get("agent")
+                if override_agent and override_agent != args.agent:
+                    agent = await host.isaa_tools.get_agent(override_agent)
+                await agent.a_run(query_text, session_id=gui_session)
+
+        await reg.stop()
+        if not args.remember:
+            agent.clear_session_history(gui_session)
+        await app.a_exit()
+        return
+
+    # ── Single Run Modus (unveränderter bestehender Pfad) ──────────
+    print(f"[*] Agent {args.agent} denkt nach...", flush=True)
+    result = await agent.a_run(args.query, session_id=args.session)
+
+    if not args.remember:
+        agent.clear_session_history(args.session)
+    await app.a_exit()
+    print(f"\n[RESULT]:\n{result}", flush=True)
+
+if __name__ == "__main__":
+    import asyncio
     asyncio.run(main_cli())

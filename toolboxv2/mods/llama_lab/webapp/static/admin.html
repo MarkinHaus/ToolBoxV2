@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>llama_lab — Admin</title><link rel="stylesheet" href="/static/app.css">
+</head><body>
+<div class="wrap">
+  <header class="top">
+    <h1>llama_lab · Admin</h1>
+    <nav><a href="/">Home</a><a href="/playground/">Playground</a><a href="/user/">Dashboard</a><a href="/docs/">Docs</a></nav>
+  </header>
+
+  <div class="card" id="sysCard">
+    <h2>System</h2>
+    <div id="sys" class="small mut">loading…</div>
+  </div>
+
+  <div class="card">
+    <h2>Running models</h2>
+    <table><thead><tr><th>Name</th><th>Modality</th><th>Mode</th><th>Port</th><th></th></tr></thead>
+    <tbody id="running"></tbody></table>
+  </div>
+
+  <div class="card">
+    <h2>Installed GGUF</h2>
+    <div class="row" style="margin-bottom:.6rem">
+      <input id="loadName" placeholder="models.ini section name">
+      <select id="loadMode"><option value="single">single (max speed)</option><option value="mass">mass (concurrent)</option></select>
+      <input id="loadPort" type="number" value="8080" style="width:6rem">
+      <button onclick="loadModel()">Load</button>
+    </div>
+    <table><thead><tr><th>File</th><th>Size</th><th></th></tr></thead><tbody id="installed"></tbody></table>
+  </div>
+
+  <div class="card">
+    <h2>HuggingFace browser</h2>
+    <div class="row"><input id="hfq" class="flex1" placeholder="search GGUF e.g. 'qwen3 moe', 'embed', 'omni'"><button onclick="searchHF()">Search</button></div>
+    <div id="hfResults" class="grid" style="margin-top:.7rem"></div>
+  </div>
+
+  <div class="card">
+    <h2>Users</h2>
+    <div class="row" style="margin-bottom:.6rem">
+      <input id="nuEmail" placeholder="email"><select id="nuTier"><option>payg</option><option>sub</option><option>admin</option></select>
+      <button onclick="createUser()">Add user</button>
+    </div>
+    <table><thead><tr><th>ID</th><th>Email</th><th>Tier</th><th>Balance</th><th>Active</th><th></th></tr></thead><tbody id="users"></tbody></table>
+  </div>
+
+  <div class="card">
+    <h2>Signup requests</h2>
+    <table><thead><tr><th>Email</th><th>Tier</th><th>Status</th><th></th></tr></thead><tbody id="signups"></tbody></table>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
+<script>
+const $=s=>document.querySelector(s);
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
+async function api(path,opts={}){
+  opts.credentials='include';opts.headers={'Content-Type':'application/json',...(opts.headers||{})};
+  const r=await fetch(path,opts);const d=await r.json().catch(()=>({}));
+  if(d&&d.error){toast(d.error.message||JSON.stringify(d.error));}
+  return d;
+}
+function tierClass(t){return t==='admin'?'tier-red':t==='sub'?'tier-amber':'tier-green';}
+
+async function loadSystem(){
+  const d=await api('/admin/api/system');
+  const h=d.hardware||{};
+  $('#sys').innerHTML=`<b>${h.summary||'?'}</b><br>backend: ${h.backend} · VRAM ${h.vram_gb} GB · RAM ${h.ram_gb} GB`;
+  const tb=$('#running');tb.innerHTML='';
+  (d.running||[]).forEach(m=>{tb.insertAdjacentHTML('beforeend',
+    `<tr><td>${m.name}</td><td><span class="tag">${m.modality}</span></td><td>${m.mode}</td><td>${m.port}</td>
+     <td><button class="sm bad" onclick="unload('${m.name}')">Unload</button></td></tr>`);});
+  if(!(d.running||[]).length)tb.innerHTML='<tr><td colspan="5" class="mut small">none running</td></tr>';
+}
+async function loadInstalled(){
+  const d=await api('/admin/api/models/installed');const tb=$('#installed');tb.innerHTML='';
+  (d.models||[]).forEach(m=>{tb.insertAdjacentHTML('beforeend',
+    `<tr><td class="small">${m.name}</td><td>${m.size_gb} GB</td>
+     <td><button class="sm ghost" onclick="setLoadName('${m.name.replace(/\.gguf$/,'').toLowerCase()}')">→ section</button>
+         <button class="sm bad" onclick="removeModel('${m.path.replace(/\\/g,'\\\\')}')">Remove</button></td></tr>`);});
+  if(!(d.models||[]).length)tb.innerHTML='<tr><td colspan="3" class="mut small">no GGUF installed</td></tr>';
+}
+function setLoadName(n){$('#loadName').value=n;window.scrollTo({top:0,behavior:'smooth'});}
+async function loadModel(){
+  const name=$('#loadName').value.trim();if(!name)return toast('section name?');
+  const r=await api('/admin/api/models/load',{method:'POST',body:JSON.stringify(
+    {name,mode:$('#loadMode').value,port:parseInt($('#loadPort').value)})});
+  if(r.status==='loaded'){toast('loaded '+name+' :'+r.port);loadSystem();}
+}
+async function unload(n){await api(`/admin/api/models/${encodeURIComponent(n)}/unload`,{method:'POST'});loadSystem();}
+async function removeModel(p){if(!confirm('Delete file?'))return;await api('/admin/api/models/remove',{method:'POST',body:JSON.stringify({path:p})});loadInstalled();}
+
+async function searchHF(){
+  const q=$('#hfq').value.trim();const box=$('#hfResults');box.innerHTML='<span class="mut small">searching…</span>';
+  const d=await api('/admin/api/models/search-hf?q='+encodeURIComponent(q));box.innerHTML='';
+  (d.results||[]).forEach(r=>{
+    const files=r.files.map(f=>`<tr><td class="small">${f.file}</td><td>${f.size_gb} GB</td>
+      <td class="small">${f.tier} · need ${f.need_gb}GB · ${f.bound}${f.note||''}</td>
+      <td><button class="sm" onclick="dl('${r.repo_id}','${f.file}')">Download</button></td></tr>`).join('');
+    box.insertAdjacentHTML('beforeend',`<div class="card" style="box-shadow:2px 2px 0 var(--line)">
+      <b>${r.repo_id}</b> <span class="tag">${r.modality}</span> <span class="mut small">↓${r.downloads} ♥${r.likes}</span>
+      <table style="margin-top:.4rem">${files||'<tr><td class="mut small">no standalone GGUF</td></tr>'}</table></div>`);
+  });
+  if(!(d.results||[]).length)box.innerHTML='<span class="mut small">no results</span>';
+}
+async function dl(repo,file){toast('downloading '+file+'…');const r=await api('/admin/api/models/download',
+  {method:'POST',body:JSON.stringify({repo_id:repo,filename:file})});
+  if(r.status==='downloaded'){toast('downloaded → section ['+(r.section||'?')+']');loadInstalled();}}
+
+async function loadUsers(){
+  const d=await api('/admin/api/users');const tb=$('#users');tb.innerHTML='';
+  (d.users||[]).forEach(u=>{tb.insertAdjacentHTML('beforeend',
+    `<tr><td>${u.id}</td><td>${u.email}</td>
+     <td><span class="${tierClass(u.tier)}">${u.tier}</span></td><td>${(u.balance||0).toFixed(2)}</td>
+     <td>${u.active?'✓':'✗'}</td>
+     <td><button class="sm ghost" onclick="mkKey(${u.id})">API key</button>
+         <button class="sm ghost" onclick="setTier(${u.id})">Tier</button>
+         <button class="sm" onclick="toggleActive(${u.id},${u.active?0:1})">${u.active?'Disable':'Enable'}</button></td></tr>`);});
+}
+async function createUser(){const email=$('#nuEmail').value.trim();if(!email)return;
+  await api('/admin/api/users',{method:'POST',body:JSON.stringify({email,tier:$('#nuTier').value})});
+  $('#nuEmail').value='';loadUsers();}
+async function mkKey(id){const r=await api(`/admin/api/users/${id}/apikey`,{method:'POST',body:JSON.stringify({name:'default'})});
+  if(r.key)prompt('API key (copy now):',r.key);}
+async function setTier(id){const t=prompt('tier (payg/sub/admin):');if(!t)return;
+  await api(`/admin/api/users/${id}`,{method:'PATCH',body:JSON.stringify({tier:t})});loadUsers();}
+async function toggleActive(id,a){await api(`/admin/api/users/${id}`,{method:'PATCH',body:JSON.stringify({active:a})});loadUsers();}
+
+async function loadSignups(){const d=await api('/admin/api/signups');const tb=$('#signups');tb.innerHTML='';
+  (d.signups||[]).forEach(s=>{tb.insertAdjacentHTML('beforeend',
+    `<tr><td>${s.email}</td><td>${s.tier}</td><td>${s.status}</td>
+     <td>${s.status==='pending'?`<button class="sm ok" onclick="approve(${s.id})">Approve</button>`:''}</td></tr>`);});
+  if(!(d.signups||[]).length)tb.innerHTML='<tr><td colspan="4" class="mut small">none</td></tr>';}
+async function approve(id){const r=await api(`/admin/api/signups/${id}/approve`,{method:'POST'});
+  if(r.key)prompt('Approved. Key for '+r.approved+':',r.key);loadSignups();loadUsers();}
+
+loadSystem();loadInstalled();loadUsers();loadSignups();
+setInterval(loadSystem,15000);
+</script>
+</body></html>

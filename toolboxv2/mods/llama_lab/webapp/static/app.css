@@ -1,0 +1,40 @@
+/* llama_lab webapp — shared paper / neo-brutalism style */
+:root{
+  --bg:#faf8f4;--card:#fff;--ink:#1a1a1a;--mut:#6b6b6b;--line:#1a1a1a;
+  --acc:#3b5bdb;--ok:#2f9e44;--warn:#e8a13a;--bad:#e03131;--code:#f1ede6;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;
+  background:var(--bg);color:var(--ink);line-height:1.5}
+a{color:var(--acc);text-decoration:none}
+.wrap{max-width:1100px;margin:0 auto;padding:1.25rem}
+header.top{display:flex;justify-content:space-between;align-items:center;
+  border-bottom:3px solid var(--line);padding-bottom:.8rem;margin-bottom:1.25rem}
+header.top h1{font-size:1.3rem;margin:0}
+nav a{margin-left:1rem;font-size:.9rem;font-weight:600}
+.card{background:var(--card);border:2px solid var(--line);border-radius:10px;
+  box-shadow:4px 4px 0 var(--line);padding:1rem 1.1rem;margin-bottom:1.1rem}
+.card h2{margin:.1rem 0 .8rem;font-size:1.05rem;border-left:5px solid var(--acc);padding-left:.5rem}
+.row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+.grid{display:grid;gap:.6rem}
+button,.btn{font:inherit;font-weight:600;cursor:pointer;background:var(--acc);color:#fff;
+  border:2px solid var(--line);border-radius:8px;padding:.4rem .8rem;box-shadow:2px 2px 0 var(--line)}
+button:hover{transform:translate(1px,1px);box-shadow:1px 1px 0 var(--line)}
+button.ghost{background:#fff;color:var(--ink)}
+button.bad{background:var(--bad)}button.ok{background:var(--ok)}
+button.sm{padding:.2rem .5rem;font-size:.8rem;box-shadow:none}
+input,select,textarea{font:inherit;border:2px solid var(--line);border-radius:8px;
+  padding:.4rem .6rem;background:#fff;min-width:0}
+input,select{height:2.2rem}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{border:1px solid #ddd;padding:.4rem .5rem;text-align:left;vertical-align:top}
+th{background:var(--code)}
+.tag{display:inline-block;font-size:.72rem;font-weight:700;border:1.5px solid var(--line);
+  border-radius:6px;padding:.05rem .4rem;background:#fff}
+.tier-green{color:var(--ok)}.tier-amber{color:var(--warn)}.tier-red{color:var(--bad)}
+.mut{color:var(--mut)}.small{font-size:.82rem}
+pre,code{font-family:ui-monospace,Menlo,monospace}
+.flex1{flex:1}.right{margin-left:auto}
+.toast{position:fixed;bottom:1rem;right:1rem;background:var(--ink);color:#fff;
+  padding:.6rem 1rem;border-radius:8px;opacity:0;transition:.25s;z-index:50}
+.toast.show{opacity:1}

@@ -39,7 +39,7 @@ from toolboxv2 import get_app
 STATE_DIR = Path(get_app().appdata) / ".tb_sandbox"
 CONTAINER_PREFIX = "tb-sbx-"
 KEY_RE = re.compile(r"^([A-Za-z0-9_-]{4,64})\.([A-Za-z0-9_-]{4,64})$")
-GLOBAL_DIR = Path(os.getenv("TB_SANDBOX_GLOBAL_DIR", str(STATE_DIR / "global")))
+GLOBAL_DIR = Path(os.getenv("TB_SANDBOX_GLOBAL_DIR", str(Path(get_app().data_dir) / "Agents"/ "VFS"/ "global")))
 GLOBAL_MOUNT = "/work/global"
 
 
@@ -257,8 +257,8 @@ class SandboxPolicy:
             v = os.getenv(var, "").strip()
             return [d.strip() for d in v.split(",") if d.strip()] or None
         return cls(
-            allowed_import_dirs=_dirs("TB_SANDBOX_IMPORT_DIRS"),
-            allowed_export_dirs=_dirs("TB_SANDBOX_EXPORT_DIRS"),
+            allowed_import_dirs=[str(Path(get_app().data_dir) / "Agents"/ "VFS")].extend(_dirs("TB_SANDBOX_IMPORT_DIRS") if _dirs("TB_SANDBOX_IMPORT_DIRS") is not None else []),
+            allowed_export_dirs=[str(Path(get_app().data_dir) / "Agents"/ "VFS")].extend(_dirs("TB_SANDBOX_EXPORT_DIRS") if _dirs("TB_SANDBOX_EXPORT_DIRS") is not None else []),
             export_prefix=os.getenv("TB_SANDBOX_EXPORT_PREFIX", "out/"),
             allow_shell=os.getenv("TB_SANDBOX_ALLOW_SHELL", "1") != "0",
             allow_code=os.getenv("TB_SANDBOX_ALLOW_CODE", "1") != "0",

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>llama_lab — API Docs</title>
+<style>
+  :root{--bg:#faf8f4;--ink:#1a1a1a;--mut:#666;--line:#1a1a1a;--acc:#3b5bdb;--code:#f1ede6}
+  *{box-sizing:border-box}
+  body{font-family:ui-sans-serif,system-ui,sans-serif;background:var(--bg);color:var(--ink);
+       margin:0;line-height:1.55}
+  .wrap{max-width:920px;margin:0 auto;padding:2rem 1.25rem 6rem}
+  header{border-bottom:3px solid var(--line);padding-bottom:1rem;margin-bottom:2rem;
+         display:flex;justify-content:space-between;align-items:baseline}
+  h1{font-size:1.6rem;margin:0}
+  h2{margin-top:2.5rem;border-left:5px solid var(--acc);padding-left:.6rem}
+  h3{margin-top:1.6rem}
+  a{color:var(--acc)}
+  nav a{margin-left:1rem;font-size:.9rem}
+  pre{background:var(--code);border:2px solid var(--line);border-radius:8px;padding:1rem;
+      overflow:auto;font-size:.85rem}
+  code{font-family:ui-monospace,Menlo,monospace}
+  p code,li code{background:var(--code);padding:.1rem .3rem;border-radius:4px}
+  table{border-collapse:collapse;width:100%;font-size:.9rem}
+  th,td{border:1px solid var(--line);padding:.4rem .6rem;text-align:left}
+  .note{background:#fff8e1;border:2px solid var(--line);border-radius:8px;padding:.8rem 1rem;margin:1rem 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>llama_lab API</h1>
+    <nav><a href="/">Home</a><a href="/playground/">Playground</a><a href="/user/">Dashboard</a></nav>
+  </header>
+
+  <p>OpenAI-compatible API served by local llama.cpp models (text, vision,
+     embeddings and full omni). Point any OpenAI SDK at the base URL below and
+     use your API key from the <a href="/user/">dashboard</a>.</p>
+
+  <h2>Onboarding</h2>
+  <ol>
+    <li>Get an API key from your <a href="/user/">dashboard</a> (an admin enables your account).</li>
+    <li>An admin loads at least one model in the <a href="/admin/">admin panel</a>
+        (browse HuggingFace → download GGUF → load with <em>single</em> or <em>mass</em> mode).</li>
+    <li>Call the API — endpoints below are drop-in OpenAI compatible.</li>
+  </ol>
+  <div class="note">Base URL: <code>http://&lt;host&gt;:&lt;port&gt;/v1</code> ·
+     Auth header: <code>Authorization: Bearer sk-...</code></div>
+
+  <h2>Quickstart (OpenAI SDK)</h2>
+<pre><code>from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="sk-your-key")
+
+resp = client.chat.completions.create(
+    model="auto",                       # or a specific loaded model
+    messages=[{"role": "user", "content": "Erklär mir MoE in einem Satz."}],
+)
+print(resp.choices[0].message.content)</code></pre>
+
+  <h3>Streaming</h3>
+<pre><code>stream = client.chat.completions.create(
+    model="auto", stream=True,
+    messages=[{"role": "user", "content": "Zähl bis 5."}],
+)
+for chunk in stream:
+    print(chunk.choices[0].delta.content or "", end="")</code></pre>
+
+  <h3>Vision / media (model-dependent)</h3>
+<pre><code>client.chat.completions.create(
+    model="auto",
+    messages=[{"role":"user","content":[
+        {"type":"text","text":"Was ist auf dem Bild?"},
+        {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}},
+    ]}],
+)</code></pre>
+  <p>The router auto-selects a vision- or omni-capable model when the request
+     contains image/audio parts; otherwise a text model.</p>
+
+  <h3>Embeddings</h3>
+<pre><code>client.embeddings.create(model="auto", input=["hello", "world"])</code></pre>
+
+  <h2>Endpoints</h2>
+  <table>
+    <tr><th>Method</th><th>Path</th><th>Purpose</th></tr>
+    <tr><td>GET</td><td>/v1/models</td><td>List loaded models</td></tr>
+    <tr><td>POST</td><td>/v1/chat/completions</td><td>Chat (text/vision/omni, stream)</td></tr>
+    <tr><td>POST</td><td>/v1/embeddings</td><td>Embeddings</td></tr>
+    <tr><td>POST</td><td>/v1/audio/transcriptions</td><td>Speech-to-text (omni/audio)</td></tr>
+    <tr><td>POST</td><td>/v1/audio/live</td><td>Open a live (omni) session → WS</td></tr>
+  </table>
+
+  <h2>Internal TB client</h2>
+  <p>From inside ToolBoxV2 you can talk to a loaded model without HTTP by using
+     the <code>llama_lab</code> serve layer / the OpenAI base url it exposes:</p>
+<pre><code>from toolboxv2 import get_app
+app = get_app()
+
+# Which models are currently served?
+status = await app.a_run_any(("llama_lab", "status"))
+
+# Start one headlessly (admin/CLI also do this)
+await app.a_run_any(("llama_lab", "serve"), name="qwen", mode="single", port=8080)
+
+# Then use any OpenAI client against http://localhost:8080/v1
+</code></pre>
+  <p>See <a href="https://docs.claude.com">deeper integration docs</a> for the
+     full ToolBoxV2 client surface.</p>
+</div>
+</body>
+</html>

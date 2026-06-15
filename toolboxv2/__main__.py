@@ -348,7 +348,7 @@ def uninstall_service():
 
 async def setup_service_windows():
     path = "C:/ProgramData/Microsoft/Windows/Start Menu/Programs/Startup"
-
+   # C:\Users\Markin\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup
     mode = await menu_select_async(
         [
             ("init", "Init (first-time setup)"),
@@ -375,7 +375,7 @@ async def setup_service_windows():
             os.remove(path + "/tb_start.bat")
         try:
             with open(path + "/tb_start.bat", "a", encoding="utf8") as f:
-                command = f"-m tb --sm"
+                command = f"-m toolboxv2.__main__ --sm"
                 f.write(f"""{sys.executable} {command}""")
             print(f"Init Service in {path}")
         except PermissionError:
@@ -2405,10 +2405,11 @@ def main_runner():
                 print(
                     f"Service manager not supported on this platform {system()}"
                 )
+
         else:
             os._exit(run_service_manager_startup())
 
-    if "--print-root" in sys.argv:
+    elif "--print-root" in sys.argv:
         from toolboxv2 import tb_root_dir
         print(str(tb_root_dir.parent))
         os._exit(0)
@@ -2533,11 +2534,12 @@ def main_runner():
             return
 
 
-import ctypes
 
 
 def get_real_python_executable():
     try:
+
+        import ctypes
         # Set the return type for the function call
         ctypes.pythonapi.Py_GetProgramFullPath.restype = ctypes.c_char_p
         exe_path = ctypes.pythonapi.Py_GetProgramFullPath()

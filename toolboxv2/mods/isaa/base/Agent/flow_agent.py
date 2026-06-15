@@ -1892,14 +1892,34 @@ class FlowAgent:
         execution_id: str | None = None,
         human_online: bool = False,
         max_iterations: int = 15,
+        term_width: int = 80,
         **kwargs,
     ) -> AsyncGenerator[str, None]:
         """
-        Vereinfachtes Streaming - gibt nur Strings zurück.
+        Zen Terminal CLI Output -- Beautifully formatted streaming agent output.
 
-        Yields:
-            str: Lesbarer Text für jeden Schritt
+        Yields ANSI-colored strings for terminal display.
+        Zero external dependencies -- pure Python + ANSI escape codes.
+
+        Design: TBJS Terminal v3.0 -- Dark Terminal Variant
+        - Monospace aesthetic throughout
+        - Phosphor-bright accents on true black
+        - Box-drawing frames and semantic glyphs
+        - Information-dense, scanline-aware layout
         """
+
+        from toolboxv2.mods.isaa.extras.zen.zen_renderer import ZenRenderer
+        renderer = ZenRenderer(term_width=term_width)
+
+        # -- User query header -------------------------------------------------
+        yield renderer.render_user_input(query)
+
+        # -- Agent response frame start ----------------------------------------
+        yield "\n\n"
+        yield renderer.render_agent_start()
+
+        need_new_line = False
+
         async for chunk in self.a_stream(
             query=query,
             session_id=session_id,
@@ -1910,57 +1930,88 @@ class FlowAgent:
         ):
             chunk_type = chunk.get("type", "")
 
+            # -- Content (LLM token stream) ------------------------------------
             if chunk_type == "content":
-                yield chunk["chunk"]
+                if need_new_line:
+                    yield "\n"
+                    need_new_line = False
+                yield renderer.render_content(chunk.get("chunk", ""))
 
+            # -- Reasoning / CoT -----------------------------------------------
             elif chunk_type == "reasoning":
-                yield Style.GREEN(chunk["chunk"])
+                need_new_line = True
+                yield renderer.render_reasoning(chunk.get("chunk", ""))
 
+            # -- Tool start ----------------------------------------------------
             elif chunk_type == "tool_start":
-                yield f"\n🔧 Nutze Tool: {chunk['name']}\n"
+                yield renderer.render_tool_start(
+                    name=chunk.get("name", "unknown"),
+                    args=chunk.get("args")
+                )
 
+            # -- Tool result ---------------------------------------------------
             elif chunk_type == "tool_result":
                 result = chunk.get("result", "")
-                if len(result) > 200:
-                    result = result[:200] + "..."
-                yield f"   ✓ Ergebnis: {result}\n"
+                duration = chunk.get("duration_ms")
+                yield renderer.render_tool_result(result, duration)
 
+            # -- Tool error ----------------------------------------------------
+            elif chunk_type == "tool_error":
+                yield renderer.render_tool_error(chunk.get("error", "Unknown error"))
+
+            # -- Final answer --------------------------------------------------
             elif chunk_type == "final_answer":
-                yield f"\n\n📝 {chunk['answer']}"
+                yield renderer.render_final_answer(chunk.get("answer", ""))
 
+            # -- Paused (human-in-the-loop) ------------------------------------
             elif chunk_type == "paused":
-                yield f"\n⏸️ Pausiert (ID: {chunk['run_id']})\n"
+                yield renderer.render_paused(chunk.get("run_id", "unknown"))
 
+            # -- Max iterations ------------------------------------------------
             elif chunk_type == "max_iterations":
-                yield f"\n⚠️ Max Iterationen erreicht\n{chunk['answer']}"
+                yield renderer.render_max_iterations(chunk.get("answer", ""))
 
+            # -- Error ---------------------------------------------------------
             elif chunk_type == "error":
-                yield f"\n❌ Fehler: {chunk['error']}\n"
+                yield renderer.render_error(chunk.get("error", "Unknown error"))
 
+            # -- Status update -------------------------------------------------
             elif chunk_type == "status":
                 msg = chunk.get("status_msg", "")
                 if msg:
-                    yield f"⏳ {msg}...\n"
+                    yield renderer.render_status(msg)
 
+            # -- Post-processing -----------------------------------------------
             elif chunk_type == "post_processing":
                 msg = chunk.get("status_msg", "")
                 if msg:
-                    yield f"\n💾 {msg}...\n"
+                    yield renderer.render_post_processing(msg)
 
+            # -- Narrator (inline thoughts) ------------------------------------
             elif chunk_type == "narrator":
-                # Mini-Flux: Narrator-Gedanken inline, dezent
                 nm = chunk.get("narrator_msg", "")
                 if nm:
-                    # \r überschreibt vorherige Narrator-Line im Terminal
-                    yield f"\r💭 {nm[:100]}\r"
+                    yield renderer.render_narrator(nm)
 
+            # -- Iteration start -----------------------------------------------
             elif chunk_type == "iteration_start":
-                yield f"\n🔄 Iter {chunk.get('iteration', '?')}/{chunk.get('max_iter', '?')}\n"
+                need_new_line = True
+                yield renderer.render_iteration_start(
+                    iteration=chunk.get("iteration", 0),
+                    max_iter=chunk.get("max_iter", max_iterations)
+                )
 
-
+            # -- Done / Complete -----------------------------------------------
             elif chunk_type == "done":
-                status = "✅" if chunk.get("success") else "⚠️"
-                yield f"\n{status} Fertig\n"
+                success = chunk.get("success", False)
+                meta = chunk.get("meta")
+                yield renderer.render_done(success, meta)
+
+            # -- Unknown chunk type --------------------------------------------
+            else:
+                # Silently skip unknown types or log debug
+                raw = str(chunk)[:200]
+                yield f"\n  {Style.GREY('?')} {Style.GREYBG(f'unknown chunk: {raw}')}\n"
 
     # =========================================================================
     # CODING: write_patch / write_file (delegated to ExecutionEngine)

@@ -118,7 +118,7 @@ class ZenRendererV2:
     Minimizable dashboard for background process overview.
     """
 
-    def __init__(self, engine=None):
+    def __init__(self, engine=None, agent=None):
         """
         Args:
             engine: ExecutionEngine instance (has .live: AgentLiveState).
@@ -126,7 +126,8 @@ class ZenRendererV2:
         """
         self._footer_active = False
         self.wit_alim = False
-        self.engine = engine
+        self._engine = engine
+        self._agent = agent
         self._anim_thread = None
         self._anim_stop = threading.Event()
         self.minimized = False
@@ -146,6 +147,14 @@ class ZenRendererV2:
         self._current_word = "zen"
 
         self._print("🌌 Zen System")
+
+    @property
+    def engine(self):
+        if self._engine is None:
+            return self._engine
+        if self._agent is None:
+            raise ValueError("engin and agent ar None")
+        return self._agent._get_execution_engine()
 
     # -- public API -----------------------------------------------------------
 
@@ -545,7 +554,11 @@ class ZenRendererV2:
         meta = ""
 
         try:
-            rd = json.loads(result) if isinstance(result, str) else result
+            try:
+                rd = json.loads(result) if isinstance(result, str) else result
+
+            except Exception as e:
+                rd = result
             if not rd:
                 rd = result
             if isinstance(rd, dict):
@@ -1137,3 +1150,890 @@ class ZenRendererV2:
             plain = re.sub(r"<[^>]+>", "", html_str)
             print(plain, end=end, flush=True)
 
+
+
+
+"""
+Zen Terminal CLI Output Renderer
+Pure Python, zero external dependencies.
+ANSI-based dark terminal style inspired by TBJS Design System v3.0.
+"""
+
+from typing import AsyncGenerator, Any
+import datetime
+import textwrap
+import re
+
+
+# =============================================================================
+# ANSI COLOR ENGINE -- Pure Python, no external libs
+# =============================================================================
+
+class _Ansi:
+    """Low-level ANSI escape code factory."""
+    ESC = "\x1b["
+
+    @staticmethod
+    def _code(*codes: int) -> str:
+        return f"{_Ansi.ESC}{';'.join(map(str, codes))}m"
+
+    @classmethod
+    def reset(cls) -> str:
+        return cls._code(0)
+
+    @classmethod
+    def bold(cls) -> str:
+        return cls._code(1)
+
+    @classmethod
+    def dim(cls) -> str:
+        return cls._code(2)
+
+    @classmethod
+    def italic(cls) -> str:
+        return cls._code(3)
+
+    @classmethod
+    def underline(cls) -> str:
+        return cls._code(4)
+
+    @classmethod
+    def fg(cls, r: int, g: int, b: int) -> str:
+        return cls._code(38, 2, r, g, b)
+
+    @classmethod
+    def bg(cls, r: int, g: int, b: int) -> str:
+        return cls._code(48, 2, r, g, b)
+
+    @classmethod
+    def fg_256(cls, n: int) -> str:
+        return cls._code(38, 5, n)
+
+    @classmethod
+    def bg_256(cls, n: int) -> str:
+        return cls._code(48, 5, n)
+
+
+# =============================================================================
+# TBJS TERMINAL DESIGN TOKENS -- Dark Terminal Variant
+# =============================================================================
+
+class T:
+    """Design tokens -- colors, spacing, typography."""
+
+    # -- Colors (RGB) ------------------------------------------------------
+    BG          = (0, 0, 0)           # True black canvas
+    BG_RAISED   = (10, 10, 15)        # Panels, cards
+    BG_SUNKEN   = (3, 3, 6)          # Inputs, code blocks
+
+    # Phosphor-bright accent -- deep tech blue (OKLCH 55% 0.18 230)
+    PRIMARY     = (59, 130, 246)      # #3B82F6
+    SUCCESS     = (34, 197, 94)       # #22C55E
+    WARNING     = (234, 179, 8)       # #EAB308
+    ERROR       = (239, 68, 68)       # #EF4444
+    INFO        = (96, 165, 250)      # #60A5FA
+
+    # Text hierarchy
+    FG          = (235, 235, 235)     # Body -- 0.92 brightness
+    FG_DIM      = (128, 128, 128)     # Labels, timestamps
+    FG_MUTED    = (77, 77, 77)        # Hints, dividers
+
+    # -- Typography --------------------------------------------------------
+    H1          = 16
+    H2          = 14
+    H3          = 13
+    BASE        = 12
+    SM          = 11
+    XS          = 10
+
+    # -- Spacing (4px rhythm) ---------------------------------------------
+    S1          = 2
+    S2          = 4
+    S3          = 8
+    S4          = 12
+    S5          = 16
+    S6          = 24
+
+    # -- Box-drawing characters -------------------------------------------
+    HORIZ       = "\u2500"
+    VERT        = "\u2502"
+    CORNER_TL   = "\u250c"
+    CORNER_TR   = "\u2510"
+    CORNER_BL   = "\u2514"
+    CORNER_BR   = "\u2518"
+    T_DOWN      = "\u252c"
+    T_UP        = "\u2534"
+    T_RIGHT     = "\u251c"
+    T_LEFT      = "\u2524"
+    CROSS       = "\u253c"
+
+    # -- Status glyphs ------------------------------------------------------
+    DOT_ON      = "\u25cf"
+    DOT_OFF     = "\u25cb"
+    DOT_PEND    = "\u25d0"
+    CROSS_G     = "\u2715"
+    WARN_G      = "\u25b2"
+    ARROW       = "\u2192"
+    CARET       = "\u258c"
+    BULLET      = "\u2022"
+    CHECK       = "\u2713"
+    CHEVRON     = "\u203a"
+    PROMPT      = "$"
+    PROMPT_ROOT = "#"
+
+    # -- Width ------------------------------------------------------------
+    TERM_WIDTH  = 80
+
+
+# =============================================================================
+# STYLE HELPER -- Fluent API for colored text
+# =============================================================================
+
+class Style:
+    """Fluent style builder. Chainable: Style().bold().blue().text("hello")"""
+
+    def __init__(self):
+        self._codes: list[int] = []
+        self._fg: tuple[int, int, int] | None = None
+        self._bg: tuple[int, int, int] | None = None
+
+    def _clone(self) -> "Style":
+        s = Style()
+        s._codes = self._codes.copy()
+        s._fg = self._fg
+        s._bg = self._bg
+        return s
+
+    def bold(self) -> "Style":
+        s = self._clone()
+        s._codes.append(1)
+        return s
+
+    def dim(self) -> "Style":
+        s = self._clone()
+        s._codes.append(2)
+        return s
+
+    def italic(self) -> "Style":
+        s = self._clone()
+        s._codes.append(3)
+        return s
+
+    def underline(self) -> "Style":
+        s = self._clone()
+        s._codes.append(4)
+        return s
+
+    def fg(self, r: int, g: int, b: int) -> "Style":
+        s = self._clone()
+        s._fg = (r, g, b)
+        return s
+
+    def bg(self, r: int, g: int, b: int) -> "Style":
+        s = self._clone()
+        s._bg = (r, g, b)
+        return s
+
+    def _build(self) -> str:
+        parts = []
+        if self._codes:
+            parts.append(_Ansi._code(*self._codes))
+        if self._fg:
+            parts.append(_Ansi.fg(*self._fg))
+        if self._bg:
+            parts.append(_Ansi.bg(*self._bg))
+        return "".join(parts)
+
+    def text(self, s: str) -> str:
+        return f"{self._build()}{s}{_Ansi.reset()}"
+
+    def __call__(self, s: str) -> str:
+        return self.text(s)
+
+    # -- Preset colors (static methods for convenience) --------------------
+    @staticmethod
+    def primary(s: str = "") -> str:
+        return Style().fg(*T.PRIMARY).text(s) if s else Style().fg(*T.PRIMARY)._build()
+
+    @staticmethod
+    def success(s: str = "") -> str:
+        return Style().fg(*T.SUCCESS).text(s) if s else Style().fg(*T.SUCCESS)._build()
+
+    @staticmethod
+    def warning(s: str = "") -> str:
+        return Style().fg(*T.WARNING).text(s) if s else Style().fg(*T.WARNING)._build()
+
+    @staticmethod
+    def error(s: str = "") -> str:
+        return Style().fg(*T.ERROR).text(s) if s else Style().fg(*T.ERROR)._build()
+
+    @staticmethod
+    def info(s: str = "") -> str:
+        return Style().fg(*T.INFO).text(s) if s else Style().fg(*T.INFO)._build()
+
+    @staticmethod
+    def fg_color(s: str = "") -> str:
+        return Style().fg(*T.FG).text(s) if s else Style().fg(*T.FG)._build()
+
+    @staticmethod
+    def dim_color(s: str = "") -> str:
+        return Style().fg(*T.FG_DIM).text(s) if s else Style().fg(*T.FG_DIM)._build()
+
+    @staticmethod
+    def muted(s: str = "") -> str:
+        return Style().fg(*T.FG_MUTED).text(s) if s else Style().fg(*T.FG_MUTED)._build()
+
+    @staticmethod
+    def bold_primary(s: str) -> str:
+        return Style().bold().fg(*T.PRIMARY).text(s)
+
+    @staticmethod
+    def bold_success(s: str) -> str:
+        return Style().bold().fg(*T.SUCCESS).text(s)
+
+    @staticmethod
+    def bold_error(s: str) -> str:
+        return Style().bold().fg(*T.ERROR).text(s)
+
+    @staticmethod
+    def bold_warning(s: str) -> str:
+        return Style().bold().fg(*T.WARNING).text(s)
+
+    @staticmethod
+    def bg_primary(s: str) -> str:
+        return f"{Style().bg(*T.PRIMARY).fg(*T.BG)._build()}{s}{_Ansi.reset()}"
+
+    @staticmethod
+    def bg_error(s: str) -> str:
+        return f"{Style().bg(*T.ERROR).fg(*T.BG)._build()}{s}{_Ansi.reset()}"
+
+
+# =============================================================================
+# TERMINAL UI COMPONENTS -- Box drawing, panels, tables, status bars
+# =============================================================================
+
+class UI:
+    """Terminal UI component factory -- pure ANSI, no external deps."""
+
+    @staticmethod
+    def _repeat(char: str, n: int) -> str:
+        return char * max(0, n)
+
+    @staticmethod
+    def _strip_ansi(s: str) -> str:
+        """Remove ANSI codes for width calculation."""
+        return re.sub(r"\x1b\[[0-9;]*m", "", s)
+
+    @staticmethod
+    def _visible_width(s: str) -> int:
+        """Width of string without ANSI codes."""
+        return len(UI._strip_ansi(s))
+
+    @staticmethod
+    def _pad(s: str, width: int, align: str = "left") -> str:
+        """Pad string to exact visible width, accounting for ANSI."""
+        vis = UI._visible_width(s)
+        if vis >= width:
+            return s
+        pad = " " * (width - vis)
+        if align == "right":
+            return pad + s
+        elif align == "center":
+            left = len(pad) // 2
+            return " " * left + s + " " * (len(pad) - left)
+        return s + pad
+
+    # -- Horizontal rules --------------------------------------------------
+    @staticmethod
+    def hr(width: int = T.TERM_WIDTH, char: str = T.HORIZ,
+           color: tuple[int, int, int] = T.FG_MUTED) -> str:
+        line = UI._repeat(char, width)
+        return Style().fg(*color).text(line)
+
+    @staticmethod
+    def hr_accent(width: int = T.TERM_WIDTH) -> str:
+        return UI.hr(width, T.HORIZ, T.PRIMARY)
+
+    @staticmethod
+    def hr_double(width: int = T.TERM_WIDTH) -> str:
+        return UI.hr(width, "\u2550", T.FG_MUTED)
+
+    # -- Box frames --------------------------------------------------------
+    @staticmethod
+    def box_top(width: int = T.TERM_WIDTH,
+                title: str = "",
+                color: tuple[int, int, int] = T.PRIMARY) -> str:
+        if title:
+            title_vis = UI._visible_width(title)
+            pad_left = 2
+            pad_right = width - title_vis - pad_left - 2
+            left = f"{T.CORNER_TL}{UI._repeat(T.HORIZ, pad_left)}"
+            right = f"{UI._repeat(T.HORIZ, pad_right)}{T.CORNER_TR}"
+            return f"{Style().fg(*color).text(left)}{title}{Style().fg(*color).text(right)}"
+        return Style().fg(*color).text(f"{T.CORNER_TL}{UI._repeat(T.HORIZ, width - 2)}{T.CORNER_TR}")
+
+    @staticmethod
+    def box_bottom(width: int = T.TERM_WIDTH,
+                   color: tuple[int, int, int] = T.PRIMARY) -> str:
+        return Style().fg(*color).text(
+            f"{T.CORNER_BL}{UI._repeat(T.HORIZ, width - 2)}{T.CORNER_BR}"
+        )
+
+    @staticmethod
+    def box_line(content: str,
+                 width: int = T.TERM_WIDTH,
+                 color: tuple[int, int, int] = T.PRIMARY,
+                 pad: int = 2) -> str:
+        vis = UI._visible_width(content)
+        avail = width - 2 - (pad * 2) - vis
+        right_pad = " " * max(0, avail)
+        return f"{Style().fg(*color).text(T.VERT)}{' ' * pad}{content}{right_pad}{' ' * pad}{Style().fg(*color).text(T.VERT)}"
+
+    @staticmethod
+    def box(content_lines: list[str],
+            width: int = T.TERM_WIDTH,
+            title: str = "",
+            color: tuple[int, int, int] = T.PRIMARY) -> str:
+        """Render a full box with content."""
+        lines = [UI.box_top(width, title, color)]
+        for line in content_lines:
+            lines.append(UI.box_line(line, width, color))
+        lines.append(UI.box_bottom(width, color))
+        return "\n".join(lines)
+
+    # -- Section headers ---------------------------------------------------
+    @staticmethod
+    def h1(text: str) -> str:
+        prefix = Style.muted("# ")
+        return f"\n{prefix}{Style().bold().fg(*T.FG).text(text)}"
+
+    @staticmethod
+    def h2(text: str) -> str:
+        prefix = Style.muted("## ")
+        return f"{prefix}{Style().fg(*T.FG).text(text)}"
+
+    @staticmethod
+    def h3(text: str) -> str:
+        prefix = Style.muted("### ")
+        return f"{prefix}{Style().fg(*T.FG_DIM).text(text)}"
+
+    @staticmethod
+    def prompt(text: str, is_root: bool = False) -> str:
+        p = T.PROMPT_ROOT if is_root else T.PROMPT
+        return f"{Style.success(p)} {Style.primary(text)}"
+
+    # -- Labels & badges ---------------------------------------------------
+    @staticmethod
+    def label(text: str, color: tuple[int, int, int] = T.PRIMARY) -> str:
+        """Bracketed label: [ LABEL ]"""
+        brackets = Style.muted("[ ") + Style().fg(*color).text(text) + Style.muted(" ]")
+        return brackets
+
+    @staticmethod
+    def badge(text: str, bg_color: tuple[int, int, int] = T.PRIMARY,
+              fg_color: tuple[int, int, int] = T.BG) -> str:
+        """Solid background badge."""
+        return f"{Style().bg(*bg_color).fg(*fg_color)._build()} {text} {_Ansi.reset()}"
+
+    @staticmethod
+    def tag(text: str, color: tuple[int, int, int] = T.PRIMARY) -> str:
+        """Inline tag: <tag>"""
+        return f"{Style.muted('<')}{Style().fg(*color).text(text)}{Style.muted('>')}"
+
+    # -- Status indicators -------------------------------------------------
+    @staticmethod
+    def status_online(label: str = "") -> str:
+        dot = Style.success(T.DOT_ON)
+        return f"{dot} {Style.fg_color(label)}" if label else dot
+
+    @staticmethod
+    def status_idle(label: str = "") -> str:
+        dot = Style.muted(T.DOT_OFF)
+        return f"{dot} {Style.dim_color(label)}" if label else dot
+
+    @staticmethod
+    def status_pending(label: str = "") -> str:
+        dot = Style.warning(T.DOT_PEND)
+        return f"{dot} {Style.warning(label)}" if label else dot
+
+    @staticmethod
+    def status_error(label: str = "") -> str:
+        dot = Style.error(T.CROSS_G)
+        return f"{dot} {Style.error(label)}" if label else dot
+
+    @staticmethod
+    def status_warn(label: str = "") -> str:
+        dot = Style.warning(T.WARN_G)
+        return f"{dot} {Style.warning(label)}" if label else dot
+
+    # -- Timestamp ---------------------------------------------------------
+    @staticmethod
+    def timestamp(dt: datetime.datetime | None = None) -> str:
+        if dt is None:
+            dt = datetime.datetime.now(datetime.timezone.utc)
+        ts = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        return Style.dim_color(ts)
+
+    # -- Progress / meter --------------------------------------------------
+    @staticmethod
+    def meter(value: float, max_val: float = 100.0, width: int = 30,
+              filled_color: tuple[int, int, int] = T.PRIMARY,
+              empty_color: tuple[int, int, int] = T.FG_MUTED) -> str:
+        ratio = min(1.0, max(0.0, value / max_val)) if max_val else 0
+        filled = int(width * ratio)
+        empty = width - filled
+        bar = (Style().fg(*filled_color).text(UI._repeat("\u2588", filled)) +
+               Style().fg(*empty_color).text(UI._repeat("\u2591", empty)))
+        pct = f" {ratio * 100:.1f}%"
+        return f"{bar}{Style.dim_color(pct)}"
+
+    # -- Key-value pair ----------------------------------------------------
+    @staticmethod
+    def kv(key: str, value: str, key_width: int = 20) -> str:
+        k = Style().fg(*T.FG_DIM).text(UI._pad(key + ":", key_width, "right"))
+        v = Style().fg(*T.FG).text(value)
+        return f"  {k} {v}"
+
+    # -- Breadcrumb nav ----------------------------------------------------
+    @staticmethod
+    def breadcrumb(*parts: str) -> str:
+        result = []
+        for i, part in enumerate(parts):
+            if i > 0:
+                result.append(Style.muted(" / "))
+            if i == len(parts) - 1:
+                result.append(Style.fg_color(part))
+            else:
+                result.append(Style.primary(part))
+        return "".join(result)
+
+    # -- Table row ---------------------------------------------------------
+    @staticmethod
+    def table_row(*cells: str, widths: list[int] | None = None,
+                  colors: list[tuple[int, int, int]] | None = None,
+                  align: list[str] | None = None) -> str:
+        if widths is None:
+            widths = [20] * len(cells)
+        if colors is None:
+            colors = [T.FG] * len(cells)
+        if align is None:
+            align = ["left"] * len(cells)
+
+        parts = []
+        for i, (cell, w, c, a) in enumerate(zip(cells, widths, colors, align)):
+            padded = UI._pad(cell, w, a)
+            parts.append(Style().fg(*c).text(padded))
+
+        sep = Style.muted(T.VERT)
+        return f" {sep} ".join(parts)
+
+    # -- Code block --------------------------------------------------------
+    @staticmethod
+    def code_block(lines: list[str], lang: str = "") -> str:
+        header = f"{Style.muted('```')}{Style.primary(lang)}" if lang else Style.muted("```")
+        footer = Style.muted("```")
+        body = "\n".join(f"  {Style().fg(*T.FG_DIM).text(line)}" for line in lines)
+        return f"{header}\n{body}\n{footer}"
+
+    # -- Inline code -------------------------------------------------------
+    @staticmethod
+    def inline_code(text: str) -> str:
+        return f"{Style.muted('`')}{Style().fg(*T.PRIMARY).text(text)}{Style.muted('`')}"
+
+    # -- List item ---------------------------------------------------------
+    @staticmethod
+    def li(text: str, indent: int = 0, bullet: str = T.BULLET) -> str:
+        indent_str = "  " * indent
+        b = Style.muted(bullet)
+        return f"{indent_str}{b} {Style.fg_color(text)}"
+
+    # -- Quote / Note --------------------------------------------------------
+    @staticmethod
+    def note(text: str, color: tuple[int, int, int] = T.INFO) -> str:
+        bar = Style().fg(*color).text(T.VERT)
+        return f"{bar} {Style().fg(*T.FG_DIM).text(text)}"
+
+    # -- Separator with label ----------------------------------------------
+    @staticmethod
+    def sep_label(label: str, width: int = T.TERM_WIDTH,
+                  color: tuple[int, int, int] = T.FG_MUTED) -> str:
+        vis = UI._visible_width(label)
+        pad = (width - vis - 4) // 2
+        left = UI._repeat(T.HORIZ, pad)
+        right = UI._repeat(T.HORIZ, width - pad - vis - 4)
+        return f"{Style().fg(*color).text(left)}  {Style().fg(*T.FG_DIM).text(label)}  {Style().fg(*color).text(right)}"
+
+    # -- Compact info line -------------------------------------------------
+    @staticmethod
+    def info_line(*segments: tuple[str, tuple[int, int, int] | None]) -> str:
+        """segments: [(text, color_or_None), ...] -- None = muted separator"""
+        parts = []
+        for text, color in segments:
+            if color is None:
+                parts.append(Style.muted(text))
+            else:
+                parts.append(Style().fg(*color).text(text))
+        return " ".join(parts)
+
+
+# =============================================================================
+# ZEN STREAM RENDERER -- The main streaming output engine
+# =============================================================================
+
+class ZenRenderer:
+    """
+    Zen Terminal CLI Output Renderer.
+    Converts agent streaming chunks into beautifully formatted terminal output.
+    Pure Python, ANSI-only, zero external dependencies.
+    """
+
+    def __init__(self, term_width: int = T.TERM_WIDTH):
+        self.width = term_width
+        self._iteration = 0
+        self._max_iter = 0
+        self._tool_count = 0
+        self._start_time = datetime.datetime.now(datetime.timezone.utc)
+        self._last_narrator: str = ""
+
+    def _header(self, title: str, color: tuple[int, int, int] = T.PRIMARY) -> str:
+        """Agent response header with box frame."""
+        agent_label = Style().bg(*color).fg(*T.BG)._build()
+        agent_name = f" {T.PROMPT} ISAA "
+        agent_reset = _Ansi.reset()
+
+        top = UI.box_top(self.width, title=f"{agent_label}{agent_name}{agent_reset}", color=color)
+        return top
+
+    def _footer(self, color: tuple[int, int, int] = T.PRIMARY) -> str:
+        return UI.box_bottom(self.width, color)
+
+    def _elapsed(self) -> str:
+        elapsed = datetime.datetime.now(datetime.timezone.utc) - self._start_time
+        secs = elapsed.total_seconds()
+        if secs < 60:
+            return f"{secs:.1f}s"
+        return f"{int(secs // 60)}m {secs % 60:.0f}s"
+
+    # -- Chunk renderers -----------------------------------------------------
+
+    def render_content(self, chunk: str) -> str:
+        """Raw content stream (LLM tokens)."""
+        return Style.fg_color(chunk)
+
+    def render_reasoning(self, chunk: str) -> str:
+        """Reasoning / thought process."""
+        label = Style().fg(*T.FG_MUTED).text("[reasoning]")
+        text = Style().fg(*T.SUCCESS).text(chunk)
+        return f"\n{label} {text}"
+
+    def render_tool_start(self, name: str, args: dict[str, Any] | None = None) -> str:
+        """Tool invocation start."""
+        self._tool_count += 1
+
+        lines = [""]
+        # Header line with tool number and name
+        num = Style().fg(*T.FG_MUTED).text(f"#{self._tool_count:02d}")
+        icon = Style().fg(*T.WARNING).text("\u2699")
+        name_styled = Style.bold_primary(name)
+        header = f"  {num} {icon} {Style.muted('TOOL')} {name_styled}"
+        lines.append(header)
+
+        # Arguments
+        if args:
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    args = {"data": args}
+            lines.append(f"  {Style.muted('  ' + T.VERT)}")
+            for k, v in args.items():
+                val_str = str(v)
+                if len(val_str) > 60:
+                    val_str = val_str[:57] + "..."
+                key = Style().fg(*T.FG_DIM).text(f"    {T.VERT}  {k}:")
+                val = Style().fg(*T.FG).text(val_str)
+                lines.append(f"{key} {val}")
+            lines.append(f"  {Style.muted('  ' + T.VERT)}")
+
+        # Status line
+        status = Style().fg(*T.WARNING).text(T.DOT_PEND)
+        status_text = Style().fg(*T.WARNING).text("executing...")
+        lines.append(f"  {Style.muted('  ' + T.CORNER_BL + T.HORIZ)} {status} {status_text}")
+
+        return "\n".join(lines)
+
+    def render_tool_result(self, result: Any, duration_ms: float | None = None) -> str:
+        """Tool execution result."""
+        result_str = str(result) if result is not None else ""
+
+        # Truncate long results
+        if len(result_str) > 300:
+            result_str = result_str[:297] + "..."
+
+        lines = []
+        icon = Style().fg(*T.SUCCESS).text(T.CHECK)
+        label = Style().fg(*T.SUCCESS).text("RESULT")
+
+        if duration_ms is not None:
+            dur = Style().fg(*T.FG_MUTED).text(f"({duration_ms:.0f}ms)")
+            lines.append(f"  {Style.muted('     ' + T.CORNER_BL + T.HORIZ)} {icon} {label} {dur}")
+        else:
+            lines.append(f"  {Style.muted('     ' + T.CORNER_BL + T.HORIZ)} {icon} {label}")
+
+        # Result content in indented block
+        if result_str:
+            wrapped = textwrap.wrap(result_str, width=self.width - 12)
+            for wline in wrapped:
+                lines.append(f"  {Style.muted('        ' + T.VERT)} {Style().fg(*T.FG_DIM).text(wline)}")
+
+        return "\n".join(lines)
+
+    def render_tool_error(self, error: str) -> str:
+        """Tool execution error."""
+        lines = []
+        icon = Style().fg(*T.ERROR).text(T.CROSS_G)
+        label = Style().fg(*T.ERROR).text("ERROR")
+        lines.append(f"  {Style.muted('     ' + T.CORNER_BL + T.HORIZ)} {icon} {label}")
+
+        wrapped = textwrap.wrap(error, width=self.width - 12)
+        for wline in wrapped:
+            lines.append(f"  {Style.muted('        ' + T.VERT)} {Style().fg(*T.ERROR).text(wline)}")
+
+        return "\n".join(lines)
+
+    def render_final_answer(self, answer: str) -> str:
+        """Final agent response."""
+        lines = [
+            "",
+            UI.hr_accent(self.width),
+            "",
+        ]
+
+        # Header
+        icon = Style().fg(*T.PRIMARY).text("\u270d")
+        label = Style.bold_primary("ANTWORT")
+        lines.append(f"  {icon} {label}")
+        lines.append("")
+
+        # Content in box
+        content_lines = answer.split("\n")
+        for line in content_lines:
+            if line.strip():
+                lines.append(f"  {Style.fg_color(line)}")
+            else:
+                lines.append("")
+
+        lines.append("")
+        lines.append(UI.hr_accent(self.width))
+
+        return "\n".join(lines)
+
+    def render_iteration_start(self, iteration: int, max_iter: int) -> str:
+        """Iteration header."""
+        self._iteration = iteration
+        self._max_iter = max_iter
+
+        lines = [""]
+
+        # Separator with iteration info
+        iter_label = f" ITERATION {iteration}/{max_iter} "
+        lines.append(UI.sep_label(iter_label, self.width, T.PRIMARY))
+
+        # Progress meter
+        meter = UI.meter(iteration, max_iter, width=40)
+        elapsed = Style().fg(*T.FG_MUTED).text(f"elapsed: {self._elapsed()}")
+        lines.append(f"  {meter}  {elapsed}")
+
+        return "\n".join(lines)
+
+    def render_status(self, msg: str) -> str:
+        """Status message (loading, processing, etc.)."""
+        icon = Style().fg(*T.INFO).text(T.DOT_PEND)
+        label = Style().fg(*T.INFO).text("STATUS")
+        text = Style().fg(*T.FG_DIM).text(msg)
+        return f"\n  {icon} {label} {text}"
+
+    def render_post_processing(self, msg: str) -> str:
+        """Post-processing status."""
+        icon = Style().fg(*T.PRIMARY).text("\u270e")
+        label = Style().fg(*T.PRIMARY).text("SAVE")
+        text = Style().fg(*T.FG_DIM).text(msg)
+        return f"\n  {icon} {label} {text}"
+
+    def render_paused(self, run_id: str) -> str:
+        """Execution paused."""
+        lines = [""]
+        lines.append(UI.hr(self.width, T.HORIZ, T.WARNING))
+
+        icon = Style().fg(*T.WARNING).text("\u23f8")
+        label = Style.bold_warning("PAUSIERT")
+        lines.append(f"  {icon} {label}")
+
+        lines.append(UI.kv("run_id", run_id, 12))
+        lines.append(UI.kv("status", "waiting for human input", 12))
+
+        lines.append(UI.hr(self.width, T.HORIZ, T.WARNING))
+        return "\n".join(lines)
+
+    def render_max_iterations(self, answer: str) -> str:
+        """Max iterations reached."""
+        lines = [""]
+        lines.append(UI.hr(self.width, "\u2550", T.WARNING))
+
+        icon = Style().fg(*T.WARNING).text(T.WARN_G)
+        label = Style.bold_warning("MAX ITERATIONEN ERREICHT")
+        lines.append(f"  {icon} {label}")
+
+        lines.append("")
+        lines.append(f"  {Style().fg(*T.FG_DIM).text('Letzte Antwort:')}")
+
+        wrapped = textwrap.wrap(answer, width=self.width - 4)
+        for wline in wrapped:
+            lines.append(f"  {Style.fg_color(wline)}")
+
+        lines.append(UI.hr(self.width, "\u2550", T.WARNING))
+        return "\n".join(lines)
+
+    def render_error(self, error: str) -> str:
+        """Critical error."""
+        lines = [""]
+        lines.append(UI.hr(self.width, "\u2550", T.ERROR))
+
+        icon = Style().fg(*T.ERROR).text("\u2718")
+        label = Style.bold_error("FEHLER")
+        lines.append(f"  {icon} {label}")
+
+        lines.append("")
+        wrapped = textwrap.wrap(error, width=self.width - 4)
+        for wline in wrapped:
+            lines.append(f"  {Style().fg(*T.ERROR).text(wline)}")
+
+        lines.append(UI.hr(self.width, "\u2550", T.ERROR))
+        return "\n".join(lines)
+
+    def render_narrator(self, msg: str) -> str:
+        """Narrator thought stream -- inline overwrite."""
+        self._last_narrator = msg
+        icon = Style().fg(*T.FG_MUTED).text("\u270c")
+        text = Style().fg(*T.FG_DIM).text(msg[:80])
+        # \r for inline overwrite in terminal
+        return f"\r  {icon} {text}\r"
+
+    def render_done(self, success: bool, meta: dict[str, Any] | None = None) -> str:
+        """Execution complete."""
+        lines = [""]
+
+        if success:
+            icon = Style().fg(*T.SUCCESS).text(T.DOT_ON)
+            label = Style.bold_success("ABGESCHLOSSEN")
+            color = T.SUCCESS
+        else:
+            icon = Style().fg(*T.WARNING).text(T.WARN_G)
+            label = Style.bold_warning("ABGESCHLOSSEN (MIT WARNUNGEN)")
+            color = T.WARNING
+
+        lines.append(UI.hr(self.width, "\u2550", color))
+        lines.append(f"  {icon} {label}")
+
+        # Meta info
+        if meta:
+            lines.append("")
+            for k, v in meta.items():
+                lines.append(UI.kv(k, str(v), 16))
+
+        # Summary stats
+        lines.append("")
+        stats = (
+            Style.dim_color("iterations") + " " + Style.muted(T.VERT) + " " +
+            Style.fg_color(f"{self._iteration}/{self._max_iter}") + "   " +
+            Style.dim_color("tools") + " " + Style.muted(T.VERT) + " " +
+            Style.fg_color(str(self._tool_count)) + "   " +
+            Style.dim_color("elapsed") + " " + Style.muted(T.VERT) + " " +
+            Style.fg_color(self._elapsed())
+        )
+        lines.append(f"  {stats}")
+
+        lines.append(UI.hr(self.width, "\u2550", color))
+        return "\n".join(lines)
+
+    def render_user_input(self, query: str) -> str:
+        """User query display."""
+        lines = [""]
+        lines.append(UI.hr(self.width, T.HORIZ, T.FG_MUTED))
+
+        prompt = Style().fg(*T.SUCCESS).text(T.PROMPT)
+        text = Style().fg(*T.FG).text(query)
+        lines.append(f"{prompt} {text}")
+
+        lines.append(UI.hr(self.width, T.HORIZ, T.FG_MUTED))
+        return "\n".join(lines)
+
+    def render_agent_start(self) -> str:
+        """Agent response start frame."""
+        return self._header("ISAA", T.PRIMARY)
+
+    def render_agent_end(self) -> str:
+        """Agent response end frame."""
+        return self._footer(T.PRIMARY)
+
+
+
+# =============================================================================
+# DEMO / TEST -- Run this to see the output in action
+# =============================================================================
+
+if __name__ == "__main__":
+    import asyncio
+
+    # Mock a_stream for demonstration
+    async def mock_a_stream(**kwargs):
+        """Simulate agent streaming chunks."""
+        chunks = [
+            {"type": "status", "status_msg": "Initializing agent session..."},
+            {"type": "iteration_start", "iteration": 1, "max_iter": 5},
+            {"type": "content", "chunk": "I'll help you fetch your unread emails. "},
+            {"type": "content", "chunk": "Let me use the Gmail tool."},
+            {"type": "tool_start", "name": "gmail_search", "args": {"query": "is:unread", "max_results": 50, "days": 7}},
+            {"type": "status", "status_msg": "Querying Gmail API"},
+            {"type": "tool_result", "result": "Found 23 unread emails from the last 7 days in your Gmail (developer.hs2015@gmail.com).", "duration_ms": 1240},
+            {"type": "content", "chunk": "\nHere are the most recent unread emails:\n"},
+            {"type": "content", "chunk": "1. 2026-04-13 19:22 UTC\n   From: Corey Ganin <hello@returnmytime.com>\n   Subject: Build With AI - yes or no?\n\n"},
+            {"type": "content", "chunk": "2. 2026-04-13 04:25 UTC\n   From: GitHub <noreply@github.com>\n   Subject: Security alert for your repository\n\n"},
+            {"type": "content", "chunk": "3. 2026-04-12 22:10 UTC\n   From: AWS <notifications@aws.com>\n   Subject: Your monthly bill is ready\n\n"},
+            {"type": "iteration_start", "iteration": 2, "max_iter": 5},
+            {"type": "reasoning", "chunk": "The user asked for unread emails from last week. I found 23 total. I should present the most recent ones clearly."},
+            {"type": "content", "chunk": "I've found 23 unread emails from the last 7 days. Above are the 3 most recent ones."},
+            {"type": "post_processing", "status_msg": "Saving conversation to memory"},
+            {"type": "done", "success": True, "meta": {"tokens_used": 2847, "model": "claude-sonnet-4"}},
+        ]
+        for c in chunks:
+            yield c
+            await asyncio.sleep(0.05)  # Simulate streaming delay
+
+    # Mock self object
+    class MockSelf:
+        async def a_stream(self, **kwargs):
+            async for chunk in mock_a_stream(**kwargs):
+                yield chunk
+
+    mock_self = MockSelf()
+    from toolboxv2.mods.isaa.base.Agent.flow_agent import FlowAgent
+
+    async def demo():
+        print("\n" + UI.hr(80, "\u2550", T.PRIMARY))
+        print(Style().bold().fg(*T.PRIMARY).text("  ISAA TERMINAL CLI OUTPUT DEMO"))
+        print(Style().fg(*T.FG_DIM).text("  Pure Python - ANSI-only - Zero dependencies"))
+        print(UI.hr(80, "\u2550", T.PRIMARY))
+
+        count = 0
+        async for output in FlowAgent.a_stream_verbose(
+            mock_self,
+            query="fetch me my unread emails from last 1 week",
+            max_iterations=5
+        ):
+            print(output, end="", flush=True)
+            count += 1
+
+        print(f"\n\n{Style().fg(*T.FG_MUTED).text(f'--- rendered {count} chunks ---')}")
+
+    asyncio.run(demo())

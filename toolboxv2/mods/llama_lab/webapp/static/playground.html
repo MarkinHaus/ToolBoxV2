@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>llama_lab — Playground</title><link rel="stylesheet" href="/static/app.css">
+<style>
+  .pg{display:grid;grid-template-columns:240px 1fr;gap:1rem;height:calc(100vh - 120px)}
+  .tree{overflow:auto}.tree .fold{font-weight:700;cursor:pointer;margin-top:.4rem}
+  .tree .sess{padding:.15rem .3rem;border-radius:6px;cursor:pointer;display:flex;gap:.3rem;align-items:center}
+  .tree .sess:hover{background:var(--code)}.tree .sess.active{background:#e7ecff}
+  .chat{display:flex;flex-direction:column;min-height:0}
+  .msgs{flex:1;overflow:auto;padding:.5rem;background:#fff;border:2px solid var(--line);border-radius:10px}
+  .msg{margin:.5rem 0;padding:.5rem .7rem;border-radius:8px;max-width:85%;white-space:pre-wrap}
+  .msg.user{background:#e7ecff;margin-left:auto}.msg.assistant{background:var(--code)}
+  .tabbar button{background:#fff;color:var(--ink)}.tabbar button.on{background:var(--acc);color:#fff}
+  .composer{display:flex;gap:.4rem;margin-top:.6rem}
+  .composer textarea{flex:1;height:3.2rem;resize:vertical}
+  .live{display:none}.live.on{display:block}.chatwrap.off{display:none}
+  video{max-width:100%;border:2px solid var(--line);border-radius:8px;background:#000}
+  .pill{font-size:.7rem}
+</style></head><body>
+<div class="wrap" style="max-width:1200px">
+  <header class="top">
+    <h1>llama_lab · Playground</h1>
+    <nav><a href="/">Home</a><a href="/user/">Dashboard</a><a href="/admin/">Admin</a><a href="/docs/">Docs</a></nav>
+  </header>
+
+  <div class="row" style="margin-bottom:.8rem">
+    <select id="model" class="flex1"></select>
+    <input id="apikey" type="password" placeholder="API key (sk-…)" style="width:14rem">
+    <span id="caps" class="mut small"></span>
+    <span class="tabbar row right">
+      <button id="tabChat" class="on" onclick="setTab('chat')">Chat</button>
+      <button id="tabLive" onclick="setTab('live')">Live</button>
+    </span>
+  </div>
+
+  <div class="pg">
+    <div class="card tree">
+      <div class="row" style="margin-bottom:.4rem">
+        <button class="sm" onclick="newChat()">+ Chat</button>
+        <button class="sm ghost" onclick="newFolder()">+ Folder</button>
+      </div>
+      <div id="tree"></div>
+    </div>
+
+    <div>
+      <div class="chatwrap" id="chatwrap">
+        <div class="chat">
+          <div class="msgs card" id="msgs" style="box-shadow:none"></div>
+          <div class="composer">
+            <textarea id="input" placeholder="Message…  (Enter to send)"></textarea>
+            <div class="grid">
+              <button onclick="send()">Send</button>
+              <span class="row">
+                <button class="sm ghost" id="imgBtn" title="image" onclick="img.click()" disabled>🖼</button>
+                <button class="sm ghost" id="audBtn" title="audio" onclick="aud.click()" disabled>🎙</button>
+              </span>
+            </div>
+          </div>
+          <div id="attach" class="small mut"></div>
+          <input id="img" type="file" accept="image/*" hidden>
+          <input id="aud" type="file" accept="audio/*" hidden>
+        </div>
+      </div>
+
+      <div class="card live" id="liveBox">
+        <h2>Live (omni)</h2>
+        <div class="row" style="margin-bottom:.6rem">
+          <button id="liveBtn" onclick="toggleLive()">Start session</button>
+          <label class="small"><input type="checkbox" id="useCam"> webcam</label>
+          <label class="small"><input type="checkbox" id="useScreen"> screen</label>
+          <span id="liveState" class="mut small">idle</span>
+        </div>
+        <video id="cam" autoplay muted playsinline style="display:none"></video>
+        <div id="liveLog" class="small" style="margin-top:.5rem;max-height:240px;overflow:auto"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
+<script src="/static/live-api.js"></script>
+<script>
+const $=s=>document.querySelector(s);
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
+function key(){return $('#apikey').value.trim();}
+$('#apikey').value=localStorage.getItem('ll_key')||'';
+$('#apikey').addEventListener('change',()=>localStorage.setItem('ll_key',key()));
+
+let MODELS=[],curSession={id:null,title:'New chat',folder_id:null,messages:[]},pending=[];
+
+async function api(p,o={}){o.credentials='include';o.headers={'Content-Type':'application/json',...(o.headers||{})};
+  const r=await fetch(p,o);return r.json().catch(()=>({}));}
+
+// ---- models + capabilities
+async function loadModels(){const d=await api('/user/api/models');MODELS=d.models||[];
+  const sel=$('#model');sel.innerHTML=MODELS.map(m=>`<option value="${m.name}">${m.name} [${m.type}]</option>`).join('')
+    ||'<option value="">no models loaded</option>';updateCaps();}
+function curModel(){return MODELS.find(m=>m.name===$('#model').value);}
+function updateCaps(){const m=curModel();const c=(m&&m.capabilities)||{};
+  $('#imgBtn').disabled=!c.vision;$('#audBtn').disabled=!c.audio;
+  $('#caps').textContent=m?('caps: '+Object.entries(c).filter(([,v])=>v).map(([k])=>k).join(', ')):'';}
+$('#model').addEventListener('change',updateCaps);
+
+// ---- file tree
+async function loadTree(){const d=await api('/user/api/tree');const t=$('#tree');t.innerHTML='';
+  const folders=d.folders||[],sessions=d.sessions||[];
+  const root=sessions.filter(s=>!s.folder_id);
+  t.appendChild(renderSessions(root));
+  folders.forEach(f=>{const h=document.createElement('div');h.className='fold';h.textContent='📁 '+f.name;
+    const body=renderSessions(sessions.filter(s=>s.folder_id===f.id));
+    h.onclick=()=>body.style.display=body.style.display==='none'?'':'none';
+    t.appendChild(h);t.appendChild(body);});
+}
+function renderSessions(list){const d=document.createElement('div');
+  list.forEach(s=>{const e=document.createElement('div');e.className='sess'+(s.id===curSession.id?' active':'');
+    e.innerHTML=`<span class="flex1">💬 ${s.title||'chat'}</span><button class="sm bad" style="box-shadow:none">✕</button>`;
+    e.querySelector('span').onclick=()=>openSession(s.id);
+    e.querySelector('button').onclick=(ev)=>{ev.stopPropagation();delSession(s.id);};
+    d.appendChild(e);});
+  if(!list.length){const m=document.createElement('div');m.className='mut small';m.textContent='—';d.appendChild(m);}
+  return d;}
+async function newFolder(){const name=prompt('Folder name:','new');if(!name)return;
+  await api('/user/api/folders',{method:'POST',body:JSON.stringify({name})});loadTree();}
+function newChat(){curSession={id:null,title:'New chat',folder_id:null,messages:[]};renderMsgs();loadTree();}
+async function openSession(id){const d=await api('/user/api/sessions/'+id);if(d.error)return;
+  curSession={id:d.id,title:d.title,folder_id:d.folder_id,messages:d.messages||[]};renderMsgs();loadTree();}
+async function delSession(id){if(!confirm('Delete chat?'))return;await api('/user/api/sessions/'+id,{method:'DELETE'});
+  if(curSession.id===id)newChat();else loadTree();}
+async function saveSession(){const body={id:curSession.id,title:curSession.title,
+  folder_id:curSession.folder_id,messages:curSession.messages};
+  const d=await api('/user/api/sessions',{method:'POST',body:JSON.stringify(body)});
+  if(d.id&&!curSession.id){curSession.id=d.id;loadTree();}}
+
+// ---- chat
+function renderMsgs(){const m=$('#msgs');m.innerHTML='';
+  curSession.messages.forEach(msg=>{const txt=typeof msg.content==='string'?msg.content
+    :(msg.content||[]).map(p=>p.type==='text'?p.text:`[${p.type}]`).join(' ');
+    m.insertAdjacentHTML('beforeend',`<div class="msg ${msg.role}">${escapeHtml(txt)}</div>`);});
+  m.scrollTop=m.scrollHeight;}
+function escapeHtml(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+$('#img').onchange=e=>attachFile(e.target.files[0],'image_url');
+$('#aud').onchange=e=>attachFile(e.target.files[0],'input_audio');
+function attachFile(f,kind){if(!f)return;const r=new FileReader();
+  r.onload=()=>{pending.push(kind==='image_url'?{type:'image_url',image_url:{url:r.result}}
+    :{type:'input_audio',input_audio:{data:r.result}});
+    $('#attach').textContent=pending.length+' attachment(s)';};r.readAsDataURL(f);}
+
+$('#input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
+async function send(){
+  if(!key())return toast('paste your API key first');
+  const text=$('#input').value.trim();if(!text&&!pending.length)return;
+  const content=pending.length?[{type:'text',text},...pending]:text;
+  curSession.messages.push({role:'user',content});pending=[];$('#attach').textContent='';
+  $('#input').value='';if(curSession.title==='New chat'&&text)curSession.title=text.slice(0,40);
+  renderMsgs();
+  const assistant={role:'assistant',content:''};curSession.messages.push(assistant);
+  const m=$('#msgs');const el=document.createElement('div');el.className='msg assistant';m.appendChild(el);
+  try{
+    const r=await fetch('/v1/chat/completions',{method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+key()},
+      body:JSON.stringify({model:$('#model').value||'auto',stream:true,messages:curSession.messages.slice(0,-1)})});
+    if(!r.ok){const e=await r.json().catch(()=>({}));el.textContent='[error] '+(e.error?.message||r.status);return;}
+    const reader=r.body.getReader();const dec=new TextDecoder();let buf='';
+    while(true){const{done,value}=await reader.read();if(done)break;
+      buf+=dec.decode(value,{stream:true});const lines=buf.split('\n');buf=lines.pop();
+      for(const line of lines){if(!line.startsWith('data: '))continue;const data=line.slice(6);
+        if(data==='[DONE]')continue;try{const j=JSON.parse(data);
+          const tok=j.choices?.[0]?.delta?.content||'';assistant.content+=tok;el.textContent=assistant.content;
+          m.scrollTop=m.scrollHeight;}catch{}}}
+  }catch(err){el.textContent='[network error] '+err.message;}
+  saveSession();
+}
+
+// ---- tabs
+function setTab(t){const chat=t==='chat';
+  $('#tabChat').classList.toggle('on',chat);$('#tabLive').classList.toggle('on',!chat);
+  $('#chatwrap').classList.toggle('off',!chat);$('#liveBox').classList.toggle('on',!chat);}
+
+// ---- live (omni) — uses live-api.js LiveSession
+let liveSession=null,recorder=null,camStream=null;
+function liveLog(m){const b=$('#liveLog');b.insertAdjacentHTML('beforeend',`<div>${escapeHtml(m)}</div>`);b.scrollTop=b.scrollHeight;}
+async function toggleLive(){
+  if(liveSession){return stopLive();}
+  if(!key())return toast('paste your API key first');
+  $('#liveState').textContent='opening…';
+  const s=await api('/v1/audio/live',{method:'POST',
+    headers:{'Authorization':'Bearer '+key()},body:JSON.stringify({model:$('#model').value})});
+  if(s.error){$('#liveState').textContent='error';return toast(s.error.message||'live error');}
+  const wsBase=(location.protocol==='https:'?'wss://':'ws://')+location.host;
+  try{
+    liveSession=new LiveSession(s.session_token,wsBase+s.ws_path,null,key());
+    liveSession.on&&liveSession.on('message',d=>liveLog('‹ '+JSON.stringify(d)));
+    liveSession.on&&liveSession.on('text',t=>liveLog('text: '+t));
+    await liveSession.connect();
+    $('#liveBtn').textContent='Stop session';$('#liveState').textContent='connected';
+    if($('#useCam').checked)await startCam(false);
+    if($('#useScreen').checked)await startCam(true);
+    await startMic();
+  }catch(e){liveLog('connect failed: '+e.message);$('#liveState').textContent='failed';liveSession=null;}
+}
+async function startMic(){
+  try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    if(window.AudioRecorder){recorder=new AudioRecorder({onChunk:(buf,tr,fin)=>liveSession&&liveSession.sendAudio&&liveSession.sendAudio(buf,tr,fin)});
+      recorder.start&&recorder.start(stream);}
+    liveLog('mic on');}catch(e){liveLog('mic denied: '+e.message);}
+}
+async function startCam(screen){
+  try{camStream=await navigator.mediaDevices[screen?'getDisplayMedia':'getUserMedia']({video:true});
+    const v=$('#cam');v.style.display='';v.srcObject=camStream;liveLog((screen?'screen':'webcam')+' on');
+  }catch(e){liveLog('video denied: '+e.message);}
+}
+function stopLive(){
+  try{recorder&&recorder.stop&&recorder.stop();}catch{}
+  try{camStream&&camStream.getTracks().forEach(t=>t.stop());}catch{}
+  try{liveSession&&liveSession.disconnect&&liveSession.disconnect();}catch{}
+  liveSession=recorder=camStream=null;$('#cam').style.display='none';
+  $('#liveBtn').textContent='Start session';$('#liveState').textContent='idle';
+}
+
+loadModels();loadTree();newChat();
+</script>
+</body></html>

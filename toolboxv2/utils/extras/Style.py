@@ -584,6 +584,7 @@ class SpinnerManager(metaclass=Singleton):
         self._lock = threading.Lock()
         self._render_thread = None
         self._should_run = False
+        self.enabled = True
         try:
             signal.signal(signal.SIGINT, self._signal_handler)
         except ValueError:
@@ -609,6 +610,8 @@ class SpinnerManager(metaclass=Singleton):
 
     def register_spinner(self, spinner):
         """Register a new spinner."""
+        if not self.enabled:
+            return
         with self._lock:
             # First spinner defines the rendering line.
             if not self._spinners:
@@ -632,7 +635,7 @@ class SpinnerManager(metaclass=Singleton):
     def _render_loop(self):
         """Continuous rendering loop for all active spinners."""
         while self._should_run:
-            if not self._spinners:
+            if not self.enabled or not self._spinners:
                 self._should_run = False
                 break
 
@@ -740,6 +743,8 @@ class Spinner:
 
     def __enter__(self):
         """Start the spinner."""
+        if not self.manager.enabled:
+            return self
         self.running = True
         self._start_time = time.time()
         self.manager.register_spinner(self)

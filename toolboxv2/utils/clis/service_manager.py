@@ -46,7 +46,8 @@ class ServiceDefinition:
     module: str  # z.B. "toolboxv2.utils.clis.cli_worker_manager"
     entry_point: str  # z.B. "main"
     is_async: bool = False
-    runner_key: Optional[str] = None  # Falls anders als name
+    runner_key: Optional[str] = None  # gesetzt → tb-Runner; None → Modul direkt via module/entry_point
+    default_args: Optional[List[str]] = None  # Registry-Defaults, wenn keine config-args
 
 
 class ServiceRegistry:
@@ -69,14 +70,6 @@ class ServiceRegistry:
     def _register_builtin_services(self) -> None:
         """Registriere alle Built-in Services"""
         # Core Services
-        self.register(ServiceDefinition(
-            name="custom",
-            description="Running a custom service",
-            category="core",
-            module="toolboxv2.__main__",
-            entry_point="main_runner",
-            runner_key="custom"
-        ))
         self.register(ServiceDefinition(
             name="workers",
             description="Worker-Orchestrierung (HTTP, WS, Broker)",
@@ -101,7 +94,7 @@ class ServiceRegistry:
             module="toolboxv2.flows.isaa.icli",
             entry_point="run",
             is_async=True,
-            runner_key="custom",
+            default_args=["--startup"],
         ))
         #self.register(ServiceDefinition(
         #    name="user",
@@ -310,10 +303,13 @@ class ServiceManager:
                 error="Already running"
             )
 
-        # Determine args to use
+        svc_def = ServiceRegistry().get(name)
+
+        # Determine args: config override → registry default_args → none
         if args is None:
-            # Use saved args from config
             args = self.get_service_args(name)
+            if not args and svc_def and svc_def.default_args:
+                args = list(svc_def.default_args)
         elif save_args and args:
             # Save new args for future restarts
             self.configure_service(name, args=args)
@@ -322,11 +318,40 @@ class ServiceManager:
         # The built-in "custom" slot and any config-flagged custom service run
         # `tb <args>` (the user defines args); registered services run `tb <name>`.
         cfg = self.load_config().get("services", {}).get(name, {})
-        is_custom = name == "custom" or cfg.get("custom", False)
-        if is_custom:
-            cmd = [sys.executable, "-m", "toolboxv2"] + (args or [])
+
+        runner = svc_def.runner_key if svc_def else name
+        is_custom = runner == "custom" or cfg.get("custom", False)
+        print(cfg)
+
+        from platform import system
+        if system() == "Windows":
+            # Ersetze python.exe durch pythonw.exe, um Fenster vollständig zu unterdrücken
+            exe_name = os.path.basename(sys.executable)
+            if exe_name.lower().startswith("python") and not exe_name.lower().startswith("pythonw"):
+                category = svc_def.category if svc_def else "infrastructure"
+                new_exe = exe_name.lower().replace("python", "pythonw" if category == "infrastructure" else "python")
+                executable = os.path.join(os.path.dirname(sys.executable), new_exe)
+                if not os.path.exists(executable):
+                    executable = sys.executable
+            else:
+                executable = sys.executable
+
         else:
-            cmd = [sys.executable, "-m", "toolboxv2", name] + (args or [])
+            executable = sys.executable
+
+        # Dispatch: runner_key gesetzt → tb-Runner; None → Modul direkt in Python
+        if svc_def is not None and svc_def.runner_key is None and svc_def.module:
+            entry = svc_def.entry_point
+            head = "import sys, asyncio" if svc_def.is_async else "import sys"
+            call = f"asyncio.run({entry}())" if svc_def.is_async else f"{entry}()"
+            code = (
+                f"{head}; sys.argv = [sys.argv[0]] + {list(args or [])!r}; "
+                f"from {svc_def.module} import {entry}; {call}"
+            )
+            cmd = [executable, "-c", code]
+        else:
+            runner = svc_def.runner_key if svc_def else name
+            cmd = [executable, "-m", "toolboxv2", runner] + (args or [])
 
         if IS_WINDOWS:
             # Windows: CREATE_NO_WINDOW für headless
@@ -341,6 +366,7 @@ class ServiceManager:
             }
 
         try:
+            print(cmd)
             process = subprocess.Popen(cmd, **kwargs)
             pid = process.pid
 
@@ -459,7 +485,7 @@ class ServiceManager:
             "auto_start": cfg.get("auto_start", False),
             "auto_restart": cfg.get("auto_restart", False),
             "category": svc_def.category if svc_def else "custom",
-            "description": svc_def.description if svc_def else "Custom service",
+            "description": svc_def.description if svc_def else cfg.get("description", "Custom service"),
             "module": svc_def.module if svc_def else None,
             "entry_point": svc_def.entry_point if svc_def else None,
             "is_async": svc_def.is_async if svc_def else False,
@@ -747,8 +773,11 @@ def _cmd_config(manager: ServiceManager, args) -> None:
         if service_args:
             print_status(f"Setting args: {' '.join(service_args)}", "info")
 
+    custom = (args.custom == "true") if getattr(args, "custom", None) else None
+    description = getattr(args, "description", None)
     manager.configure_service(args.name, auto_start=auto_start,
-                              auto_restart=auto_restart, args=service_args)
+                              auto_restart=auto_restart, args=service_args,
+                              custom=custom, description=description)
     print_status(f"Configuration for {args.name} updated", "success")
 
 

@@ -42,6 +42,13 @@ Du hast VOLLEN Zugriff auf das ToolBoxV2-System.
 
 3. **Streaming**: Du arbeitest im Streaming-Modus. Der User sieht jeden Schritt live.
 
+## Strikte Validierung & Caching-Fragen ("scashen")
+
+- **Absolutes Raten- und Assoziationsverbot**: Es ist dir absolut verboten, Vermutungen anzustellen, zu spekulieren oder freie Assoziationen zu bilden. Wenn du etwas nicht weißt, suche danach, statt zu raten.
+- **Kein blindes Vertrauen**: Vertraue niemals blind einer einzelnen Quelle oder Dokumentation. Schaue immer eine Ebene tiefer und überprüfe die Logik direkt im Quellcode, bevor du eine Antwort formulierst.
+- **Fokus und Tiefe**: Analysiere Mechanismen präzise und gründlich, um exakt zu erklären, wie sie funktionieren. Achte jedoch darauf, dich nicht in unwichtigen Details zu verlieren.
+- **Umgang mit Caching-Fragen ("scashen")**: Wenn Fragen dazu gestellt werden, wie das Caching ("scashen") im System funktioniert, musst du die genaue Funktionsweise im Code analysieren und absolut präzise erklären. Jede Aussage dazu muss vollständig aus den echten Dokumenten und dem Code validiert sein.
+
 ## Architektur-Wissen
 
 ### Worker-System
@@ -686,31 +693,31 @@ def _build_style():
 
 async def _print_stream(agent, text: str, session_id: str = "admin"):
     """Run agent with a_stream_verbose and print chunks live."""
-    if False:
-        res = await agent.a_run(
-            query=text,
-            session_id=session_id,
-            human_online=True
-        )
 
-        print()
-        print(res)
-        return
+    from toolboxv2.utils.extras.Style import SpinnerManager
+    SpinnerManager().enabled = False
 
     try:
-        async for chunk in agent.a_stream_verbose(
+
+        count = 0
+        async for output in agent.a_stream_verbose(
             query=text,
             session_id=session_id,
             human_online=True,
-            max_iterations=50
+            max_iterations=75,
+            term_width=os.get_terminal_size().columns - 5
         ):
-            if chunk:
-                print(chunk, end="", flush=True)
-        print()  # final newline
+            print(output, end="", flush=True)
+            count += 1
+
+        print(f"\n\n{Style.GREY(f'--- rendered {count} chunks ---')}")
+
+        SpinnerManager().enabled = True
     except Exception as e:
         print(Style.RED(f"\nAgent error: {e}"))
         import traceback
         traceback.print_exc()
+
 
 
 # ---------------------------------------------------------------------------
@@ -732,6 +739,8 @@ async def run(app: App, args=None):
         print(Style.RED("ERROR: ISAA module not loaded!"))
         print("Start with: python -m toolboxv2 -m isaa -f toolbox_admin")
         return
+
+    isaa.stuf = True # mute isaa prints
 
     print(Style.YELLOW("Initializing ISAA..."))
     await isaa.init_isaa(name="tb_admin")
@@ -818,7 +827,7 @@ async def run(app: App, args=None):
         if not text:
             continue
 
-        if text.lower() in ("exit", "quit", "/quit"):
+        if text.lower() in ("exit", "quit", "/quit", "/q", "/e"):
             print(Style.YELLOW("Bye!"))
             break
 

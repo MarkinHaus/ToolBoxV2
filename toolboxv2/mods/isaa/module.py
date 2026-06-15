@@ -2556,7 +2556,7 @@ def shell_tool_function(
     session_id: Optional[str] = None,
     user_input: Optional[str] = None,
     new_session: bool = False,
-    timeout: float = 2.0,
+    timeout: float = 6.0,
 ) -> str:
     r"""
     Shell-Tool mit Session-Support und verbessertem Error-Handling.
