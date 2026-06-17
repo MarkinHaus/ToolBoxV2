@@ -74,7 +74,7 @@ from toolboxv2.mods.isaa.base.audio_io.audio_live import (
 )
 from toolboxv2.mods.isaa.base.audio_io.omni import (
     OmniSession, JobManager, VoiceModeConfig,
-    make_agent_tools, make_vfs_peek_tools,
+    make_agent_tools, make_vfs_peek_tools, make_chat_view_tools,
     StubOmniBackend, BlobStateStore, make_world_model_tools, OMNI_SYSTEM_INSTRUCTION,
 )
 from toolboxv2.mods.isaa.base.audio_io.audio_recorder import LocalMicRecorder
@@ -9850,9 +9850,9 @@ class ISAA_Host:
                     def _speak_when_done(fut):
                         try:
                             txt = exc.result_text or ""
-                            b = host._omni_session.backend if host._omni_session else None
-                            if b and txt and exc.status == "completed":
-                                asyncio.create_task(b.send_text(
+                            sess = host._omni_session
+                            if sess and txt and exc.status == "completed":
+                                asyncio.create_task(sess.send_user_text(
                                     f"[system] Task '{task_id}' finished. Tell the user briefly "
                                     f"and summarize:\n{txt[:1500]}"
                                 ))
@@ -10087,6 +10087,24 @@ class ISAA_Host:
                 )
                 agent.add_tools(self._omni_session.compress_tool)
 
+                # ponytail: let the Omni model READ the chat it rides on —
+                # running chat executions + recent history (history holds the
+                # latest finished results). Read-only providers, no shared registry.
+                def _chat_history_provider(n: int) -> list[dict]:
+                    sm = getattr(agent, "session_manager", None)
+                    sid = getattr(agent, "active_session", None)
+                    if sm is None or sid is None:
+                        return []
+                    sess = sm.get(sid)
+                    if sess is None:
+                        return []
+                    return sess.get_history_for_llm(n)
+
+                agent.add_tools(make_chat_view_tools(
+                    executions_provider=agent.list_executions,
+                    history_provider=_chat_history_provider,
+                ))
+
                 self._omni_session.is_active = True
                 self._omni_in_text = self._omni_out_text = ""
                 self._omni_in_levels.clear()
@@ -10147,10 +10165,10 @@ class ISAA_Host:
         label = state.get("label", state.get("job_id"))
         result = state.get("result", "")
         print_status(f"[omni] {label} → {state.get('status')}", "info")
-        b = self._omni_session.backend if self._omni_session else None
-        if b:
+        sess = self._omni_session
+        if sess:
             try:
-                await b.send_text(
+                await sess.send_user_text(
                     f"[system] Task '{label}' finished. Tell the user briefly and "
                     f"summarize:\n{result}"
                 )

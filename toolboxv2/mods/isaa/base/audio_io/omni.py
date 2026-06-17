@@ -758,9 +758,29 @@ def make_agent_tools(
             return "<running>" if st == "running" else f"Error: unknown job {job_id!r}"
         return res
 
+    # ponytail: track which finished jobs agent_status already surfaced, so a
+    # newly-finished delegation is reported ONCE — not re-listed as "just done"
+    # on every later completion.
+    reported: set[str] = set()
+
     async def agent_status() -> str:
-        """Mini live-state of all running/finished delegated jobs as JSON."""
-        return json.dumps(jobs.live_state(), ensure_ascii=False)
+        """Live-state of delegated jobs as JSON. Running jobs always shown;
+        each finished job is flagged 'finished_new' exactly once, then
+        'finished' on later calls — so the model announces it only once."""
+        out = []
+        for st in jobs.live_state():
+            jid = st["job_id"]
+            if st["status"] == "running":
+                out.append(st)
+                continue
+            # finished/failed
+            if jid in reported:
+                st = {**st, "status": f"{st['status']} (already reported)"}
+            else:
+                reported.add(jid)
+                st = {**st, "status": f"{st['status']} (new)"}
+            out.append(st)
+        return json.dumps(out, ensure_ascii=False)
 
     async def agent_progress(job_id: str) -> str:
         """Show a delegate's CURRENT thinking: last reasoning/narrator, current
@@ -839,6 +859,62 @@ def make_agent_tools(
                 "job_id, query). Cancels the old run if active; returns a new job_id."
             ),
             "category": ["agent", "control"],
+        },
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Chat-view tools — read-only window into the ICLI chat the Omni session rides on
+# ---------------------------------------------------------------------------
+
+def make_chat_view_tools(
+    executions_provider: Callable[[], list[dict]],
+    history_provider: Callable[[int], list[dict]],
+) -> list[dict]:
+    """Read-only tools so the Omni model can see the CHAT it is part of:
+    currently-running chat executions and recent chat history (which already
+    contains the last finished results as assistant turns).
+
+    ponytail: read, don't share. No shared JobManager/registry refactor — the
+    Omni model just *reads* the chat's existing state through two thin providers
+    injected by the host (duck-typed; this module imports nothing from toolboxv2).
+    """
+
+    async def chat_executions() -> str:
+        """List the chat's currently running/active executions (JSON). These are
+        tasks started in the text chat, separate from your own delegate() jobs."""
+        try:
+            return json.dumps(executions_provider() or [], ensure_ascii=False, default=str)
+        except Exception as e:  # noqa: BLE001
+            return f"Error: chat_executions failed: {e}"
+
+    async def chat_history(last_n: int = 10) -> str:
+        """Last N messages of the chat conversation (JSON), most recent last.
+        Includes the latest finished results (assistant answers)."""
+        try:
+            return json.dumps(history_provider(last_n) or [], ensure_ascii=False, default=str)
+        except Exception as e:  # noqa: BLE001
+            return f"Error: chat_history failed: {e}"
+
+    return [
+        {
+            "tool_func": chat_executions,
+            "name": "chat_executions",
+            "description": (
+                "Read-only: tasks currently running in the text chat (JSON). "
+                "Separate from your own delegate() jobs."
+            ),
+            "category": ["chat", "read"],
+        },
+        {
+            "tool_func": chat_history,
+            "name": "chat_history",
+            "description": (
+                "Read-only: last N chat messages (JSON), incl. the latest "
+                "finished results. Call before answering questions about what "
+                "the user did in the text chat."
+            ),
+            "category": ["chat", "read"],
         },
     ]
 
@@ -1421,6 +1497,10 @@ class OmniSession:
         self._tool_specs: list[dict] = []
         self._turn_buf: list[tuple[str, str]] = []  # (source, text) within current turn
         self._restarting = False
+        # ponytail: serialize text inputs. While the agent is speaking, queue
+        # incoming text (user + system announcements) and flush as ONE combined
+        # message on TURN_END — otherwise two send_text calls overlap mid-speech.
+        self._pending_text: list[str] = []
 
         # phase hook
         self.on_phase = on_phase or PhaseCallback()
@@ -1713,6 +1793,29 @@ class OmniSession:
             logger.warning("OmniSession audio pump stopping: %s", e)
             self._running = False
 
+    async def send_user_text(self, text: str) -> None:
+        """Single serialized entry for ALL injected text (user input + system
+        announcements). While the agent is speaking, queue it; the queued text
+        is flushed as one combined message on TURN_END. Routes everything through
+        one place so two inputs can never overlap the model mid-speech."""
+        if not text:
+            return
+        if self._agent_speaking:
+            self._pending_text.append(text)
+            logger.debug("OmniSession: queued text while speaking (%d pending)",
+                         len(self._pending_text))
+            return
+        await self.backend.send_text(text)
+
+    async def _flush_pending_text(self) -> None:
+        """Send everything queued during the last turn as ONE message."""
+        if not self._pending_text:
+            return
+        combined = "\n".join(self._pending_text)
+        self._pending_text.clear()
+        logger.debug("OmniSession: flushing %d queued text input(s)", combined.count("\n") + 1)
+        await self.backend.send_text(combined)
+
     async def _consume_events(self) -> None:
         try:
             async for ev in self.backend.events():
@@ -1758,7 +1861,7 @@ class OmniSession:
             f"Briefly tell the user it's done and summarize the result:\n{result[:1500]}"
         )
         try:
-            await self.backend.send_text(note)
+            await self.send_user_text(note)
         except Exception as e:  # noqa: BLE001
             logger.warning("OmniSession: announce send_text failed: %s", e)
 
@@ -1848,6 +1951,8 @@ class OmniSession:
                 asyncio.ensure_future(self._do_restart(self.restart_compress))
             await self._flush_audio()
             self._thinking = False
+            # ponytail: turn done -> deliver any text queued while speaking as one
+            await self._flush_pending_text()
             # playback runs async in the player; hold AUDIO_PLAYING until it drains
             if self._agent_speaking:
                 if self._playback_task is None or self._playback_task.done():
@@ -2014,12 +2119,16 @@ class OmniSession:
         try:
             logger.info("OmniSession: restarting session (turns=%d, compress=%s)",
                         self.turns, compress)
-            if self._event_task is not None and not self._event_task.done():
-                self._event_task.cancel()
+            # ponytail: compress on the LIVE backend, swap only when seed is ready.
+            # Cancelling events / stopping the backend before _compress made the
+            # session go silent for the whole summary LLM call (the freeze).
             if compress:
                 await self._compress(merge_old=True)
             await self._archive_session()
             seed = self._build_seed_text()
+            # seed ready -> now tear down the old session and bring up the fresh one
+            if self._event_task is not None and not self._event_task.done():
+                self._event_task.cancel()
             try:
                 await self.backend.stop()
             except Exception as e:  # noqa: BLE001
