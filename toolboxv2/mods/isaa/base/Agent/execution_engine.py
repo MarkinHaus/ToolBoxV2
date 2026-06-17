@@ -701,7 +701,7 @@ class ExecutionContext:
         if not self.dynamic_tools:
             return None
 
-        sorted_tools = sorted(self.dynamic_tools, key=lambda t: t.relevance_score)
+        sorted_tools = sorted(self.dynamic_tools, key=lambda t: t.relevance_score, reverse=True)
         return sorted_tools[0].name if sorted_tools else None
 
     def get_majority_category(self) -> Optional[str]:
@@ -4267,7 +4267,7 @@ BEISPIELE:
                                 AgentPhase.COMPRESSING,
                                 f"Partial compression ({majority_category} -> {new_category})",
                             )
-
+            if len(ctx.dynamic_tools) > ctx.max_dynamic_tools:
                 # Remove least relevant tool
                 least_relevant = ctx.get_least_relevant_tool()
                 if least_relevant:
@@ -4302,11 +4302,13 @@ BEISPIELE:
 
         for t in all_tools:
             # Filter by category
-            match = True
+            match = False
             if category:
                 t_cats = t.category if isinstance(t.category, list) else [t.category]
                 if not any(category.lower() in str(c).lower() for c in t_cats if c):
                     match = False
+                else:
+                    match = True
 
             if match:
                 desc = t.description.split("\n")[0] if t.description else "No description"
@@ -4320,7 +4322,7 @@ BEISPIELE:
                 )
                 lines.append(f"- {t.name}: {desc} [{cats}]")
 
-        if not lines:
+        if category and not lines:
             return "Keine Tools für diese Kategorie gefunden."
 
         # List available categories at the end

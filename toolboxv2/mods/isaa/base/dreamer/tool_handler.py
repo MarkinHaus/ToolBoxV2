@@ -178,10 +178,6 @@ class DreamerToolHandler:
                 return self.handle_extract_memories(
                     list(payload.get("memories", []) or []),
                 )
-            if action == "create_memories":
-                return self.handle_extract_memories(
-                    list(payload.get("memories", []) or []),
-                )
             if action == "write_taskmap_guide":
                 return self.handle_write_taskmap_guide(
                     task_type=str(payload.get("task_type", "")),
@@ -223,7 +219,7 @@ class DreamerToolHandler:
 
         Avoids the user having to remember three separate calls.
         """
-        scope = (payload.get("scope") or "all").lower()
+        scope = str((payload.get("scope") or "all")).lower()
         out = {}
         if scope in ("all", "skills"):
             out["skills"] = self.handle_cleanup_skills()
@@ -1105,7 +1101,14 @@ class DreamerToolHandler:
     # ═══════════════════════════════════════════════════════════════
 
     def handle_extract_rules(self, rules_data: List[Dict]) -> str:
+
+        if isinstance(rules_data, dict):
+            rules_data = [rules_data]
+        elif not isinstance(rules_data, list):
+            return json.dumps({"success": False, "error": "rules must be list or dict"})
+
         created = []
+
         for rd in rules_data:
             rule_id = f"rule_{uuid.uuid4().hex[:8]}"
 

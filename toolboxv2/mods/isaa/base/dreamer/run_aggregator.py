@@ -414,6 +414,10 @@ class RunAggregator:
             "last_updated": 0, "entry_count": 0, "is_new": True,
         }
         n = int(idx.get("entry_count", 0))
+
+        if m.total_iterations < 0 and n < 0:
+            return None
+
         perf = float(idx.get("performance", 0.0))
         avg_trace = float(idx.get("avg_trace_length", 0.0))
         new_perf = (perf * n + (1.0 if m.success else 0.0)) / (n + 1)

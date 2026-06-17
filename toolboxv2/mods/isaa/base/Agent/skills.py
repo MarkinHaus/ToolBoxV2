@@ -591,6 +591,77 @@ class SkillIOAnthropicFormat:
 # =============================================================================
 # CONVENIENCE: Direct integration
 # =============================================================================
+import os, json, tempfile, urllib.request
+from pathlib import Path
+from urllib.parse import urlparse, unquote
+
+
+def _gh_headers():
+    h = {"User-Agent": "ToolBoxV2-skills", "Accept": "application/vnd.github+json"}
+    tok = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if tok:
+        h["Authorization"] = f"Bearer {tok}"
+    return h
+
+
+def _http_get(url, headers=None):
+    req = urllib.request.Request(url, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return r.read()
+
+
+def _parse_github_url(url):
+    """-> (owner, repo, ref|None, subpath) for github.com (tree/blob) or raw URLs."""
+    p = urlparse(url)
+    host = p.netloc.lower()
+    parts = [unquote(x) for x in p.path.strip("/").split("/") if x]
+    if host == "github.com" and len(parts) >= 2:
+        owner, repo = parts[0], parts[1]
+        if len(parts) <= 2:                       # repo root, default branch
+            return owner, repo, None, ""
+        ref = parts[3] if len(parts) > 3 else None  # parts[2] = tree|blob
+        return owner, repo, ref, "/".join(parts[4:])
+    if host in ("raw.githubusercontent.com", "raw.github.com") and len(parts) >= 3:
+        owner, repo, rest = parts[0], parts[1], parts[2:]
+        if len(rest) >= 2 and rest[0] == "refs" and rest[1] in ("heads", "tags"):
+            ref, sub = (rest[2] if len(rest) > 2 else None), "/".join(rest[3:])
+        else:
+            ref, sub = rest[0], "/".join(rest[1:])
+        return owner, repo, ref, sub
+    raise ValueError(f"Unsupported skill URL: {url}")
+
+
+def _gh_contents(owner, repo, ref, sub):
+    api = f"https://api.github.com/repos/{owner}/{repo}/contents/{sub.strip('/')}"
+    if ref:
+        api += f"?ref={ref}"
+    return json.loads(_http_get(api, _gh_headers()).decode("utf-8"))
+
+
+def _download_dir(owner, repo, ref, listing, dest: Path):
+    dest.mkdir(parents=True, exist_ok=True)
+    for e in listing:
+        target = dest / e["name"]
+        if e["type"] == "dir":
+            _download_dir(owner, repo, ref, _gh_contents(owner, repo, ref, e["path"]), target)
+        else:
+            target.write_bytes(_http_get(e["download_url"]))
+
+
+def _resolve_remote_skill(url) -> Path:
+    owner, repo, ref, sub = _parse_github_url(url)
+    meta = _gh_contents(owner, repo, ref, sub)          # dict=file, list=dir
+    tmp = Path(tempfile.mkdtemp(prefix="tb_skill_"))
+    if isinstance(meta, dict):                           # single file (.skill / SKILL.md)
+        out = tmp / meta["name"]
+        out.write_bytes(_http_get(meta["download_url"]))
+        return out
+    out = tmp / (sub.rsplit("/", 1)[-1] or repo)        # directory
+    _download_dir(owner, repo, ref, meta, out)
+    return out
+
+
+
 
 def add_anthropic_skill_io(skills_manager: 'SkillsManager'):
     """
@@ -608,14 +679,25 @@ def add_anthropic_skill_io(skills_manager: 'SkillsManager'):
     """
     io = SkillIOAnthropicFormat(skills_manager)
 
+    def import_skills(path, overwrite=False):
+        if str(path).startswith(("http://", "https://")):
+            path = _resolve_remote_skill(str(path))
+        path = Path(path)
+        if str(path).endswith(".skill"):
+            return io.import_from_skill_file(path, overwrite=overwrite)
+        if not (path / "SKILL.md").exists():
+            return io.import_skills_from_directory(path, overwrite=overwrite)
+        return {path.name: io.import_single_skill(path, overwrite=overwrite)}
+
     skills_manager._skill_io = io
-    skills_manager.import_skills = lambda path, overwrite=False: (
+    skills_manager.import_skills =import_skills
+    """ lambda path, overwrite=False: (
         io.import_from_skill_file(Path(path), overwrite=overwrite)
         if str(path).endswith('.skill')
         else io.import_skills_from_directory(Path(path), overwrite=overwrite)
         if not (Path(path) / "SKILL.md").exists()
         else {Path(path).name: io.import_single_skill(Path(path), overwrite=overwrite)}
-    )
+    )"""
     skills_manager.export_skills = io.export_skills_to_directory
     skills_manager.export_skill_file = io.export_to_skill_file
 
@@ -1765,7 +1847,7 @@ class SkillsManager:
                 tools_used=list(set(tools_used)),
                 tool_groups=[],
                 source="learned",
-                confidence=0.3
+                confidence=0.61
             )
 
             self.skills[skill.id] = skill
