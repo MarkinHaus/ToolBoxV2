@@ -242,6 +242,50 @@ def healthcheck(client: "Minio") -> Tuple[bool, str]:
 
 # ── CredentialBroker Integration ──
 
+def vend_user_credentials_for_user(user_id: str, env_config: dict) -> Dict[str, Any]:
+    """
+    Mint scoped MinIO credentials for a user using CredentialBroker.
+
+    Mirrors ``vend_credentials_for_share`` but uses the user-scoped policy
+    (``tb-users-private/{user_id}/*`` + RO on ``tb-users-public/*``).
+    See ``toolboxv2.mods.CloudM.auth.minio_policy.CredentialBroker``.
+
+    Args:
+        user_id: the user identifier
+        env_config: dict from ``load_env_config()`` with endpoint,
+            access_key, secret_key, secure
+
+    Returns:
+        Credential dict: {endpoint, access_key, secret_key, secure,
+            buckets, user_prefix, policy_applied, expires_in}
+
+    Raises:
+        ValueError: if required env fields are missing
+        RuntimeError: if minio package is unavailable
+    """
+    if not user_id:
+        raise ValueError("user_id required")
+    for field in ("endpoint", "access_key", "secret_key"):
+        if not env_config.get(field):
+            raise ValueError(f"env_config.{field} required")
+
+    from toolboxv2.mods.CloudM.auth.minio_policy import (
+        CredentialBroker,
+        MinIOPolicyConfig,
+    )
+
+    config = MinIOPolicyConfig(
+        endpoint=env_config["endpoint"],
+        access_key=env_config["access_key"],
+        secret_key=env_config["secret_key"],
+        secure=env_config.get("secure", False),
+    )
+    broker = CredentialBroker(config)
+    creds = broker.vend_user_credentials(user_id)
+    logger.info(f"Minted scoped credentials for user {user_id}")
+    return creds
+
+
 def vend_credentials_for_share(share_id: str, env_config: dict) -> Dict[str, Any]:
     """
     Mint scoped MinIO credentials for a share using CredentialBroker.

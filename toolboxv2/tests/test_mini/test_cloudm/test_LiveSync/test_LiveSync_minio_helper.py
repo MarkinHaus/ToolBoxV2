@@ -170,3 +170,67 @@ class TestHealthcheck(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCredentialVending(unittest.TestCase):
+    """Tests for vend_user_credentials_for_user and vend_credentials_for_share."""
+
+    def test_vend_user_credentials_for_user(self):
+        """vend_user_credentials_for_user delegates to CredentialBroker.vend_user_credentials."""
+        from toolboxv2.mods.CloudM.LiveSync.minio_helper import vend_user_credentials_for_user
+
+        env = {
+            "endpoint": "localhost:9000",
+            "access_key": "admin",
+            "secret_key": "secret",
+            "secure": False,
+        }
+        creds = {
+            "endpoint": "localhost:9000",
+            "access_key": "sa-user",
+            "secret_key": "secret",
+            "secure": False,
+            "buckets": {"private": "tb-users-private", "public": "tb-users-public", "shared": "tb-shared"},
+            "user_prefix": "markin",
+            "policy_applied": True,
+            "expires_in": 86400,
+        }
+
+        # CredentialBroker is imported inside the function, so we patch
+        # at the source module path.
+        with patch("toolboxv2.mods.CloudM.auth.minio_policy.CredentialBroker") as MockBroker:
+            broker_instance = MockBroker.return_value
+            broker_instance.vend_user_credentials.return_value = creds
+
+            result = vend_user_credentials_for_user("markin", env)
+
+            self.assertEqual(result, creds)
+            MockBroker.assert_called_once()
+            broker_instance.vend_user_credentials.assert_called_once_with("markin")
+
+    def test_vend_user_credentials_for_user_requires_user_id(self):
+        """Empty user_id raises ValueError."""
+        from toolboxv2.mods.CloudM.LiveSync.minio_helper import vend_user_credentials_for_user
+
+        env = {"endpoint": "x", "access_key": "x", "secret_key": "x", "secure": False}
+        with self.assertRaises(ValueError):
+            vend_user_credentials_for_user("", env)
+
+    def test_vend_user_credentials_for_user_requires_env_fields(self):
+        """Missing env fields raise ValueError."""
+        from toolboxv2.mods.CloudM.LiveSync.minio_helper import vend_user_credentials_for_user
+
+        with self.assertRaises(ValueError):
+            vend_user_credentials_for_user("markin", {})
+
+    def test_vend_credentials_for_share_fallback(self):
+        """vend_credentials_for_share returns fallback creds when CredentialBroker import fails."""
+        from toolboxv2.mods.CloudM.LiveSync.minio_helper import vend_credentials_for_share
+
+        env = {"endpoint": "localhost:9000", "access_key": "admin", "secret_key": "secret", "secure": False}
+
+        # Simulate ImportError for CredentialBroker
+        with patch.dict("sys.modules", {"toolboxv2.mods.CloudM.auth.minio_policy": None}):
+            creds = vend_credentials_for_share("share123", env)
+            self.assertFalse(creds["policy_applied"])
+            self.assertEqual(creds["endpoint"], "localhost:9000")

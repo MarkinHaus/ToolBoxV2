@@ -385,3 +385,139 @@ if _TB_AVAILABLE:
         if not vault_path:
             return Result.error("vault_path required")
         return restart_sync(vault_path, port=port)
+
+    # ── Credential & Share-Token API (Dashboard-facing) ──
+
+    @export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
+    def tb_get_my_minio_credentials(app: App, request: RequestData = None):
+        """
+        Return scoped MinIO credentials for the authenticated user.
+
+        Reads ``user_id`` from ``request.session``. Requires an
+        authenticated session (``session.is_authenticated``).
+
+        Returns:
+            Result.ok(data={endpoint, access_key, secret_key, secure,
+                buckets, user_prefix, policy_applied, expires_in})
+        """
+        if request is None:
+            return Result.error("request required")
+
+        user_id = _extract_user_id(request)
+        if not user_id:
+            return Result.error("Authentication required")
+
+        try:
+            env = load_env_config()
+            from .minio_helper import vend_user_credentials_for_user
+            creds = vend_user_credentials_for_user(user_id, env)
+            return Result.ok(data=creds)
+        except ValueError as e:
+            return Result.error(str(e))
+        except Exception as e:
+            logger.error(f"[LiveSync] get-my-credentials failed: {e}")
+            return Result.error(f"Credential generation failed: {e}")
+
+    @export(mod_name=Name, api=True, version=version)
+    def tb_generate_share_token(
+        app: App,
+        request: RequestData = None,
+        share_id: str = "",
+        ws_host: str = "",
+        ws_port: int = 0,
+    ):
+        """
+        Generate a ShareToken **without** starting the server.
+
+        Unlike ``tb_create_share`` this does not call ``start_sync()`` —
+        it returns only the token for distribution.
+
+        Args:
+            share_id: optional custom share ID (auto-generated if empty)
+            ws_host: WebSocket host (defaults to env LIVESYNC_WS_HOST)
+            ws_port: WebSocket port (defaults to env LIVESYNC_WS_PORT)
+
+        Returns:
+            Result.ok(data={"token": str, "share_id": str})
+        """
+        env = load_env_config()
+
+        if not share_id:
+            share_id = uuid.uuid4().hex[:8]
+        if not ws_host:
+            ws_host = env.get("ws_host", "0.0.0.0")
+        if not ws_port:
+            ws_port = env.get("ws_port", 8765)
+
+        enc_key = generate_encryption_key()
+        ws_endpoint = f"ws://{ws_host}:{ws_port}"
+
+        token = create_share_token(
+            share_id=share_id,
+            encryption_key=enc_key,
+            minio_endpoint=env["endpoint"],
+            ws_endpoint=ws_endpoint,
+            bucket=env.get("bucket", "livesync"),
+        )
+        return Result.ok(data={"token": token, "share_id": share_id})
+
+    @export(mod_name=Name, api=True, version=version)
+    def tb_get_share_credentials(
+        app: App,
+        request: RequestData = None,
+        share_id: str = "",
+    ):
+        """
+        Return scoped MinIO credentials for a specific share.
+
+        Args:
+            share_id: the share identifier
+
+        Returns:
+            Result.ok(data={endpoint, access_key, secret_key, secure,
+                bucket, prefix, policy_applied})
+        """
+        if not share_id:
+            return Result.error("share_id required")
+
+        env = load_env_config()
+        from .minio_helper import vend_credentials_for_share
+        creds = vend_credentials_for_share(share_id, env)
+        return Result.ok(data=creds)
+
+
+# ── Helpers ──
+
+def _extract_user_id(request) -> str:
+    """
+    Extract user_id from a RequestData object.
+
+    Checks ``request.session.user_id`` and ``request.session.user_name``
+    in that order, following the pattern established in
+    ``CloudM.UserAccountManager.get_current_user_from_request``.
+
+    Returns:
+        user_id string or empty string if not authenticated.
+    """
+    if request is None or not hasattr(request, "session") or not request.session:
+        return ""
+
+    session = request.session
+
+    # user_id attribute (Session dataclass)
+    uid = getattr(session, "user_id", None)
+    if uid:
+        return str(uid)
+
+    # user_name fallback
+    uname = getattr(session, "user_name", None)
+    if uname and uname != "anonymous":
+        return str(uname)
+
+    # dict-style session
+    if hasattr(session, "get"):
+        uid = session.get("user_id") or session.get("uid")
+        if uid:
+            return str(uid)
+
+    return ""
