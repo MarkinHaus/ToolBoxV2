@@ -1529,6 +1529,28 @@ class OmniSession:
         self._video_task: Optional[asyncio.Task] = None
 
     # lifecycle --------------------------------------------------------------
+    async def _warmup_vad(self) -> None:
+        """Load/JIT the VAD model OFF the event loop BEFORE the mic starts. The
+        first vad.is_speech() lazily loads the model (torch.hub) which blocks the
+        loop ~10s on first run — the recorder queue then floods and the mic stream
+        self-stops. Warming up in an executor keeps the loop responsive. Generic:
+        duck-types is_speech/reset, no SileroVAD import. Never blocks start."""
+        if self.vad is None:
+            return
+        probe = getattr(self.vad, "is_speech", None)
+        if probe is None:
+            return
+        try:
+            loop = asyncio.get_event_loop()
+            silence = b"\x00\x00" * self.sample_rate  # ~1s @ sample_rate, enough to JIT
+            await loop.run_in_executor(None, probe, silence)
+            reset = getattr(self.vad, "reset", None)
+            if reset is not None:
+                reset()  # drop the warmup frame so real speech state starts clean
+            logger.info("OmniSession: VAD warmed up")
+        except Exception as e:  # noqa: BLE001 - warmup must never break start
+            logger.debug("OmniSession: VAD warmup skipped: %s", e)
+
     async def start(self, tool_specs: Optional[list[dict]] = None) -> None:
         self._tool_specs = tool_specs or []
         logger.info("OmniSession.start backend=%s tools=%d", self.backend.backend_name,
@@ -1540,6 +1562,10 @@ class OmniSession:
             import traceback
             logger.debug(traceback.format_exc())
             raise
+
+        # ponytail: warm the VAD BEFORE the mic produces frames, so the first
+        # is_speech() doesn't load the model on the loop while frames pile up.
+        await self._warmup_vad()
 
         if self.recorder is not None:
             await self.recorder.start()

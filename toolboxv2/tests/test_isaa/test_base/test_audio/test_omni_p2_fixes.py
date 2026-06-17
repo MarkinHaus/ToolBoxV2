@@ -12,6 +12,7 @@ unittest only. Run:
 from __future__ import annotations
 
 import ast
+import asyncio
 import sys
 import types
 import unittest
@@ -55,9 +56,27 @@ def _extract(names):
     return ns
 
 
-NS = _extract(["_omni_wave", "_PyannoteOmniEmbedder"])
+NS = _extract(["_omni_wave", "_PyannoteOmniEmbedder", "_pyannote_speaker_model"])
 _omni_wave = NS["_omni_wave"]
 _PyannoteOmniEmbedder = NS["_PyannoteOmniEmbedder"]
+_pyannote_speaker_model = NS["_pyannote_speaker_model"]
+
+
+def _load_omni():
+    p = _repo_root() / "toolboxv2" / "mods" / "isaa" / "base" / "audio_io" / "omni.py"
+    spec = importlib.util.spec_from_file_location("omni_iso_p2bug", p)
+    m = importlib.util.module_from_spec(spec)
+    sys.modules["omni_iso_p2bug"] = m
+    spec.loader.exec_module(m)
+    return m
+
+
+import importlib.util  # noqa: E402
+omni = _load_omni()
+
+
+def run(coro):
+    return asyncio.new_event_loop().run_until_complete(coro)
 
 
 # --- T7: waveform scrolls while playing, stays stable otherwise ---------------
@@ -115,6 +134,101 @@ class TestT6Embedder(unittest.TestCase):
         pcm = (np.zeros(1600, dtype=np.int16)).tobytes()
         out = emb.embed(pcm)
         self.assertEqual(out, [0.1, 0.2, 0.3])
+
+
+# --- BUG 1: pyannote token kwarg is version-proof (token vs use_auth_token) ----
+class TestBug1PyannoteKwarg(unittest.TestCase):
+    def _call_with_fake(self, sig_params):
+        """Inject a fake PretrainedSpeakerEmbedding with the given signature and
+        capture how _pyannote_speaker_model calls it."""
+        captured = {}
+
+        def _make_fake():
+            import inspect
+            params = [inspect.Parameter(n, inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                                        default=None) for n in sig_params]
+            sig = inspect.Signature([inspect.Parameter("embedding",
+                                     inspect.Parameter.POSITIONAL_OR_KEYWORD)] + params)
+
+            def fake(embedding, **kw):
+                captured.update(kw)
+                return "MODEL"
+            fake.__signature__ = sig
+            return fake
+
+        mod = types.ModuleType("pyannote.audio.pipelines.speaker_verification")
+        mod.PretrainedSpeakerEmbedding = _make_fake()
+        # ensure parent packages resolve
+        for parent in ("pyannote", "pyannote.audio", "pyannote.audio.pipelines"):
+            sys.modules.setdefault(parent, types.ModuleType(parent))
+        sys.modules["pyannote.audio.pipelines.speaker_verification"] = mod
+        try:
+            out = _pyannote_speaker_model("hf_xyz")
+        finally:
+            del sys.modules["pyannote.audio.pipelines.speaker_verification"]
+        return out, captured
+
+    def test_picks_token_when_available(self):
+        _, kw = self._call_with_fake(["device", "token", "cache_dir"])
+        self.assertEqual(kw.get("token"), "hf_xyz")
+        self.assertNotIn("use_auth_token", kw)
+
+    def test_falls_back_to_use_auth_token(self):
+        _, kw = self._call_with_fake(["device", "use_auth_token"])
+        self.assertEqual(kw.get("use_auth_token"), "hf_xyz")
+        self.assertNotIn("token", kw)
+
+    def test_no_token_kwarg_when_neither(self):
+        _, kw = self._call_with_fake(["device"])
+        self.assertNotIn("token", kw)
+        self.assertNotIn("use_auth_token", kw)
+
+
+# --- BUG 2: VAD warmed up OFF the event loop before the mic starts ------------
+class _FakeVAD:
+    def __init__(self):
+        self.calls = []
+        self.reset_count = 0
+        self.thread_ids = []
+
+    def is_speech(self, pcm):
+        import threading
+        self.thread_ids.append(threading.get_ident())
+        self.calls.append(len(pcm))
+        return -1.0
+
+    def reset(self):
+        self.reset_count += 1
+
+
+def _bare_session(vad):
+    s = omni.OmniSession.__new__(omni.OmniSession)
+    s.vad = vad
+    s.sample_rate = 16000
+    return s
+
+
+class TestBug2VadWarmup(unittest.TestCase):
+    def test_warmup_calls_vad_offthread_and_resets(self):
+        import threading
+        vad = _FakeVAD()
+        s = _bare_session(vad)
+        run(s._warmup_vad())
+        self.assertEqual(len(vad.calls), 1)          # probed once
+        self.assertEqual(vad.reset_count, 1)          # state reset after
+        # the slow load must run OFF the event-loop thread (executor)
+        self.assertNotIn(threading.get_ident(), vad.thread_ids)
+
+    def test_warmup_noop_without_vad(self):
+        s = _bare_session(None)
+        run(s._warmup_vad())  # must not raise
+
+    def test_warmup_swallows_vad_errors(self):
+        class _Boom:
+            def is_speech(self, pcm):
+                raise RuntimeError("model load failed")
+        s = _bare_session(_Boom())
+        run(s._warmup_vad())  # must not raise -> start() never blocked
 
 
 if __name__ == "__main__":

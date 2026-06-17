@@ -673,6 +673,26 @@ class _OmniTapRecorder:
     def __getattr__(self, k): return getattr(self._inner, k)
 
 
+def _pyannote_speaker_model(hf_token):
+    """Build pyannote PretrainedSpeakerEmbedding, version-proof on the token
+    kwarg: newer pyannote.audio uses token=, older used use_auth_token=. Picks
+    whichever the installed signature accepts; passes none if neither (the model
+    then reads HF_TOKEN from the environment via huggingface_hub)."""
+    from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding
+    import inspect
+    import torch
+    params = inspect.signature(PretrainedSpeakerEmbedding).parameters
+    kw = {}
+    if hf_token:
+        if "token" in params:
+            kw["token"] = hf_token
+        elif "use_auth_token" in params:
+            kw["use_auth_token"] = hf_token
+    return PretrainedSpeakerEmbedding(
+        "pyannote/embedding", device=torch.device("cpu"), **kw
+    )
+
+
 class _PyannoteOmniEmbedder:
     """Real speaker embedder for the Omni SpeakerRegistry — duck-types
     .embed(pcm)->list[float]. Wraps the SAME pyannote model the `/audio speaker`
@@ -691,12 +711,8 @@ class _PyannoteOmniEmbedder:
         if self._model is not None or self._broken:
             return
         try:
-            from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding
-            import torch
             hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-            self._model = PretrainedSpeakerEmbedding(
-                "pyannote/embedding", use_auth_token=hf_token, device=torch.device("cpu"),
-            )
+            self._model = _pyannote_speaker_model(hf_token)
         except Exception as e:  # noqa: BLE001
             self._broken = True
             print_status(f"[speakers] pyannote embed unavailable: {e}", "warning")
@@ -10302,9 +10318,8 @@ class ISAA_Host:
             return
 
         try:
-            from pyannote.audio import Model
-            from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding
-            import torch, torchaudio
+            from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding  # noqa: F401
+            import torch
         except ImportError:
             print_status(
                 "pyannote.audio required for speaker profiles:\n"
@@ -10341,17 +10356,16 @@ class ISAA_Host:
             w.writeframes(pcm)
         wav_bytes = buf.getvalue()
 
-        # Extract embedding
+        # Extract embedding. ponytail: feed the in-memory recording straight to
+        # the model as {waveform, sample_rate} — torchaudio.load routes through
+        # torchcodec, which fails on Windows without the FFmpeg DLLs. We already
+        # HAVE the float32 samples, so skip decoding entirely.
         try:
             hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-            embed_model = PretrainedSpeakerEmbedding(
-                "pyannote/embedding",
-                use_auth_token=hf_token,
-                device=torch.device("cpu"),
-            )
-            waveform, sr = torchaudio.load(io.BytesIO(wav_bytes))
+            embed_model = _pyannote_speaker_model(hf_token)
+            waveform = torch.from_numpy(recording[:, 0].astype(np.float32)).unsqueeze(0)  # [1, N]
             with torch.no_grad():
-                emb = embed_model({"waveform": waveform, "sample_rate": sr})
+                emb = embed_model({"waveform": waveform, "sample_rate": SR})
             embedding = emb.squeeze().numpy()
 
             self._speaker_store.add(name, embedding)
