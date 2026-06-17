@@ -1509,6 +1509,14 @@ class OmniSession:
         # incoming text (user + system announcements) and flush as ONE combined
         # message on TURN_END — otherwise two send_text calls overlap mid-speech.
         self._pending_text: list[str] = []
+        # ponytail: during a backend swap (reconnect/restart) the new WS isn't
+        # connected yet and send_audio() drops frames -> the user's reopening
+        # speech is lost ("talking into the void"). While _backend_swapping, the
+        # pump BUFFERS outgoing mic frames (bounded) and they're replayed to the
+        # NEW backend once it's up, so no speech / overhang is lost.
+        self._backend_swapping = False
+        self._pending_audio: list[bytes] = []
+        self._pending_audio_bytes = 0
 
         # phase hook
         self.on_phase = on_phase or PhaseCallback()
@@ -1818,6 +1826,10 @@ class OmniSession:
                 if not res:
                     self.frames_gated += 1
                     continue
+                if self._backend_swapping:
+                    # backend mid-swap (WS not up) -> buffer, replay after start
+                    self._buffer_out_audio(frame)
+                    continue
                 await self.backend.send_audio(frame)
                 if self.speakers is not None and self._speaking:
                     self._speech_frames += frame
@@ -1887,6 +1899,70 @@ class OmniSession:
                 logger.debug("OmniSession: backend interrupt failed: %s", e)
         self._update_phase()
 
+    def _buffer_out_audio(self, frame: bytes) -> None:
+        """Hold a mic frame during a backend swap. Bounded ring (~5s of audio):
+        drop oldest on overflow so a slow swap can't grow unbounded."""
+        self._pending_audio.append(frame)
+        self._pending_audio_bytes += len(frame)
+        cap = self.sample_rate * 2 * 5  # int16 mono, ~5s
+        while self._pending_audio_bytes > cap and self._pending_audio:
+            self._pending_audio_bytes -= len(self._pending_audio.pop(0))
+
+    async def _replay_pending_audio(self) -> None:
+        """Send frames buffered during the swap to the NEW backend, in order."""
+        if not self._pending_audio:
+            return
+        frames = self._pending_audio
+        self._pending_audio = []
+        self._pending_audio_bytes = 0
+        logger.info("OmniSession: replaying %d buffered mic frame(s) to new backend",
+                    len(frames))
+        for f in frames:
+            try:
+                await self.backend.send_audio(f)
+            except Exception as e:  # noqa: BLE001
+                logger.debug("OmniSession: replay frame failed: %s", e)
+                break
+
+    async def _swap_backend(self, seed: str) -> None:
+        """Stop the current backend and bring up a fresh one (reseeded). Shared by
+        _reconnect and _do_restart. Guarantees a usable new session:
+          - mic audio produced during the swap is buffered + replayed (no lost
+            reopening speech / overhang),
+          - the half-duplex gate is reset so the mic feeds the NEW backend
+            (otherwise a stuck _agent_speaking gates every frame -> 'void')."""
+        if self._event_task is not None and not self._event_task.done():
+            self._event_task.cancel()
+        self._backend_swapping = True  # pump buffers instead of sending to a dead WS
+        seed_via_text = False
+        try:
+            try:
+                await self.backend.stop()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("OmniSession: old backend stop failed: %s", e)
+            self.backend = self.backend_factory()
+            if seed:
+                if hasattr(self.backend, "system_instruction"):
+                    base = getattr(self.backend, "system_instruction", "") or ""
+                    self.backend.system_instruction = (base + "\n\n" + seed).strip()
+                else:
+                    seed_via_text = True
+            await self.backend.start(tools=self._tool_specs)
+        finally:
+            self._backend_swapping = False
+        # gate reset: the NEW backend must receive the mic again
+        self._agent_speaking = False
+        self._mic_muted_until = 0.0
+        self._vad_hangover = 0
+        self._audio_buf.clear()
+        await self._flush_player()
+        self._last_event_mono = time.monotonic()
+        self._event_task = asyncio.ensure_future(self._consume_events())
+        if seed_via_text:
+            await self.backend.send_text(seed)
+        await self._replay_pending_audio()  # deliver the buffered reopening speech
+        self._update_phase()
+
     async def _watchdog_loop(self, poll_s: float = 1.0) -> None:
         """Pause+reopen the backend if it goes silent for idle_reconnect_s while
         WAITING — the WS can half-die and just hang on 'waiting for speaker'."""
@@ -1911,31 +1987,11 @@ class OmniSession:
 
     async def _reconnect(self) -> None:
         """Pause + reopen the backend after an idle stall. Subset of _do_restart:
-        NO compress (nothing new to fold) and KEEP _announced_jobs (so finished
-        delegations are not re-announced). Reseeds from persistent state."""
+        NO compress (nothing new to fold) and KEEPS _announced_jobs (so finished
+        delegations are not re-announced). Audio during the swap is buffered +
+        replayed and the mic gate is reset by _swap_backend."""
         try:
-            seed = self._build_seed_text()
-            if self._event_task is not None and not self._event_task.done():
-                self._event_task.cancel()
-            try:
-                await self.backend.stop()
-            except Exception as e:  # noqa: BLE001
-                logger.warning("OmniSession: reconnect old-backend stop failed: %s", e)
-            self.backend = self.backend_factory()
-            seed_via_text = False
-            if seed:
-                if hasattr(self.backend, "system_instruction"):
-                    base = getattr(self.backend, "system_instruction", "") or ""
-                    self.backend.system_instruction = (base + "\n\n" + seed).strip()
-                else:
-                    seed_via_text = True
-            await self.backend.start(tools=self._tool_specs)
-            self._audio_buf.clear()
-            await self._flush_player()
-            self._last_event_mono = time.monotonic()
-            self._event_task = asyncio.ensure_future(self._consume_events())
-            if seed_via_text:
-                await self.backend.send_text(seed)
+            await self._swap_backend(self._build_seed_text())
             logger.info("OmniSession: reconnect complete (backend=%s)", self.backend.backend_name)
         except Exception as e:  # noqa: BLE001
             logger.error("OmniSession: reconnect failed: %s", e)
@@ -2253,30 +2309,11 @@ class OmniSession:
                 await self._compress(merge_old=True)
             await self._archive_session()
             seed = self._build_seed_text()
-            # seed ready -> now tear down the old session and bring up the fresh one
-            if self._event_task is not None and not self._event_task.done():
-                self._event_task.cancel()
-            try:
-                await self.backend.stop()
-            except Exception as e:  # noqa: BLE001
-                logger.warning("OmniSession: old backend stop failed: %s", e)
-            self.backend = self.backend_factory()
-            seed_via_text = False
-            if seed:
-                if hasattr(self.backend, "system_instruction"):
-                    base = getattr(self.backend, "system_instruction", "") or ""
-                    self.backend.system_instruction = (base + "\n\n" + seed).strip()
-                else:
-                    seed_via_text = True
-            await self.backend.start(tools=self._tool_specs)
+            # swap buffers+replays mic audio and resets the gate (shared path)
+            await self._swap_backend(seed)
             self.turns = 0
-            self._audio_buf.clear()
-            await self._flush_player()  # ponytail: clear stale playback backlog on restart
             self._turn_buf = []
             self._announced_jobs.clear()
-            self._event_task = asyncio.ensure_future(self._consume_events())
-            if seed_via_text:
-                await self.backend.send_text(seed)
             logger.info("OmniSession: restart complete (backend=%s)", self.backend.backend_name)
         except Exception as e:  # noqa: BLE001
             logger.error("OmniSession: restart failed: %s", e)

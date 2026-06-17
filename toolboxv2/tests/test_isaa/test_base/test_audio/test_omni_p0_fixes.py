@@ -50,16 +50,19 @@ def run(coro):
 # --- T1: freeze fix — compress happens BEFORE the event task is cancelled -----
 class TestT1RestartOrder(unittest.TestCase):
     def test_compress_runs_before_cancel_and_stop(self):
+        # T1 guarantee survives the swap refactor: in _do_restart the summary
+        # (_compress) runs BEFORE the backend teardown. Teardown now lives in the
+        # shared _swap_backend, so _do_restart must call _compress before it.
         src = inspect.getsource(omni.OmniSession._do_restart)
         i_comp = src.find("_compress(merge_old=True)")
-        i_cancel = src.find("_event_task.cancel()")
-        i_stop = src.find("self.backend.stop()")
+        i_swap = src.find("_swap_backend(")
         self.assertGreaterEqual(i_comp, 0, "compress call missing in _do_restart")
-        self.assertGreaterEqual(i_cancel, 0, "event cancel missing in _do_restart")
-        self.assertGreaterEqual(i_stop, 0, "backend.stop missing in _do_restart")
-        # the whole point of T1: summarize while the old backend is still live
-        self.assertLess(i_comp, i_cancel, "compress must run BEFORE event_task.cancel")
-        self.assertLess(i_comp, i_stop, "compress must run BEFORE backend.stop")
+        self.assertGreaterEqual(i_swap, 0, "swap call missing in _do_restart")
+        self.assertLess(i_comp, i_swap, "compress must run BEFORE the backend swap")
+        # and the teardown (cancel + stop) lives in _swap_backend, after the seed
+        swap_src = inspect.getsource(omni.OmniSession._swap_backend)
+        self.assertIn("_event_task.cancel()", swap_src)
+        self.assertIn("self.backend.stop()", swap_src)
 
 
 # --- T2: text serialization — queue while speaking, flush once on turn end ----
