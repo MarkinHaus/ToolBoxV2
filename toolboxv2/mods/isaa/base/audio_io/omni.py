@@ -1440,6 +1440,7 @@ class OmniSession:
         on_phase: Optional[Callable[["OmniPhase", dict], Any]] = None,
         speakers: Any = None,
         video_source: Any = None,
+        idle_reconnect_s: float = 10.0,
     ):
         self.backend = backend
         self.recorder = recorder
@@ -1474,6 +1475,13 @@ class OmniSession:
         self._pump_task: Optional[asyncio.Task] = None
         self._event_task: Optional[asyncio.Task] = None
         self._running = False
+
+        # ponytail: idle watchdog. If no backend event arrives for idle_reconnect_s
+        # while WAITING (WS half-dead -> "waiting for speaker" hang), pause + reopen
+        # the backend. 0 disables. Reuses backend_factory; keeps _announced_jobs.
+        self.idle_reconnect_s = idle_reconnect_s
+        self._last_event_mono = 0.0
+        self._watchdog_task: Optional[asyncio.Task] = None
 
         # per-turn audio buffer: list of (pcm_bytes, sample_rate)
         self._audio_buf: list[tuple[bytes, int]] = []
@@ -1542,12 +1550,15 @@ class OmniSession:
             logger.info("OmniSession: player started (%s)", type(self.player).__name__)
 
         self._running = True
+        self._last_event_mono = time.monotonic()
         self._event_task = asyncio.ensure_future(self._consume_events())
         if self.recorder is not None:
             self._pump_task = asyncio.ensure_future(self._pump_audio())
         self._notify_task = asyncio.ensure_future(self._notify_loop())
         if self.video_source is not None:
             self._video_task = asyncio.ensure_future(self._pump_video())
+        if self.idle_reconnect_s > 0 and self.backend_factory is not None:
+            self._watchdog_task = asyncio.ensure_future(self._watchdog_loop())
         logger.info("OmniSession: live loop running")
 
     async def stop(self) -> None:
@@ -1575,7 +1586,8 @@ class OmniSession:
                 except Exception:  # noqa: BLE001
                     pass
         for t in (self._pump_task, self._event_task, self._notify_task,
-                  self._video_task, self._playback_task, self._user_end_task):
+                  self._video_task, self._playback_task, self._user_end_task,
+                  self._watchdog_task):
             if t is not None and not t.done():
                 t.cancel()
         await self.backend.stop()
@@ -1816,6 +1828,94 @@ class OmniSession:
         logger.debug("OmniSession: flushing %d queued text input(s)", combined.count("\n") + 1)
         await self.backend.send_text(combined)
 
+    async def _flush_player(self) -> None:
+        """Drop in-flight player audio if the player supports it (barge-in /
+        restart / reconnect). No-op for players without flush()."""
+        if self.player is None:
+            return
+        f = getattr(self.player, "flush", None)
+        if f is None:
+            return
+        try:
+            res = f()
+            if asyncio.iscoroutine(res):
+                await res
+        except Exception as e:  # noqa: BLE001
+            logger.debug("OmniSession: player flush failed: %s", e)
+
+    async def interrupt(self) -> None:
+        """User barge-in: stop the agent talking NOW. Drops buffered + in-flight
+        audio and returns to WAITING. Reuses the INTERRUPTED dispatch semantics,
+        just user-triggered (e.g. an icli keybind)."""
+        logger.info("OmniSession: user interrupt")
+        self._audio_buf.clear()
+        await self._flush_player()
+        self._agent_speaking = False
+        bi = getattr(self.backend, "interrupt", None)
+        if bi is not None:
+            try:
+                res = bi()
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception as e:  # noqa: BLE001
+                logger.debug("OmniSession: backend interrupt failed: %s", e)
+        self._update_phase()
+
+    async def _watchdog_loop(self, poll_s: float = 1.0) -> None:
+        """Pause+reopen the backend if it goes silent for idle_reconnect_s while
+        WAITING — the WS can half-die and just hang on 'waiting for speaker'."""
+        try:
+            while self._running:
+                await asyncio.sleep(poll_s)
+                if self._restarting or self._agent_speaking or self.idle_reconnect_s <= 0:
+                    continue
+                if self._phase is not OmniPhase.WAITING:
+                    continue
+                if self.backend_factory is None or not getattr(self.backend, "supports_restart", True):
+                    continue
+                idle = time.monotonic() - self._last_event_mono
+                if idle >= self.idle_reconnect_s:
+                    logger.info("OmniSession: idle %.1fs while waiting -> reconnecting", idle)
+                    self._restarting = True
+                    await self._reconnect()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning("OmniSession watchdog error: %s", e)
+
+    async def _reconnect(self) -> None:
+        """Pause + reopen the backend after an idle stall. Subset of _do_restart:
+        NO compress (nothing new to fold) and KEEP _announced_jobs (so finished
+        delegations are not re-announced). Reseeds from persistent state."""
+        try:
+            seed = self._build_seed_text()
+            if self._event_task is not None and not self._event_task.done():
+                self._event_task.cancel()
+            try:
+                await self.backend.stop()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("OmniSession: reconnect old-backend stop failed: %s", e)
+            self.backend = self.backend_factory()
+            seed_via_text = False
+            if seed:
+                if hasattr(self.backend, "system_instruction"):
+                    base = getattr(self.backend, "system_instruction", "") or ""
+                    self.backend.system_instruction = (base + "\n\n" + seed).strip()
+                else:
+                    seed_via_text = True
+            await self.backend.start(tools=self._tool_specs)
+            self._audio_buf.clear()
+            await self._flush_player()
+            self._last_event_mono = time.monotonic()
+            self._event_task = asyncio.ensure_future(self._consume_events())
+            if seed_via_text:
+                await self.backend.send_text(seed)
+            logger.info("OmniSession: reconnect complete (backend=%s)", self.backend.backend_name)
+        except Exception as e:  # noqa: BLE001
+            logger.error("OmniSession: reconnect failed: %s", e)
+        finally:
+            self._restarting = False
+
     async def _consume_events(self) -> None:
         try:
             async for ev in self.backend.events():
@@ -1910,6 +2010,7 @@ class OmniSession:
 
     # event dispatch ---------------------------------------------------------
     async def dispatch(self, ev: OmniEvent) -> None:
+        self._last_event_mono = time.monotonic()  # ponytail: watchdog liveness stamp
         if ev.type == OmniEventType.AUDIO:
             self.audio_chunks_out += 1
             if ev.audio:
@@ -2144,6 +2245,7 @@ class OmniSession:
             await self.backend.start(tools=self._tool_specs)
             self.turns = 0
             self._audio_buf.clear()
+            await self._flush_player()  # ponytail: clear stale playback backlog on restart
             self._turn_buf = []
             self._announced_jobs.clear()
             self._event_task = asyncio.ensure_future(self._consume_events())

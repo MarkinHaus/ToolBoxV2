@@ -4619,6 +4619,14 @@ class ISAA_Host:
             asyncio.create_task(self._toggle_audio_recording())
             self.anim.set_mode('audio' if self._audio_recording else 'dreaming')
 
+        @kb.add("f10")
+        def _(event):
+            """F10: Interrupt (barge-in) the speaking Omni agent."""
+            sess = getattr(self, "_omni_session", None)
+            if sess is not None:
+                asyncio.create_task(sess.interrupt())
+                c_print(HTML(f"<style fg='{PTColors.ZEN_DIM}'>  ⏸ Omni interrupted</style>"))
+
         @kb.add("f5")
         def _(event):
             """Show status dashboard with F5."""

@@ -208,6 +208,15 @@ class LocalPlayer(AudioPlayer):
     async def queue_audio(self, wav_bytes: bytes, metadata: dict) -> None:
         await self._queue.put((wav_bytes, metadata))
 
+    async def flush(self) -> None:
+        """Drop queued (not-yet-playing) audio. Best-effort barge-in support."""
+        while not self._queue.empty():
+            try:
+                self._queue.get_nowait()
+                self._queue.task_done()
+            except Exception:
+                break
+
     @property
     def is_active(self) -> bool:
         return self._playing or not self._queue.empty()
@@ -275,7 +284,8 @@ class StreamingLocalPlayer(AudioPlayer):
     backend's output SR MUST match (pass output_sample_rate accordingly).
     """
 
-    def __init__(self, device=None, sample_rate: int = 24000, channels: int = 1):
+    def __init__(self, device=None, sample_rate: int = 24000, channels: int = 1,
+                 max_buffer_s: float = 8.0):
         import threading
         self.device = device
         self.sample_rate = sample_rate
@@ -284,6 +294,11 @@ class StreamingLocalPlayer(AudioPlayer):
         self._lock = threading.Lock()
         self._stream = None
         self._running = False
+        # ponytail: bound the ring so playback latency can't drift unbounded.
+        # Gemini bursts a whole turn faster than realtime; without a cap the
+        # backlog grows every turn/restart (audible drift after ~5 restarts).
+        # ceiling: keep at most max_buffer_s of audio, drop oldest on overflow.
+        self.max_buffer_bytes = int(sample_rate * 2 * channels * max_buffer_s)
 
     async def start(self) -> None:
         import numpy as np
@@ -325,6 +340,15 @@ class StreamingLocalPlayer(AudioPlayer):
             return
         with self._lock:
             self._buf.extend(arr.tobytes())
+            overflow = len(self._buf) - self.max_buffer_bytes
+            if overflow > 0:  # ponytail: drop oldest -> bounded latency, no drift
+                del self._buf[:overflow]
+
+    async def flush(self) -> None:
+        """Drop all buffered audio immediately (barge-in / restart reset).
+        Keeps the OutputStream open; just empties the ring."""
+        with self._lock:
+            self._buf.clear()
 
     @property
     def is_active(self) -> bool:
