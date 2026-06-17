@@ -673,6 +673,51 @@ class _OmniTapRecorder:
     def __getattr__(self, k): return getattr(self._inner, k)
 
 
+class _PyannoteOmniEmbedder:
+    """Real speaker embedder for the Omni SpeakerRegistry — duck-types
+    .embed(pcm)->list[float]. Wraps the SAME pyannote model the `/audio speaker`
+    enrollment path uses, so embeddings are consistent across both systems.
+
+    Lazy-loads the model on first embed (no slow/network work at session start).
+    Returns None on any failure so SpeakerRegistry just yields 'unknown' rather
+    than crashing the audio loop. pcm is int16 mono @16kHz (TARGET_SR).
+    """
+    def __init__(self, sample_rate: int = 16000):
+        self._sr = sample_rate
+        self._model = None
+        self._broken = False
+
+    def _ensure_model(self):
+        if self._model is not None or self._broken:
+            return
+        try:
+            from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding
+            import torch
+            hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+            self._model = PretrainedSpeakerEmbedding(
+                "pyannote/embedding", use_auth_token=hf_token, device=torch.device("cpu"),
+            )
+        except Exception as e:  # noqa: BLE001
+            self._broken = True
+            print_status(f"[speakers] pyannote embed unavailable: {e}", "warning")
+
+    def embed(self, pcm: bytes):
+        self._ensure_model()
+        if self._model is None:
+            return None
+        try:
+            import numpy as np
+            import torch
+            arr = np.frombuffer(pcm, dtype=np.int16).astype("float32") / 32768.0
+            waveform = torch.from_numpy(arr).unsqueeze(0)  # [1, N]
+            with torch.no_grad():
+                emb = self._model({"waveform": waveform, "sample_rate": self._sr})
+            return emb.squeeze().tolist()
+        except Exception as e:  # noqa: BLE001
+            logger.debug("PyannoteOmniEmbedder.embed failed: %s", e)
+            return None
+
+
 class _OmniTapPlayer:
     """Duck-typed AudioPlayer-Wrapper: misst Output-Pegel aus dem wav."""
     def __init__(self, inner, levels):
@@ -690,10 +735,17 @@ from prompt_toolkit.formatted_text import FormattedText
 _OMNI_BLOCKS = " ▁▂▃▄▅▆▇█"
 _OMNI_SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
-def _omni_wave(levels, cols, color):
+def _omni_wave(levels, cols, color, anim=None):
     vals = list(levels)[-cols:]
     if not vals:
         return (f"fg:{color}", " " + "▁" * cols)
+    if anim is not None and len(vals) > 1:
+        # ponytail: scroll the captured levels so the bar visibly RUNS for the
+        # whole real playback. The phase stays audio_playing until the player
+        # actually drains; without this the bar freezes on the enqueue tail
+        # (Gemini bursts the turn) and looks finished before the audio is.
+        k = anim % len(vals)
+        vals = vals[k:] + vals[:k]
     m = max(vals) or 1e-6
     bar = "".join(_OMNI_BLOCKS[min(8, int((v / m) * 8))] for v in vals)
     return (f"fg:{color}", " " + bar)
@@ -747,7 +799,7 @@ def render_omni_footer(host) -> FormattedText:
         f.append((f"fg:{C['purple']} bold", f" {spin} omni denkt{dots}"))
     elif phase == "audio_playing":
         f.append(("", "\n"))
-        f.append(_omni_wave(host._omni_out_levels, cols, C["deep"]))
+        f.append(_omni_wave(host._omni_out_levels, cols, C["deep"], anim=host._omni_anim_frame))
         if host._omni_out_text:
             f.append(("", "\n"))
             f.append((f"fg:{C['cyan']}", " » " + host._omni_out_text[-(width - 4):]))
@@ -10065,9 +10117,25 @@ class ISAA_Host:
                     from toolboxv2.mods.isaa.base.audio_io.omni import (
                         SpeakerRegistry, StubSpeakerEmbedder,
                     )
+                    # ponytail: real embedder (same pyannote model as /audio
+                    # speaker) if pyannote+HF_TOKEN are present; else the dep-free
+                    # stub. Decided up front so a missing model never blocks start.
+                    embedder = StubSpeakerEmbedder()
+                    try:
+                        import importlib.util as _ilu
+                        if (_ilu.find_spec("pyannote.audio") is not None
+                                and (os.environ.get("HF_TOKEN")
+                                     or os.environ.get("HUGGING_FACE_HUB_TOKEN"))):
+                            embedder = _PyannoteOmniEmbedder()
+                            print_status("[speakers] real embedder active (pyannote)", "info")
+                        else:
+                            print_status("[speakers] stub embedder (set HF_TOKEN + "
+                                         "pip install pyannote.audio for real ID)", "info")
+                    except Exception:
+                        pass
                     speakers_obj = SpeakerRegistry(
                         "isaa/omni/speakers.json", BlobFile,
-                        embedder=StubSpeakerEmbedder(),  # swap for a real .embed(pcm)
+                        embedder=embedder,
                         label_hook=lambda emb, score: None,  # app names unknown voices here
                     )
                 except Exception as e:
