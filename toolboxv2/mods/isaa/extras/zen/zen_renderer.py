@@ -1722,9 +1722,8 @@ class ZenRenderer:
 
     def render_reasoning(self, chunk: str) -> str:
         """Reasoning / thought process."""
-        label = Style().fg(*T.FG_MUTED).text("[reasoning]")
         text = Style().fg(*T.SUCCESS).text(chunk)
-        return f"\n{label} {text}"
+        return f"{text}"
 
     def render_tool_start(self, name: str, args: dict[str, Any] | None = None) -> str:
         """Tool invocation start."""

@@ -3174,6 +3174,7 @@ SUBCOMMANDS: dict[str, dict] = {
     "sys-refresh": {"args": ["vfs_path"],               "flags": []},
     "sys-list":    {"args": [],                         "flags": []},
     "obsidian":    {"args": ["subcmd:mount|unmount|sync", "local_path", "vfs_path"], "flags": []},
+    "share":       {"args": ["subcmd:create|connect|disconnect|list", "local_path", "vfs_path", "local_path"], "flags": ["--token", "--readonly"]},
 }
 
 
@@ -3610,6 +3611,12 @@ F6 during execution       - Move agent to background
 /vfs mounts              - List active mounts
 /vfs dirty               - Show modified files
 /vfs rm/remove           - Remove Folder or File
+/vfs share create <local_dir> [ws_port]
+                         - Set up a share on this server node \u2192 token
+/vfs share connect <vfs_path> <local_dir> --token <t> [--readonly]
+                         - Live-sync a folder across machines
+/vfs share disconnect <vfs_path>  - Stop a live cross-machine share
+/vfs share list          - List live cross-machine shares
     """,
 
     # System Files (Read‑Only)
@@ -3944,6 +3951,9 @@ class ISAA_Host:
         self.history_file = Path(self.app.appdata) / "icli" / "isaa_host_history.txt"
         self.rate_limiter_config_file = (
             Path(self.app.appdata) / "icli" / "rate_limiter_config.json"
+        )
+        self.vfs_shares_file = (
+            Path(self.app.appdata) / "icli" / "vfs_shares.json"
         )
 
         if not (Path(self.app.appdata) / "icli" ).exists():
@@ -4305,6 +4315,48 @@ class ISAA_Host:
                 json.dump(self._rate_limiter_config, f, indent=2)
         except Exception as e:
             print_status(f"Failed to save rate limiter config: {e}", "error")
+
+    def _load_vfs_shares(self) -> list:
+        """Load persisted cross-machine VFS shares."""
+        try:
+            if self.vfs_shares_file.exists():
+                with open(self.vfs_shares_file, encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return []
+
+    def _save_vfs_shares(self, shares: list):
+        """Persist cross-machine VFS shares."""
+        try:
+            self.vfs_shares_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.vfs_shares_file, "w", encoding="utf-8") as f:
+                json.dump(shares, f, indent=2)
+        except Exception as e:
+            print_status(f"Failed to save vfs shares: {e}", "warning")
+
+    async def _autostart_vfs_shares(self):
+        """On startup: reconnect all saved VFS shares so updates flow in."""
+        shares = self._load_vfs_shares()
+        if not shares:
+            return
+        agent = await self.isaa_tools.get_agent(self.active_agent_name)
+        session = await agent.session_manager.get_or_create(self.active_session_id)
+        if not session or not hasattr(session, "vfs"):
+            return
+        from toolboxv2.mods.CloudM.LiveSync.vfs_adapter import VFSSyncManager
+        mgr = getattr(session, "_vfs_sync_mgr", None)
+        if mgr is None:
+            mgr = VFSSyncManager(session.vfs)
+            session._vfs_sync_mgr = mgr
+        for sh in shares:
+            try:
+                await mgr.connect(sh["vfs_path"], sh["local_dir"],
+                                  token=sh["token"], readonly=sh.get("readonly", False))
+            except Exception as e:
+                print_status(f"VFS share autostart failed {sh.get('vfs_path')}: {e}", "warning")
+        if mgr.list():
+            print_status(f"VFS shares live: {', '.join(mgr.list())}", "success")
 
     def get_rate_limiter_config(self) -> dict:
         """Get the global rate limiter configuration."""
@@ -6139,6 +6191,36 @@ class ISAA_Host:
                 "clear": None,
                 "test": None,
             },
+            "/persona": {
+                "list": None,
+                "show": None,
+                "add": None,
+                "edit": None,
+                "delete": None,
+                "set": None,
+                "import": PathCompleter(only_directories=True, expanduser=True),
+                "export": PathCompleter(only_directories=True, expanduser=True),
+            },
+            "/rules": {
+                "list": None,
+                "show": None,
+                "add": None,
+                "edit": None,
+                "delete": None,
+                "clear": None,
+            },
+            "/worldmodel": {
+                "show": None,
+                "set": {
+                    "user": None,
+                    "agent_role": None,
+                },
+                "routines": {
+                    "add": None,
+                    "remove": None,
+                },
+                "reset": None,
+            },
 
         }, VFSCompleter(session.vfs) if is_vfs else None
 
@@ -6794,6 +6876,14 @@ class ISAA_Host:
         elif cmd == "/prompt":
             await self._cmd_prompt(args)
 
+        elif cmd == "/persona":
+            await self._cmd_persona(args)
+
+        elif cmd == "/rules":
+            await self._cmd_rules(args)
+
+        elif cmd == "/worldmodel":
+            await self._cmd_worldmodel(args)
         else:
             print_status(f"Unknown command: {cmd}. Type /help for help.", "error")
 
@@ -8908,6 +8998,73 @@ class ISAA_Host:
                     print_box_content(f"{path} ← {local}{refresh}", "")
                     print_box_content(f"  {info['lines']} lines, {info['file_type']}", "dim")
                 print_box_footer()
+
+            elif cmd == "share":
+                # Cross-machine VFS share-folder live-sync (LiveSync engine).
+                sub = args[1].lower() if len(args) > 1 else ""
+                rest = args[2:]
+                readonly = "--readonly" in rest
+                token, pos, i = "", [], 0
+                while i < len(rest):
+                    a = rest[i]
+                    if a == "--token" and i + 1 < len(rest):
+                        token = rest[i + 1]; i += 2; continue
+                    if not a.startswith("--"):
+                        pos.append(a)
+                    i += 1
+
+                if sub == "create":
+                    # Server-side: provision a share for a folder, print the token.
+                    if not pos:
+                        print_status("Usage: /vfs share create <local_dir> [ws_port]", "warning")
+                        return
+                    from toolboxv2.mods.CloudM.LiveSync import create_share
+                    ws_port = int(pos[1]) if len(pos) > 1 and pos[1].isdigit() else 8765
+                    res = create_share(pos[0], ws_port=ws_port)
+                    if res.get("ok"):
+                        print_status(f"Share created: {res['share_id']} (server :{ws_port})", "success")
+                        print_box_header("Share token \u2014 distribute to nodes", "\U0001f511")
+                        print_box_content(res["token"], "")
+                        print_box_footer()
+                    else:
+                        print_status(f"Create failed: {res.get('error')}", "error")
+                    return
+
+                from toolboxv2.mods.CloudM.LiveSync.vfs_adapter import VFSSyncManager
+                mgr = getattr(session, "_vfs_sync_mgr", None)
+                if mgr is None:
+                    mgr = VFSSyncManager(session.vfs)
+                    session._vfs_sync_mgr = mgr
+
+                if sub == "connect":
+                    if len(pos) < 2 or not token:
+                        print_status("Usage: /vfs share connect <vfs_path> <local_dir> --token <token> [--readonly]", "warning")
+                        return
+                    await mgr.connect(pos[0], pos[1], token=token, readonly=readonly)
+                    shares = [x for x in self._load_vfs_shares() if x.get("vfs_path") != pos[0]]
+                    shares.append({"vfs_path": pos[0], "local_dir": pos[1], "token": token, "readonly": readonly})
+                    self._save_vfs_shares(shares)
+                    print_status(f"Share live + saved: {pos[0]}", "success")
+                elif sub == "disconnect":
+                    if not pos:
+                        print_status("Usage: /vfs share disconnect <vfs_path>", "warning")
+                        return
+                    ok = await mgr.disconnect(pos[0])
+                    self._save_vfs_shares([x for x in self._load_vfs_shares() if x.get("vfs_path") != pos[0]])
+                    print_status(f"{'Disconnected' if ok else 'Removed'}: {pos[0]}", "success")
+                elif sub == "list":
+                    live = mgr.list()
+                    saved = self._load_vfs_shares()
+                    print_box_header("VFS Shares", "\U0001f517")
+                    for sh in saved:
+                        vp = sh["vfs_path"]
+                        flag = "\u25cf" if vp in live else "\u25cb"
+                        print_box_content(f"{flag} {vp} \u2190 {sh['local_dir']}", "")
+                    if not saved:
+                        print_box_content("(none saved)", "")
+                    print_box_footer()
+                else:
+                    print_status("Usage: /vfs share <create|connect|disconnect|list>", "warning")
 
             # /vfs <path> - show file content or directory listing
             else:
@@ -11118,6 +11275,574 @@ class ISAA_Host:
         else:
             print_status(f"Unknown skill action: {action}", "error")
 
+    async def _cmd_persona(self, args: list[str]):
+        """Handle /persona commands — manage builtin + learned personas."""
+        if not args:
+            print_status("Usage: /persona <list|show|add|edit|delete|set|import|export> [id]", "warning")
+            return
+
+        action = args[0].lower()
+
+        # ── helpers ──────────────────────────────────────────────────────
+        def _load_builtin() -> dict:
+            try:
+                from toolboxv2.mods.isaa.base.Agent.default_personas import _BUILTIN_PERSONAS
+                return _BUILTIN_PERSONAS
+            except Exception:
+                return {}
+
+        def _load_learned() -> dict:
+            """Load learned personas from VFS dreamer store."""
+            try:
+                from toolboxv2.utils.extras.blobs import BlobFile
+                import json as _json
+                with BlobFile("isaa/dreamer/personas.json", "r") as f:
+                    raw = f.read_json()
+                return raw if isinstance(raw, dict) else {}
+            except Exception:
+                return {}
+
+        def _save_learned(data: dict) -> bool:
+            try:
+                from toolboxv2.utils.extras.blobs import BlobFile
+                with BlobFile("isaa/dreamer/personas.json", "w") as f:
+                    f.write_json(data)
+                return True
+            except Exception as e:
+                print_status(f"Save failed: {e}", "error")
+                return False
+
+        # ── list ─────────────────────────────────────────────────────────
+        if action == "list":
+            builtins = _load_builtin()
+            learned = _load_learned()
+
+            print_box_header(f"Personas — builtin ({len(builtins)}) + learned ({len(learned)})", "🎭")
+
+            all_ids = sorted(set(list(builtins.keys()) + list(learned.keys())))
+            for pid in all_ids:
+                src = "learned" if pid in learned else "builtin"
+                if pid in builtins:
+                    p = builtins[pid]
+                    name = p.name
+                    model = p.model_preference
+                    temp = f"{p.temperature:.1f}" if p.temperature is not None else "default"
+                else:
+                    entry = learned[pid]
+                    prof = entry.get("profile", {})
+                    name = prof.get("name", pid)
+                    model = prof.get("model_preference", "?")
+                    temp = prof.get("temperature", "?")
+                style = "green" if src == "learned" else "cyan"
+                print_table_row(
+                    [pid[:30], name[:25], src, model, str(temp)],
+                    [32, 27, 9, 8, 8],
+                    [style, "white", "grey", "white", "white"],
+                )
+            print_box_footer()
+
+        # ── show ─────────────────────────────────────────────────────────
+        elif action == "show":
+            if len(args) < 2:
+                print_status("Usage: /persona show <persona_id>", "warning")
+                return
+            pid = args[1]
+            builtins = _load_builtin()
+            learned = _load_learned()
+
+            if pid in builtins:
+                p = builtins[pid]
+                print_box_header(f"Persona: {p.name} (builtin)", "🎭")
+                print_box_content(f"ID: {pid}", "info")
+                print_box_content(
+                    f"Model: {p.model_preference} | Temp: {p.temperature} | Verif: {p.verification_level}", "info")
+                print_box_content(f"Max-Iter Factor: {p.max_iterations_factor}", "info")
+                print_separator()
+                print_status("Prompt Modifier:", "info")
+                print_code_block(p.prompt_modifier, "markdown")
+                print_box_footer()
+            elif pid in learned:
+                entry = learned[pid]
+                prof = entry.get("profile", {})
+                print_box_header(f"Persona: {prof.get('name', pid)} (learned)", "🎭")
+                print_box_content(f"ID: {pid}", "info")
+                print_box_content(
+                    f"Confidence: {entry.get('confidence', '?')} | Evidence: {entry.get('evidence_count', '?')}",
+                    "info")
+                print_box_content(f"Model: {prof.get('model_preference', '?')} | Temp: {prof.get('temperature', '?')}",
+                                  "info")
+                print_separator()
+                print_status("Prompt Modifier:", "info")
+                print_code_block(prof.get("prompt_modifier", ""), "markdown")
+                print_box_footer()
+            else:
+                print_status(f"Persona '{pid}' not found.", "error")
+
+        # ── add ──────────────────────────────────────────────────────────
+        elif action == "add":
+            if len(args) < 3:
+                print_status("Usage: /persona add <id> <name> [model=fast] [temp=0.4]", "warning")
+                return
+            pid = args[1]
+            name = args[2]
+            model_pref = "fast"
+            temp = 0.4
+            for a in args[3:]:
+                if a.startswith("model="):
+                    model_pref = a.split("=", 1)[1]
+                elif a.startswith("temp="):
+                    try:
+                        temp = float(a.split("=", 1)[1])
+                    except ValueError:
+                        pass
+
+            print_status(f"Enter prompt_modifier for '{name}' (end with empty line):", "configure")
+            plines: list[str] = []
+            if self.prompt_session is not None:
+                while True:
+                    line = await self.prompt_session.prompt_async(
+                        HTML("<style fg='grey'>... </style>")
+                    )
+                    if not line.strip():
+                        break
+                    plines.append(line)
+            modifier = "\n".join(plines)
+            if not modifier.strip():
+                print_status("Empty modifier — cancelled.", "warning")
+                return
+
+            learned = _load_learned()
+            learned[pid] = {
+                "profile": {
+                    "name": name,
+                    "prompt_modifier": modifier,
+                    "model_preference": model_pref,
+                    "temperature": temp,
+                    "max_iterations_factor": 1.0,
+                    "verification_level": "basic",
+                },
+                "confidence": 1.0,
+                "evidence_count": 1,
+                "dream_cycles": 0,
+                "usage_count": 0,
+                "created": datetime.now().isoformat(),
+            }
+            if _save_learned(learned):
+                print_status(f"Persona '{pid}' added.", "success")
+
+        # ── edit ─────────────────────────────────────────────────────────
+        elif action == "edit":
+            if len(args) < 2:
+                print_status("Usage: /persona edit <id>", "warning")
+                return
+            pid = args[1]
+            learned = _load_learned()
+            builtins = _load_builtin()
+
+            # Edit learned or create a learned copy from builtin
+            if pid in learned:
+                prof = learned[pid].get("profile", {})
+            elif pid in builtins:
+                p = builtins[pid]
+                prof = {
+                    "name": p.name,
+                    "prompt_modifier": p.prompt_modifier,
+                    "model_preference": p.model_preference,
+                    "temperature": p.temperature or 0.4,
+                    "max_iterations_factor": p.max_iterations_factor,
+                    "verification_level": p.verification_level,
+                }
+                learned[pid] = {"profile": prof, "confidence": 1.0, "evidence_count": 1, "usage_count": 0,
+                                "created": datetime.now().isoformat()}
+            else:
+                print_status(f"Persona '{pid}' not found.", "error")
+                return
+
+            print_box_header(f"Editing: {prof.get('name', pid)}", "🎭")
+            print_status("Current prompt_modifier:", "info")
+            print_code_block(prof.get("prompt_modifier", ""), "markdown")
+            print_separator()
+            print_status("Enter NEW prompt_modifier (end with empty line) or 'CANCEL':", "configure")
+            elines: list[str] = []
+            if self.prompt_session is not None:
+                while True:
+                    line = await self.prompt_session.prompt_async(
+                        HTML("<style fg='grey'>... </style>")
+                    )
+                    if not line.strip():
+                        break
+                    if line.strip().upper() == "CANCEL":
+                        print_status("Edit cancelled.", "warning")
+                        return
+                    elines.append(line)
+            new_mod = "\n".join(elines)
+            if new_mod.strip():
+                prof["prompt_modifier"] = new_mod
+                learned[pid]["profile"] = prof
+                if _save_learned(learned):
+                    print_status(f"Persona '{pid}' updated.", "success")
+
+        # ── delete ───────────────────────────────────────────────────────
+        elif action == "delete":
+            if len(args) < 2:
+                print_status("Usage: /persona delete <id>", "warning")
+                return
+            pid = args[1]
+            learned = _load_learned()
+            if pid in learned:
+                del learned[pid]
+                if _save_learned(learned):
+                    print_status(f"Learned persona '{pid}' deleted.", "success")
+            else:
+                print_status(f"Persona '{pid}' not found in learned store (builtin personas cannot be deleted).",
+                             "error")
+
+        # ── set (activate for current agent) ─────────────────────────────
+        elif action == "set":
+            if len(args) < 2:
+                print_status("Usage: /persona set <id>", "warning")
+                return
+            pid = args[1]
+            builtins = _load_builtin()
+            learned = _load_learned()
+
+            prof_data = None
+            if pid in learned:
+                prof_data = learned[pid].get("profile", {})
+            elif pid in builtins:
+                p = builtins[pid]
+                prof_data = {
+                    "name": p.name,
+                    "prompt_modifier": p.prompt_modifier,
+                    "model_preference": p.model_preference,
+                    "temperature": p.temperature,
+                    "max_iterations_factor": p.max_iterations_factor,
+                    "verification_level": p.verification_level,
+                }
+            if not prof_data:
+                print_status(f"Persona '{pid}' not found.", "error")
+                return
+
+            try:
+                agent = await self.isaa_tools.get_agent(self.active_agent_name)
+                attr = "system_message" if hasattr(agent.amd, "system_message") else "system_prompt"
+                existing = getattr(agent.amd, attr, "") or ""
+                modifier = prof_data.get("prompt_modifier", "")
+                # Remove previous persona block if present
+                if "[PERSONA:" in existing:
+                    existing = existing[:existing.index("[PERSONA:")]
+                new_sys = existing.rstrip() + "\n\n[PERSONA:" + pid + "]\n" + modifier
+                setattr(agent.amd, attr, new_sys)
+                print_status(f"Persona '{pid}' activated for agent '{self.active_agent_name}'.", "success")
+            except Exception as e:
+                print_status(f"Failed to set persona: {e}", "error")
+
+        # ── export ───────────────────────────────────────────────────────
+        elif action == "export":
+            if len(args) < 3:
+                print_status("Usage: /persona export <id|all> <path>", "warning")
+                return
+            pid = args[1]
+            out_path = args[2]
+            learned = _load_learned()
+            builtins = _load_builtin()
+            if pid == "all":
+                export_data = {}
+                for k, v in {**builtins, **learned}.items():
+                    if k in builtins:
+                        p = builtins[k]
+                        export_data[k] = {"name": p.name, "prompt_modifier": p.prompt_modifier,
+                                          "model_preference": p.model_preference, "temperature": p.temperature,
+                                          "max_iterations_factor": p.max_iterations_factor,
+                                          "verification_level": p.verification_level, "source": "builtin"}
+                    else:
+                        export_data[k] = learned[k]
+            else:
+                if pid in learned:
+                    export_data = {pid: learned[pid]}
+                elif pid in builtins:
+                    p = builtins[pid]
+                    export_data = {pid: {"profile": {"name": p.name, "prompt_modifier": p.prompt_modifier,
+                                                     "model_preference": p.model_preference,
+                                                     "temperature": p.temperature,
+                                                     "max_iterations_factor": p.max_iterations_factor,
+                                                     "verification_level": p.verification_level}, "source": "builtin"}}
+                else:
+                    print_status(f"Persona '{pid}' not found.", "error")
+                    return
+            try:
+                Path(out_path).write_text(json.dumps(export_data, indent=2, ensure_ascii=False), encoding="utf-8")
+                print_status(f"Persona(s) exported to '{out_path}'", "success")
+            except Exception as e:
+                print_status(f"Export failed: {e}", "error")
+
+        # ── import ───────────────────────────────────────────────────────
+        elif action == "import":
+            if len(args) < 2:
+                print_status("Usage: /persona import <path>", "warning")
+                return
+            in_path = args[1]
+            try:
+                raw = Path(in_path).read_text(encoding="utf-8")
+                data = json.loads(raw)
+            except Exception as e:
+                print_status(f"Import failed: {e}", "error")
+                return
+            learned = _load_learned()
+            count = 0
+            for k, v in data.items():
+                if isinstance(v, dict) and "profile" in v:
+                    learned[k] = v
+                    count += 1
+                elif isinstance(v, dict) and "prompt_modifier" in v:
+                    learned[k] = {"profile": v, "confidence": 1.0, "evidence_count": 1, "usage_count": 0,
+                                  "created": datetime.now().isoformat()}
+                    count += 1
+            _save_learned(learned)
+            print_status(f"Imported {count} persona(s) from '{in_path}'", "success")
+
+        else:
+            print_status(f"Unknown persona action: {action}", "error")
+
+    async def _cmd_rules(self, args: list[str]):
+        """Handle /rules commands — manage runtime rules checkpoint."""
+        if not args:
+            print_status("Usage: /rules <list|show|add|edit|delete|clear> [id]", "warning")
+            return
+
+        action = args[0].lower()
+
+        # ── helpers ──────────────────────────────────────────────────────
+        def _load_rules() -> dict:
+            try:
+                from toolboxv2.utils.extras.blobs import BlobFile
+                with BlobFile("isaa/dreamer/rules_checkpoint.json", "r") as f:
+                    raw = f.read_json()
+                if isinstance(raw, dict) and "rules" in raw:
+                    return raw["rules"]
+                return raw if isinstance(raw, dict) else {}
+            except Exception:
+                return {}
+
+        def _save_rules(rules: dict) -> bool:
+            try:
+                from toolboxv2.utils.extras.blobs import BlobFile
+                with BlobFile("isaa/dreamer/rules_checkpoint.json", "w") as f:
+                    f.write_json({"rules": rules})
+                return True
+            except Exception as e:
+                print_status(f"Save failed: {e}", "error")
+                return False
+
+        # ── list ─────────────────────────────────────────────────────────
+        if action == "list":
+            rules = _load_rules()
+            if not rules:
+                print_status("No rules defined.", "info")
+                return
+            print_box_header(f"Rules ({len(rules)})", "📋")
+            for rid, r in rules.items():
+                situation = r.get("situation", "?")[:60]
+                intent = r.get("intent", "?")[:50]
+                n_instr = len(r.get("instructions", []))
+                print_table_row(
+                    [rid[:22], situation, intent, str(n_instr)],
+                    [24, 62, 52, 6],
+                    ["cyan", "white", "grey", "white"],
+                )
+            print_box_footer()
+
+        # ── show ─────────────────────────────────────────────────────────
+        elif action == "show":
+            if len(args) < 2:
+                print_status("Usage: /rules show <rule_id>", "warning")
+                return
+            rid = args[1]
+            rules = _load_rules()
+            r = rules.get(rid)
+            if not r:
+                print_status(f"Rule '{rid}' not found.", "error")
+                return
+            print_box_header(f"Rule: {rid}", "📋")
+            print_box_content(f"Situation: {r.get('situation', '')}", "info")
+            print_box_content(f"Intent: {r.get('intent', '')}", "info")
+            print_separator()
+            print_status("Instructions:", "info")
+            for i, instr in enumerate(r.get("instructions", []), 1):
+                print_box_content(f"  {i}. {instr}", "")
+            print_box_footer()
+
+        # ── add ──────────────────────────────────────────────────────────
+        elif action == "add":
+            print_status("Adding new rule. Enter details:", "configure")
+            rid = f"rule_{uuid.uuid4().hex[:8]}"
+            if self.prompt_session is not None:
+                situation = (await self.prompt_session.prompt_async(
+                    HTML("<style fg='cyan'>Situation: </style>"))).strip()
+                intent = (await self.prompt_session.prompt_async(
+                    HTML("<style fg='cyan'>Intent: </style>"))).strip()
+                print_status("Enter instructions (one per line, end with empty line):", "info")
+                ilines: list[str] = []
+                while True:
+                    line = await self.prompt_session.prompt_async(
+                        HTML("<style fg='grey'>... </style>"))
+                    if not line.strip():
+                        break
+                    ilines.append(line)
+            else:
+                situation = input("Situation: ").strip()
+                intent = input("Intent: ").strip()
+                ilines = []
+                while True:
+                    line = input("... ").strip()
+                    if not line:
+                        break
+                    ilines.append(line)
+
+            if not situation:
+                print_status("Situation is required — cancelled.", "warning")
+                return
+            rules = _load_rules()
+            rules[rid] = {
+                "id": rid,
+                "situation": situation,
+                "intent": intent,
+                "instructions": ilines,
+            }
+            if _save_rules(rules):
+                print_status(f"Rule '{rid}' added.", "success")
+
+        # ── edit ─────────────────────────────────────────────────────────
+        elif action == "edit":
+            if len(args) < 2:
+                print_status("Usage: /rules edit <rule_id>", "warning")
+                return
+            rid = args[1]
+            rules = _load_rules()
+            r = rules.get(rid)
+            if not r:
+                print_status(f"Rule '{rid}' not found.", "error")
+                return
+            print_box_header(f"Editing rule: {rid}", "📋")
+            print_box_content(f"Current situation: {r.get('situation', '')}", "info")
+            print_box_content(f"Current intent: {r.get('intent', '')}", "info")
+            print_separator()
+            if self.prompt_session is not None:
+                new_situation = (await self.prompt_session.prompt_async(
+                    HTML("<style fg='cyan'>New situation (Enter=keep): </style>"))).strip()
+                new_intent = (await self.prompt_session.prompt_async(
+                    HTML("<style fg='cyan'>New intent (Enter=keep): </style>"))).strip()
+                if new_situation:
+                    r["situation"] = new_situation
+                if new_intent:
+                    r["intent"] = new_intent
+                print_status("Enter NEW instructions (one per line, end with empty line) or 'KEEP':", "info")
+                ilines: list[str] = []
+                while True:
+                    line = await self.prompt_session.prompt_async(
+                        HTML("<style fg='grey'>... </style>"))
+                    if not line.strip():
+                        break
+                    if line.strip().upper() == "KEEP":
+                        ilines = r.get("instructions", [])
+                        break
+                    ilines.append(line)
+                if ilines:
+                    r["instructions"] = ilines
+            rules[rid] = r
+            if _save_rules(rules):
+                print_status(f"Rule '{rid}' updated.", "success")
+
+        # ── delete ───────────────────────────────────────────────────────
+        elif action == "delete":
+            if len(args) < 2:
+                print_status("Usage: /rules delete <rule_id>", "warning")
+                return
+            rid = args[1]
+            rules = _load_rules()
+            if rid in rules:
+                del rules[rid]
+                if _save_rules(rules):
+                    print_status(f"Rule '{rid}' deleted.", "success")
+            else:
+                print_status(f"Rule '{rid}' not found.", "error")
+
+        # ── clear ────────────────────────────────────────────────────────
+        elif action == "clear":
+            if _save_rules({}):
+                print_status("All rules cleared.", "success")
+
+        else:
+            print_status(f"Unknown rules action: {action}", "error")
+
+    async def _cmd_worldmodel(self, args: list[str]):
+        """Handle /worldmodel commands — direct access to the always-on World Model."""
+        if not args:
+            print_status("Usage: /worldmodel <show|set|routines|reset> [field] [value]", "warning")
+            return
+
+        action = args[0].lower()
+        store = self._omni_state_store
+        wm = store.state.world_model
+
+        # ── show ─────────────────────────────────────────────────────────
+        if action == "show":
+            rendered = wm.render() or "(world model empty)"
+            print_box_header("World Model", "🌍")
+            print_box_content(rendered, "")
+            print_box_footer()
+            print_code_block(json.dumps(wm.to_dict(), indent=2, ensure_ascii=False), "json")
+
+        # ── set ──────────────────────────────────────────────────────────
+        elif action == "set":
+            if len(args) < 3:
+                print_status("Usage: /worldmodel set <user|agent_role> <value...>", "warning")
+                return
+            field_name = args[1].lower()
+            value = " ".join(args[2:])
+            if field_name not in ("user", "agent_role"):
+                print_status(f"Invalid field '{field_name}'. Valid: user, agent_role", "error")
+                return
+            setattr(wm, field_name, value.strip())
+            store.save()
+            print_status(f"World Model field '{field_name}' set to: {value.strip()}", "success")
+            print_box_content(wm.render(), "")
+
+        # ── routines ─────────────────────────────────────────────────────
+        elif action == "routines":
+            if len(args) < 3:
+                print_status("Usage: /worldmodel routines <add|remove> <value>", "warning")
+                return
+            sub = args[1].lower()
+            value = " ".join(args[2:]).strip()
+            if sub == "add":
+                if value and value not in wm.routines:
+                    wm.routines.append(value)
+                    store.save()
+                    print_status(f"Routine added: {value}", "success")
+                else:
+                    print_status(f"Routine already exists or empty.", "warning")
+            elif sub == "remove":
+                if value in wm.routines:
+                    wm.routines.remove(value)
+                    store.save()
+                    print_status(f"Routine removed: {value}", "success")
+                else:
+                    print_status(f"Routine '{value}' not found.", "error")
+            else:
+                print_status(f"Unknown routines sub-command: {sub}. Use add|remove", "error")
+
+        # ── reset ────────────────────────────────────────────────────────
+        elif action == "reset":
+            wm.user = ""
+            wm.agent_role = ""
+            wm.routines = []
+            store.save()
+            print_status("World Model reset to empty.", "success")
+
+        else:
+            print_status(f"Unknown worldmodel action: {action}", "error")
+
     async def _cmd_feature(self, args: list[str]):
         """Handle /feature commands."""
         if len(args) < 2:
@@ -12377,6 +13102,12 @@ class ISAA_Host:
         # Initialize Self Agent
         await self._init_self_agent()
 
+        # Auto-start saved cross-machine VFS shares
+        try:
+            await self._autostart_vfs_shares()
+        except Exception as _vfs_err:
+            print_status(f"VFS share autostart skipped: {_vfs_err}", "warning")
+
         # Start Job Scheduler
         # Start Job Scheduler
         self.job_scheduler = self.isaa_tools.job_scheduler
@@ -13006,9 +13737,9 @@ async def main_cli():
     import argparse
     import sys
 
-    # ZMQ benötigt SelectorEventLoop auf Windows
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    # ZMQ benötigt SelectorEventLoop auf Windows kein ZMQ in der icli
+    # if sys.platform == "win32":
+    #     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     parser = argparse.ArgumentParser(description="ISAA iCLI")
     parser.add_argument("query", nargs="?", help="Anfrage an den Agenten")

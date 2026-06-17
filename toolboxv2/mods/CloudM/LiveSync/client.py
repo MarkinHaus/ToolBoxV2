@@ -145,7 +145,7 @@ class ClientWatchdogHandler(FileSystemEventHandler):
             try:
                 old = str(Path(event.src_path).relative_to(self.vault_path)).replace("\\", "/")
                 new = str(Path(event.dest_path).relative_to(self.vault_path)).replace("\\", "/")
-                if not should_ignore(new):
+                if not should_ignore(new) and not should_ignore(old):
                     self.loop.call_soon_threadsafe(
                         self.queue.put_nowait, ("renamed", old, new)
                     )
@@ -194,6 +194,10 @@ class SyncClient:
 
         # Suppress watchdog events for files we're currently writing
         self._writing_paths: set = set()
+
+        # Optional VFS-bridge hook: callback(event_type:str, payload:dict)
+        # fired after a remote change is applied locally. Set by VFSSyncAdapter.
+        self.on_remote_change = None
 
     # ── Lifecycle ──
 
@@ -367,6 +371,15 @@ class SyncClient:
 
         elif msg.type == MsgType.ERROR:
             logger.error(f"[LiveSync] Server error: {msg.payload.get('message')}")
+
+        # VFS-bridge hook — notify after a remote mutation is applied locally
+        if self.on_remote_change and msg.type in (
+            MsgType.FILE_CHANGED, MsgType.FILE_DELETED, MsgType.FILE_RENAMED,
+        ):
+            try:
+                self.on_remote_change(msg.type.value, msg.payload)
+            except Exception as e:
+                logger.error(f"[LiveSync] on_remote_change hook error: {e}")
 
     # ── Ping/Pong ──
 

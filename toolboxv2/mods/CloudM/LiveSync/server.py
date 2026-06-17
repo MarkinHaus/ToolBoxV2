@@ -107,7 +107,7 @@ class AsyncWatchdogHandler(FileSystemEventHandler):
         try:
             old = str(Path(event.src_path).relative_to(self.vault_path)).replace("\\", "/")
             new = str(Path(event.dest_path).relative_to(self.vault_path)).replace("\\", "/")
-            if should_ignore(new):
+            if should_ignore(new) or should_ignore(old):
                 return
             self.loop.call_soon_threadsafe(
                 self.queue.put_nowait, ("renamed", old, new)

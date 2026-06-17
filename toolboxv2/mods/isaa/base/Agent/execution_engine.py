@@ -1792,6 +1792,7 @@ BEISPIELE:
             ctx, session, query, max_iterations, is_resume
         )
 
+
         final_response = None
         success = True
         log = get_logger()
@@ -2075,6 +2076,16 @@ BEISPIELE:
                     persona.max_iterations_factor if persona else 1.0,
                 )
                 return chunk
+
+            task_type = getattr(ctx, "task_type", None)
+            subtype = getattr(ctx, "subtype", None)
+            if task_type:
+                yield enrich({
+                    "type": "status",
+                    "status_msg": f"Task-Typ erkannt: {task_type}" + (f" ({subtype})" if subtype else ""),
+                    "task_type": task_type,
+                    "subtype": subtype
+                })
 
             try:
                 while ctx.current_iteration < ctx.max_iterations:
@@ -2557,6 +2568,16 @@ BEISPIELE:
             )
             return chunk
 
+        task_type = getattr(ctx, "task_type", None)
+        subtype = getattr(ctx, "subtype", None)
+        if task_type:
+            yield enrich({
+                "type": "status",
+                "status_msg": f"Task-Typ erkannt: {task_type}" + (f" ({subtype})" if subtype else ""),
+                "task_type": task_type,
+                "subtype": subtype
+            })
+
         # --- Narrator callback (fire-and-forget via yield queue) ---
         narrator_pending = []
 
@@ -2946,11 +2967,16 @@ BEISPIELE:
                     )
 
                     async def _narrator_classify(_system: str, _query: str):
-                        return await self._narrator.blitz(
+                        res = await self._narrator.blitz(
                             system=_system,
                             messages=[{"role": "user", "content": _query[:1500]}],
                             schema={"task_type": str, "subtype": str},
                         )
+                        # --- ANPASSUNG: Auf dem Context speichern ---
+                        if isinstance(res, dict) and "task_type" in res:
+                            ctx.task_type = res.get("task_type")
+                            ctx.subtype = res.get("subtype")
+                        return res
 
                     _pre = await build_preinjection(
                         session.vfs, query, narrator_call=_narrator_classify
