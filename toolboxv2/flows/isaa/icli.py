@@ -28,8 +28,6 @@ from typing import Any
 
 import requests
 from prompt_toolkit.document import Document
-from prompt_toolkit.filters import is_done
-from prompt_toolkit.output.win32 import NoConsoleScreenBufferError
 
 from toolboxv2.utils.workers import get_registry
 from toolboxv2.utils.extras.Style import Spinner
@@ -1017,6 +1015,14 @@ class Colors:
 def esc(text: Any) -> str:
     """Escaped Text für HTML-Tags, verhindert Crash bei < oder > im Text"""
     return html.escape(str(text).encode().decode(encoding="utf-8", errors="replace"), quote=False)
+
+try:
+    if sys.platform == "win32":
+        from prompt_toolkit.output.win32 import NoConsoleScreenBufferError
+    else:
+        NoConsoleScreenBufferError = Exception
+except AssertionError:
+    NoConsoleScreenBufferError = Exception
 
 def c_print(*args, **kwargs):
     """Drop-in Replacement für print, nutzt prompt_toolkit"""
