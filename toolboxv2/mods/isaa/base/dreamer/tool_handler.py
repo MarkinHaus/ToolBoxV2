@@ -84,7 +84,7 @@ class DreamerToolHandler:
         "evolve_skill", "merge_skills", "split_skill", "compress_skill",
         "cleanup", "delete_skill", "delete_rule",
         "extract_rules", "learn_pattern",
-        "write_taskmap_guide", "persist_checkpoint",
+        "write_taskmap_guide", "add_task_class", "persist_checkpoint", "update_classify_guide"
     })
 
     def handle_act(self, action: str, payload: dict | None = None) -> str:
@@ -127,12 +127,31 @@ class DreamerToolHandler:
                     tools_used=list(payload.get("tools_used", []) or []),
                     failure_patterns=list(payload.get("failure_patterns", []) or []),
                 )
-            if action == "create_rule":
-                return self.handle_extract_rules(
-                    list(payload.get("rules", []) or []),
+            if action in ("create_rule", "extract_rules"):
+                # Toleranz für alte Listen-Formatierung
+                rd = payload
+                if "rules" in payload and isinstance(payload["rules"], list) and len(payload["rules"]) > 0:
+                    rd = payload["rules"][0]
+
+                return self.handle_create_rule(
+                    situation=str(rd.get("situation", "")),
+                    intent=str(rd.get("intent", "")),
+                    instructions=list(rd.get("instructions", []) or []),
+                    required_tool_groups=list(rd.get("required_tool_groups", []) or []),
+                    confidence=float(rd.get("confidence", 0.5)),
+                )
+            if action == "add_task_class":
+                return self.handle_add_task_class(
+                    task_type=str(payload.get("task_type", "")),
+                    subtype=str(payload.get("subtype", "")),
+                    classification_keywords=list(payload.get("classification_keywords", []) or [])
                 )
             if action == "create_persona":
                 return self.handle_evolve_persona(**payload)
+            if action == "update_classify_guide":
+                return self.handle_update_classify_guide(
+                    additions=list(payload.get("additions", []) or []),
+                )
             if action == "evolve_skill":
                 return self.handle_evolve_skill(**payload)
             if action == "merge_skills":
@@ -161,10 +180,6 @@ class DreamerToolHandler:
                 return self.handle_delete_rule(
                     rule_id=str(payload.get("rule_id", "")),
                     reason=str(payload.get("reason", "")),
-                )
-            if action == "extract_rules":
-                return self.handle_extract_rules(
-                    list(payload.get("rules", []) or []),
                 )
             if action == "learn_pattern":
                 return self.handle_learn_pattern(
@@ -386,6 +401,67 @@ class DreamerToolHandler:
             self._report.setdefault("taskmap_guides_written", []).append(f"{task_type}/{sub}")
         return json.dumps({"success": ok, "path": path})
 
+    # 3. Die Methode implementieren:
+    def handle_update_classify_guide(self, additions: List[str]) -> str:
+        """Sicheres, rein additives Erstellen neuer Klassen aus dem Original-Prompt-Format."""
+        if not additions:
+            return json.dumps({"success": False, "error": "additions list is required"})
+
+        vfs = self._taskmap_vfs()
+        if vfs is None:
+            return json.dumps({"success": False, "error": "no VFS available"})
+
+        import re
+        path_guide = f"{self._TASKMAP_ROOT}/classify_guide.md"
+        path_index = f"{self._TASKMAP_ROOT}/_index.json"
+
+        # 1. Classify Guide updaten (Markdown)
+        raw_guide = self._vfs_read(vfs, path_guide)
+        lines = raw_guide.splitlines() if raw_guide else []
+
+        parsed_additions = []
+        for a in additions:
+            # Akzeptiert das exakte Format: task_type/subtype: keyword1 keyword2 ...
+            match = re.match(r"^\s*([a-z0-9_-]+)/([a-z0-9_-]+)\s*:\s*(.+)$", a.strip(), re.IGNORECASE)
+            if not match:
+                continue
+            t_type = match.group(1).lower()
+            s_type = match.group(2).lower()
+            keywords = match.group(3).lower()
+
+            prefix = f"{t_type}/{s_type}:"
+            # Nur anfügen, falls die Klasse noch nicht im Guide steht
+            if not any(l.strip().lower().startswith(prefix) for l in lines):
+                lines.append(f"{prefix} {keywords}")
+                parsed_additions.append((t_type, s_type))
+
+        if parsed_additions:
+            # Guide schreiben
+            vfs.write(path_guide, "\n".join(lines) + "\n")
+
+            # 2. _index.json synchronisieren (rein additiv)
+            raw_index = self._vfs_read(vfs, path_index)
+            top_index = {}
+            if raw_index:
+                try:
+                    top_index = json.loads(raw_index)
+                except Exception:
+                    top_index = {"task_types": {}}
+            if "task_types" not in top_index:
+                top_index["task_types"] = {}
+
+            for t_type, s_type in parsed_additions:
+                if t_type not in top_index["task_types"]:
+                    top_index["task_types"][t_type] = {
+                        "subtypes": [], "success_rate": 0.0, "last_updated": 0, "entry_count": 0
+                    }
+                if s_type not in top_index["task_types"][t_type]["subtypes"]:
+                    top_index["task_types"][t_type]["subtypes"].append(s_type)
+                    self._report.setdefault("classes_added", []).append(f"{t_type}/{s_type}")
+
+            vfs.write(path_index, json.dumps(top_index, indent=2))
+
+        return json.dumps({"success": True, "added_classes": [f"{t}/{s}" for t, s in parsed_additions]})
     # ═══════════════════════════════════════════════════════════════
     # BLOAT CALCULATION
     # ═══════════════════════════════════════════════════════════════
@@ -482,6 +558,59 @@ class DreamerToolHandler:
     def handle_get_personas(self) -> str:
         """Return all personas as JSON."""
         return json.dumps(self._personas, indent=2, default=str)
+
+    def handle_add_task_class(self, task_type: str, subtype: str, classification_keywords: List[str]) -> str:
+        """Fügt eine neue Task-Klasse sauber und additiv zum System hinzu."""
+        if not task_type or not subtype or not classification_keywords:
+            return json.dumps(
+                {"success": False, "error": "task_type, subtype and classification_keywords are required"})
+
+        vfs = self._taskmap_vfs()
+        if vfs is None:
+            return json.dumps({"success": False, "error": "no VFS available"})
+
+        import re
+        # Nur Kleinschreibung, keine Sonderzeichen
+        t_type = re.sub(r"[^a-z0-9_-]", "", task_type.lower())
+        s_type = re.sub(r"[^a-z0-9_-]", "", subtype.lower())
+
+        path_guide = f"{self._TASKMAP_ROOT}/classify_guide.md"
+        path_index = f"{self._TASKMAP_ROOT}/_index.json"
+
+        # 1. Classify Guide updaten (Markdown)
+        raw_guide = self._vfs_read(vfs, path_guide)
+        lines = raw_guide.splitlines() if raw_guide else []
+
+        prefix = f"{t_type}/{s_type}:"
+        exists_in_guide = any(l.startswith(prefix) for l in lines)
+
+        if not exists_in_guide:
+            keywords_str = " ".join(re.sub(r"[^a-z0-9_-]", "", kw.lower()) for kw in classification_keywords)
+            lines.append(f"{prefix} {keywords_str}")
+            vfs.write(path_guide, "\n".join(lines) + "\n")
+
+        # 2. TaskMap Index updaten (JSON) - Strikt additiv, rührt bestehende Metriken nicht an
+        raw_index = self._vfs_read(vfs, path_index)
+        top_index = {}
+        if raw_index:
+            try:
+                top_index = json.loads(raw_index)
+            except Exception:
+                top_index = {"task_types": {}}
+        if "task_types" not in top_index:
+            top_index["task_types"] = {}
+
+        if t_type not in top_index["task_types"]:
+            top_index["task_types"][t_type] = {
+                "subtypes": [], "success_rate": 0.0, "last_updated": 0, "entry_count": 0
+            }
+
+        if s_type not in top_index["task_types"][t_type]["subtypes"]:
+            top_index["task_types"][t_type]["subtypes"].append(s_type)
+            vfs.write(path_index, json.dumps(top_index, indent=2))
+
+        self._report.setdefault("classes_added", []).append(f"{t_type}/{s_type}")
+        return json.dumps({"success": True, "task_class": f"{t_type}/{s_type}"})
 
     # ═══════════════════════════════════════════════════════════════
     # CLUSTERING
@@ -1100,52 +1229,59 @@ class DreamerToolHandler:
     # RULE/PATTERN EXTRACTION
     # ═══════════════════════════════════════════════════════════════
 
-    def handle_extract_rules(self, rules_data: List[Dict]) -> str:
+    def handle_create_rule(self, situation: str, intent: str, instructions: List[str],
+                           required_tool_groups: List[str] = None, confidence: float = 0.5) -> str:
+        if not situation or not intent:
+            return json.dumps({"success": False, "error": "situation and intent required"})
 
-        if isinstance(rules_data, dict):
-            rules_data = [rules_data]
-        elif not isinstance(rules_data, list):
-            return json.dumps({"success": False, "error": "rules must be list or dict"})
+        rule_id = f"rule_{uuid.uuid4().hex[:8]}"
 
-        created = []
+        # Echte Klasse suchen, aber Dummys ignorieren
+        rule_cls = None
+        if self._rules:
+            for r in self._rules.values():
+                if type(r).__name__ not in ('_Rule', 'dict'):
+                    rule_cls = type(r)
+                    break
 
-        for rd in rules_data:
-            rule_id = f"rule_{uuid.uuid4().hex[:8]}"
-
-            # Build rule object matching SituationRule interface
-            rule_cls = type(list(self._rules.values())[0]) if self._rules else None
-            if rule_cls:
+        if rule_cls:
+            try:
                 rule = rule_cls(
                     id=rule_id,
-                    situation=rd["situation"],
-                    intent=rd["intent"],
-                    instructions=rd.get("instructions", []),
-                    required_tool_groups=rd.get("required_tool_groups", []),
+                    situation=situation,
+                    intent=intent,
+                    instructions=instructions,
+                    required_tool_groups=required_tool_groups or [],
                     learned=True,
-                    confidence=rd.get("confidence", 0.5),
+                    confidence=confidence,
                 )
-            else:
-                # Fallback: simple namespace
-                class _Rule:
-                    pass
-                rule = _Rule()
-                rule.id = rule_id
-                rule.situation = rd["situation"]
-                rule.intent = rd["intent"]
-                rule.instructions = rd.get("instructions", [])
-                rule.required_tool_groups = rd.get("required_tool_groups", [])
-                rule.learned = True
-                rule.confidence = rd.get("confidence", 0.5)
-                rule.success_count = 0
-                rule.failure_count = 0
-                rule.created_at = datetime.now()
-                rule.last_used = None
+            except Exception:
+                rule_cls = None
 
-            self._rules[rule_id] = rule
-            created.append(rule_id)
+        if not rule_cls:
+            # Fallback mit explizitem __init__, damit kwargs nicht crashen
+            class _Rule:
+                def __init__(self, **kwargs):
+                    for k, v in kwargs.items():
+                        setattr(self, k, v)
 
-        self._report["rules_created"].extend(created)
-        return f"OK: Created {len(created)} rules"
+            rule = _Rule(
+                id=rule_id,
+                situation=situation,
+                intent=intent,
+                instructions=instructions,
+                required_tool_groups=required_tool_groups or [],
+                learned=True,
+                confidence=confidence,
+                success_count=0,
+                failure_count=0,
+                created_at=datetime.now(),
+                last_used=None
+            )
+
+        self._rules[rule_id] = rule
+        self._report["rules_created"].append(rule_id)
+        return f"OK: Rule created (id={rule_id})"
 
     def handle_learn_pattern(
         self,
@@ -1154,33 +1290,49 @@ class DreamerToolHandler:
         category: str = "general",
         tags: List[str] = None,
     ) -> str:
+        if not pattern:
+            return "ERROR: pattern required"
+
         # Check for duplicates
         for existing in self._patterns:
-            if existing.pattern.lower() == pattern.lower():
+            if getattr(existing, "pattern", "").lower() == pattern.lower():
                 return f"OK: Pattern already exists (skipped)"
 
-        # Build pattern object
-        pat_cls = type(self._patterns[0]) if self._patterns else None
+        pat_cls = None
+        if self._patterns:
+            for p in self._patterns:
+                if type(p).__name__ not in ('_Pattern', 'dict'):
+                    pat_cls = type(p)
+                    break
+
         if pat_cls:
-            p = pat_cls(
+            try:
+                p = pat_cls(
+                    pattern=pattern,
+                    source_situation=source_situation,
+                    confidence=0.5,
+                    category=category,
+                    tags=tags or [],
+                )
+            except Exception:
+                pat_cls = None
+
+        if not pat_cls:
+            class _Pattern:
+                def __init__(self, **kwargs):
+                    for k, v in kwargs.items():
+                        setattr(self, k, v)
+
+            p = _Pattern(
                 pattern=pattern,
                 source_situation=source_situation,
                 confidence=0.5,
+                usage_count=0,
                 category=category,
                 tags=tags or [],
+                created_at=datetime.now(),
+                last_used=None
             )
-        else:
-            class _Pattern:
-                pass
-            p = _Pattern()
-            p.pattern = pattern
-            p.source_situation = source_situation
-            p.confidence = 0.5
-            p.usage_count = 0
-            p.category = category
-            p.tags = tags or []
-            p.created_at = datetime.now()
-            p.last_used = None
 
         self._patterns.append(p)
         self._report["patterns_added"].append(pattern[:50])

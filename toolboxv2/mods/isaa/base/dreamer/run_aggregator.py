@@ -350,13 +350,15 @@ class RunAggregator:
             return NEW_TYPE, "general"
 
         cand_str = ", ".join(f"{t}/{s}" for t, s, _ in candidates) or "none"
+        # PROMPT-ÄNDERUNG: Strikte Anweisung, nur aus 'known' zu wählen
         sys = (
             "Classify the task into task_type/subtype. Respond ONLY with JSON: "
             '{"task_type": "...", "subtype": "..."}\n'
             f"Known classes: {', '.join(known)}\n"
             f"Fuzzy pre-selection (likely): {cand_str}\n"
-            f'If uncertain or the task fits no class well, use "{NEW_TYPE}"/"general". '
-            "A new sensible class name is allowed if clearly warranted."
+            f'You MUST choose an EXACT match from the "Known classes". '
+            f'If uncertain, or if the task fits no known class perfectly, ALWAYS use "{NEW_TYPE}" and "general". '
+            "NEVER invent new classes."
         )
         try:
             raw = await self.llm(
@@ -365,8 +367,18 @@ class RunAggregator:
                 model_preference="fast", with_context=False, stream=False,
             )
             data = json.loads(re.search(r"\{.*\}", str(raw), re.DOTALL).group(0))
-            return _sanitize_class(data.get("task_type", NEW_TYPE),
-                                   data.get("subtype", "general"))
+
+            t_type = data.get("task_type", NEW_TYPE)
+            s_type = data.get("subtype", "general")
+
+            # CODE-ÄNDERUNG: Harte Validierung gegen die 'known' Liste
+            proposed_class = f"{t_type}/{s_type}"
+            if proposed_class not in known:
+                _log.debug(f"LLM tried to invent class '{proposed_class}', overriding to {NEW_TYPE}/general")
+                return NEW_TYPE, "general"
+
+            return _sanitize_class(t_type, s_type)
+
         except Exception as e:
             _log.debug(f"fast-model classify failed ({e}), fuzzy fallback")
             if candidates and candidates[0][2] >= 2:

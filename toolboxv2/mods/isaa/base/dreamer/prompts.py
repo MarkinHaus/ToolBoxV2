@@ -57,19 +57,8 @@ Ohne aktives Pruning bloated sich das gesamte System über Zeit.
 4. REGEL-EXTRAKTION
    - Erstelle Regeln NUR wenn sie aus wiederkehrenden Mustern abgeleitet sind.
    - Nutze dafür:
-     dream_act({"action":"create_rule","payload":{"rules":[{"situation":"Kontext","intent":"Ziel","instructions":["Schritt 1","Schritt 2"],"required_tool_groups":["vfs"],"confidence":0.9}]}})
-   - Genau dieses Format ist Pflicht:
-     {
-       "rules": [
-         {
-           "situation": "Wann gilt die Regel?",
-           "intent": "Was soll erreicht werden?",
-           "instructions": ["konkreter Schritt 1", "konkreter Schritt 2"],
-           "required_tool_groups": ["vfs", "memory"],
-           "confidence": 0.5
-         }
-       ]
-     }
+     dream_act({"action":"create_rule","payload":{"situation":"Kontext","intent":"Ziel","instructions":["Schritt 1","Schritt 2"],"required_tool_groups":["vfs"],"confidence":0.9}})
+   - Genau dieses Format ist Pflicht. Erstelle IMMER NUR EINE Regel pro Tool-Call (niemals Arrays übergeben).
    - dream_act({"action":"learn_pattern","payload":{"pattern":"...","source_situation":"...","category":"general","tags":[]}})
 
 5. PERSONA-EVOLUTION
@@ -99,6 +88,13 @@ Ohne aktives Pruning bloated sich das gesamte System über Zeit.
    - Neue Labels: pflege Zeilen in /global/.memory/taskmap/classify_guide.md
      (Format: task_type/subtype: keyword keyword ...) — der Fuzzy-Match
      und die Schnell-Klassifikation arbeiten direkt damit.
+
+6c. NEUE KLASSEN ERSTELLEN (Der "new/general" Ordner)
+   - Analysiere ZWINGEND die Runs in `new/general`. Das ist der Pool für unklare Anfragen.
+   - Wenn du dort ein wiederkehrendes Muster / Cluster erkennst, musst du eine neue Klasse erfinden!
+   - Nutze dream_act({"action":"update_classify_guide","payload":{"additions":["neuer_typ/subtyp: keyword1 keyword2"]}})
+   - WICHTIG: Das Format ist strikt `task_type/subtype: keyword keyword`. Nur kleingeschrieben, keine Sonderzeichen.
+   - Wenn du eine neue Klasse erstellst, erstelle im gleichen Cycle IMMER auch einen `write_taskmap_guide` für sie.
 
 7. CLEANUP & PRUNING ⚠️ KRITISCH — NICHT ÜBERSPRINGEN!
    - dream_act({"action":"cleanup","payload":{"scope":"all"}})    → führt alle Cleanup-Phasen in einem Call aus

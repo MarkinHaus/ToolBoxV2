@@ -769,10 +769,19 @@ async def run(app: App, args=None):
 
     await isaa.register_agent(builder)
     agent = await isaa.get_agent("tb_admin")
-    agent.tool_manager.register_cli_tool("tb", executable="uv", executable_args=["run"],
-                                    flags={"system_tool_by_name": True},
-                                    cli_tool_executable="tb",
-                                    category="system")
+    try:
+        agent.tool_manager.register_cli_tool("tb", executable="uv", executable_args=["run"],
+                                        flags={"system_tool_by_name": True},
+                                        cli_tool_executable="tb",
+                                        category="system")
+    except:
+        try:
+            agent.tool_manager.register_cli_tool("tb", executable=sys.executabel, executable_args=["run"],
+                                                 flags={"system_tool_by_name": True},
+                                                 cli_tool_executable="tb",
+                                                 category="system")
+        except:
+            pass
     print(Style.GREEN(f"Agent ready: {agent.amd.name}"))
     print(Style.GREEN(f"  Fast Model:    {agent.amd.fast_llm_model}"))
     print(Style.GREEN(f"  Complex Model: {agent.amd.complex_llm_model}"))

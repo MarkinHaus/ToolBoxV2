@@ -229,6 +229,7 @@ class GeminiLiveBackend(OmniBackend):
             "mimeType": f"audio/pcm;rate={self.INPUT_SR}",
         }}}
         try:
+            logger.debug("GeminiLiveBackend: send_audio (%d bytes)", len(pcm))
             await self._ws.send(json.dumps(msg))
         except Exception as e:  # noqa: BLE001 - WS may have died; stop quietly
             self._closed = True

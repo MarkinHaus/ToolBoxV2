@@ -3220,9 +3220,9 @@ async def serve_app(self, app=None, host: str = DEFAULT_HOST, port: int = DEFAUL
 
     # ISAA's UI is auth-gated like every other FastTB app.
     isaa_app = build_app(app)
-    isaa_app.auth = True
+    isaa_app.auth = False
     # ISAA is reachable on the local origin, so serve the login assets locally too.
-    isaa_app.serve_login_assets = True
+    isaa_app.serve_login_assets = False
 
     # If ISAA ends up the owner, let OBS join it.
     from toolboxv2.utils.workers.fast.tray_api import register_collective_commands

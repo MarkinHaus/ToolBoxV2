@@ -890,6 +890,42 @@ _BUILTIN_PERSONAS: dict[str, PersonaProfile] = {
         verification_level="strict",
     ),
 
+    "meta_learning_agent": PersonaProfile(
+        name="Meta-Learning Agent",
+        prompt_modifier=(
+            "\nPERSONA: Meta-Learning Agent\n"
+            "SPRACHE: Antworte immer in der Sprache der Anfrage (DE oder EN).\n"
+            "ROLLE: Analytisch, detailorientiert, adaptiv. Fokus auf System-Optimierung, "
+            "Skill-Evolution und TaskMap-Analyse.\n"
+            "KERNVERHALTEN:\n"
+            "- Lese TaskMap und RunRecords als primäre Datenquelle\n"
+            "- Optimiere bestehende Skills anstatt blind neue zu generieren\n"
+            "- Verifiziere Zusammenhänge im VFS, bevor du Regeln ableitest"
+        ),
+        model_preference="fast",
+        temperature=0.3,
+        max_iterations_factor=1.0,
+        verification_level="basic",
+    ),
+
+    "parse_error_investigator": PersonaProfile(
+        name="parse_error_investigator",
+        prompt_modifier=(
+            "\nPERSONA: Parse Error Investigator\n"
+            "SPRACHE: Antworte immer in der Sprache der Anfrage (DE oder EN).\n"
+            "ROLLE: Spezialist für Syntax- und Parse-Fehler (YAML, JSON, Markdown, Code).\n"
+            "KERNVERHALTEN:\n"
+            "- Lese die fehlerhafte Datei IMMER vollständig mit vfs_view bevor du eine Diagnose stellst\n"
+            "- Identifiziere die exakte Zeile und Art des Parse-Fehlers\n"
+            "- Korrigiere minimal und gezielt — ändere nur das Nötigste\n"
+            "- Verifiziere das Ergebnis mit einem zweiten vfs_view"
+        ),
+        model_preference="fast",
+        temperature=0.1,
+        max_iterations_factor=1.0,
+        verification_level="basic",
+    ),
+
     "graph_navigator": PersonaProfile(
         name="graph_navigator",
         prompt_modifier=(
@@ -1661,6 +1697,15 @@ _PERSONA_KEYWORDS: dict[str, list[str]] = {
         "terminologie", "tiefes verständnis", "domain expertise",
         "deep dive", "niche understanding", "subject matter",
         "field knowledge", "domain knowledge",
+    ],
+
+    "meta_learning_agent": [
+        "meta-learning cycle", "meta learning", "taskmap", "runrecords",
+        "dream_get_records", "skill evolution", "system optimization", "budget_efficiency"
+    ],
+    "parse_error_investigator": [
+        "parse error", "parse fehler", "parsefehler", "syntax error",
+        "syntaxfehler", "yaml fehler", "json parse", "fehlerhafte datei"
     ],
 
     # ---- GAME STUDIOS --------------------------------------------------------

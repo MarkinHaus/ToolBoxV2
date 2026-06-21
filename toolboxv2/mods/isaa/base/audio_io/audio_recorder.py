@@ -157,12 +157,13 @@ class LocalMicRecorder(AudioRecorder):
                 try:
                     self._queue.put_nowait(p)
                 except asyncio.QueueFull:
-                    logger.warning("LocalMicRecorder queue full — dropping frame - restart")
-                    self._active = False
-                    if self._stream is not None:
-                        self._stream.stop()
-                        self._stream.close()
-                        self._stream = None
+                    logger.warning("LocalMicRecorder queue full — dropping frame")
+
+                    #self._active = False
+                    #if self._stream is not None:
+                    #   self._stream.stop()
+                    #    self._stream.close()
+                    #    self._stream = None
             self._loop.call_soon_threadsafe(_enqueue)
 
         self._stream = sd.InputStream(

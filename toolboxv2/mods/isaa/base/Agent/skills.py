@@ -2086,9 +2086,17 @@ class SkillsManager:
             if skill_id in predefined_ids:
                 # Update predefined skill stats only
                 if skill_id in self.skills:
-                    self.skills[skill_id].success_count = skill_data.get('success_count', 0)
-                    self.skills[skill_id].failure_count = skill_data.get('failure_count', 0)
-                    self.skills[skill_id].confidence = skill_data.get('confidence', 1.0)
+                    s = self.skills[skill_id]
+                    s.success_count = skill_data.get('success_count', 0)
+                    s.failure_count = skill_data.get('failure_count', 0)
+                    s.confidence = skill_data.get('confidence', 1.0)
+                    s.total_uses = skill_data.get('total_uses', 0)  # NEU
+                    if skill_data.get('last_used'):  # NEU
+                        try:
+                            s.last_used = datetime.fromisoformat(skill_data['last_used'])
+                        except (ValueError, TypeError):
+                            pass
+                    s.recent_queries = skill_data.get('recent_queries', [])
             else:
                 # Restore learned/imported skills
                 self.skills[skill_id] = Skill.from_dict(skill_data)

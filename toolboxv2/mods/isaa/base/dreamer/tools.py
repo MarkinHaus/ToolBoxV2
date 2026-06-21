@@ -62,7 +62,7 @@ DREAM_ACT_TOOL = {
                         "Action to execute. Available actions: get_taskmap, get_all_state, "
                         "migrate_logs, create_skill, create_rule, create_persona, evolve_skill, "
                         "merge_skills, split_skill, compress_skill, cleanup, delete_skill, "
-                        "delete_rule, extract_rules, learn_pattern, write_taskmap_guide, "
+                        "delete_rule, extract_rules, learn_pattern, write_taskmap_guide, add_task_class, update_classify_guide,"
                         "persist_checkpoint."
                     ),
                     "enum": [
@@ -82,6 +82,8 @@ DREAM_ACT_TOOL = {
                         "extract_rules",
                         "learn_pattern",
                         "write_taskmap_guide",
+                        "update_classify_guide"
+                        "add_task_class"
                         "persist_checkpoint",
                     ],
                 },
@@ -91,9 +93,12 @@ DREAM_ACT_TOOL = {
                         "Action-specific payload. Examples: "
                         "get_taskmap={\"task_type\":\"coding\",\"subtype\":\"toolbox\",\"limit\":20}; "
                         "create_skill={\"name\":\"...\",\"triggers\":[\"...\"],\"instruction\":\"...\",\"tools_used\":[...]}; "
-                        "create_rule={\"rules\":[{\"situation\":\"...\",\"intent\":\"...\",\"instructions\":[\"...\"],\"confidence\":0.5}]}; "
+                        "create_rule={\"situation\":\"...\",\"intent\":\"...\",\"instructions\":[\"...\"],\"confidence\":0.5}; "
                         "create_persona={\"name\":\"...\",\"prompt_modifier\":\"...\",\"model_preference\":\"fast\",\"temperature\":0.3}; "
                         "write_taskmap_guide={\"task_type\":\"coding\",\"subtype\":\"toolbox\",\"content\":\"...\"}; "
+                        "write_taskmap_guide={\"task_type\":\"coding\",\"subtype\":\"toolbox\",\"content\":\"...\"}; "
+                        "update_classify_guide={\"additions\":[\"neuer_typ/subtyp: keyword1 keyword2\"]}; " #
+                        "add_task_class={\"task_type\":\"coding\",\"subtype\":\"deployment\",\"classification_keywords\":[\"server\",\"docker\"]}; "
                         "persist_checkpoint={}."
                     ),
                 },

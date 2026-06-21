@@ -1440,7 +1440,7 @@ class OmniSession:
         on_phase: Optional[Callable[["OmniPhase", dict], Any]] = None,
         speakers: Any = None,
         video_source: Any = None,
-        idle_reconnect_s: float = 10.0,
+        idle_reconnect_s: float = 0.0,
     ):
         self.backend = backend
         self.recorder = recorder
@@ -1557,7 +1557,7 @@ class OmniSession:
                 reset()  # drop the warmup frame so real speech state starts clean
             logger.info("OmniSession: VAD warmed up")
         except Exception as e:  # noqa: BLE001 - warmup must never break start
-            logger.debug("OmniSession: VAD warmup skipped: %s", e)
+            logger.warning("OmniSession: VAD warmup FAILED — first is_speech() will block! %s", e)
 
     async def start(self, tool_specs: Optional[list[dict]] = None) -> None:
         self._tool_specs = tool_specs or []
@@ -1797,7 +1797,7 @@ class OmniSession:
             return True
         in_speech = self._update_speech_state(prob)
         # Fallback ends turns via its OWN VAD -> it must receive the silence too.
-        if getattr(self.backend, "needs_silence", False):
+        if True and getattr(self.backend, "needs_silence", False):
             return True
         return in_speech
 
