@@ -2,7 +2,8 @@
 import threading, sys, traceback, time, os, asyncio, linecache
 
 # === ANPASSEN ===
-PROJECT_ROOT = os.path.normpath(r"/")
+from toolboxv2 import tb_root_dir
+PROJECT_ROOT = str(tb_root_dir.parent)
 TIMEOUT = 60
 # ================
 
