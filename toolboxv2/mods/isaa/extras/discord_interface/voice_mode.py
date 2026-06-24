@@ -415,10 +415,16 @@ class VoiceHandler:
         bot: commands.Bot,
         media_handler: MediaHandler,
         on_voice_message: Optional[Callable[[VoiceMessage, VoiceConversation], Any]] = None,
+        voice_backend: str = "classic",
+        omni_controller: Any = None,
     ):
         self.bot = bot
         self.media_handler = media_handler
         self.on_voice_message = on_voice_message
+
+        # Voice backend: "classic" (STT->a_stream->TTS) or "omni" (OmniSession S2S)
+        self.voice_backend = voice_backend
+        self.omni_controller = omni_controller
 
         # Voice Clients per Guild
         self._voice_clients: dict[int, VoiceClient] = {}  # guild_id -> VoiceClient
@@ -485,6 +491,16 @@ class VoiceHandler:
             )
 
             # Start listening if available
+            if self.voice_backend == "omni" and self.omni_controller and VOICE_RECV_AVAILABLE:
+                res = await self.omni_controller.attach(vc, guild_id)
+                return {
+                    "success": res.get("success", False),
+                    "channel_id": channel.id,
+                    "channel_name": channel.name,
+                    "listening": res.get("success", False),
+                    "omni": True,
+                    "error": res.get("error"),
+                }
             if VOICE_RECV_AVAILABLE:
                 self._start_listening(vc, guild_id)
                 return {
@@ -563,6 +579,10 @@ class VoiceHandler:
         try:
             vc = self._voice_clients[guild_id]
             channel_id = vc.channel.id if vc.channel else None
+
+            # Stop Omni session (if this guild ran the Omni backend)
+            if self.voice_backend == "omni" and self.omni_controller:
+                await self.omni_controller.detach(guild_id)
 
             # Stop listening
             if guild_id in self._audio_sinks:
@@ -842,7 +862,8 @@ class VoiceModeExtension:
         /discord voice status
     """
 
-    def __init__(self, discord_interface):
+    def __init__(self, discord_interface, voice_backend: str = "classic",
+                 omni_mode: str = "omni_cloud"):
         from .discord_interface import DiscordInterface
 
         self.interface: DiscordInterface = discord_interface
@@ -852,11 +873,24 @@ class VoiceModeExtension:
         # Stop words to interrupt
         self.stop_words = ["stop", "stopp", "halt", "quiet", "ruhe", "sei still", "shut up"]
 
+        # Omni voice backend (selectable). Default "classic" keeps the existing
+        # STT->a_stream->TTS path; "omni" routes voice through OmniSession (S2S).
+        self.voice_backend = voice_backend
+        if voice_backend == "omni":
+            from .discord_omni_io import DiscordOmniController
+            self.omni_controller = DiscordOmniController(self.interface, mode=omni_mode)
+        else:
+            self.omni_controller = None
+        # exposed so DiscordInterface._handle_message can do one-shot audio I/O
+        self.interface.omni_controller = self.omni_controller
+
         # Create VoiceHandler
         self.voice_handler = VoiceHandler(
             bot=self.interface.bot,
             media_handler=self.interface.media_handler,
             on_voice_message=self._on_voice_message,
+            voice_backend=voice_backend,
+            omni_controller=self.omni_controller,
         )
 
         # Register voice events
@@ -900,6 +934,9 @@ class VoiceModeExtension:
 
     async def _on_voice_message(self, msg: VoiceMessage, conv: VoiceConversation):
         """Called when a voice message is transcribed"""
+        # Whitelist check: Nur registrierte User verarbeiten [3]
+        if self.interface.admin_ids and msg.user_id not in self.interface.admin_ids:
+            return
         print(f"[Voice] 🎤 {msg.user_name}: {msg.text}")
 
         text_lower = msg.text.lower().strip()
@@ -1377,7 +1414,8 @@ async def handle_voice_cli_command(
 # FACTORY
 # =============================================================================
 
-def create_voice_mode(discord_interface) -> VoiceModeExtension:
+def create_voice_mode(discord_interface, voice_backend: str = "omni",
+                      omni_mode: str = "omni_cloud") -> VoiceModeExtension:
     """
     Factory function to add Voice Mode to a DiscordInterface.
 
@@ -1395,4 +1433,5 @@ def create_voice_mode(discord_interface) -> VoiceModeExtension:
         await interface.start()
     """
     _suppress_voice_noise()
-    return VoiceModeExtension(discord_interface)
+    return VoiceModeExtension(discord_interface, voice_backend=voice_backend,
+                              omni_mode=omni_mode)

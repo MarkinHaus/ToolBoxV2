@@ -2422,7 +2422,7 @@ class FlowAgent:
             "dream_compress_skill": lambda skill_id="", **kw:
             handler.handle_compress_skill(skill_id),
             "dream_create_rules": lambda rules=None, **kw:
-            handler.handle_extract_rules(rules or []),
+            handler.handle_create_rule(rules or []),
             "dream_learn_pattern": lambda pattern="", source_situation="",
                                           category="general", tags=None, **kw: handler.handle_learn_pattern(
                 pattern, source_situation, category, tags),

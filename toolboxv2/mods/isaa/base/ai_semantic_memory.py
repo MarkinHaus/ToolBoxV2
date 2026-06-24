@@ -22,7 +22,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from toolboxv2 import Singleton, get_app
+from toolboxv2 import Singleton, get_app, get_logger
 
 from .hybrid_memory import HybridMemoryStore
 
@@ -255,6 +255,7 @@ class AISemanticMemory(metaclass=Singleton):
                 logger.error(f"add_data failed for chunk: {e}")
                 import traceback
                 traceback.print_exc()
+                get_logger().exception("bg memory save failed, run continues")
 
         return added > 0
 
@@ -286,6 +287,7 @@ class AISemanticMemory(metaclass=Singleton):
 
         k = int(query_params.get("k", 3))
         min_sim = float(query_params.get("min_similarity", 0.2))
+        meta_filter = query_params.get("meta_filter") or kwargs.get("meta_filter")
 
         # Generate query embedding once
         try:
@@ -306,6 +308,7 @@ class AISemanticMemory(metaclass=Singleton):
                     k=k,
                     search_modes=search_modes,
                     min_similarity=min_sim,
+                    meta_filter=meta_filter,
                 )
                 if hits:
                     results.append({"memory": name, "type": "standard", "hits": hits})

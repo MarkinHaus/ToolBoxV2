@@ -1297,6 +1297,10 @@ class DiscordInterface:
     def _should_respond(self, ctx: MessageContext) -> bool:
         """Entscheidet ob der Bot antworten soll"""
 
+        # Whitelist check: Falls konfiguriert, nur erlaubte Nutzer zulassen [3]
+        if self.admin_ids and ctx.user_id not in self.admin_ids:
+            return False
+
         # DMs: immer antworten
         if ctx.source == MessageSource.DM:
             return True
@@ -1334,6 +1338,22 @@ class DiscordInterface:
             self.router.set_pending_context(ctx)
 
             try:
+                # Omni one-shot: audio attachment -> S2S audio reply (reuses a_audio)
+                omni = getattr(self, "omni_controller", None)
+                audio_atts = [a for a in ctx.attachments if a.media_type == "audio"]
+                if omni and audio_atts:
+                    import io
+                    from pathlib import Path as _P
+                    wav = _P(audio_atts[0].path).read_bytes()
+                    sid = f"discord_{ctx.source_address.replace('://', '_').replace('/', '_')}"
+                    audio_out, text_out = await omni.handle_audio_file(wav, session_id=sid)
+                    if audio_out:
+                        await message.channel.send(
+                            file=discord.File(io.BytesIO(audio_out), "reply.wav"))
+                    elif text_out:
+                        await self.router.route_response(content=text_out, as_audio=False)
+                    return
+
                 # Build Agent Input
                 agent_input = f"{ctx.to_agent_context()}\n\nMessage:\n{ctx.content}"
 
@@ -1556,7 +1576,12 @@ def create_discord_interface(
     token = token or os.environ.get("DISCORD_TOKEN")
     if not token:
         raise ValueError("Discord token required (pass token or set DISCORD_TOKEN env)")
-
+    # Whitelist automatisch aus Umgebungsvariable laden (kommagetrennt) [3]
+    if admin_ids is None and os.environ.get("DISCORD_ADMIN_IDS"):
+        try:
+            admin_ids = [int(x.strip()) for x in os.environ.get("DISCORD_ADMIN_IDS").split(",") if x.strip()]
+        except ValueError:
+            print("[Discord] Invalid DISCORD_ADMIN_IDS env value")
     return DiscordInterface(
         agent=agent,
         token=token,

@@ -1563,6 +1563,12 @@ class OmniSession:
         self._tool_specs = tool_specs or []
         logger.info("OmniSession.start backend=%s tools=%d", self.backend.backend_name,
                     len(self._tool_specs))
+        # O3: auch den INITIALEN Start seeden (nicht nur Restart/Reconnect) —
+        # world_model + rolling summary + letzte Turns. Mirror _swap_backend.
+        _seed = self._build_seed_text()
+        if _seed and hasattr(self.backend, "system_instruction"):
+            _base = getattr(self.backend, "system_instruction", "") or ""
+            self.backend.system_instruction = (_base + "\n\n" + _seed).strip()
         try:
             await self.backend.start(tools=tool_specs)
         except Exception as e:  # noqa: BLE001
@@ -1603,6 +1609,12 @@ class OmniSession:
         # raw active_history from leaking into the next session's seed.
         try:
             self._flush_turn()
+
+            if self.recorder is not None:
+                await self.recorder.stop()
+            if self.player is not None:
+                await self.player.stop()
+
             if self.state_store is not None:
                 # persist current turns FIRST — survives selbst wenn der LLM-Compress
                 # beim Shutdown (Ctrl-C) abbricht. _compress speichert bei Erfolg erneut.
@@ -1625,10 +1637,6 @@ class OmniSession:
             if t is not None and not t.done():
                 t.cancel()
         await self.backend.stop()
-        if self.recorder is not None:
-            await self.recorder.stop()
-        if self.player is not None:
-            await self.player.stop()
 
     async def wait(self, timeout: Optional[float] = None) -> None:
         if self._event_task is None:
@@ -2313,7 +2321,6 @@ class OmniSession:
             await self._swap_backend(seed)
             self.turns = 0
             self._turn_buf = []
-            self._announced_jobs.clear()
             logger.info("OmniSession: restart complete (backend=%s)", self.backend.backend_name)
         except Exception as e:  # noqa: BLE001
             logger.error("OmniSession: restart failed: %s", e)

@@ -56,14 +56,32 @@ class ChatSession:
         return self.history[-x:]
 
     def get_start_with_last_user(self, x=None):
-        if x is None:
-            x = len(self.history)
+        # x = number of USER messages to include, counting back from the end.
+        # x=None → 1 (history since the last user message; preserves last_u path).
+        target_users = 1 if x is None else x
+        if target_users <= 0:
+            return []
         history = []
-        for h in self.get_past_x(x, last_u=False)[::-1]:
+        users_seen = 0
+        for h in self.history[::-1]:
             history.append(h)
             if h.get('role') == 'user':
-                break
-        return history[::-1]
+                users_seen += 1
+                if users_seen >= target_users:
+                    break
+        history.reverse()
+        # ponytail: ChatSession is the clean conversation layer (no tool_calls),
+        # so adjacent same-role text msgs are safe to merge → keeps strict
+        # user/assistant alternation for providers that require it (Anthropic).
+        merged = []
+        for h in history:
+            if (merged and merged[-1].get('role') == h.get('role')
+                and 'tool_calls' not in merged[-1] and 'tool_calls' not in h):
+                merged[-1] = {**merged[-1],
+                              'content': f"{merged[-1].get('content', '')}\n{h.get('content', '')}".strip()}
+            else:
+                merged.append(h)
+        return merged
 
     def on_exit(self):
         if '__sub__' in self.space_name:

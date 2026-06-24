@@ -594,9 +594,10 @@ async def build_preinjection(vfs, query: str, narrator_call=None) -> str:
             return ""
 
         task_type, subtype = await classify_for_injection(query, guide, narrator_call)
-        if task_type == NEW_TYPE:
-            return ""
-
+        # ponytail: NEW injiziert nicht mehr nichts — es lädt die generische,
+        # cross-class Tool-Baseline aus new/general/guid.md (vom Dreamer gerollt).
+        # Bleibt UNSPEZIFISCH → eine Falsch-Klassifikation gibt harmlose Baseline,
+        # nicht falsch-spezifische Anleitung.
         base = f"{TASKMAP_ROOT}/{task_type}/{subtype}"
         hp_r = vfs.read(f"{base}/happypath.md")
         gd_r = vfs.read(f"{base}/guid.md")

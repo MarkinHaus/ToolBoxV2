@@ -137,7 +137,7 @@ def make_sandbox_browser(session: "AgentSessionV2"):
     }
 
     def sandbox_browser(area: str = "info", method: str | None = None,
-                        args: dict | None = None) -> dict:
+                        args: dict | None = None, **kwargs) -> dict:
         """FULL sandbox browser incl. devtools — thin wrapper over the sandbox API.
 
         area='screenshot' | 'info' | 'restart' | 'action' (raw input action via args)
@@ -170,7 +170,7 @@ def make_sandbox_browser(session: "AgentSessionV2"):
             if not method or not hasattr(sub, method) or method.startswith("_"):
                 avail = [m for m in dir(sub) if not m.startswith("_") and m != "with_raw_response"]
                 return _err(f"method '{method}' not in area '{area}'. Available: {avail}")
-            r = getattr(sub, method)(**args)
+            r = getattr(sub, method)(**args, **kwargs)
             data = getattr(r, "data", r)
             return {"success": True, "stdout": str(data), "stderr": "", "returncode": 0}
         except Exception as e:

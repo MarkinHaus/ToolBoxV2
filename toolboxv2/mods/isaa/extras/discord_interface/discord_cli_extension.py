@@ -107,6 +107,8 @@ class DiscordCLIExtension:
             await self._search_address(sub_args)
         elif action == "active":
             await self._show_active()
+        elif action == "whitelist":
+            await self._handle_whitelist(sub_args)
         elif action == "voice":
             await self._handle_voice(sub_args)
         else:
@@ -119,6 +121,10 @@ class DiscordCLIExtension:
         print_box_content("/discord connect [token] - Connect to Discord", "")
         print_box_content("/discord disconnect      - Disconnect from Discord", "")
         print_box_content("/discord status          - Show connection status", "")
+        print_box_content("/discord whitelist        - List whitelisted users", "")
+        print_box_content("/discord whitelist add <id> - Add user ID to whitelist", "")
+        print_box_content("/discord whitelist remove <id> - Remove user ID", "")
+        print_box_content("/discord channels         - List active channels", "")
         print_box_content("/discord channels        - List active channels", "")
         print_box_content("/discord active          - Show active conversations", "")
         print_box_content("/discord send <addr> <msg> - Send message to address", "")
@@ -281,6 +287,76 @@ class DiscordCLIExtension:
                     )
 
         print_box_footer()
+
+    async def _handle_whitelist(self, args: list[str]):
+        """Verwaltet die Whitelist von Discord User-IDs über die CLI [3]"""
+        if not self._connected or not self.interface:
+            print_status("Not connected to Discord", "warning")
+            return
+
+        if not args:
+            print_box_header("Discord Whitelist", "🔒")
+            if not self.interface.admin_ids:
+                print_box_content("Whitelist is empty (everyone is ignored)", "warning")
+            else:
+                for uid in self.interface.admin_ids:
+                    # Benutzernamen asynchron und thread-sicher vom Bot-Loop auflösen [3]
+                    try:
+                        async def _fetch_username(u_id=uid):
+                            user = self.interface.bot.get_user(u_id)
+                            if not user:
+                                try:
+                                    user = await self.interface.bot.fetch_user(u_id)
+                                except Exception:
+                                    return "Unknown User"
+                            return f"@{user.name}" if user else "Unknown User"
+
+                        future = asyncio.run_coroutine_threadsafe(_fetch_username(), self.interface.bot.loop)
+                        username = await asyncio.wrap_future(future)
+                    except Exception:
+                        username = "Unknown User"
+
+                    print_box_content(f"  • {uid} ({username})", "")
+
+            # Mini-Docs: Anleitung zum Finden der ID [3]
+            print_separator()
+            print_box_content("How to get a Discord User ID:", "bold")
+            print_box_content("1. Open Discord -> User Settings -> Advanced.", "")
+            print_box_content("2. Enable 'Developer Mode'.", "")
+            print_box_content("3. Right-click any user's avatar/profile -> Click 'Copy User ID'.", "")
+            print_box_footer()
+            return
+
+        sub_action = args[0].lower()
+        if sub_action == "add":
+            if len(args) < 2:
+                print_status("Usage: /discord whitelist add <user_id>", "error")
+                return
+            try:
+                user_id = int(args[1])
+                if user_id not in self.interface.admin_ids:
+                    self.interface.admin_ids.append(user_id)
+                    print_status(f"Added {user_id} to whitelist", "success")
+                else:
+                    print_status(f"User {user_id} is already whitelisted", "info")
+            except ValueError:
+                print_status("Invalid user ID format", "error")
+
+        elif sub_action == "remove":
+            if len(args) < 2:
+                print_status("Usage: /discord whitelist remove <user_id>", "error")
+                return
+            try:
+                user_id = int(args[1])
+                if user_id in self.interface.admin_ids:
+                    self.interface.admin_ids.remove(user_id)
+                    print_status(f"Removed {user_id} from whitelist", "success")
+                else:
+                    print_status(f"User {user_id} not found in whitelist", "warning")
+            except ValueError:
+                print_status("Invalid user ID format", "error")
+        else:
+            print_status(f"Unknown whitelist action: {sub_action}", "error")
 
     async def _show_active(self):
         """Zeigt aktive Conversations"""
@@ -690,6 +766,10 @@ def get_completer_dict() -> dict:
         "connect": None,
         "disconnect": None,
         "status": None,
+        "whitelist": {
+            "add": None,
+            "remove": None,
+        },
         "channels": None,
         "active": None,
         "send": None,

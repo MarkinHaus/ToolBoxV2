@@ -3927,13 +3927,6 @@ async def _resume_as_stream(engine, run_id, max_iterations, content):
         yield {"type": "final_answer", "answer": str(result)}
         yield {"type": "done", "success": True, "final_answer": str(result)}
 
-def _deleg_session_id(query: str) -> str:
-    """Stable, FILESYSTEM-SAFE session id for a delegated query. The id becomes a
-    memory filename, so strip to [A-Za-z0-9]; quotes/spaces/etc. raise OSError
-    [Errno 22] on Windows. Single source of truth for delegate + VFS-peek tools."""
-    import re
-    slug = re.sub(r"[^A-Za-z0-9]+", "-", (query or "").strip()).strip("-")[:12] or "task"
-    return f"deleg-{slug}"
 # =============================================================================
 # ISAA HOST - MAIN CLASS
 # =============================================================================
@@ -9906,7 +9899,7 @@ class ISAA_Host:
             target = await host.isaa_tools.get_agent(target_name)
             await host._ensure_world_model(target)
 
-            session_id = _deleg_session_id(query)
+            session_id = getattr(target, "active_session", None) or "omni-main"
             run_id = uuid.uuid4().hex[:8]
 
             exc = host._create_execution(
@@ -9925,7 +9918,7 @@ class ISAA_Host:
                 async def combined_stream():
                     import asyncio
                     # Dynamically bind the background Task driving this generator to icli
-                    current_task = asyncio.current_task()
+                    """current_task = asyncio.current_task()
                     exc.async_task = current_task
 
                     # Notify the user via Omni voice backend when completed
@@ -9942,7 +9935,12 @@ class ISAA_Host:
                             pass
 
                     if current_task:
-                        current_task.add_done_callback(_speak_when_done)
+                        current_task.add_done_callback(_speak_when_done)"""
+                    current_task = asyncio.current_task()
+                    exc.async_task = current_task
+                    # O2: Ansage NUR über OmniSession._notify_loop (deduped via
+                    # _announced_jobs). Kein zweiter done-callback-Pfad.
+
 
                     agent_stream = target.a_stream(query, session_id=session_id)
                     result_text = ""
@@ -10135,33 +10133,36 @@ class ISAA_Host:
                     print_status(f"[vad] unavailable, streaming continuously: {e}", "warning")
 
                 speakers_obj = None
-                try:
-                    from toolboxv2.mods.isaa.base.audio_io.omni import (
-                        SpeakerRegistry, StubSpeakerEmbedder,
-                    )
-                    # ponytail: real embedder (same pyannote model as /audio
-                    # speaker) if pyannote+HF_TOKEN are present; else the dep-free
-                    # stub. Decided up front so a missing model never blocks start.
-                    embedder = StubSpeakerEmbedder()
+                if "muti-speaker" in args:
                     try:
-                        import importlib.util as _ilu
-                        if (_ilu.find_spec("pyannote.audio") is not None
-                                and (os.environ.get("HF_TOKEN")
-                                     or os.environ.get("HUGGING_FACE_HUB_TOKEN"))):
-                            embedder = _PyannoteOmniEmbedder()
-                            print_status("[speakers] real embedder active (pyannote)", "info")
-                        else:
-                            print_status("[speakers] stub embedder (set HF_TOKEN + "
-                                         "pip install pyannote.audio for real ID)", "info")
-                    except Exception:
-                        pass
-                    speakers_obj = SpeakerRegistry(
-                        "isaa/omni/speakers.json", BlobFile,
-                        embedder=embedder,
-                        label_hook=lambda emb, score: None,  # app names unknown voices here
-                    )
-                except Exception as e:
-                    print_status(f"[speakers] unavailable, streaming continuously: {e}", "warning")
+                        from toolboxv2.mods.isaa.base.audio_io.omni import (
+                            SpeakerRegistry, StubSpeakerEmbedder,
+                        )
+                        # ponytail: real embedder (same pyannote model as /audio
+                        # speaker) if pyannote+HF_TOKEN are present; else the dep-free
+                        # stub. Decided up front so a missing model never blocks start.
+                        embedder = StubSpeakerEmbedder()
+                        try:
+                            import importlib.util as _ilu
+                            if (_ilu.find_spec("pyannote.audio") is not None
+                                    and (os.environ.get("HF_TOKEN")
+                                         or os.environ.get("HUGGING_FACE_HUB_TOKEN"))):
+                                embedder = _PyannoteOmniEmbedder()
+                                print_status("[speakers] real embedder active (pyannote)", "info")
+                            else:
+                                print_status("[speakers] stub embedder (set HF_TOKEN + "
+                                             "pip install pyannote.audio for real ID)", "info")
+                        except Exception:
+                            pass
+                        speakers_obj = SpeakerRegistry(
+                            "isaa/omni/speakers.json", BlobFile,
+                            embedder=embedder,
+                            label_hook=lambda emb, score: None,  # app names unknown voices here
+                        )
+                    except Exception as e:
+                        print_status(f"[speakers] unavailable, streaming continuously: {e}", "warning")
+                else:
+                    print_status(f"[speakers] disabled add 'muti-speaker' to enable note 'muti-speaker' requires external lips and additional setup", status="configure")
 
                 self._omni_recorder = _OmniTapRecorder(self._omni_recorder, self._omni_in_levels)
                 self._omni_player = _OmniTapPlayer(self._omni_player, self._omni_out_levels)
@@ -10209,6 +10210,21 @@ class ISAA_Host:
                 self._omni_out_levels.clear()
                 self._omni_phase = "waiting"
                 self._omni_ui_task = asyncio.create_task(self._omni_ui_loop())
+
+                # O4: Omni mit dem Chat-Context starten (gleicher Provider den
+                # chat_history liest). Speist O3-Seed → Omni startet informiert.
+                try:
+                    _hist = _chat_history_provider(20)
+                    _st = self._omni_state_store.state
+                    if _hist and not _st.full_summary and not _st.active_history:
+                        _st.active_history = [
+                            {"role": "user" if h.get("role") == "user" else "assistant",
+                             "text": h.get("content", "")}
+                            for h in _hist if h.get("content")
+                        ]
+                        self._omni_state_store.save()
+                except Exception:
+                    pass
 
                 await self._omni_session.start(
                     tool_specs=self._tool_specs_for_backend(agent)

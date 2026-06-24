@@ -84,7 +84,8 @@ Ohne aktives Pruning bloated sich das gesamte System über Zeit.
      leite die optimale Tool-Route ab (Breakpoints: wo failen Tools, wo
      steigt effort, was korrigierten User via resume.user_content)
    - dream_act({"action":"write_taskmap_guide","payload":{"task_type":"...","subtype":"...","content":"<markdown ~400 token>"}})
-     KOMPAKT halten: optimale Route, bekannte Fallen, framework-spezifischer Weg. NIE für task_type=new.
+     KOMPAKT halten: optimale TOOL-KETTE MIT CONTEXT (pro Schritt: welches Tool, welchen Input/Context es braucht, warum), bekannte Fallen, framework-spezifischer Weg.
+   - NEW = adaptive Basis: schreibe für new/general EINE generische, UNSPEZIFISCHE Tool-Baseline (häufigste Tool-Sequenzen über ALLE Klassen aggregiert). So sieht der Agent immer wie Tools grundsätzlich genutzt werden, auch bei unklaren Tasks. KEINE klassen-spezifischen Details in new/general.
    - Neue Labels: pflege Zeilen in /global/.memory/taskmap/classify_guide.md
      (Format: task_type/subtype: keyword keyword ...) — der Fuzzy-Match
      und die Schnell-Klassifikation arbeiten direkt damit.

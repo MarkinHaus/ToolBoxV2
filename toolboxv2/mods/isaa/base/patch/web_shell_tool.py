@@ -1187,3 +1187,31 @@ async def cleanup_web_shell(web_shell_fn):
             except Exception:
                 pass
         await agent.stop()
+
+
+r""" in agent error
+Traceback (most recent call last):
+  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\base\patch\web_shell_tool.py", line 456, in _ensure_agent
+    await agent.start()
+  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\mods\isaa\extras\web_helper\web_agent.py", line 609, in start
+    self._playwright = await async_playwright().start()
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\playwright\async_api\_context_manager.py", line 51, in start
+    return await self.__aenter__()
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\playwright\async_api\_context_manager.py", line 46, in __aenter__
+    playwright = AsyncPlaywright(next(iter(done)).result())
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\.venv\Lib\site-packages\playwright\_impl\_transport.py", line 120, in connect
+    self._proc = await asyncio.create_subprocess_exec(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\asyncio\subprocess.py", line 224, in create_subprocess_exec
+    transport, protocol = await loop.subprocess_exec(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\asyncio\base_events.py", line 1756, in subprocess_exec
+    transport = await self._make_subprocess_transport(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\AppData\Roaming\uv\python\cpython-3.12.9-windows-x86_64-none\Lib\asyncio\base_events.py", line 528, in _make_subprocess_transport
+    raise NotImplementedError
+NotImplementedError
+"""

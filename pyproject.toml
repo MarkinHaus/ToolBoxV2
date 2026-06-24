@@ -19,6 +19,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "pydantic>=2.11.7",
     "pyzmq>=27.1.0",
+    "tornado>=6.1 ; sys_platform == 'win32'",  # zmq.asyncio add_reader-Shim on Proactor (Playwright coexist)
     "aiosqlite>=0.22.1",
     "psutil",
     "prompt-toolkit>=3.0.52",

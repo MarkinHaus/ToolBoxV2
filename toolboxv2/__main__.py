@@ -2389,7 +2389,8 @@ def main_runner():
     sys.excepthook = sys.__excepthook__
     # Windows: Use SelectorEventLoop for ZMQ compatibility
     if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        # asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
     # IPython special case -> refactor to MocIpy new flow
 

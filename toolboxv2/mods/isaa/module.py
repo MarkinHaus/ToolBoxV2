@@ -2015,11 +2015,7 @@ class Tools(MainTool):
         self.print(f"🗑️ START: Deleting agent '{agent_name}' completely...")
 
         # Zugriff auf App-Verzeichnis
-        try:
-            app_data_dir = get_app().data_dir
-        except Exception:
-            # Fallback falls get_app() fehlschlägt (z.B. Testumgebung)
-            app_data_dir = self.working_directory
+        app_data_dir = get_app().data_dir
 
         # --- SCHRITT 1: Laufende Instanz stoppen (Memory Leak Prevention) ---
         instance_key = f"agent-instance-{agent_name}"

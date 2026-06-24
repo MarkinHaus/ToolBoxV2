@@ -190,13 +190,24 @@ class HybridMemoryStore:
     # Pattern from mobile_db.py:169-193
 
     def _get_conn(self) -> sqlite3.Connection:
-        """Get thread-local SQLite connection with WAL mode"""
-        if not hasattr(self._local, "conn") or self._local.conn is None:
-            self._local.conn = sqlite3.connect(str(self.db_path), timeout=30.0)
-            self._local.conn.row_factory = sqlite3.Row
-            self._local.conn.execute("PRAGMA journal_mode=WAL")
-            self._local.conn.execute("PRAGMA synchronous=NORMAL")
-        return self._local.conn
+        """Thread-local WAL conn — self-healing: reconnect if dead."""
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            try:
+                conn.execute("SELECT 1")  # ponytail: liveness probe, 1 round-trip; cheap vs. crashing the run
+                return conn
+            except sqlite3.Error:
+                try:
+                    conn.close()
+                except sqlite3.Error:
+                    pass
+                self._local.conn = None
+        conn = sqlite3.connect(str(self.db_path), timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        self._local.conn = conn
+        return conn
 
     @contextmanager
     def _tx(self):
@@ -209,9 +220,30 @@ class HybridMemoryStore:
             conn.rollback()
             raise
 
-    def _exec(self, sql: str, params: tuple = ()):
-        """Execute SQL and return cursor"""
-        return self._get_conn().execute(sql, params)
+    def _exec(self, sql: str, params: tuple = (), _retries: int = 2):
+        for attempt in range(_retries + 1):
+            try:
+                return self._get_conn().execute(sql, params)
+            except sqlite3.Error as e:
+                if attempt >= _retries:
+                    raise
+                msg = str(e).lower()
+                try:
+                    if getattr(self._local, "conn", None): self._local.conn.close()
+                except sqlite3.Error:
+                    pass
+                self._local.conn = None  # force reconnect on next _get_conn
+                if "locked" in msg or "busy" in msg:
+                    time.sleep(0.1 * (attempt + 1))  # ponytail: linear backoff, exp if contention high
+                elif "malformed" in msg or "corrupt" in msg:
+                    self._heal_from_backup()  # Tier 3, no-op wenn MinIO aus
+
+    def _heal_from_backup(self):
+        # ponytail: last-resort restore; kein MinIO/Backup → still broken, Exception fliegt upstream
+        try:
+            self.load_from_minio()
+        except Exception as e:
+            print(e)
 
     def _init_db(self):
         """Initialize database schema from embedded SQL"""
@@ -792,6 +824,7 @@ class HybridMemoryStore:
 
     # ════════════════════ Persistence ════════════════════
 
+
     def save(self, target_dir: Optional[str] = None) -> bool:
         """
         Save complete state to directory (NO pickle!)
@@ -820,13 +853,16 @@ class HybridMemoryStore:
         if target != self.db_dir:
             src_db = self.db_dir / "entries.db"
             dst_db = target / "entries.db"
+            # After wal_checkpoint(TRUNCATE) the full state is in entries.db.
+            # Remove stale WAL/SHM at the destination so a leftover -wal is NOT
+            # replayed onto the copied db. Do NOT copy the source -wal/-shm —
+            # that re-introduces a replayable WAL → "malformed" on next open.
+            for suffix in ("-wal", "-shm"):
+                stale = target / f"entries.db{suffix}"
+                if stale.exists():
+                    stale.unlink()
             if src_db.exists():
                 shutil.copy2(str(src_db), str(dst_db))
-            # Also copy WAL/SHM if they exist (shouldn't after TRUNCATE, but defensive)
-            for suffix in ["-wal", "-shm"]:
-                src_extra = self.db_dir / f"entries.db{suffix}"
-                if src_extra.exists():
-                    shutil.copy2(str(src_extra), str(target / f"entries.db{suffix}"))
 
         # 3. FAISS: native save via faiss.serialize_index -> bytes -> file
         import faiss

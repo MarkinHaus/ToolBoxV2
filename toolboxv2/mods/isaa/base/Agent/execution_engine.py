@@ -2998,6 +2998,25 @@ BEISPIELE:
                 *permanent_history,
                 {"role": "user", "content": query},
             ]
+            # augment — linearer last - N Seed(C1) bleibt = "was hast du gerade gemacht";
+            # hier zusätzlich same-topic Recall aus früheren Runs
+            # via meta_filter (C4). Skip für sub-agents / new. Kostet 1 embed+vector
+            # query pro Run — nur wenn ein Topic klassifiziert wurde.
+            _tt = getattr(ctx, "task_type", None)
+            if _tt and _tt != "new" and not self.is_sub_agent:
+                try:
+                    _topic = f"{_tt}/{getattr(ctx, 'subtype', None) or 'general'}"
+                    _recall = await session.get_reference(
+                        query, meta_filter={"topic": _topic}, max_entries=3
+                    )
+                    if _recall and _recall.strip():
+                        ctx.working_history.insert(1, {
+                            "role": "system",
+                            "content": f"## TOPIC RECALL ({_topic})\n{_recall}",
+                        })
+                except Exception as e:
+                    get_logger().error(e)
+                    pass
             ctx.max_iterations = max_iterations
         # Live state
         agent_type = "SUB-AGENT" if self.is_sub_agent else "MAIN"
@@ -4178,6 +4197,21 @@ BEISPIELE:
                 {"role": "user", "content": f"Neues Ziel: {next_objective}. Fahre fort."},
             ]
 
+            #  hot-swap — neues Topic-Guide bei Fokus-Wechsel re-injizieren.
+            try:
+                from toolboxv2.mods.isaa.base.dreamer.run_aggregator import build_preinjection
+                async def _nc(_sys, _q):
+                    return await self._narrator.blitz(
+                        system=_sys,
+                        messages=[{"role": "user", "content": _q[:1500]}],
+                        schema={"task_type": str, "subtype": str},
+                    )
+                _pre = await build_preinjection(session.vfs, next_objective, narrator_call=_nc)
+                if _pre:
+                    ctx.working_history.insert(1, {"role": "system", "content": _pre})
+            except Exception:
+                pass
+
             # 5. Trackers zurücksetzen für neue Phase
             ctx.loop_detector.reset()
             ctx.loop_warning_given = False
@@ -5224,16 +5258,18 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
 
         # System Summary mit Referenz auf Log-Datei
         summary_msg = {
-            "role": "system",
-            "content": f"⚡ RUN SUMMARY [{ctx.run_id}]: {summary_text}\n(Task Map: /global/.memory/taskmap/)",
+            "role": "assistant",
+            "content": f"RUN SUMMARY [{ctx.run_id}]: {summary_text}\n(Task Map: /global/.memory/taskmap/)",
         }
 
+        _topic = f"{getattr(ctx, 'task_type', None) or 'new'}/{getattr(ctx, 'subtype', None) or 'general'}"
         await session.add_message(
             summary_msg,
             direct=True,
             type="action_summary",
             run_id=ctx.run_id,
             success=success,
+            topic=_topic,
         )
 
         # Final response

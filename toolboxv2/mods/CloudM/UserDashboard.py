@@ -2452,6 +2452,8 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                 '<div class="quick-actions">' +
                     '<button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="showMinIOCreds()">' +
                         '<span class="material-symbols-outlined">visibility</span>Anzeigen</button>' +
+                    '<button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="showLiveSyncMinIOCreds()">' +
+                        '<span class="material-symbols-outlined">cloud_done</span>Scoped (LiveSync)</button>' +
                     '<button class="tb-btn tb-btn-warning tb-btn-sm" onclick="rotateMinIOCreds()">' +
                         '<span class="material-symbols-outlined">sync</span>Rotieren</button>' +
                 '</div>' +
@@ -2459,11 +2461,15 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         } else {
             html += '<div class="setting-item">' +
                 '<div class="setting-info">' +
-                    '<div class="setting-label">Kein Zugang</div>' +
-                    '<div class="setting-description">Sie haben noch keinen MinIO-Speicherzugang.</div>' +
+                    '<div class="setting-label">Kein lokaler Zugang</div>' +
+                    '<div class="setting-description">Sie haben noch keinen lokalen MinIO-Speicherzugang.</div>' +
                 '</div>' +
-                '<button class="tb-btn tb-btn-success tb-btn-sm" onclick="createMinIOCreds()">' +
-                    '<span class="material-symbols-outlined">add</span>Erstellen</button>' +
+                '<div class="quick-actions">' +
+                    '<button class="tb-btn tb-btn-success tb-btn-sm" onclick="createMinIOCreds()">' +
+                        '<span class="material-symbols-outlined">add</span>Erstellen</button>' +
+                    '<button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="showLiveSyncMinIOCreds()">' +
+                        '<span class="material-symbols-outlined">cloud_done</span>Scoped (LiveSync)</button>' +
+                '</div>' +
             '</div>';
         }
         html += '</div>';
@@ -2537,6 +2543,118 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         } catch (e) {
             TB.ui.Loader.hide();
             TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
+
+    // ── LiveSync scoped credentials (IAM-policy backed) ──
+    window.showLiveSyncMinIOCreds = async function() {
+        if (!confirm('Scoped MinIO-Zugangsdaten über die LiveSync API abrufen? Diese werden per CredentialBroker mit IAM-Policy generiert.')) return;
+
+        TB.ui.Loader.show('Lade LiveSync Credentials...');
+        try {
+            // Call the new LiveSync API (closes the dashboard-credential gap)
+            var res = await TB.api.request('CloudM.LiveSync', 'get_my_minio_credentials', null, 'GET');
+            TB.ui.Loader.hide();
+
+            if (res.error === TB.ToolBoxError.none) {
+                var creds = res.get();
+                window._renderScopedCredsCard(creds);
+            } else {
+                TB.ui.Toast.showError('Fehler: ' + TB.utils.escapeHtml(
+                    (res.info && res.info.help_text) || JSON.stringify(res)
+                ));
+            }
+        } catch (e) {
+            TB.ui.Loader.hide();
+            console.error(e);
+            TB.ui.Toast.showError('Netzwerkfehler beim Abrufen der LiveSync Credentials');
+        }
+    };
+
+    // Render a clean card with the scoped credentials (no alert box)
+    window._renderScopedCredsCard = function(creds) {
+        var esc = (s) => TB.utils.escapeHtml(String(s == null ? '' : s));
+        var buckets = creds.buckets || {};
+        var expiresHours = creds.expires_in ? Math.round(creds.expires_in / 3600) : 24;
+
+        var html = ''
+            + '<div class="scoped-creds-card" style="'
+            +   'background: var(--bg-surface, #1a1a1a);'
+            +   'border: 1px solid var(--border-default, #333);'
+            +   'border-radius: var(--radius-lg, 12px);'
+            +   'padding: var(--space-5, 20px);'
+            +   'max-width: 520px;'
+            +   'font-family: inherit;'
+            +   'box-shadow: var(--shadow-md, 0 4px 12px rgba(0,0,0,0.3));'
+            + '">'
+            +   '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">'
+            +     '<span class="material-symbols-outlined" style="color: var(--color-primary-500, #4f9eff);">cloud_done</span>'
+            +     '<h3 style="margin:0;font-size:1.1rem;">Scoped MinIO Credentials (LiveSync)</h3>'
+            +   '</div>'
+            +   '<p style="font-size:0.85rem;color:var(--text-secondary,#aaa);margin:0 0 16px 0;">'
+            +     'IAM-policy-scoped Service-Account. Gültig für ca. ' + expiresHours + 'h. Nutze diese Credentials direkt mit dem MinIO Client.'
+            +   '</p>'
+            +   '<div class="scoped-cred-row">'
+            +     '<label>Endpoint</label>'
+            +     '<code class="scoped-cred-value">' + esc(creds.endpoint) + '</code>'
+            +   '</div>'
+            +   '<div class="scoped-cred-row">'
+            +     '<label>Access Key</label>'
+            +     '<code class="scoped-cred-value">' + esc(creds.access_key) + '</code>'
+            +   '</div>'
+            +   '<div class="scoped-cred-row">'
+            +     '<label>Secret Key</label>'
+            +     '<div style="display:flex;gap:6px;align-items:center;">'
+            +       '<input type="password" readonly value="' + esc(creds.secret_key) + '" '
+            +         'id="livesync-secret-key" '
+            +         'style="flex:1;background:var(--bg-canvas,#0e0e0e);border:1px solid var(--border-default,#333);'
+            +         'border-radius:6px;padding:6px 8px;color:var(--text-primary,#fff);font-family:monospace;font-size:0.85rem;" />'
+            +       '<button class="tb-btn tb-btn-secondary tb-btn-sm" type="button" '
+            +         'onclick="var i=document.getElementById(\'livesync-secret-key\'); i.type=(i.type===\'password\'?\'text\':\'password\');">'
+            +         '<span class="material-symbols-outlined">visibility</span></button>'
+            +     '</div>'
+            +   '</div>'
+            +   '<div class="scoped-cred-row">'
+            +     '<label>Buckets</label>'
+            +     '<ul style="margin:0;padding-left:18px;font-size:0.85rem;">'
+            +       '<li>private: <code>' + esc(buckets.private) + '</code></li>'
+            +       '<li>public: <code>' + esc(buckets.public) + '</code> (read-only)</li>'
+            +       '<li>shared: <code>' + esc(buckets.shared) + '</code></li>'
+            +     '</ul>'
+            +   '</div>'
+            +   '<div class="scoped-cred-row">'
+            +     '<label>Prefix</label>'
+            +     '<code class="scoped-cred-value">' + esc(creds.user_prefix) + '</code>'
+            +   '</div>'
+            +   '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">'
+            +     '<button class="tb-btn tb-btn-secondary" type="button" onclick="TB.ui.Modal.close()">Schließen</button>'
+            +   '</div>'
+            + '</div>'
+            + '<style>'
+            +   '.scoped-cred-row { margin-bottom: 10px; }'
+            +   '.scoped-cred-row label { display:block; font-size:0.75rem; '
+            +     'text-transform:uppercase; letter-spacing:0.05em; '
+            +     'color:var(--text-secondary,#aaa); margin-bottom:4px; }'
+            +   '.scoped-cred-value { display:block; background:var(--bg-canvas,#0e0e0e); '
+            +     'border:1px solid var(--border-default,#333); border-radius:6px; '
+            +     'padding:6px 8px; color:var(--text-primary,#fff); '
+            +     'font-family:monospace; font-size:0.85rem; word-break:break-all; }'
+            + '</style>';
+
+        if (TB.ui.Modal && typeof TB.ui.Modal.show === 'function') {
+            TB.ui.Modal.show(html);
+        } else {
+            // Fallback: in ein vorhandenes Result-Div rendern oder alert
+            var container = document.getElementById('dashboard-content')
+                || document.getElementById('scoped-creds-fallback');
+            if (container) {
+                container.insertAdjacentHTML('beforeend', html);
+            } else {
+                alert('Endpoint: ' + creds.endpoint
+                    + '\nAccess Key: ' + creds.access_key
+                    + '\nSecret Key: ' + creds.secret_key
+                    + '\nBuckets: ' + JSON.stringify(buckets));
+            }
         }
     };
 

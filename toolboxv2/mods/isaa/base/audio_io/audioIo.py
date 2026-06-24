@@ -272,47 +272,46 @@ class LocalPlayer(AudioPlayer):
 # STREAMING LOCAL PLAYER (gapless, low-latency continuous OutputStream)
 # =============================================================================
 
-
 class StreamingLocalPlayer(AudioPlayer):
-    """Gapless, low-latency PCM output via ONE continuous sounddevice OutputStream.
-
-    LocalPlayer does one sd.play()/sd.wait() per WAV -> audible gaps between
-    streamed chunks. This keeps a single OutputStream open and feeds a ring
-    buffer that the audio callback drains continuously, so Omni's 24kHz PCM
-    chunks play back-to-back with ~one callback of latency. Mono int16; the
-    stream sample rate is fixed at construction (Gemini live = 24000), so the
-    backend's output SR MUST match (pass output_sample_rate accordingly).
+    """
+    Gapless, low-latency PCM output via ONE continuous sounddevice OutputStream.
+    Two-Tier-Buffer: Haupt-Buffer (60s) + Overflow-Queue. 0 Datenverlust garantiert.
     """
 
     def __init__(self, device=None, sample_rate: int = 24000, channels: int = 1,
-                 max_buffer_s: float = 8.0):
+                 max_buffer_s: float = 60.0):
         import threading
         self.device = device
         self.sample_rate = sample_rate
         self.channels = channels
+
+        # Tier 1: Ring-Buffer (sounddevice-Callback liest hier)
         self._buf = bytearray()
+        # Tier 2: Overflow-Queue (sammelt Bursts, die nicht in Tier 1 passen)
+        self._overflow = bytearray()
+        # Geteiltes Lock für beide Buffer + Hintergrund-Task
         self._lock = threading.Lock()
+
         self._stream = None
         self._running = False
-        # ponytail: bound the ring so playback latency can't drift unbounded.
-        # Gemini bursts a whole turn faster than realtime; without a cap the
-        # backlog grows every turn/restart (audible drift after ~5 restarts).
-        # ceiling: keep at most max_buffer_s of audio, drop oldest on overflow.
+        self._drain_task = None  # NEU: Background-Task für Overflow → Buffer
         self.max_buffer_bytes = int(sample_rate * 2 * channels * max_buffer_s)
+        from toolboxv2 import get_logger
+        self.logger = get_logger()
 
     async def start(self) -> None:
         import numpy as np
         import sounddevice as sd
         self._running = True
-        bpf = 2 * self.channels  # bytes per frame (int16)
+        bpf = 2 * self.channels
 
         def _cb(outdata, frames, time_info, status):
             need = frames * bpf
             with self._lock:
                 take = bytes(self._buf[:need])
                 del self._buf[:need]
-            if len(take) < need:                       # underrun -> silence, no glitch
-                take += b"\x00" * (need - len(take))
+            if len(take) < need:
+                take += b"\x00" * (need - len(take))  # Underrun → Stille
             outdata[:] = np.frombuffer(take, dtype=np.int16).reshape(frames, self.channels)
 
         self._stream = sd.OutputStream(
@@ -321,8 +320,19 @@ class StreamingLocalPlayer(AudioPlayer):
         )
         self._stream.start()
 
+        # NEU: Overflow-Drain-Task starten
+        self._drain_task = asyncio.ensure_future(self._drain_overflow())
+
     async def stop(self) -> None:
         self._running = False
+        # NEU: Drain-Task zuerst stoppen
+        if self._drain_task is not None:
+            self._drain_task.cancel()
+            try:
+                await self._drain_task
+            except asyncio.CancelledError:
+                pass
+            self._drain_task = None
         if self._stream is not None:
             try:
                 self._stream.stop()
@@ -332,28 +342,63 @@ class StreamingLocalPlayer(AudioPlayer):
             self._stream = None
         with self._lock:
             self._buf.clear()
+            self._overflow.clear()
 
     async def queue_audio(self, wav_bytes: bytes, metadata: dict) -> None:
+        """Schreibt PCM in Tier 1. Wenn nicht genug Platz → Rest in Tier 2 (Overflow)."""
         try:
-            arr, _sr = _wav_to_numpy(wav_bytes)   # unwrap; SR assumed == self.sample_rate
+            arr, _sr = _wav_to_numpy(wav_bytes)
         except Exception:
             return
+        pcm = arr.tobytes()
         with self._lock:
-            self._buf.extend(arr.tobytes())
-            overflow = len(self._buf) - self.max_buffer_bytes
-            if overflow > 0:  # ponytail: drop oldest -> bounded latency, no drift
-                del self._buf[:overflow]
+            available = self.max_buffer_bytes - len(self._buf)
+            if len(pcm) <= available:
+                # Passt komplett in Tier 1
+                self._buf.extend(pcm)
+            else:
+                # Burst! Tier 1 füllen, Rest in Tier 2 (Overflow) - KEIN Verlust
+                if available > 0:
+                    self._buf.extend(pcm[:available])
+                    pcm = pcm[available:]
+                self._overflow.extend(pcm)
+                self.logger.info("StreamingLocalPlayer: overflow %d bytes (buf=%d/%d)",
+                            len(self._overflow), len(self._buf), self.max_buffer_bytes)
+
+    async def _drain_overflow(self) -> None:
+        """
+        Hintergrund-Task: Schiebt Overflow → Buffer sobald Platz ist.
+        0 Datenverlust: Polling-Loop mit 10ms Takt, lock-geschützt.
+        """
+        while self._running:
+            try:
+                await asyncio.sleep(0.01)  # 100 Hz Check
+                with self._lock:
+                    if not self._overflow:
+                        continue
+                    space = self.max_buffer_bytes - len(self._buf)
+                    if space <= 0:
+                        continue
+                    # So viel wie möglich in den Haupt-Buffer schieben
+                    take = min(space, len(self._overflow))
+                    self._buf.extend(self._overflow[:take])
+                    del self._overflow[:take]
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.debug("drain_overflow error: %s", e)
 
     async def flush(self) -> None:
-        """Drop all buffered audio immediately (barge-in / restart reset).
-        Keeps the OutputStream open; just empties the ring."""
+        """Barge-in: Beide Buffer leeren."""
         with self._lock:
             self._buf.clear()
+            self._overflow.clear()
 
     @property
     def is_active(self) -> bool:
+        """True solange Daten in Tier 1 ODER Tier 2 sind."""
         with self._lock:
-            return len(self._buf) > 0
+            return len(self._buf) > 0 or len(self._overflow) > 0
 
 
 # =============================================================================
