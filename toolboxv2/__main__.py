@@ -2296,9 +2296,6 @@ def runner_setup():
         "workers": cli_worker_manager,
         "session": cli_session,
         "broker": cli_event,
-        "build": lambda: __import__(
-            "toolboxv2.utils.system.Build", fromlist=["run"]
-        ).run(get_app("app.build")),
         "mkdocs": lambda: __import__(
             "toolboxv2.utils.clis.cli_mkdocs", fromlist=["run"]
         ).run(get_app("app.mkdocs"), sys.argv),
@@ -2319,7 +2316,7 @@ def runner_setup():
         "llm-gateway": lambda: __import__(
             "toolboxv2.utils.clis.llm_gateway_cli", fromlist=["cli_llm_gateway"]
         ).cli_llm_gateway(),
-        "fbuild": lambda: __import__(
+        "build": lambda: __import__(
             "toolboxv2.utils.system.ci.ci_build", fromlist=["main"]
         ).main(),
         "version": lambda: __import__(
