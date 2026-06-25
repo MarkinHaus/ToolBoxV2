@@ -64,7 +64,7 @@ def create_share_token(
     encryption_key: str,
     minio_endpoint: str,
     ws_endpoint: str,
-    bucket: str = "livesync",
+    bucket: str = "tb-shared",
 ) -> str:
     """Create a share token (base64 string) for distribution."""
     tok = ShareToken(
@@ -99,7 +99,10 @@ def stop_share(share_id: str) -> dict:
     """Stop and deregister a share."""
     if share_id in _share_registry:
         del _share_registry[share_id]
-        logger.info(f"[LiveSync] Share stopped: {share_id}")
+        logger.info(
+            f"[LiveSync] Share stopped: {share_id}",
+            extra={"audit_action": "SHARE_STOP", "share_id": share_id}
+        )
         return {"ok": True, "info": f"Share {share_id} stopped"}
     return {"ok": False, "error": f"Share {share_id} not found"}
 
@@ -193,8 +196,20 @@ def get_sync_status() -> dict:
 
 
 # ── Create / Join Share ──
+import socket
+def _get_lan_ip() -> str:
+     """Ermittelt die erste non-localhost LAN-IP."""
+     try:
+         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+         s.settimeout(0)
+         s.connect(('8.8.8.8', 80))  # muss nicht erreichbar sein, nur routing lookup
+         ip = s.getsockname()[0]
+         s.close()
+         return ip
+     except Exception:
+         return '127.0.0.1'
 
-def create_share(vault_path: str, ws_host: str = "0.0.0.0", ws_port: int = 8765) -> dict:
+def create_share(vault_path: str, ws_host: str = None, ws_port: int = 8765) -> dict:
     """
     Create a new share for a vault folder.
 
@@ -208,6 +223,10 @@ def create_share(vault_path: str, ws_host: str = "0.0.0.0", ws_port: int = 8765)
 
     share_id = uuid.uuid4().hex[:8]
     enc_key = generate_encryption_key()
+
+    if not ws_host or ws_host == "0.0.0.0":
+        ws_host = os.getenv("LIVESYNC_WS_HOST") or _get_lan_ip()
+
     ws_endpoint = f"ws://{ws_host}:{ws_port}"
 
     token = create_share_token(
@@ -215,13 +234,17 @@ def create_share(vault_path: str, ws_host: str = "0.0.0.0", ws_port: int = 8765)
         encryption_key=enc_key,
         minio_endpoint=env["endpoint"],
         ws_endpoint=ws_endpoint,
-        bucket=env.get("bucket", "livesync"),
+        bucket=env.get("bucket", "tb-shared"),
     )
 
     register_share(share_id, vault_path, token)
     start_sync(vault_path, share_id, ws_port)
 
-    logger.info(f"[LiveSync] Share created: {share_id}")
+    logger.info(
+        f"[LiveSync] Share created: {share_id} vault={vault_path} port={ws_port}",
+        extra={"audit_action": "SHARE_CREATE", "share_id": share_id,
+               "vault_path": vault_path, "ws_port": ws_port}
+    )
     return {
         "ok": True,
         "share_id": share_id,
@@ -241,6 +264,11 @@ def join_share(vault_path: str, token: str) -> dict:
     register_share(config.share_id, vault_path, token)
 
     logger.info(f"[LiveSync] Joined share: {config.share_id}")
+    logger.info(
+        f"[LiveSync] Share Joined: {config.share_id} vault={vault_path}",
+        extra={"audit_action": "SHARE_JOINED", "share_id": config.share_id,
+               "vault_path": vault_path, "ws_port": config.ws_endpoint}
+    )
     return {
         "ok": True,
         "share_id": config.share_id,
@@ -457,7 +485,7 @@ if _TB_AVAILABLE:
             encryption_key=enc_key,
             minio_endpoint=env["endpoint"],
             ws_endpoint=ws_endpoint,
-            bucket=env.get("bucket", "livesync"),
+            bucket=env.get("bucket", "tb-shared"),
         )
         return Result.ok(data={"token": token, "share_id": share_id})
 

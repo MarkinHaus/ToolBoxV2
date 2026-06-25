@@ -313,52 +313,102 @@ def gen_shim(exports: dict[str, str], available: set[str]) -> str:
 _DIST_MAP = {"faiss": "faiss-cpu", "cv2": "opencv-python", "PIL": "pillow",
              "yaml": "pyyaml", "sklearn": "scikit-learn", "bs4": "beautifulsoup4"}
 
-
-def external_deps(closure: dict[str, Path]) -> list[str]:
-    """Load-time external (non-stdlib, non-in-tree) import roots across the
-    closure, mapped to PyPI distribution names."""
-    std = set(sys.stdlib_module_names)
-    roots: set[str] = set()
-    for mod, path in closure.items():
-        src = path.read_text(encoding="utf-8", errors="replace")
-        for kind, m, names in _iter_ext(src):
-            root = m.split(".")[0]
-            if root and root != TOP and root not in std and not root.startswith("_"):
-                roots.add(root)
-    return sorted(_DIST_MAP.get(r, r) for r in roots)
+_IMPORT_ERRORS = {"ImportError", "ModuleNotFoundError"}
 
 
-def _iter_ext(src: str):
-    """Load-time (module-level/class/try, not function) non-relative imports."""
+def _classify_externals(src: str, std: set[str]) -> tuple[set[str], set[str], set[str]]:
+    """
+    Return (hard, optional, lazy) external import roots for one module:
+      hard     = unguarded, module-level (executes at import, required)
+      optional = inside a try/except(ImportError) block anywhere (feature-gated)
+      lazy     = unguarded, inside a function body (required-but-deferred or opt)
+    """
+    hard: set[str] = set()
+    optional: set[str] = set()
+    lazy: set[str] = set()
     tree = ast.parse(src)
+
+    def root_of(name: str) -> str | None:
+        r = name.split(".")[0]
+        if not r or r == TOP or r in std or r.startswith("_"):
+            return None
+        return r
 
     class V(ast.NodeVisitor):
         def __init__(self):
-            self.depth = 0
-            self.hits = []
+            self.fn_depth = 0
+            self.guard_depth = 0
 
-        def _d(self, n):
-            self.depth += 1
+        def _fn(self, n):
+            self.fn_depth += 1
             self.generic_visit(n)
-            self.depth -= 1
+            self.fn_depth -= 1
 
-        visit_FunctionDef = _d
-        visit_AsyncFunctionDef = _d
+        visit_FunctionDef = _fn
+        visit_AsyncFunctionDef = _fn
 
-        def visit_Import(self, n):
-            if self.depth:
-                return
-            for a in n.names:
-                self.hits.append(("import", a.name, []))
+        def visit_Try(self, n):
+            guards = any(
+                (h.type is None)
+                or (isinstance(h.type, ast.Name) and h.type.id in _IMPORT_ERRORS)
+                or (isinstance(h.type, ast.Tuple) and any(
+                    isinstance(e, ast.Name) and e.id in _IMPORT_ERRORS for e in h.type.elts))
+                for h in n.handlers
+            )
+            if guards:
+                self.guard_depth += 1
+                for stmt in n.body:
+                    self.visit(stmt)
+                self.guard_depth -= 1
+                for stmt in n.orelse + n.finalbody:
+                    self.visit(stmt)
+                for h in n.handlers:
+                    self.visit(h)
+            else:
+                self.generic_visit(n)
 
-        def visit_ImportFrom(self, n):
-            if self.depth or n.level:
-                return
-            self.hits.append(("from", n.module or "", []))
+        def _names(self, node):
+            if isinstance(node, ast.Import):
+                return [a.name for a in node.names]
+            return [node.module] if (node.level == 0 and node.module) else []
 
-    v = V()
-    v.visit(tree)
-    return v.hits
+        def _emit(self, node):
+            for name in self._names(node):
+                r = root_of(name)
+                if not r:
+                    continue
+                if self.guard_depth:
+                    optional.add(r)
+                elif self.fn_depth:
+                    lazy.add(r)
+                else:
+                    hard.add(r)
+
+        visit_Import = _emit
+        visit_ImportFrom = _emit
+
+    V().visit(tree)
+    return hard, optional, lazy
+
+
+def external_deps(closure: dict[str, Path]) -> tuple[list[str], list[str], list[str]]:
+    """
+    Aggregate external deps across the closure into three buckets, mapped to
+    PyPI distribution names:
+      hard     -> [project.dependencies]
+      optional -> [project.optional-dependencies].optional
+      full     -> [project.optional-dependencies].full  (everything; test-gate)
+    """
+    std = set(sys.stdlib_module_names)
+    H, O, L = set(), set(), set()
+    for path in closure.values():
+        h, o, l = _classify_externals(
+            path.read_text(encoding="utf-8", errors="replace"), std)
+        H |= h; O |= o; L |= l
+    optional = O - H
+    full = H | O | L
+    m = lambda s: sorted(_DIST_MAP.get(x, x) for x in s)
+    return m(H), m(optional), m(full)
 
 
 # ── packaging ────────────────────────────────────────────────────────────────
@@ -388,7 +438,8 @@ def _write_module(pkg_root: Path, mod: str, src: str) -> None:
     target.write_text(src, encoding="utf-8")
 
 
-def pack(entry: Path, root: Path, out: Path, leaf_name: str | None = None) -> PackResult:
+def pack(entry: Path, root: Path, out: Path, leaf_name: str | None = None,
+         version: str = "0.1.0") -> PackResult:
     root = root.resolve()
     entry = entry.resolve()
     exports = parse_init_exports(root)
@@ -412,27 +463,53 @@ def pack(entry: Path, root: Path, out: Path, leaf_name: str | None = None) -> Pa
     # `from toolboxv2 import X` refs are rewritten to `from tbv._shim import X`.
     shim_src = gen_shim(exports, available)
 
-    # ---- core package ----
+    # ---- core package (monotonic superset; merge, never shrink) ----
+    core_pin = None
     if core:
         (core_dir / NS).mkdir(parents=True, exist_ok=True)
+        manifest = _load_core_manifest(core_dir)
+        prev_mods = dict(manifest.get("modules", {}))
+        changed: list[str] = []
+        added: list[str] = []
         for m in core:
-            src = closure[m].read_text(encoding="utf-8", errors="replace")
-            _write_module(core_dir, m, rewrite_source(src, m, is_package_path(closure[m])))
-        (core_dir / NS / "_shim.py").write_text(shim_src, encoding="utf-8")
-        _write_pyproject(core_dir, "tbv-core", deps=[])
+            rsrc = rewrite_source(
+                closure[m].read_text(encoding="utf-8", errors="replace"),
+                m, is_package_path(closure[m]))
+            sha = _sha(rsrc)
+            _write_module(core_dir, m, rsrc)
+            if m not in prev_mods:
+                added.append(m)
+            elif prev_mods[m] != sha:
+                changed.append(m)
+            prev_mods[m] = sha
+        # shim reflects ALL core modules ever merged (superset), not just this pack
+        merged_core = set(prev_mods)
+        (core_dir / NS / "_shim.py").write_text(
+            gen_shim(exports, available | merged_core), encoding="utf-8")
+        old_ver = manifest.get("version")
+        core_ver = old_ver or "0.1.0"
+        if old_ver and (added or changed):
+            core_ver = _bump_patch(old_ver)
+        _save_core_manifest(core_dir, core_ver, prev_mods)
+        _write_pyproject(core_dir, "tbv-core", core_ver, deps=[])
+        core_pin = f"tbv-core>={core_ver}"
+        if changed:
+            print(f"WARNING: tbv-core modules changed (shared!): {changed} "
+                  f"-> bumped to {core_ver}; verify back-compat for dependents.")
 
     # ---- leaf package ----
     (leaf_dir / NS).mkdir(parents=True, exist_ok=True)
     for m in leaf:
         src = closure[m].read_text(encoding="utf-8", errors="replace")
         _write_module(leaf_dir, m, rewrite_source(src, m, is_package_path(closure[m])))
-    ext = external_deps(closure)
+    hard, optional, full = external_deps(closure)
     if core:
-        deps = ["tbv-core"] + ext
+        deps = [core_pin] + hard
     else:
         (leaf_dir / NS / "_shim.py").write_text(shim_src, encoding="utf-8")
-        deps = ext
-    _write_pyproject(leaf_dir, leaf_name, deps=deps)
+        deps = hard
+    _write_pyproject(leaf_dir, leaf_name, version, deps=deps,
+                     optional=optional, full=full)
 
     stubbed = sorted(
         s for s, m in exports.items()
@@ -444,23 +521,59 @@ def pack(entry: Path, root: Path, out: Path, leaf_name: str | None = None) -> Pa
     )
 
 
-def _write_pyproject(pkg_dir: Path, name: str, deps: list[str]) -> None:
+def _bump_patch(ver: str) -> str:
+    parts = (ver.split(".") + ["0", "0", "0"])[:3]
+    try:
+        parts[2] = str(int(parts[2]) + 1)
+    except ValueError:
+        parts[2] = "1"
+    return ".".join(parts)
+
+
+def _load_core_manifest(core_dir: Path) -> dict:
+    f = core_dir / ".tbv_core.json"
+    if f.exists():
+        try:
+            return json.loads(f.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
+def _save_core_manifest(core_dir: Path, version: str, modules: dict) -> None:
+    (core_dir / ".tbv_core.json").write_text(
+        json.dumps({"version": version, "modules": modules}, indent=2,
+                   sort_keys=True), encoding="utf-8")
+
+
+def _write_pyproject(pkg_dir: Path, name: str, version: str, deps: list[str],
+                     optional: list[str] | None = None,
+                     full: list[str] | None = None) -> None:
     dep_str = ", ".join(f'"{d}"' for d in deps)
-    (pkg_dir / "pyproject.toml").write_text(
+    body = (
         "[build-system]\n"
         'requires = ["setuptools>=61"]\n'
         'build-backend = "setuptools.build_meta"\n\n'
         "[project]\n"
         f'name = "{name}"\n'
-        'version = "0.1.0"\n'
+        f'version = "{version}"\n'
         f'description = "tb_atomic-packed ToolBoxV2 component ({name})."\n'
         'requires-python = ">=3.10"\n'
-        f"dependencies = [{dep_str}]\n\n"
-        "[tool.setuptools.packages.find]\n"
-        f'include = ["{NS}*"]\n'
-        "namespaces = true\n",
-        encoding="utf-8",
+        f"dependencies = [{dep_str}]\n"
     )
+    opt_lines = []
+    if optional:
+        opt_lines.append("optional = [" + ", ".join(f'"{d}"' for d in optional) + "]")
+    if full:
+        opt_lines.append("full = [" + ", ".join(f'"{d}"' for d in full) + "]")
+    if opt_lines:
+        body += "\n[project.optional-dependencies]\n" + "\n".join(opt_lines) + "\n"
+    body += (
+        "\n[tool.setuptools.packages.find]\n"
+        f'include = ["{NS}*"]\n'
+        "namespaces = true\n"
+    )
+    (pkg_dir / "pyproject.toml").write_text(body, encoding="utf-8")
 
 
 # ── test selection (import-closed) ───────────────────────────────────────────
@@ -500,10 +613,12 @@ def _main(argv: list[str] | None = None) -> int:
     pk.add_argument("--root", default=".", help="Repo root containing toolboxv2/.")
     pk.add_argument("-o", "--out", default="dist_atomic")
     pk.add_argument("--name", default=None)
+    pk.add_argument("--version", default="0.1.0", help="Leaf package version.")
     args = p.parse_args(argv)
 
     if args.cmd == "pack":
-        res = pack(Path(args.entry), Path(args.root), Path(args.out), args.name)
+        res = pack(Path(args.entry), Path(args.root), Path(args.out),
+                   args.name, args.version)
         print(json.dumps({
             "leaf": res.leaf_name,
             "entry": res.entry_mod,

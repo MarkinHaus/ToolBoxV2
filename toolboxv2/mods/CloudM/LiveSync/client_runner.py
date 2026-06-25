@@ -10,7 +10,7 @@ async def main():
     ap.add_argument("--ws", required=True)
     ap.add_argument("--minio", required=True)
     ap.add_argument("--key", required=True)
-    ap.add_argument("--bucket", default="livesync")
+    ap.add_argument("--bucket", default="tb-shared")
     ap.add_argument("--debounce", type=float, default=0.5)
     a = ap.parse_args()
     cfg = SyncConfig(

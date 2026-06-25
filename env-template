@@ -25,6 +25,7 @@ CLUSTER_SECRET=
 TB_JWT_SECRET=                              # REQUIRED: JWT signing secret (min 64 chars)
 TB_COOKIE_SECRET=                           # REQUIRED: Session cookie signing secret
 TOKEN_SECRET="012345678900000987654321asdfghjkl"
+TB_R_KEY="root@remote"                      # for your remote server connection
 
 # --- Database & Caching ---
 IS_OFFLINE_DB="false"                       # true = nur SQLite, false = full DB
@@ -42,12 +43,17 @@ CLOUD_ENDPOINT=
 CLOUD_ACCESS_KEY=
 CLOUD_SECRET_KEY=
 
-TB_R_KEY="root@remote"
-
 # Blob API Keys (Dynamic)
 # Format: TB_BLOB_API_KEY_<PORT>=<key> oder TB_BLOB_API_KEY_<HOST>_<PORT>=<key>
 # TB_BLOB_API_KEY_3001=
 # TB_BLOB_API_KEY_3002=
+
+# --- CloudM LiveSync config ---
+LIVESYNC_WS_HOST=0.0.0.0   # nur im selben lan oder server ip eingeben
+LIVESYNC_WS_PORT=8765
+LIVESYNC_WSS=false
+LIVESYNC_SSL_CERT=   # /etc/letsencrypt/live/sync.example.com/fullchain.pem
+LIVESYNC_SSL_KEY=    # /etc/letsencrypt/live/sync.example.com/privkey.pem
 
 # --- AI & LLM API Keys ---
 OPENAI_API_KEY=

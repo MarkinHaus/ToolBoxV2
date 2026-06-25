@@ -13,6 +13,34 @@ from toolboxv2.mods.isaa.base.bench.core import CheckResult, TaskContext
 from toolboxv2.mods.isaa.base.bench.validators import Validator, register
 
 
+def _needs_word_boundary(value: str) -> bool:
+    """Short or numeric needles cause substring false positives ('10' in '12').
+    Default such values to word-boundary matching. Longer multi-word phrases
+    (e.g. 'march 15') keep plain substring — their false positives are semantic
+    and belong to the judge, not the matcher.
+    """
+    v = value.strip()
+    if not v:
+        return False
+    # pure number, or a token ending in a number ("confidence: 1"), or a short word
+    has_digit = any(ch.isdigit() for ch in v)
+    is_short = len(v) <= 4
+    is_single_token = " " not in v
+    # multi-word phrases that END in a bare number also need boundary ("confidence: 1")
+    ends_in_number = v.split()[-1].isdigit() if v.split() else False
+    return (has_digit and (is_single_token or ends_in_number)) or (is_short and is_single_token)
+
+
+def _is_present(needle: str, haystack: str, word_boundary: bool) -> bool:
+    """Substring or word-boundary presence test (both lowercased by caller)."""
+    if not word_boundary:
+        return needle in haystack
+    # \b doesn't anchor well around punctuation like ':' — build an explicit
+    # boundary: needle not flanked by alphanumerics.
+    pattern = r"(?<![a-z0-9])" + re.escape(needle) + r"(?![a-z0-9])"
+    return re.search(pattern, haystack) is not None
+
+
 @register("contains")
 class ContainsValidator(Validator):
     """Check if response contains a value (case-insensitive)."""
@@ -26,13 +54,23 @@ class ContainsValidator(Validator):
 
 @register("not_contains")
 class NotContainsValidator(Validator):
-    """Check that response does NOT contain a value."""
+    """Check that response does NOT contain a value.
+
+    ponytail: numeric and short alphanumeric needles (e.g. "10", "1") match with
+    word boundaries by default, so "12" no longer trips a not_contains "10" check
+    and "CONFIDENCE: 10" no longer trips not_contains "1". Set word_boundary: false
+    to force raw substring. Longer phrases use plain substring (unchanged).
+    """
     name = "not_contains"
 
     async def validate(self, ctx: TaskContext) -> CheckResult:
         value = str(self.params["value"]).lower()
-        absent = value not in ctx.response.lower()
-        return CheckResult("not_contains", absent, f"'{value}' {'absent' if absent else 'present'}")
+        resp = ctx.response.lower()
+        wb = self.params.get("word_boundary", _needs_word_boundary(value))
+        present = _is_present(value, resp, wb)
+        absent = not present
+        mode = " (wb)" if wb else ""
+        return CheckResult("not_contains", absent, f"'{value}' {'absent' if absent else 'present'}{mode}")
 
 
 @register("equals")
@@ -205,13 +243,24 @@ class AllOfValidator(Validator):
 
 @register("none_of")
 class NoneOfValidator(Validator):
-    """Response must contain none of the given values."""
+    """Response must contain none of the given values.
+
+    ponytail: per-value word boundary for numeric/short tokens (same rule as
+    not_contains), so "0" in none_of won't fire on "10"/"30" and
+    "confidence: 1" won't fire on "CONFIDENCE: 10".
+    """
     name = "none_of"
 
     async def validate(self, ctx: TaskContext) -> CheckResult:
         values = self.params["values"]
         resp_lower = ctx.response.lower()
-        found = [v for v in values if str(v).lower() in resp_lower]
+        wb_default = self.params.get("word_boundary", None)
+        found = []
+        for v in values:
+            v_low = str(v).lower()
+            wb = wb_default if wb_default is not None else _needs_word_boundary(v_low)
+            if _is_present(v_low, resp_lower, wb):
+                found.append(v)
         passed = len(found) == 0
         return CheckResult("none_of", passed,
                           "none present" if passed else f"found: {found}")

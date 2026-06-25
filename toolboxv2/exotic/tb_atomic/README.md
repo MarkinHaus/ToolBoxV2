@@ -1,203 +1,262 @@
 # tb_atomic
 
-Import single **ToolBoxV2** components — and only their minimal, transitive
-in-tree dependencies — from remote sources (gist / GitHub raw / your
-`registry.simplecore.app`), **without installing the full ToolBoxV2**.
+Dev/build tool that packs a **single ToolBoxV2 component** — plus only its
+minimal transitive in-tree dependencies — into a **standalone, install-free**
+Python distribution. The packed module imports on a machine that has never seen
+ToolBoxV2, with no runtime import hooks and no network fetch.
 
-`from toolboxv2.mods.isaa.memory_layer import MemoryLayer` just works, even on
-a machine that has never seen ToolBoxV2, by fetching the needed `.py` files at
-import time, hash-pinning them, and caching them to disk.
+This is a rewrite. The old `tb_atomic` was a *runtime fetcher* (a
+`sys.meta_path` finder pulling `.py` files over HTTP at import time). That is
+gone. `tb_atomic` is now a pure **packer**: it produces real wheels at build
+time, and a separate script publishes them.
 
-## How it works
+---
 
-Two cooperating layers, installed via a `sys.meta_path` finder:
+## What it does (and does not)
 
-| Layer | Purpose |
-|-------|---------|
-| **Remote modules** | Real source pulled over HTTP, optionally `sha256`-pinned, cached under `~/.tb_atomic_cache/`. |
-| **Stubs** | Lightweight stand-ins for heavy top-level symbols (e.g. `toolboxv2.get_logger`) so importing a leaf module does **not** drag in the whole framework. |
+**Does:** statically crawl an entry file's load-time imports, vendor that exact
+set of source files, rewrite the `toolboxv2.` namespace to a neutral `tbv.`,
+split shared base modules into a reusable `tbv-core`, and emit ready-to-build
+package directories.
 
-Intermediate packages (`toolboxv2`, `toolboxv2.mods`, …) are synthesised as
-empty namespace packages on demand. **Stubs take precedence over remote
-sources** of the same name — so the heavy top-level `toolboxv2/__init__.py` is
-never executed when you stub it.
+**Does not:** execute any ToolBoxV2 code, run a live framework, or guarantee
+that *every* runtime code path works. It guarantees the module **imports
+standalone** and that load-time behaviour matches. Calls that reach back into
+un-packed framework code raise a clear `ImportError` at call time (see
+[Limitations](#limitations)).
 
-## Install
+---
 
-Directly from the gist (a gist is a git repo):
+## Pipeline
+
+```
+tb_atomic pack <entry.py>
+   │
+   ├─ 1. crawl        load-time transitive in-tree closure (relative + absolute)
+   ├─ 2. split        core (shared base)  vs  leaf (entry-specific)
+   ├─ 3. rewrite      toolboxv2.*  ->  tbv.*   (+ generate tbv/_shim.py)
+   ├─ 4. deps         classify external deps into 3 buckets
+   ├─ 5. emit         tbv-core/  +  <leaf>/   (PEP420 namespace, pyproject each)
+   └─ 6. (gate)       run import-closed TB tests against the packed copy
+```
+
+### 1. Crawl — load-time only
+
+The crawler resolves both **absolute** (`from toolboxv2.x import Y`) and
+**relative** (`from ..utils import Y`) imports. Crucially it follows **only
+load-time imports** — imports that execute when the module is imported.
+
+Imports nested inside a **function body** are *deferred*: they are **not**
+vendored (they would drag in most of the framework). Imports at module level —
+including inside a top-level `try: / except ImportError:` or a `class` body —
+**are** load-time and are vendored.
+
+This is what keeps the pack "atomic". A naive full-static crawl of a real ISAA
+module pulls in ~130 modules (most of ToolBoxV2); the load-time closure is
+typically a handful.
+
+### 2. Core / leaf split
+
+Modules whose name is a **re-export source in `toolboxv2/__init__.py`** (e.g.
+`utils.system.types`, `utils.extras.Style`, `utils.security.cryp`) go into the
+shared **`tbv-core`** package. Everything else goes into the **leaf** package.
+
+The split rule is an allowlist seeded automatically from `__init__.py` — the
+file already declares `symbol -> source module`, so no list is maintained by
+hand.
+
+### 3. Namespace rewrite + shim
+
+All `toolboxv2` references are rewritten to a neutral shared namespace `tbv`,
+so multiple packed modules co-install and never clash with a real ToolBoxV2:
+
+| Original | Rewritten |
+|---|---|
+| `from toolboxv2.mods.x import Y` | `from tbv.mods.x import Y` |
+| `from toolboxv2 import Result` | `from tbv._shim import Result` |
+| `import toolboxv2` | `import tbv._shim as toolboxv2` |
+
+`tbv` is a **PEP 420 namespace package** — there is **no `__init__.py`**
+anywhere in the tree, so `tbv-core` and any number of leaves can each contribute
+files to `tbv.*` without file collisions, and shared classes keep a single
+identity (`tbv.mods.isaa.base.VectorStores.types.Chunk` is the same class for
+every dependent).
+
+Top-level symbols are mirrored in a generated **`tbv/_shim.py`**:
+
+- `get_logger` → real (`logging.getLogger`)
+- self-contained classes whose source module was packed (`Result`, `Style`,
+  `Spinner`, `Code`, …) → re-exported from the vendored module
+- framework-bound symbols (`App`, `get_app`, `flows_dict`, `ToolBox_over`) and
+  any symbol whose source module was **not** packed → a stub that raises a clear
+  `ImportError` on use.
+
+### 4. External dependencies — 3 buckets
+
+Third-party (non-stdlib, non-ToolBoxV2) imports are classified, not guessed:
+
+| Bucket | Rule | Goes to |
+|---|---|---|
+| **hard** | unguarded, module-level | `[project.dependencies]` |
+| **optional** | inside `try/except ImportError` (anywhere) | `optional-dependencies.optional` |
+| **full** | everything, incl. lazy in-function imports | `optional-dependencies.full` |
+
+Import names are mapped to PyPI distribution names (`faiss` → `faiss-cpu`,
+`cv2` → `opencv-python`, `yaml` → `pyyaml`, …). The test gate installs
+`.[full]` so behaviour matches the original even for lazily-imported libraries.
+
+### 5. Emit + dedup (D-mid hybrid)
+
+`tbv-core` is a **monotonic superset**. State lives in
+`tbv-core/.tbv_core.json` (`{version, modules: {module: sha256}}`). On each
+pack:
+
+- new core modules are added; existing ones are kept (never shrinks);
+- if a module's content hash changed, the patch version is bumped and a
+  `WARNING` is printed (it is shared — verify back-compat for dependents);
+- leaves pin `tbv-core>=<current version>`.
+
+So installing several packed modules pulls `tbv-core` exactly once.
+
+### 6. Test gate
+
+`select_tests()` picks the ToolBoxV2 tests that are **import-closed** over the
+packed set — every in-tree module the test imports is inside the closure. Those
+tests get the same `toolboxv2.`→`tbv.` rewrite and run against the standalone
+copy in a clean environment.
+
+Many TB tests pull in `App` / `get_app` and are therefore **not** isolatable;
+the gate reports and skips them rather than pretending they passed.
+
+---
+
+## Usage — packing
 
 ```bash
-pip install "git+https://gist.github.com/<USER>/<GIST_ID>.git"
+# from a ToolBoxV2 checkout
+python tb_atomic.py pack toolboxv2/utils/workers/fast_tb.py \
+    --root . \
+    -o dist_atomic \
+    [--name tbv-fast-tb] \
+    [--version 0.1.0]
 ```
 
-Pin a specific revision:
+Output:
+
+```
+dist_atomic/
+├─ tbv-core/                 # shared base (only if the entry needs core symbols)
+│  ├─ tbv/_shim.py
+│  ├─ tbv/utils/extras/Style.py
+│  ├─ .tbv_core.json
+│  └─ pyproject.toml
+└─ tbv-fast-tb/              # the leaf
+   ├─ tbv/utils/workers/fast_tb.py
+   └─ pyproject.toml
+```
+
+Updating a packed module = re-run `pack` against the current source. The core
+merges forward; the leaf is regenerated.
+
+---
+
+## Usage — publishing
+
+`publish_tb_atomic.py` operates on the **packed output directory** and builds /
+uploads **core-first** (leaves depend on it).
 
 ```bash
-pip install "git+https://gist.github.com/<USER>/<GIST_ID>.git@<COMMIT_SHA>"
+python publish_tb_atomic.py dist_atomic [targets] [flags]
 ```
 
-Only dependency is `requests`.
+**Targets** (combinable; default `--testpypi` if none given):
 
-## Quickstart
+| Flag | Effect |
+|---|---|
+| `--testpypi` | wheel + sdist → TestPyPI |
+| `--pypi` (`--prod`) | wheel + sdist → production PyPI |
+| `--registry` | zipped package → TB Registry (via `RegistryClient`) |
 
-```python
-import tb_atomic
+**Flags:** `--check` (build + `twine check`, no upload), `--build-only`,
+`--no-clean`, `--packages a,b` (publish a subset).
 
-# Load the manifest that ships with ToolBoxV2 — registers every module + stub.
-tb_atomic.load_manifest(
-    "https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/main/toolboxv2/atomic.json"
-)
-
-# Now import as if ToolBoxV2 were installed.
-from toolboxv2.mods.isaa.memory_layer import MemoryLayer
-```
-
-### Without a manifest (manual)
-
-```python
-import tb_atomic, logging
-
-# Top-level stub instead of the heavy real __init__.
-tb_atomic.register_stub("toolboxv2", get_logger=logging.getLogger)
-
-RAW = "https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/main"
-tb_atomic.register("toolboxv2.utils.types",  f"{RAW}/toolboxv2/utils/types.py")
-tb_atomic.register("toolboxv2.utils.logger", f"{RAW}/toolboxv2/utils/logger.py")
-tb_atomic.register(
-    "toolboxv2.mods.isaa.memory_layer",
-    f"{RAW}/toolboxv2/mods/isaa/memory_layer.py",
-    sha256="abc123…",  # optional integrity pin
-)
-
-from toolboxv2.mods.isaa.memory_layer import MemoryLayer
-```
-
-## Generating the manifest (`atomic.json`)
-
-Run the AST crawler **once** on the ToolBoxV2 checkout. It statically resolves
-every transitive `toolboxv2.*` import from an entry file — no execution, no
-markup in the source files required — and records each module's path + sha256.
+**Auth** (environment):
 
 ```bash
-tb-atomic crawl toolboxv2/mods/isaa/memory_layer.py \
-    --root toolboxv2 \
-    --top toolboxv2 \
-    --base https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/main \
-    --version 0.4.2 \
-    -o atomic.json
+# PyPI / TestPyPI
+export TWINE_PASSWORD=<token>           # username is forced to __token__
+
+# TB Registry
+export TB_REGISTRY_TOKEN=<jwt>
+export REGISTRY_BASE_URL=https://registry.simplecore.app   # optional override
 ```
 
-Then add the stubs section by hand (the symbols you want substituted instead
-of fetched):
+PyPI upload uses `twine`. Registry upload imports `RegistryClient` from the
+local `toolboxv2` checkout, checks the token belongs to a **verified
+publisher**, then `create_package` (idempotent — ignores "already exists") →
+`upload_version` with a zipped package and sha256.
 
-```json
-{
-  "version": "0.4.2",
-  "base_url": "https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/main",
-  "modules": {
-    "toolboxv2.mods.isaa.memory_layer": {
-      "path": "toolboxv2/mods/isaa/memory_layer.py",
-      "sha256": "…"
-    },
-    "toolboxv2.utils.types":  { "path": "toolboxv2/utils/types.py",  "sha256": "…" },
-    "toolboxv2.utils.logger": { "path": "toolboxv2/utils/logger.py", "sha256": "…" }
-  },
-  "stubs": {
-    "toolboxv2": ["get_logger"]
-  }
-}
-```
-
-Commit `atomic.json` to the repo; let CI regenerate it on each release.
-
-> Stub defaults: `get_logger` maps to `logging.getLogger`. Any other stubbed
-> name raises a clear `ImportError` on use until you register a real
-> replacement via `tb_atomic.register_stub(...)`.
-
-## Caching & overrides
-
-The cache lives under `~/.tb_atomic_cache/` (override with
-`tb_atomic.configure(cache_dir=...)` or the `TB_ATOMIC_CACHE` env path you set
-yourself).
-
-```python
-# Re-fetch a module on next import (drop its cached copy now):
-tb_atomic.register(name, url, force=True)
-tb_atomic.invalidate("toolboxv2.utils.types")
-
-# Refresh the whole manifest:
-tb_atomic.load_manifest(url, force=True)
-
-# Auto-stale after N seconds:
-tb_atomic.register(name, url, ttl=3600)
-
-# Version-pinned: bumping `version` in register/manifest forces a re-fetch
-# even if a cached copy exists.
-tb_atomic.register(name, url, version="0.4.3")
-
-# Clear everything (or specific modules):
-tb_atomic.clear_cache()
-tb_atomic.clear_cache("toolboxv2.utils.types")
-```
-
-CLI:
+Examples:
 
 ```bash
-tb-atomic clear-cache                       # all
-tb-atomic clear-cache toolboxv2.utils.types # one
+python publish_tb_atomic.py dist_atomic --check            # dry: build + check
+python publish_tb_atomic.py dist_atomic                     # -> TestPyPI
+python publish_tb_atomic.py dist_atomic --pypi --registry   # both, core first
 ```
 
-## Use as a uv script (PEP 723)
+---
 
-`uv` resolves inline script metadata, so a standalone script can declare
-`tb-atomic` (from the gist) as a dependency and run with zero manual setup:
+## Validated
 
-```python
-# memory_demo.py
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "tb-atomic @ git+https://gist.github.com/<USER>/<GIST_ID>.git",
-# ]
-# ///
-import tb_atomic
+Against a real `github.com/MarkinHaus/ToolBoxV2` checkout, in a fresh venv with
+`toolboxv2` **absent**:
 
-tb_atomic.load_manifest(
-    "https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/main/toolboxv2/atomic.json"
-)
+- `tbv.mods.isaa.base.hybrid_memory` imports standalone; live FAISS
+  `add_embeddings` + `search` roundtrip returns the correct nearest neighbour.
+- `tbv.utils.workers.fast_tb` imports standalone; `FastTB` route registration
+  works.
+- Shim: `get_logger` real; `get_app()` raises `ImportError`.
+- A real TB test (`test_styles.py`), selected by the gate and rewritten,
+  passes against the packed copy (6 passed).
+- Core merge: 2 → 8 modules across packs bumped `tbv-core` 0.1.0 → 0.1.1;
+  leaf pinned `tbv-core>=0.1.1`.
+- Publisher: all packages build wheel+sdist and pass `twine check` core-first;
+  registry zip/metadata/order verified mechanically.
 
-from toolboxv2.mods.isaa.memory_layer import MemoryLayer
-
-print("Loaded:", MemoryLayer)
-```
-
-Run it — uv creates an ephemeral environment, installs `tb-atomic` from the
-gist, and executes:
-
-```bash
-uv run memory_demo.py
-```
-
-Add a one-off dependency without editing the script:
-
-```bash
-uv run --with "git+https://gist.github.com/<USER>/<GIST_ID>.git" memory_demo.py
-```
-
-## API
-
-| Function | Purpose |
-|----------|---------|
-| `register(name, url, *, sha256=None, version=None, ttl=0, is_package=False, force=False)` | Register a remote module source. |
-| `register_stub(name, **attrs)` | Register a lightweight stand-in module. |
-| `load_manifest(url_or_path, *, force=False, prefetch=False)` | Register everything from an `atomic.json`. |
-| `invalidate(name)` | Drop one module's cache. |
-| `clear_cache(*names)` | Clear all or specific modules. |
-| `configure(cache_dir=...)` | Override the cache directory. |
+---
 
 ## Limitations
 
-- C extensions and data files are not handled — pure-Python in-tree modules only.
-- A stubbed symbol must actually be substitutable; truly framework-bound objects
-  should raise rather than silently no-op (that is the default behaviour).
-- Integrity pinning is opt-in: provide `sha256` for anything you don't fully control.
+Honest list of what this does **not** do:
+
+- **Load-time scope only.** Code paths that lazily import un-packed framework
+  modules at *call* time will raise `ImportError` (by design — those need a full
+  ToolBoxV2). The pack guarantees import + load-time behaviour, not 100% runtime
+  coverage.
+- **Intermediate `__init__` side effects are dropped.** Parent packages
+  (`toolboxv2.mods.isaa…`) are synthesised as empty PEP420 namespaces. If a real
+  `__init__.py` did registration or re-exports, that behaviour is not carried
+  over.
+- **Dependency classification is heuristic.** A module-level guarded import
+  lands in `optional`; a lazy in-function import lands only in `full`. If a lazy
+  import is actually mandatory, promote it to `dependencies` by hand.
+- **Core breaking-change detection is hash + warning only.** It detects *that* a
+  shared module changed, not whether the change is API-breaking. Version pins
+  are `>=`; a genuinely incompatible change needs a manual major bump and
+  narrowed pins.
+- **Live registry upload is untested end-to-end** here — it needs a real
+  verified-publisher token and a reachable registry. The code path matches the
+  `RegistryClient` API; the zip/metadata/ordering are verified.
+- **No `crawl` / `update` CLI subcommands yet** — only `pack`. Updating is
+  re-running `pack`.
+- **Pure-Python in-tree modules only.** C extensions and data files are not
+  handled.
+
+---
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `tb_atomic.py` | the packer (`pack` CLI + crawl/rewrite/split/gate functions) |
+| `publish_tb_atomic.py` | build & upload packed dists to PyPI and/or TB Registry |

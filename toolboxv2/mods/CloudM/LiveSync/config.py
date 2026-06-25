@@ -25,7 +25,7 @@ class SyncConfig:
     encryption_key: str  # Base64-encoded AES-256 key
 
     # Defaults
-    bucket: str = "livesync"
+    bucket: str = "tb-shared"
     prefix: str = ""  # defaults to share_id if empty
     max_file_size: int = 50 * 1024 * 1024  # 50 MB
     debounce_seconds: float = 2.0
@@ -44,9 +44,13 @@ class ShareToken:
     """
     Encodes everything a client needs to join a share.
 
-    SECURITY: Token contains the AES encryption key and endpoints,
-    but NEVER MinIO access/secret keys. Those are provisioned via
-    WebSocket after authentication.
+    SECURITY (FIX 3b): Token payload is encrypted with the TB Device Key
+    via Code.encode_code(). The AES file-encryption key, endpoints, and
+    all metadata are opaque to the client. Only the server (which has the
+    Device Key) can decode the token.
+
+    Token format: v2 = "v2:" + Code.encode_code(json_payload)
+                   v1 = urlsafe_b64(json_payload)  [legacy, deprecated]
     """
 
     share_id: str
@@ -55,10 +59,10 @@ class ShareToken:
     prefix: str
     encryption_key: str  # Base64 AES key
     ws_endpoint: str
-    version: int = 1
+    version: int = 2  # FIX 3b: v2 = encrypted, v1 = legacy plaintext
 
     def encode(self) -> str:
-        """Encode token as URL-safe Base64 string."""
+        """Encode token — encrypted with TB Device Key (v2)."""
         data = {
             "v": self.version,
             "share_id": self.share_id,
@@ -68,14 +72,31 @@ class ShareToken:
             "enc_key": self.encryption_key,
             "ws_endpoint": self.ws_endpoint,
         }
-        return base64.urlsafe_b64encode(json.dumps(data).encode()).decode()
+        plaintext = json.dumps(data)
+
+        # FIX 3b: Encrypt entire payload with Device Key
+        try:
+            from toolboxv2.utils.security.cryp import Code
+            encrypted = Code.encode_code(plaintext)
+            return f"v2:{encrypted}"
+        except Exception:
+            # Fallback: legacy v1 (should only happen in standalone without TB)
+            return base64.urlsafe_b64encode(plaintext.encode()).decode()
 
     @classmethod
     def decode(cls, token: str) -> ShareToken:
-        """Decode token from Base64 string. Raises ValueError on bad input."""
+        """Decode token. Supports v2 (encrypted) and v1 (legacy)."""
         try:
-            raw = base64.urlsafe_b64decode(token)
-            data = json.loads(raw)
+            if token.startswith("v2:"):
+                # FIX 3b: Decrypt with Device Key
+                from toolboxv2.utils.security.cryp import Code
+                encrypted = token[3:]
+                plaintext = Code.decode_code(encrypted)
+                data = json.loads(plaintext)
+            else:
+                # Legacy v1: plain base64
+                raw = base64.urlsafe_b64decode(token)
+                data = json.loads(raw)
         except Exception as exc:
             raise ValueError(f"Invalid share token: {exc}") from exc
 
@@ -113,7 +134,7 @@ def load_env_config() -> dict:
         MINIO_SECURE         (default: false)
         LIVESYNC_WS_HOST     (default: 0.0.0.0)
         LIVESYNC_WS_PORT     (default: 8765)
-        LIVESYNC_BUCKET      (default: livesync)
+        LIVESYNC_BUCKET      (default: tb-shared)
     """
     return {
         "endpoint": os.getenv("MINIO_ENDPOINT", "127.0.0.1:9000"),
@@ -122,5 +143,8 @@ def load_env_config() -> dict:
         "secure": os.getenv("MINIO_SECURE", "false").lower() in ("true", "1", "yes"),
         "ws_host": os.getenv("LIVESYNC_WS_HOST", "0.0.0.0"),
         "ws_port": int(os.getenv("LIVESYNC_WS_PORT", "8765")),
-        "bucket": os.getenv("LIVESYNC_BUCKET", "livesync"),
+        "bucket": os.getenv("LIVESYNC_BUCKET", "tb-shared"),
+        "ws_secure": os.getenv("LIVESYNC_WSS", "false").lower() in ("true", "1", "yes"),
+        "ws_ssl_cert": os.getenv("LIVESYNC_SSL_CERT", ""),
+        "ws_ssl_key": os.getenv("LIVESYNC_SSL_KEY", ""),
     }

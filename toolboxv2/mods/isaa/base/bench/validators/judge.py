@@ -64,11 +64,13 @@ class JudgeValidator(Validator):
     async def validate(self, ctx: TaskContext) -> CheckResult:
         question = self.params["question"]
 
+        # ponytail: a judge that can't run must NOT cost the model points.
+        # skipped=True drops this check from the denominator (3/3 -> 2/2).
         try:
             from toolboxv2 import get_app
             isaa = get_app().get_mod("isaa")
         except Exception as e:
-            return CheckResult("judge", False, f"ISAA unavailable: {e}")
+            return CheckResult("judge", False, f"judge_skipped: ISAA unavailable: {e}", skipped=True)
 
         task_prompt = (
             f"You are a strict binary judge. Answer ONLY true or false.\n\n"
@@ -77,10 +79,13 @@ class JudgeValidator(Validator):
             f"## Question:\n{question}\n\n"
             f"Answer true or false."
         )
-        agent = await isaa.get_agent("BenchJudge")
 
-        agent.amd.complex_llm_model = agent.amd.fast_llm_model
-        agent.amd.fast_llm_model = os.getenv("BLITZMODEL", agent.amd.fast_llm_model)
+        try:
+            agent = await isaa.get_agent("BenchJudge")
+            agent.amd.complex_llm_model = agent.amd.fast_llm_model
+            agent.amd.fast_llm_model = os.getenv("BLITZMODEL", agent.amd.fast_llm_model)
+        except Exception as e:
+            return CheckResult("judge", False, f"judge_skipped: agent setup failed: {e}", skipped=True)
 
         try:
             result = await asyncio.wait_for(
@@ -94,14 +99,14 @@ class JudgeValidator(Validator):
 
             answer = _extract_answer(result)
             if answer is None:
-                return CheckResult("judge", False, f"judge returned unparseable: {result}")
+                return CheckResult("judge", False, f"judge_skipped: unparseable: {result}", skipped=True)
 
             return CheckResult("judge", answer, f"judge={'true' if answer else 'false'}: {question}")
 
         except asyncio.TimeoutError:
-            return CheckResult("judge", False, f"judge timeout ({self.params.get('timeout', 30)}s)")
+            return CheckResult("judge", False, f"judge_skipped: timeout ({self.params.get('timeout', 30)}s)", skipped=True)
         except Exception as e:
-            return CheckResult("judge", False, f"judge error: {e}")
+            return CheckResult("judge", False, f"judge_skipped: error: {e}", skipped=True)
 
 
 @register("judge_compare")
@@ -123,7 +128,7 @@ class JudgeCompareValidator(Validator):
             from toolboxv2 import get_app
             isaa = get_app().get_mod("isaa")
         except Exception as e:
-            return CheckResult("judge_compare", False, f"ISAA unavailable: {e}")
+            return CheckResult("judge_compare", False, f"judge_skipped: ISAA unavailable: {e}", skipped=True)
 
         task_prompt = (
             f"You are a strict binary judge. Answer ONLY true or false.\n\n"
@@ -133,11 +138,12 @@ class JudgeCompareValidator(Validator):
             f"Answer true or false."
         ).encode("utf-8").decode("utf-8")
 
-        agent = await isaa.get_agent("BenchJudge")
-
-        agent.amd.complex_llm_model = agent.amd.fast_llm_model
-        agent.amd.fast_llm_model = os.getenv("BLITZMODEL", agent.amd.fast_llm_model)
-
+        try:
+            agent = await isaa.get_agent("BenchJudge")
+            agent.amd.complex_llm_model = agent.amd.fast_llm_model
+            agent.amd.fast_llm_model = os.getenv("BLITZMODEL", agent.amd.fast_llm_model)
+        except Exception as e:
+            return CheckResult("judge_compare", False, f"judge_skipped: agent setup failed: {e}", skipped=True)
 
         try:
             result = await asyncio.wait_for(
@@ -151,11 +157,11 @@ class JudgeCompareValidator(Validator):
 
             answer = _extract_answer(result)
             if answer is None:
-                return CheckResult("judge_compare", False, f"judge returned unparseable: {result}")
+                return CheckResult("judge_compare", False, f"judge_skipped: unparseable: {result}", skipped=True)
 
             return CheckResult("judge_compare", answer, f"judge={'true' if answer else 'false'}")
 
         except asyncio.TimeoutError:
-            return CheckResult("judge_compare", False, f"judge timeout ({self.params.get('timeout', 30)}s)")
+            return CheckResult("judge_compare", False, f"judge_skipped: timeout ({self.params.get('timeout', 30)}s)", skipped=True)
         except Exception as e:
-            return CheckResult("judge_compare", False, f"judge error: {e}")
+            return CheckResult("judge_compare", False, f"judge_skipped: error: {e}", skipped=True)

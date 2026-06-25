@@ -62,9 +62,6 @@ from toolboxv2.utils.extras.mkdocs import DocsSystem
 from toolboxv2 import init_cwd, tb_root_dir
 from prompt_toolkit import print_formatted_text, HTML
 from toolboxv2.mods.isaa.CodingAgent.coder import CoderAgent
-from toolboxv2.mods.isaa.base.audio_io.audioIo import (
-    AudioStreamPlayer, LocalPlayer, AudioStreamRecorder,
-)
 from toolboxv2.mods.isaa.base.audio_io.Tts import TTSConfig, TTSBackend, TTSEmotion
 from toolboxv2.mods.isaa.base.audio_io.audio_live import (
     LiveModeConfig, EndMode,
@@ -76,7 +73,7 @@ from toolboxv2.mods.isaa.base.audio_io.omni import (
     StubOmniBackend, BlobStateStore, make_world_model_tools, OMNI_SYSTEM_INSTRUCTION,
 )
 from toolboxv2.mods.isaa.base.audio_io.audio_recorder import LocalMicRecorder
-from toolboxv2.mods.isaa.base.audio_io.audioIo import LocalPlayer, NullPlayer, StreamingLocalPlayer
+from toolboxv2.mods.isaa.base.audio_io.audioIo import LocalPlayer, NullPlayer, StreamingLocalPlayer, AudioStreamPlayer, AudioStreamRecorder
 from toolboxv2.utils.extras.blobs import BlobFile
 import os, sys
 os.environ["NARRATOR_CONSOLE_PRINT"] = "false"
@@ -88,6 +85,7 @@ def ensure_utf8_stdout():
         except AttributeError:
             pass
 
+ensure_utf8_stdout()
 
 """
 ISAA Live View — A+B combined task dashboard.
@@ -728,7 +726,7 @@ class _PyannoteOmniEmbedder:
                 emb = self._model({"waveform": waveform, "sample_rate": self._sr})
             return emb.squeeze().tolist()
         except Exception as e:  # noqa: BLE001
-            logger.debug("PyannoteOmniEmbedder.embed failed: %s", e)
+            get_logger().debug("PyannoteOmniEmbedder.embed failed: %s", e)
             return None
 
 
@@ -3629,6 +3627,57 @@ _help_text = {
 /mcp remove <name>        - Server trennen & Tools löschen
 /mcp reload               - Alle MCP Tools neu indizieren
     """,
+    # Claude Code Plugins
+    "plugin": """/plugin list              - Geladene Plugins (zeigt auch den Plugin-Ordner)
+/plugin reload            - Plugins neu scannen & laden (nach dem Hinzufügen)
+/plugin info <name>       - Manifest + Skills + Hook-Events eines Plugins
+/plugin skills            - Alle Plugin-Skills als /<skill>-Befehle auflisten
+/<skill>                  - Skill aktivieren (Agent bekommt vollen Kontext)
+/<skill> <prompt>         - Aktivieren + Prompt sofort ausführen
+/<skill> help             - Skill-spezifische Doku (Beschreibung + Instruction)
+/<skill> stop             - Diesen Skill deaktivieren
+/<skill> clean            - ALLE aktiven Skills leeren
+
+— Installieren ————————————————————————————————————————
+/plugin install <url>             - Direkt von Git (https://… oder git@…)
+/plugin install <org/repo>        - GitHub-Kurzform
+/plugin install <name>@<market>   - Aus einem Marketplace
+/plugin uninstall <name>          - Plugin entfernen
+
+— Discovery (Marketplaces) ————————————————————————————
+/plugin marketplace add <org/repo|url>  - Quelle hinzufügen
+/plugin marketplace remove <src>        - Quelle entfernen
+/plugin marketplace list                - Quellen anzeigen
+/plugin browse                          - Plugins aller Quellen listen
+
+ Vertrauenswürdige Quellen (Beispiele):
+  /plugin marketplace add anthropics/claude-plugins-official
+      (offizielles, von Anthropic kuratiertes Directory)
+  /plugin marketplace add anthropics/claude-code
+      (offizielle Bundle-Plugins: PR-Review, Commit-Workflows etc.)
+  /plugin marketplace add claude-market/marketplace
+      (community-kuratiert, Plugins werden vor Aufnahme geprüft)
+
+— Sicherheit (Nutzer-Schutz) ——————————————————————————
+/plugin scan <name>               - Installiertes Plugin scannen (Report)
+/plugin security <on|off>         - Install-Gate an/aus (default: ON)
+
+Ablauf Install: git clone -> .staging -> Security-Scan -> Bestätigung
+  -> erst dann nach plugins/<name> + reload. Bei DANGER-Funden muss
+  explizit 'trust' getippt werden, sonst y/N.
+Der Scanner flaggt: auto-laufende Hooks, pipe-to-shell (curl|sh),
+  rm -rf, Credential-Zugriff (.ssh/.env), eval/exec/os.system,
+  base64->exec, Persistenz, externe MCP-Server.
+Grenze: statisches Grepping ist ein Guardrail, keine Mauer — nur
+  Plugins aus vertrauenswürdigen Quellen installieren.
+
+Plugin-Ordner: <appdata>/icli/plugins/<name>/ (exakt via /plugin list)
+Struktur: .claude-plugin/plugin.json + skills/<id>/SKILL.md
+  (oder Root-SKILL.md) + optional .mcp.json + hooks/hooks.json
+Auto-Setup beim Laden: Skills importiert & trigger-aktiviert,
+  .mcp.json verbindet automatisch, hooks laufen bei
+  SessionStart/SessionEnd/UserPromptSubmit.
+    """,
 
 # CLI Tools Management (Live)
     "cli": """/cli list                 - Zeige registrierte CLI Tools
@@ -3928,6 +3977,116 @@ async def _resume_as_stream(engine, run_id, max_iterations, content):
         yield {"type": "done", "success": True, "final_answer": str(result)}
 
 # =============================================================================
+# CLAUDE CODE PLUGIN SUPPORT
+# =============================================================================
+
+class ClaudeCodePluginParser:
+    """Parse Claude Code plugin layout (.claude-plugin/plugin.json + skills/*/SKILL.md).
+
+    Native to icli: SKILL.md -> ISAA skill_data dict (consumed by
+    SkillsManager.import_skill); .mcp.json -> per-server cfg for
+    ISAA_Host._mcp_connect_and_register. No external/runtime deps beyond
+    stdlib + optional PyYAML (graceful fallback to a minimal kv parser).
+    """
+
+    @staticmethod
+    def _parse_frontmatter(text: str) -> tuple[dict, str]:
+        """Split YAML frontmatter from markdown body. Returns (meta, body)."""
+        if not text.startswith("---"):
+            return {}, text.strip()
+        # split on the two fence markers
+        parts = text.split("---", 2)
+        if len(parts) < 3:
+            return {}, text.strip()
+        raw_meta, body = parts[1], parts[2]
+        meta: dict = {}
+        try:
+            import yaml
+            loaded = yaml.safe_load(raw_meta)
+            if isinstance(loaded, dict):
+                meta = loaded
+        except Exception:
+            pass  # ponytail: yaml is present in-env; on failure the skill imports trigger-less
+        return meta, body.strip()
+
+    @classmethod
+    def parse_skill_md(cls, file_path: Path) -> dict:
+        """Read one SKILL.md into {metadata, instruction}."""
+        content = file_path.read_text(encoding="utf-8", errors="replace")
+        meta, body = cls._parse_frontmatter(content)
+        return {"metadata": meta, "instruction": body}
+
+    @staticmethod
+    def to_skill_data(plugin_name: str, skill_id: str, parsed: dict) -> dict:
+        """Map a parsed SKILL.md to an ISAA SkillsManager.import_skill() payload."""
+        meta = parsed.get("metadata", {}) or {}
+        # CC skills are model-invoked via `description`; icli activates via triggers
+        # + skill description embedding. Honour an explicit `triggers` field if the
+        # author provides one, else seed with the skill id and name.
+        raw_triggers = meta.get("triggers", [])
+        if isinstance(raw_triggers, str):
+            raw_triggers = [t.strip() for t in raw_triggers.split(",") if t.strip()]
+        name = str(meta.get("name", skill_id))
+        triggers = list(dict.fromkeys([*raw_triggers, skill_id, name]))
+        return {
+            "id": f"plugin_{plugin_name}_{skill_id}",
+            "name": name,
+            "triggers": triggers,
+            "instruction": parsed.get("instruction", ""),
+            "tools_used": [],
+            "tool_groups": [],
+            "source": "plugin",
+            "confidence": 0.85,
+            "activation_threshold": 0.6,
+            "success_count": 0,
+            "failure_count": 0,
+            "created_at": datetime.now().isoformat(),
+            "last_used": None,
+        }
+
+# Static pre-install scanner. Plugins run shell hooks + MCP servers with full
+# user privileges (cf. CVE-2025-59536 / CVE-2026-25725 RCE via auto-run hooks),
+# so flag the documented attack patterns before anything touches disk/PATH.
+PLUGIN_SCAN_EXT = {".sh", ".bash", ".zsh", ".py", ".js", ".ts", ".mjs",
+                   ".rb", ".pl", ".ps1", ".json", ".md", ".txt", ""}
+PLUGIN_DANGER_PATTERNS = [
+    ("danger", "pipe-to-shell (remote code exec)", r"(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(ba|z)?sh\b"),
+    ("danger", "destructive delete", r"\brm\s+-[a-z]*r[a-z]*f?\s+(/|~|\$HOME|\*)"),
+    ("danger", "credential / secret access", r"(\.ssh/|id_rsa|\.aws/credentials|\.env\b|/Cookies|wallet\.dat|\.netrc|keychain)"),
+    ("danger", "permission-bypass flag", r"(--dangerously-skip-permissions|disableAllHooks|bypassPermissions)"),
+    ("danger", "base64 decode then exec", r"base64\s+(-d|--decode)[^\n]*\|\s*(ba)?sh\b"),
+    ("warn", "dynamic code execution", r"\beval\s*\(|\bexec\s*\(|new\s+Function\s*\(|os\.system\s*\(|child_process|shell\s*=\s*True|pickle\.loads"),
+    ("warn", "outbound network call", r"\b(nc|netcat|Invoke-WebRequest)\b|requests\.(get|post)\s*\(|\bfetch\s*\(|\b(curl|wget)\b"),
+    ("warn", "persistence / scheduling", r"\b(crontab|launchctl|systemctl\s+enable|schtasks|reg\s+add)\b"),
+]
+
+
+def scan_plugin_dir(root: Path, max_bytes: int = 200_000) -> list[dict]:
+    """Grep plugin files for dangerous patterns. Returns findings (best-effort)."""
+    import re
+    compiled = [(lvl, lbl, re.compile(rx, re.I)) for lvl, lbl, rx in PLUGIN_DANGER_PATTERNS]
+    findings: list[dict] = []
+    for p in sorted(root.rglob("*")):
+        if not p.is_file() or ".git/" in p.as_posix():
+            continue
+        if p.suffix.lower() not in PLUGIN_SCAN_EXT:
+            continue
+        try:
+            if p.stat().st_size > max_bytes:
+                continue
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        rel = p.relative_to(root).as_posix()
+        for i, line in enumerate(text.splitlines(), 1):
+            for lvl, lbl, rx in compiled:
+                if rx.search(line):
+                    findings.append({"level": lvl, "file": rel, "line": i,
+                                     "label": lbl, "snippet": line.strip()[:80]})
+    return findings
+
+
+# =============================================================================
 # ISAA HOST - MAIN CLASS
 # =============================================================================
 
@@ -4047,6 +4206,8 @@ class ISAA_Host:
         self._audio_language = "de"
         self._audio_device = None  # None = system default
         self._audio_device_i = None  # None = system default
+        self._audio_device_name = None  # Speichert den Namen des Ausgabegeräts
+        self._audio_device_i_name = None  # Speichert den Namen des Eingabegeräts
         self.verbose_audio = False
         self.audio_player = self._build_audio_player()
 
@@ -4100,13 +4261,15 @@ class ISAA_Host:
         for feature in ALL_FEATURES.values():
             feature(self.feature_manager)
 
-        try:
-            from toolboxv2.mods.icli_web import IcliWebClient
-            IcliWebClient.get().attach(self)
-        except Exception as e:
-            from traceback import format_exc
-            c_print(f"WEB ERRRO {format_exc()}")
-            self.app.logger.warning(f"icli_web not available: {e}")
+        # ── Claude Code Plugins ──────────────────────────────────────────────
+        self.plugins_dir = Path(self.app.appdata) / "icli" / "plugins"
+        self.plugins_dir.mkdir(parents=True, exist_ok=True)
+        self.loaded_plugins: dict[str, dict] = {}  # name -> {manifest, root, skills, hooks}
+
+        self.marketplaces_file = Path(self.app.appdata) / "icli" / "plugin_marketplaces.json"
+        self.plugin_security_check = True  # optional install gate; /plugin security off to disable
+        self._active_skill_context: dict[str, str] = {}  # skill_id -> instruction (injected into agent)
+        self._skill_command_names: set[str] = set()  # completion cache: plugin + native skill names
 
     def _build_audio_player(self) -> AudioStreamPlayer:
         """(Re)baut den AudioStreamPlayer aus den aktuellen icli-Einstellungen."""
@@ -4122,6 +4285,40 @@ class ISAA_Host:
             tts_config=cfg,
             session_id=getattr(self, "active_session_id", "default"),
         )
+
+    def _resolve_audio_device_indices(self) -> None:
+        """Sucht die aktuellen Audio-Indizes anhand der gespeicherten Gerätenamen heraus."""
+        try:
+            import sounddevice as sd
+            devices = sd.query_devices()
+        except ImportError:
+            return
+
+        # Output-Gerät (Wiedergabe) auflösen
+        if getattr(self, "_audio_device_name", None):
+            found_o = False
+            for i, dev in enumerate(devices):
+                if dev["max_output_channels"] > 0 and dev["name"] == self._audio_device_name:
+                    self._audio_device = i
+                    found_o = True
+                    break
+            if not found_o:
+                self._audio_device = None
+        else:
+            self._audio_device = None
+
+        # Input-Gerät (Mikrofon) auflösen
+        if getattr(self, "_audio_device_i_name", None):
+            found_i = False
+            for i, dev in enumerate(devices):
+                if dev["max_input_channels"] > 0 and dev["name"] == self._audio_device_i_name:
+                    self._audio_device_i = i
+                    found_i = True
+                    break
+            if not found_i:
+                self._audio_device_i = None
+        else:
+            self._audio_device_i = None
 
     async def _ensure_audio_setup(self, agent_name: str | None = None) -> bool:
         """
@@ -4453,8 +4650,9 @@ class ISAA_Host:
                     state = json.load(f)
                     self.active_agent_name = state.get("active_agent", "self")
                     self.active_session_id = state.get("active_session", "default")
-                    self.audio_device_i = state.get("audio_device_i", None)
-                    self.audio_device = state.get("audio_device", None)
+                    self._audio_device_name = state.get("audio_device_name", None)
+                    self._audio_device_i_name = state.get("audio_device_i_name", None)
+                    self._resolve_audio_device_indices()
                     # Prompt Enhancer
                     pe = state.get("prompt_enhancer", {})
                     self._prompt_enhancer_enabled = pe.get("enabled", False)
@@ -4511,6 +4709,8 @@ class ISAA_Host:
                 "active_session": self.active_session_id,
                 "audio_device": self._audio_device,
                 "audio_device_i": self._audio_device_i,
+                "audio_device_name": getattr(self, "_audio_device_name", None),
+                "audio_device_i_name": getattr(self, "_audio_device_i_name", None),
                 "prompt_enhancer": {
                     "enabled": self._prompt_enhancer_enabled,
                     "mode": self._prompt_enhancer_mode,
@@ -6048,11 +6248,19 @@ class ISAA_Host:
 
         path_compl = PathCompleter(expanduser=True)
 
+        # Skill commands: /<skill> with sub-actions, sourced from the live cache
+        # (plugin-imported AND native skills), refreshed on load/import/delete.
+        _skill_subs = {"stop": None, "clean": None, "help": None}
+        plugin_cmds: dict = {
+            f"/{_n.replace(' ', '_')}": dict(_skill_subs)
+            for _n in getattr(self, "_skill_command_names", set())
+        }
+
         d = {
             "/agent": None, "/audio": None, "/coder": None, "/job": None,
             "/mcp": None,"/cli": None, "/session": None, "/skill": None, "/task": None,
             "/tools": None, "/vfs": None, "/feature": None, "/chain": None,
-            "/set_max_iterations": None, "/prompt": None,
+            "/set_max_iterations": None, "/prompt": None, "/plugin": None,
         }
 
         # Die spezifischen Hilfe-Kategorien
@@ -6076,6 +6284,7 @@ class ISAA_Host:
             "/exit": None,
             "/clear": None,
             "/status": None,
+            "/web-init": None,
             "/onboarding": {
                 "ratelimit" : None,
                 "audio": None,
@@ -6296,6 +6505,19 @@ class ISAA_Host:
                 },
                 "reset": None,
             },
+            "/plugin": {
+                "list": None,
+                "reload": None,
+                "info": {p: None for p in getattr(self, "loaded_plugins", {})},
+                "skills": None,
+                "install": None,
+                "uninstall": {p: None for p in getattr(self, "loaded_plugins", {})},
+                "marketplace": {"add": None, "remove": None, "list": None},
+                "browse": None,
+                "scan": {p: None for p in getattr(self, "loaded_plugins", {})},
+                "security": {"on": None, "off": None},
+            },
+            **plugin_cmds,
 
         }, VFSCompleter(session.vfs) if is_vfs else None
 
@@ -6668,7 +6890,12 @@ class ISAA_Host:
         print_box_content("  /context stats          - Context X-Ray zur tiefen Token-Analyse aufrufen", "")
         print_box_content("  /omni start [mode]      - Latenzoptimierte Freisprech-Sprachsteuerung aktivieren", "")
         print_box_content("  /feature enable         - Capability-Suiten (autodoc, autotest, web) dynamisch laden", "")
+        print_box_content("  /<skill>                 - Skill aktivieren (Agent bekommt vollen Kontext)", "")
+        print_box_content("  /<skill> <prompt>        - Aktivieren + Prompt sofort ausführen", "")
+        print_box_content("  /<skill> help            - Skill-spezifische Doku (Beschreibung + Instruction)", "")
+
         print_separator(char="·")
+
 
         # Schicht 3: Drill-down Anleitung (Direkte Ausgabe per c_print/HTML zur Vermeidung von Doppel-Escaping)
         c_print(
@@ -6848,6 +7075,16 @@ class ISAA_Host:
         elif cmd == "/agent":
             await self._cmd_agent(args)
 
+        elif cmd == "/web-init":
+
+            try:
+                from toolboxv2.mods.icli_web import IcliWebClient
+                IcliWebClient.get().attach(self)
+            except Exception as e:
+                from traceback import format_exc
+                c_print(f"WEB ERRRO {format_exc()}")
+                self.app.logger.warning(f"icli_web not available: {e}")
+
         elif cmd == "/state":
 
             if self.state_file.exists():
@@ -6959,8 +7196,17 @@ class ISAA_Host:
 
         elif cmd == "/worldmodel":
             await self._cmd_worldmodel(args)
+
+        elif cmd == "/plugin":
+            await self._cmd_plugin(args)
+
         else:
-            print_status(f"Unknown command: {cmd}. Type /help for help.", "error")
+            # Resolve as skill command: /<skill> [stop | prompt...] — plugin AND
+            # native SkillsManager skills. Activating injects the skill's full
+            # instruction into the agent context; an inline prompt runs at once,
+            # otherwise it applies to the next message.
+            if not await self._cmd_skill_invoke(cmd[1:], args):
+                print_status(f"Unknown command: {cmd}. Type /help for help.", "error")
 
     async def _cmd_cli(self, args: list[str]):
         """Handle live CLI tool management commands."""
@@ -8583,6 +8829,558 @@ class ISAA_Host:
                 print_status(f"  (Could not persist to agent.json: {e})", "warning")
 
 
+    # ───────────────────────── Claude Code Plugins ─────────────────────────
+
+    async def _load_all_plugins(self):
+        """Scan plugins_dir, load manifests, register skills + MCP + hooks.
+
+        Layout per plugin folder (Claude Code spec):
+          <plugin>/.claude-plugin/plugin.json   (manifest, only `name` required)
+          <plugin>/skills/<id>/SKILL.md   or   <plugin>/SKILL.md   (single-skill)
+          <plugin>/hooks/hooks.json   (lifecycle hooks)
+          <plugin>/.mcp.json          ({"mcpServers": {name: cfg}})
+        """
+        if not self.plugins_dir.exists():
+            return
+        self.loaded_plugins.clear()
+        for plugin_folder in sorted(self.plugins_dir.iterdir()):
+            if not plugin_folder.is_dir():
+                continue
+            manifest_path = plugin_folder / ".claude-plugin" / "plugin.json"
+            if not manifest_path.exists():
+                continue
+            try:
+                with open(manifest_path, encoding="utf-8") as f:
+                    manifest = json.load(f)
+            except Exception as e:
+                print_status(f"Plugin '{plugin_folder.name}': bad plugin.json ({e})", "error")
+                continue
+
+            plugin_name = manifest.get("name") or plugin_folder.name
+            entry = {"manifest": manifest, "root": plugin_folder, "skills": {}, "hooks": {}}
+
+            # 1. Skills: skills/<id>/SKILL.md (modern) or root SKILL.md (single-skill)
+            skills_dir = plugin_folder / "skills"
+            skill_files: list[Path] = []
+            if skills_dir.exists():
+                skill_files = list(skills_dir.glob("**/SKILL.md"))
+            elif (plugin_folder / "SKILL.md").exists():
+                skill_files = [plugin_folder / "SKILL.md"]
+            for skill_file in skill_files:
+                try:
+                    parsed = ClaudeCodePluginParser.parse_skill_md(skill_file)
+                except Exception as e:
+                    print_status(f"Plugin '{plugin_name}': bad SKILL.md {skill_file.name} ({e})", "warning")
+                    continue
+                skill_id = parsed["metadata"].get("name") or skill_file.parent.name
+                entry["skills"][skill_id] = parsed
+
+            # 2. Hooks: hooks/hooks.json or inline "hooks" in manifest
+            hooks_path = plugin_folder / "hooks" / "hooks.json"
+            if hooks_path.exists():
+                try:
+                    with open(hooks_path, encoding="utf-8") as f:
+                        entry["hooks"] = json.load(f)
+                except Exception as e:
+                    print_status(f"Plugin '{plugin_name}': bad hooks.json ({e})", "warning")
+            elif isinstance(manifest.get("hooks"), dict):
+                entry["hooks"] = manifest["hooks"]
+
+            self.loaded_plugins[plugin_name] = entry
+
+            # 3. Register skills natively + auto-load MCP
+            await self._register_plugin_skills(plugin_name, entry)
+            await self._load_plugin_mcp(plugin_name, plugin_folder)
+
+            n_sk = len(entry["skills"])
+            n_hk = sum(len(v) for v in entry["hooks"].values()) if entry["hooks"] else 0
+            print_status(f"Plugin '{plugin_name}': {n_sk} skill(s), {n_hk} hook(s) loaded.", "success")
+
+        await self._refresh_skill_names()
+
+    async def _register_plugin_skills(self, plugin_name: str, entry: dict):
+        """Import plugin skills into the active agent's SkillsManager.
+
+        Activation + system-prompt injection are handled natively by the engine's
+        skills_manager during agent.a_stream — no manual prompt patching here.
+        """
+        if not entry["skills"]:
+            return
+        try:
+            agent = await self.isaa_tools.get_agent(self.active_agent_name)
+            sm = agent._get_execution_engine().skills_manager
+        except Exception as e:
+            print_status(f"Plugin '{plugin_name}': cannot access skills_manager ({e})", "error")
+            return
+        for skill_id, parsed in entry["skills"].items():
+            skill_data = ClaudeCodePluginParser.to_skill_data(plugin_name, skill_id, parsed)
+            try:
+                sm.import_skill(skill_data, overwrite=True)
+            except Exception as e:
+                print_status(f"Plugin '{plugin_name}': import skill '{skill_id}' failed ({e})", "warning")
+
+    async def _load_plugin_mcp(self, plugin_name: str, plugin_folder: Path):
+        """Auto-load a plugin's .mcp.json via the existing MCP infra (per server)."""
+        mcp_config = plugin_folder / ".mcp.json"
+        if not mcp_config.exists():
+            return
+        try:
+            with open(mcp_config, encoding="utf-8") as f:
+                raw = json.load(f)
+        except Exception as e:
+            print_status(f"Plugin '{plugin_name}': bad .mcp.json ({e})", "warning")
+            return
+        servers = raw.get("mcpServers", raw) if isinstance(raw, dict) else {}
+        if not servers:
+            return
+        try:
+            agent = await self.isaa_tools.get_agent(self.active_agent_name)
+            if not getattr(agent, "_mcp_session_manager", None):
+                from toolboxv2.mods.isaa.extras.mcp_session_manager import MCPSessionManager
+                agent._mcp_session_manager = MCPSessionManager()
+            mcp_mgr = agent._mcp_session_manager
+        except Exception as e:
+            print_status(f"Plugin '{plugin_name}': MCP setup failed ({e})", "warning")
+            return
+        for srv_name, srv_cfg in servers.items():
+            if not isinstance(srv_cfg, dict):
+                continue
+            cfg = dict(srv_cfg)
+            if "url" in cfg:
+                cfg.setdefault("transport", "sse" if "sse" in str(cfg.get("url")) else "http")
+            else:
+                cfg.setdefault("transport", "stdio")
+                cfg.setdefault("args", [])
+                cfg.setdefault("env", {})
+            try:
+                await self._mcp_connect_and_register(
+                    agent, mcp_mgr, f"{plugin_name}_{srv_name}", cfg
+                )
+            except Exception as e:
+                print_status(f"Plugin '{plugin_name}': MCP '{srv_name}' failed ({e})", "warning")
+
+    async def _trigger_plugin_hook(self, event: str):
+        """Run command-hooks registered for a lifecycle event (best-effort).
+
+        Hooks run local shell commands with plugin trust (matches Claude Code).
+        ${CLAUDE_PLUGIN_ROOT} expands to the plugin folder. Failures never abort
+        the CLI; each command is bounded by its declared timeout (default 30s).
+        """
+        for plugin_name, entry in self.loaded_plugins.items():
+            specs = entry.get("hooks", {}).get(event, [])
+            if not isinstance(specs, list):
+                continue
+            root = str(entry["root"])
+            # Windows: suppress the cmd.exe console window the shell child would spawn
+            creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            for spec in specs:
+                for hook in spec.get("hooks", []):
+                    if hook.get("type") != "command":
+                        continue
+                    cmd = str(hook.get("command", "")).replace("${CLAUDE_PLUGIN_ROOT}", root)
+                    if not cmd:
+                        continue
+                    timeout = float(hook.get("timeout", 30))
+                    try:
+                        print_status(f"running hook {cmd}")
+                        proc = await asyncio.create_subprocess_shell(
+                            cmd,
+                            cwd=root,
+                            env={**os.environ, "CLAUDE_PLUGIN_ROOT": root},
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                            creationflags=creationflags,
+                        )
+                        await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                    except Exception as e:
+                        print_status(f"Hook {event} ({plugin_name}) failed: {e}", "warning")
+
+    async def _cmd_plugin(self, args: list[str]):
+        """Handle /plugin commands."""
+        if not args:
+            print_status("Usage: /plugin <list|reload|info|skills> [name]", "warning")
+            return
+        action = args[0].lower()
+
+        if action == "reload":
+            await self._load_all_plugins()
+            print_status(f"{len(self.loaded_plugins)} plugin(s) reloaded.", "success")
+
+        elif action == "list":
+            print_box_header("Claude Code Plugins", "🧩")
+            if not self.loaded_plugins:
+                print_box_content(f"None. Drop plugins into {self.plugins_dir}", "info")
+            else:
+                for name, entry in self.loaded_plugins.items():
+                    ver = entry["manifest"].get("version", "?")
+                    n_sk = len(entry["skills"])
+                    n_hk = sum(len(v) for v in entry["hooks"].values()) if entry["hooks"] else 0
+                    print_box_content(f"{name} v{ver} — {n_sk} skill(s), {n_hk} hook(s)", "success")
+            print_box_footer()
+
+        elif action == "info":
+            if len(args) < 2 or args[1] not in self.loaded_plugins:
+                print_status("Usage: /plugin info <name>", "warning")
+                return
+            entry = self.loaded_plugins[args[1]]
+            print_code_block(json.dumps(entry["manifest"], indent=2), "json")
+            print_status(f"Skills: {', '.join(entry['skills']) or '—'}", "info")
+            print_status(f"Hook events: {', '.join(entry['hooks'].keys()) or '—'}", "info")
+
+        elif action == "skills":
+            for name, entry in self.loaded_plugins.items():
+                for skill_id, parsed in entry["skills"].items():
+                    desc = parsed["metadata"].get("description", "")
+                    print_status(f"/{skill_id}  ({name}) — {desc[:60]}", "info")
+        elif action == "install":
+            if len(args) < 2:
+                print_status("Usage: /plugin install <github-url | org/repo | name@marketplace>", "warning")
+                return
+            target = args[1]
+            head = target.split("@", 1)[0]
+            if "@" in target and "://" not in target and "/" not in head:
+                await self._plugin_install_from_marketplace(target)
+            else:
+                await self._plugin_install_from_git(target)
+
+        elif action == "uninstall":
+            if len(args) < 2:
+                print_status("Usage: /plugin uninstall <name>", "warning")
+                return
+            dest = self.plugins_dir / args[1]
+            if dest.exists() and dest.is_dir():
+                shutil.rmtree(dest, ignore_errors=True)
+                print_status(f"Removed '{args[1]}'. Reloading...", "success")
+                await self._load_all_plugins()
+            else:
+                print_status(f"Plugin '{args[1]}' not installed.", "warning")
+
+
+        elif action == "marketplace":
+            sub = args[1].lower() if len(args) > 1 else "list"
+            markets = self._load_marketplaces()
+            if sub == "add" and len(args) > 2:
+                if args[2] not in markets:
+                    markets.append(args[2])
+                    self._save_marketplaces(markets)
+                print_status(f"Marketplace added: {args[2]}", "success")
+            elif sub == "remove" and len(args) > 2:
+                self._save_marketplaces([m for m in markets if m != args[2]])
+                print_status(f"Marketplace removed: {args[2]}", "success")
+            else:
+                print_box_header("Marketplaces", "🛒")
+                for m in markets:
+                    print_box_content(m, "info")
+                if not markets:
+                    print_box_content("None. /plugin marketplace add <org/repo|url>", "info")
+                print_box_footer()
+
+        elif action == "browse":
+            await self._plugin_browse()
+
+        elif action == "scan":
+            if len(args) < 2:
+                print_status("Usage: /plugin scan <installed-name>", "warning")
+                return
+            target = self.plugins_dir / args[1]
+            if not target.exists():
+                print_status(f"Plugin '{args[1]}' not installed.", "warning")
+                return
+            self._plugin_security_report(target, args[1])
+
+        elif action == "security":
+            if len(args) > 1 and args[1].lower() in ("on", "off"):
+                self.plugin_security_check = args[1].lower() == "on"
+            print_status(
+                f"Install security gate: {'ON' if self.plugin_security_check else 'OFF'}",
+                "info",
+            )
+        else:
+            print_status(f"Unknown /plugin action: {action}", "error")
+
+    # ── plugin install / discovery / security ───────────────────────────────
+
+    def _load_marketplaces(self) -> list:
+        try:
+            return json.loads(self.marketplaces_file.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+
+    def _save_marketplaces(self, markets: list):
+        try:
+            self.marketplaces_file.write_text(json.dumps(markets, indent=2), encoding="utf-8")
+        except Exception as e:
+            print_status(f"Could not persist marketplaces: {e}", "warning")
+
+    @staticmethod
+    def _marketplace_json_url(src: str) -> str:
+        """Resolve a marketplace source to its raw marketplace.json URL."""
+        if src.endswith(".json"):
+            return src
+        s = src
+        for pre in ("https://github.com/", "http://github.com/"):
+            if s.startswith(pre):
+                s = s[len(pre):]
+                break
+        s = s.rstrip("/")
+        if s.endswith(".git"):
+            s = s[:-4]
+        return f"https://raw.githubusercontent.com/{s}/HEAD/.claude-plugin/marketplace.json"
+
+    @staticmethod
+    def _source_to_git_url(source) -> str | None:
+        """Map a marketplace plugin `source` entry to a cloneable git URL."""
+        if isinstance(source, str):
+            return source
+        if not isinstance(source, dict):
+            return None
+        t = source.get("source")
+        if t == "github" and source.get("repo"):
+            return f"https://github.com/{source['repo']}"
+        if t in ("git", "url", "git-subdir") and source.get("url"):
+            # ponytail: git-subdir `path` not extracted in v1 — clones whole repo,
+            #   loader's rglob finds the nested plugin.json anyway. Add path-checkout
+            #   if a marketplace ships many plugins per repo.
+            return source["url"]
+        return None
+
+    async def _git_clone(self, url: str, dest: Path) -> bool:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "clone", "--depth", "1", url, str(dest),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            _, err = await asyncio.wait_for(proc.communicate(), timeout=120)
+            if proc.returncode != 0:
+                print_status(f"git clone failed: {err.decode(errors='replace')[:200]}", "error")
+                return False
+            return True
+        except FileNotFoundError:
+            print_status("git not found on PATH.", "error")
+            return False
+        except Exception as e:
+            print_status(f"git clone error: {e}", "error")
+            return False
+
+    def _plugin_security_report(self, root: Path, name: str) -> list:
+        """Print a scan report. Returns the list of `danger`-level findings."""
+        findings = scan_plugin_dir(root)
+        hook_events = []
+        hp = root / "hooks" / "hooks.json"
+        if hp.exists():
+            try:
+                hook_events = list(json.loads(hp.read_text(encoding="utf-8")).keys())
+            except Exception:
+                hook_events = ["<unreadable>"]
+        has_mcp = (root / ".mcp.json").exists()
+        dangers = [f for f in findings if f["level"] == "danger"]
+        warns = [f for f in findings if f["level"] == "warn"]
+
+        print_box_header(f"Security Scan: {name}", "🛡")
+        if hook_events:
+            print_box_content(f"⚠ Auto-runs shell hooks on: {', '.join(hook_events)}", "warning")
+        if has_mcp:
+            print_box_content("⚠ Ships .mcp.json — external MCP server auto-connects", "warning")
+        for f in dangers:
+            print_box_content(f"✗ DANGER {f['file']}:{f['line']} — {f['label']}", "error")
+            print_box_content(f"     {f['snippet']}", "")
+        for f in warns:
+            print_box_content(f"• {f['file']}:{f['line']} — {f['label']}", "info")
+        if not findings and not hook_events and not has_mcp:
+            print_box_content("✓ No dangerous patterns, hooks or MCP servers found.", "success")
+        print_box_footer()
+        return dangers
+
+    async def _plugin_scan_and_confirm(self, root: Path, name: str) -> bool:
+        """Scan + gate. Returns True to proceed with install."""
+        dangers = self._plugin_security_report(root, name)
+        if not self.plugin_security_check:
+            print_status("Security gate OFF — installing without confirmation.", "warning")
+            return True
+        if dangers:
+            prompt_txt = "danger findings above — type 'trust' to install anyway: "
+        else:
+            prompt_txt = "Install this plugin? [y/N]: "
+        try:
+            with patch_stdout():
+                ans = (await self.prompt_session.prompt_async(
+                    HTML(f"<style fg='#ef4444'>▸ </style>{esc(prompt_txt)}")
+                )).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        return ans == "trust" if dangers else ans in ("y", "yes")
+
+    async def _plugin_install_from_git(self, url: str):
+        if not url.startswith(("http://", "https://", "git@", "ssh://")):
+            url = f"https://github.com/{url.strip('/')}"
+        staging = self.plugins_dir / ".staging"
+        shutil.rmtree(staging, ignore_errors=True)
+        print_status(f"Cloning {url} ...", "progress")
+        if not await self._git_clone(url, staging):
+            shutil.rmtree(staging, ignore_errors=True)
+            return
+        # Locate plugin root: dir holding .claude-plugin/plugin.json (root or nested)
+        root = None
+        if (staging / ".claude-plugin" / "plugin.json").exists():
+            root = staging
+        else:
+            for cand in staging.rglob(".claude-plugin/plugin.json"):
+                root = cand.parent.parent
+                break
+        if root is None:
+            print_status("No .claude-plugin/plugin.json found in repo.", "error")
+            shutil.rmtree(staging, ignore_errors=True)
+            return
+        try:
+            manifest = json.loads((root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+            name = manifest.get("name") or root.name
+        except Exception as e:
+            print_status(f"Bad plugin.json: {e}", "error")
+            shutil.rmtree(staging, ignore_errors=True)
+            return
+        if not await self._plugin_scan_and_confirm(root, name):
+            print_status("Install aborted.", "warning")
+            shutil.rmtree(staging, ignore_errors=True)
+            return
+        dest = self.plugins_dir / name
+        shutil.rmtree(dest, ignore_errors=True)
+        shutil.move(str(root), str(dest))
+        shutil.rmtree(staging, ignore_errors=True)
+        print_status(f"✓ Installed '{name}'. Reloading...", "success")
+        await self._load_all_plugins()
+
+    async def _plugin_install_from_marketplace(self, ref: str):
+        name, _, market = ref.partition("@")
+        for src in self._load_marketplaces():
+            try:
+                data = requests.get(self._marketplace_json_url(src), timeout=15).json()
+            except Exception:
+                continue
+            if market and data.get("name") != market:
+                continue
+            for pl in data.get("plugins", []):
+                if pl.get("name") == name:
+                    git_url = self._source_to_git_url(pl.get("source", {}))
+                    if not git_url:
+                        print_status("Unsupported plugin source type.", "error")
+                        return
+                    await self._plugin_install_from_git(git_url)
+                    return
+        print_status(f"Plugin '{ref}' not found in any marketplace.", "error")
+
+    async def _plugin_browse(self):
+        markets = self._load_marketplaces()
+        if not markets:
+            print_status("No marketplaces. Add one: /plugin marketplace add <org/repo|url>", "warning")
+            return
+        print_box_header("Marketplace Plugins", "🛒")
+        for src in markets:
+            try:
+                data = requests.get(self._marketplace_json_url(src), timeout=15).json()
+            except Exception as e:
+                print_box_content(f"{src}: fetch failed ({e})", "error")
+                continue
+            mname = data.get("name", src)
+            for pl in data.get("plugins", []):
+                pn = pl.get("name", "?")
+                desc = (pl.get("description", "") or "")[:55]
+                print_box_content(f"{pn}@{mname} — {desc}", "info")
+        print_box_footer()
+        print_status("Install: /plugin install <name>@<marketplace>", "info")
+
+    async def _refresh_skill_names(self):
+        """Rebuild the /<skill> completion cache from plugin + native skills."""
+        names: set[str] = set()
+        for e in self.loaded_plugins.values():
+            names.update(e["skills"].keys())
+        try:
+            agent = await self.isaa_tools.get_agent(self.active_agent_name)
+            sm = agent._get_execution_engine().skills_manager
+            for sk in sm.skills.values():
+                n = getattr(sk, "name", None)
+                if n:
+                    names.add(n)
+        except Exception:
+            pass
+        self._skill_command_names = names
+
+    def _print_skill_help(self, skill_name: str, sk) -> None:
+        """Show a skill's own documentation: frontmatter description + instruction."""
+        desc = getattr(sk, "description", "") or ""
+        if not desc:
+            cands = {skill_name, skill_name.replace("_", " ")}
+            for e in self.loaded_plugins.values():
+                hit = next((k for k in e["skills"] if k in cands), None)
+                if hit:
+                    desc = e["skills"][hit]["metadata"].get("description", "")
+                    break
+        print_box_header(f"Skill: {skill_name}", "📖")
+        for line in (desc.strip().splitlines() or ["(no description)"]):
+            print_box_content(line, "info")
+        print_box_footer()
+        instruction = getattr(sk, "instruction", "") or ""
+        if instruction:
+            print_code_block(instruction, language="markdown")
+
+    async def _cmd_skill_invoke(self, skill_name: str, args: list[str]) -> bool:
+        """Activate a skill (plugin or native) and inject its full instruction
+        into the agent context. `/<skill> stop` deactivates; `/<skill> <prompt>`
+        activates and runs the prompt immediately. False if no such skill exists.
+        """
+        try:
+            agent = await self.isaa_tools.get_agent(self.active_agent_name)
+            sm = agent._get_execution_engine().skills_manager
+        except Exception:
+            return False
+        # Resolve: exact id -> plugin-namespaced -> by display name
+        # `/<skill>` is typed with underscores; real names may contain spaces.
+        cands = {skill_name, skill_name.replace("_", " ")}
+        sk = sm.skills.get(skill_name)
+        if sk is None:
+            for owner, e in self.loaded_plugins.items():
+                hit = next((k for k in e["skills"] if k in cands), None)
+                if hit:
+                    sk = sm.skills.get(f"plugin_{owner}_{hit}")
+                    break
+        if sk is None:
+            sk = next((s for s in sm.skills.values()
+                       if getattr(s, "name", None) in cands), None)
+        if sk is None:
+            return False
+
+        sid = getattr(sk, "id", skill_name)
+        sub = args[0].lower() if args else ""
+
+        if sub == "stop":
+            self._active_skill_context.pop(sid, None)
+            try:
+                sk.confidence = 0.0
+            except Exception:
+                pass
+            print_status(f"Skill '{skill_name}' deactivated.", "success")
+            return True
+
+        if sub == "clean":
+            self._active_skill_context.clear()
+            print_status("All active skills cleared.", "success")
+            return True
+
+        if sub == "help":
+            self._print_skill_help(skill_name, sk)
+            return True
+
+        self._active_skill_context[sid] = getattr(sk, "instruction", "") or ""
+        try:
+            sk.confidence = 0.95
+        except Exception:
+            pass
+        print_status(f"Skill '{skill_name}' active — agent has full context.", "success")
+
+        prompt = " ".join(args).strip()
+        if prompt:
+            await self._handle_agent_interaction(prompt)
+        return True
+
     def _print_vfs_tree(self, tree: dict, level: int = 0, max_depth: int = 4):
         """Recursively print VFS directory structure (HTML version)."""
         if level > max_depth:
@@ -9624,6 +10422,7 @@ class ISAA_Host:
                         print_status(f"Device [{idx}] has no output channels", "error")
                         return
                     self._audio_device = idx
+                    self._audio_device_name = dev["name"]
                     await self._restart_audio_player()
                     print_status(f"Audio device → [{idx}] {dev['name']}", "success")
 
@@ -9635,6 +10434,7 @@ class ISAA_Host:
                         print_status(f"Device [{idx_o}] has no output channels", "error")
                         return
                     self._audio_device_i = idx_o
+                    self._audio_device_i_name = dev["name"]
                     await self._restart_audio_player()
                     print_status(f"Audio device → [{idx_o}] {dev['name']}", "success")
                 except ValueError:
@@ -10442,6 +11242,7 @@ class ISAA_Host:
                 print_status(f"Invalid index", "error")
                 return
             self._audio_device = idx
+            self._audio_device_name = sd.query_devices()[idx]["name"]
             await self._restart_audio_player()
             dev_name = sd.query_devices()[idx]["name"]
             print_status(f"Audio device → [{idx}] {dev_name}", "success")
@@ -10472,6 +11273,7 @@ class ISAA_Host:
                 print_status(f"Invalid index", "error")
                 return
             self._audio_device_i = idx
+            self._audio_device_i_name = sd.query_devices()[idx]["name"]
             await self._restart_audio_player()
             dev_name = sd.query_devices()[idx]["name"]
             print_status(f"Audio input device → [{idx}] {dev_name}", "success")
@@ -11234,6 +12036,7 @@ class ISAA_Host:
             for name, success in results.items():
                 print(f"{'✅' if success else '❌'} {name}")
             print_status(f"Skill '{input_path}' imported", "success")
+            await self._refresh_skill_names()
 
         elif action == "delete":
             if len(args) < 2:
@@ -11251,6 +12054,7 @@ class ISAA_Host:
                 # Trigger save via checkpoint manager implicitly later or set dirty flag
                 sm._skill_embeddings_dirty = True
                 print_status(f"Skill '{skill_id}' deleted.", "success")
+                await self._refresh_skill_names()
             else:
                 print_status(f"Skill '{skill_id}' not found.", "error")
         elif action == "list":
@@ -12897,6 +13701,11 @@ class ISAA_Host:
             print_status("Usage: /prompt <on|off|mode|set|ask|history|clear|test>", "warning")
 
     async def _handle_agent_interaction(self, user_input: str):
+        if self.loaded_plugins:
+            try:
+                await self._trigger_plugin_hook("UserPromptSubmit")
+            except Exception:
+                pass
         if self.active_coder and not user_input.startswith("@"):
             await self._cmd_coder(["task", user_input])
             return
@@ -12941,6 +13750,16 @@ class ISAA_Host:
 
             agent_name = self.active_agent_name
 
+            # Inject active skill instructions as full agent context (display
+            # query stays clean; only what the agent consumes is enriched).
+            agent_query = user_input
+            if self._active_skill_context:
+                blocks = "\n\n".join(
+                    f"[ACTIVE SKILL: {sid}]\n{instr}"
+                    for sid, instr in self._active_skill_context.items()
+                )
+                agent_query = f"{blocks}\n\n---\nUser request:\n{user_input}"
+
             # Stream starten
             resumable_ctx = None
             run_id = engine._session_last_run.get(self.active_session_id)
@@ -12960,7 +13779,7 @@ class ISAA_Host:
                 ))
             else:
                 stream = agent.a_stream(
-                    query=user_input,
+                    query=agent_query,
                     session_id=self.active_session_id,
                     max_iterations=self.max_iteration,
                 )
@@ -13232,6 +14051,13 @@ class ISAA_Host:
         # Initialize Self Agent
         await self._init_self_agent()
 
+        # ── Claude Code Plugins: load + SessionStart ─────────────────────────
+        try:
+            await self._load_all_plugins()
+            await self._trigger_plugin_hook("SessionStart")
+        except Exception as _plg_err:
+            print_status(f"Plugin load skipped: {_plg_err}", "warning")
+
         # Auto-start saved cross-machine VFS shares
         try:
             await self._autostart_vfs_shares()
@@ -13359,6 +14185,10 @@ class ISAA_Host:
 
         with Spinner("Clening isaa State", symbols="a"):
             # Cleanup
+            try:
+                await self._trigger_plugin_hook("SessionEnd")
+            except Exception:
+                pass
             self._save_state()
             if hasattr(self, "client_sop"):
                 self.client_sop()

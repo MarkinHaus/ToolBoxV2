@@ -5,7 +5,7 @@ All MinIO I/O operations. Clients upload/download directly to MinIO —
 WebSocket NEVER carries file content.
 
 Bucket layout:
-    livesync/
+    tb-shared/
     └── {share_id}/
         ├── {rel_path}.enc          ← encrypted + compressed file
         └── .meta/
@@ -90,9 +90,21 @@ def rel_path_from_object_key(
 # ── Bucket Management ──
 
 def ensure_bucket(client: "Minio", bucket: str) -> None:
-    """Create bucket if it doesn't exist."""
+    """Create bucket if it doesn't exist and enable versioning."""
     if not client.bucket_exists(bucket):
         client.make_bucket(bucket)
+
+    # Enable versioning to protect against accidental deletes (FIX)
+    try:
+        from minio.versioningconfig import VersioningConfig, ENABLED
+        status = client.get_bucket_versioning(bucket)
+        if status.status != "Enabled":
+            client.set_bucket_versioning(bucket, VersioningConfig(ENABLED))
+            logger.info(f"[LiveSync] Bucket versioning enabled: {bucket}")
+    except ImportError:
+        logger.warning("[LiveSync] minio.versioningconfig not available - versioning skipped")
+    except Exception as e:
+        logger.warning(f"[LiveSync] Versioning enable failed for {bucket}: {e}")
 
 
 # ── Upload ──
@@ -283,6 +295,10 @@ def vend_user_credentials_for_user(user_id: str, env_config: dict) -> Dict[str, 
     broker = CredentialBroker(config)
     creds = broker.vend_user_credentials(user_id)
     logger.info(f"Minted scoped credentials for user {user_id}")
+    logger.info(
+        f"Minted scoped credentials for user {user_id}",
+        extra={"audit_action": "CREDENTIAL_VEND", "user_id": user_id, "scoped": True}
+    )
     return creds
 
 
@@ -300,46 +316,22 @@ def vend_credentials_for_share(share_id: str, env_config: dict) -> Dict[str, Any
     Returns:
         Credential dict: {endpoint, access_key, secret_key, secure, bucket, prefix, ...}
     """
-    try:
-        from toolboxv2.mods.CloudM.auth.minio_policy import (
-            CredentialBroker,
-            MinIOPolicyConfig,
-        )
+    from toolboxv2.mods.CloudM.auth.minio_policy import (
+        CredentialBroker,
+        MinIOPolicyConfig,
+    )
 
-        config = MinIOPolicyConfig(
-            endpoint=env_config["endpoint"],
-            access_key=env_config["access_key"],
-            secret_key=env_config["secret_key"],
-            secure=env_config.get("secure", False),
-        )
-        broker = CredentialBroker(config)
-        creds = broker.vend_share_credentials(share_id)
-        logger.info(f"Minted scoped credentials for share {share_id}")
-        return creds
+    config = MinIOPolicyConfig(
+        endpoint=env_config["endpoint"],
+        access_key=env_config["access_key"],
+        secret_key=env_config["secret_key"],
+        secure=env_config.get("secure", False),
+    )
+    broker = CredentialBroker(config)
+    creds = broker.vend_share_credentials(share_id)
+    logger.info(
+        f"Minted scoped credentials for share {share_id}",
+        extra={"audit_action": "CREDENTIAL_VEND", "share_id": share_id, "scoped": True}
+    )
+    return creds
 
-    except ImportError:
-        logger.warning(
-            "CredentialBroker not available — using admin credentials as fallback"
-        )
-        return {
-            "endpoint": env_config["endpoint"],
-            "access_key": env_config["access_key"],
-            "secret_key": env_config["secret_key"],
-            "secure": env_config.get("secure", False),
-            "bucket": env_config.get("bucket", "livesync"),
-            "prefix": share_id,
-            "policy_applied": False,
-            "warning": "CredentialBroker not available, using admin credentials",
-        }
-    except Exception as e:
-        logger.error(f"CredentialBroker failed for share {share_id}: {e}")
-        return {
-            "endpoint": env_config["endpoint"],
-            "access_key": env_config["access_key"],
-            "secret_key": env_config["secret_key"],
-            "secure": env_config.get("secure", False),
-            "bucket": env_config.get("bucket", "livesync"),
-            "prefix": share_id,
-            "policy_applied": False,
-            "warning": f"CredentialBroker error: {e}",
-        }

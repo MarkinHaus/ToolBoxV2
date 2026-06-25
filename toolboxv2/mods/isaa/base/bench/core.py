@@ -69,6 +69,7 @@ class CheckResult:
     validator_name: str
     passed: bool
     detail: str = ""
+    skipped: bool = False  # judge infra failure etc. — excluded from scoring (3/3 -> 2/2)
 
 
 @dataclass
@@ -88,19 +89,25 @@ class TaskResult:
     working_history: list[dict] = field(default_factory=list)  # [{"role","content"}]
 
     @property
+    def _scored_checks(self) -> list:
+        """Checks that count toward scoring (skipped ones drop out entirely)."""
+        return [c for c in self.checks if not getattr(c, "skipped", False)]
+
+    @property
     def score(self) -> float:
-        """passed / total. 1.0 = perfect, 0.0 = all failed."""
-        if not self.checks:
+        """passed / total over non-skipped checks. A skipped judge turns 3/3 into 2/2."""
+        scored = self._scored_checks
+        if not scored:
             return 0.0
-        return sum(1 for c in self.checks if c.passed) / len(self.checks)
+        return sum(1 for c in scored if c.passed) / len(scored)
 
     @property
     def passed(self) -> int:
-        return sum(1 for c in self.checks if c.passed)
+        return sum(1 for c in self._scored_checks if c.passed)
 
     @property
     def total_checks(self) -> int:
-        return len(self.checks)
+        return len(self._scored_checks)
 
     def to_dict(self) -> dict:
         return {
@@ -111,7 +118,8 @@ class TaskResult:
             "passed": self.passed,
             "total_checks": self.total_checks,
             "checks": [
-                {"validator": c.validator_name, "passed": c.passed, "detail": c.detail}
+                {"validator": c.validator_name, "passed": c.passed, "detail": c.detail,
+                 "skipped": getattr(c, "skipped", False)}
                 for c in self.checks
             ],
             "response": self.response,
@@ -213,7 +221,8 @@ class Report:
                 "cost": r.cost,
                 "flags": [],
                 "checks": [
-                    {"name": c.validator_name, "passed": c.passed, "detail": c.detail}
+                    {"name": c.validator_name, "passed": c.passed, "detail": c.detail,
+                     "skipped": getattr(c, "skipped", False)}
                     for c in r.checks
                 ],
                 "tool_calls": [

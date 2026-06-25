@@ -165,8 +165,27 @@ class SyncServer:
 
     # ── Lifecycle ──
 
+    def _build_ssl_context(self):
+        """FIX 4: Build SSL context for WSS if configured."""
+        ssl_mode = os.getenv("LIVESYNC_WSS", "false").lower()
+        if ssl_mode not in ("true", "1", "yes"):
+            return None
+
+        import ssl
+        cert_path = os.getenv("LIVESYNC_SSL_CERT", "")
+        key_path = os.getenv("LIVESYNC_SSL_KEY", "")
+
+        if not cert_path or not key_path:
+            logger.warning("[LiveSync] LIVESYNC_WSS=true but no cert/key set, falling back to ws://")
+            return None
+
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(cert_path, key_path)
+        logger.info(f"[LiveSync] SSL enabled: cert={cert_path}")
+        return ctx
+
     async def start(self, host: str = "0.0.0.0", port: int = 8765):
-        """Start the sync server (WS + watchdog + index)."""
+        """Start the sync server (WS/WSS + watchdog + index)."""
         if not WS_AVAILABLE:
             raise RuntimeError("websockets library required: pip install websockets")
 
@@ -194,11 +213,13 @@ class SyncServer:
             self._start_watchdog()
             logger.info(f"[LiveSync] File watcher started for {self.vault_path}")
 
-        # Start WS server
-        logger.info(f"[LiveSync] Starting server on ws://{host}:{port}")
+        # FIX 4: Build SSL context for WSS (None = plain ws://)
+        ssl_ctx = self._build_ssl_context()
+        scheme = "wss" if ssl_ctx else "ws"
+        logger.info(f"[LiveSync] Starting server on {scheme}://{host}:{port}")
 
-        async with ws_serve(self._handle_client, host, port):
-            logger.info(f"[LiveSync] Server running on ws://{host}:{port}")
+        async with ws_serve(self._handle_client, host, port, ssl=ssl_ctx):
+            logger.info(f"[LiveSync] Server running on {scheme}://{host}:{port}")
             # Main loop: process watchdog events + pending broadcasts
             while self._running:
                 await self._process_watch_events()
@@ -379,16 +400,61 @@ class SyncServer:
                 await websocket.send(
                     SyncMessage.error("First message must be auth").to_json()
                 )
+                logger.warning("[LiveSync] Rejected: non-auth first message")
                 return
 
-            # Authenticate + provision credentials
+            # ── FIX 3: Token-Validierung vor Credential-Vending ──
             client_id = msg.payload.get("client_id", f"client-{int(time.time())}")
             device_type = msg.payload.get("device_type", "unknown")
             share_id = msg.payload.get("share_id", self.share_id)
+            client_token = msg.payload.get("token", "")
+
+            # Validate share_id against this server's active share
+            if share_id != self.share_id:
+                await websocket.send(
+                    SyncMessage.error(f"Invalid share_id for this server").to_json()
+                )
+                logger.warning(
+                    f"[LiveSync] AUTH_DENIED: share_id mismatch. "
+                    f"Client={client_id} requested={share_id} expected={self.share_id}"
+                )
+                return
+
+            # Validate token: decode and check share_id matches
+            token_valid = False
+            if client_token:
+                try:
+                    from .config import ShareToken
+                    tok = ShareToken.decode(client_token)
+                    token_valid = (tok.share_id == share_id)
+                except Exception:
+                    token_valid = False
+
+            if not token_valid:
+                await websocket.send(
+                    SyncMessage.error("Invalid or missing share token").to_json()
+                )
+                logger.warning(
+                    f"[LiveSync] AUTH_DENIED: invalid token. "
+                    f"Client={client_id} share={share_id}"
+                )
+                return
+
+            # Log client IP for audit
+            peer = websocket.remote_address[0] if hasattr(websocket, 'remote_address') else "unknown"
+            logger.info(
+                f"[LiveSync] AUTH_SUCCESS: client={client_id} share={share_id} "
+                f"device={device_type} ip={peer}"
+            )
 
             # Mint scoped MinIO credentials
             minio_creds = vend_credentials_for_share(share_id, self.env_config)
-
+            logger.info(
+                f"[LiveSync] CREDENTIAL_VEND: client={client_id} share={share_id} "
+                f"scoped={minio_creds.get('policy_applied', False)} ip={peer}",
+                extra={"audit_action": "CREDENTIAL_VEND", "client_id": client_id,
+                       "share_id": share_id, "scoped": minio_creds.get("policy_applied", False)}
+            )
             # Get current checksums for initial sync
             checksums = await self.index.get_all_checksums()
 
@@ -397,13 +463,15 @@ class SyncServer:
                 "ws": websocket,
                 "client_id": client_id,
                 "device_type": device_type,
+                "peer_ip": peer,
+                "auth_at": time.time(),
             }
 
             # Send auth success
             await websocket.send(
                 SyncMessage.auth_success(client_id, minio_creds, checksums).to_json()
             )
-            logger.info(f"[LiveSync] Client connected: {client_id} ({device_type})")
+            logger.info(f"[LiveSync] Client connected: {client_id} ({device_type}) from {peer}")
 
             # Handle messages
             async for raw_msg in websocket:
@@ -412,7 +480,10 @@ class SyncServer:
         except asyncio.TimeoutError:
             logger.warning("[LiveSync] Client auth timeout")
         except websockets.exceptions.ConnectionClosed:
-            logger.info(f"[LiveSync] Client disconnected: {client_id}")
+            logger.info(
+                f"[LiveSync] Client disconnected: {client_id}",
+                extra={"audit_action": "CLIENT_DISCONNECT", "client_id": client_id}
+            )
         except Exception as e:
             logger.error(f"[LiveSync] Client error ({client_id}): {e}")
         finally:
@@ -520,18 +591,34 @@ class SyncServer:
         await self._broadcast(broadcast_msg, skip_client=client_id)
 
         await self.index.log_sync_event(path, "upload", checksum, client_id)
-        logger.info(f"[LiveSync] File synced: {path} from {client_id}")
-
+        logger.info(
+            f"[LiveSync] File synced: {path} from {client_id}",
+            extra={"audit_action": "FILE_UPLOAD", "client_id": client_id,
+                   "share_id": self.share_id, "path": path, "checksum": checksum}
+        )
     async def _process_file_deleted(self, client_id: str, path: str):
         """Process file_deleted from a client."""
         await self.index.delete_file(path)
+        # Delete encrypted object from MinIO to prevent orphaned data
+        bucket = self.env_config.get("bucket", "tb-shared")
+        if self._minio_admin:
+            try:
+                from .minio_helper import delete_file_and_meta
+                delete_file_and_meta(self._minio_admin, bucket, self.share_id, path)
+                logger.info(f"[LiveSync] MinIO object deleted: {self.share_id}/{path}")
+            except Exception as e:
+                logger.warning(f"[LiveSync] MinIO delete failed for {path}: {e}")
 
         # Broadcast
         msg = SyncMessage.file_deleted(path, source_client=client_id)
         await self._broadcast(msg, skip_client=client_id)
 
         await self.index.log_sync_event(path, "delete", "", client_id)
-        logger.info(f"[LiveSync] File deleted: {path} by {client_id}")
+        logger.warning(
+            f"[LiveSync] File deleted: {path} by {client_id}",
+            extra={"audit_action": "FILE_DELETE", "client_id": client_id,
+                   "share_id": self.share_id, "path": path}
+        )
 
     async def _process_file_renamed(
         self, client_id: str, old_path: str, new_path: str,

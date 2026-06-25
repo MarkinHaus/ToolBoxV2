@@ -121,6 +121,7 @@ class AuthPayload(BaseModel):
     client_id: str
     device_type: str = "desktop"  # "desktop", "mobile", "termux"
     share_id: str = ""
+    token: str = ""
 
 class AuthSuccessPayload(BaseModel):
     """Server → Client: auth OK + initial state."""

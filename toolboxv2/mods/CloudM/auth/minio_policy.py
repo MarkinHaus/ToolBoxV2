@@ -484,30 +484,12 @@ class CredentialBroker:
             },
         )
 
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                result = json.loads(resp.read())
-                return {
-                    "endpoint": self.config.endpoint,
-                    "access_key": result.get("accessKey", sa_access),
-                    "secret_key": result.get("secretKey", sa_secret),
-                    "secure": self.config.secure,
-                    "buckets": {
-                        "private": self.config.bucket_private,
-                        "public": self.config.bucket_public,
-                        "shared": self.config.bucket_shared,
-                    },
-                    "user_prefix": user_id,
-                    "policy_applied": True,
-                    "expires_in": 86400,  # 24h recommended rotation
-                }
-        except (urllib.error.URLError, urllib.error.HTTPError) as e:
-            # Fallback: return admin-scoped info with policy hint
-            # Client MUST apply policy client-side
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
             return {
                 "endpoint": self.config.endpoint,
-                "access_key": self.config.access_key,
-                "secret_key": self.config.secret_key,
+                "access_key": result.get("accessKey", sa_access),
+                "secret_key": result.get("secretKey", sa_secret),
                 "secure": self.config.secure,
                 "buckets": {
                     "private": self.config.bucket_private,
@@ -515,9 +497,8 @@ class CredentialBroker:
                     "shared": self.config.bucket_shared,
                 },
                 "user_prefix": user_id,
-                "policy_applied": False,
-                "policy": policy,
-                "warning": f"STS creation failed ({e}), using fallback credentials",
+                "policy_applied": True,
+                "expires_in": 86400,  # 24h recommended rotation
             }
 
     def vend_share_credentials(self, share_id: str) -> Dict:
