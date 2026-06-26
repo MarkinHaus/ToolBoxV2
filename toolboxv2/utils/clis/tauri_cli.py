@@ -548,6 +548,19 @@ def update_app(source: str = "auto") -> bool:
     print_status(f"Updated to v{latest}!", "success")
     return True
 
+def _fallback_to_local_ui(http_port: int = 5000) -> None:
+    """When the Tauri binary is unavailable, serve the local web UI (browser +
+    tray) instead of dead-ending. Falls through to CLI if waitress is missing.
+    """
+    try:
+        from toolboxv2 import get_app
+        from toolboxv2.init_onboarding import launch_ui
+        surface = launch_ui(get_app("gui.fallback"), prefer="web", port=http_port)
+        print_status(f"Launched local UI surface: {surface}", "info")
+    except Exception as e:
+        print_status(f"Local UI fallback failed: {e}", "error")
+
+
 def run_app(with_worker: bool = True, http_port: int = 5000,
             ws_port: int = 5001, no_ws: bool = False,
             download_if_missing: bool = True) -> None:
@@ -568,15 +581,15 @@ def run_app(with_worker: bool = True, http_port: int = 5000,
             print_status("App not installed, downloading...", "info")
             if not download_app():
                 print_status("Failed to download app", "error")
-                return
+                return _fallback_to_local_ui(http_port)
             app_path = get_installed_app_path()
         else:
-            print_status("App not installed. Run: tb gui download", "error")
-            return
+            print_status("Tauri app not installed — falling back to local web UI", "warning")
+            return _fallback_to_local_ui(http_port)
 
     if not app_path:
-        print_status("App installation failed", "error")
-        return
+        print_status("App installation failed — falling back to local web UI", "warning")
+        return _fallback_to_local_ui(http_port)
 
     project_root = get_project_root()
     worker_proc = None

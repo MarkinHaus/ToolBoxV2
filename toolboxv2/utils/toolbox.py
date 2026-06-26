@@ -74,21 +74,23 @@ class App(AppType, metaclass=Singleton):
 
         self.bg_tasks = []
 
-        lapp = dir_name + '\\.data\\'
+        # ponytail: prefix file follows TB_DATA_DIR like the other dirs.
+        lapp = os.path.join(os.getenv("TB_DATA_DIR") or dir_name, ".data")
+        _prefix_file = os.path.join(lapp, "last-app-prefix.txt")
 
         if not prefix:
-            if not os.path.exists(f"{lapp}last-app-prefix.txt"):
+            if not os.path.exists(_prefix_file):
                 os.makedirs(lapp, exist_ok=True)
-                open(f"{lapp}last-app-prefix.txt", "a").close()
-            with open(f"{lapp}last-app-prefix.txt") as prefix_file:
+                open(_prefix_file, "a").close()
+            with open(_prefix_file) as prefix_file:
                 cont = prefix_file.read()
                 if cont:
                     prefix = cont.rstrip()
         else:
-            if not os.path.exists(f"{lapp}last-app-prefix.txt"):
+            if not os.path.exists(_prefix_file):
                 os.makedirs(lapp, exist_ok=True)
-                open(f"{lapp}last-app-prefix.txt", "a").close()
-            with open(f"{lapp}last-app-prefix.txt", "w") as prefix_file:
+                open(_prefix_file, "a").close()
+            with open(_prefix_file, "w") as prefix_file:
                 prefix_file.write(prefix)
 
         self.prefix = prefix
@@ -107,24 +109,30 @@ class App(AppType, metaclass=Singleton):
 
         identification = self.id
         collective_identification = self.id
+        # ── data root: honor TB_DATA_DIR (writable, user-owned) over the
+        #    package dir. ponytail: one base var, proper os.path.join. Default
+        #    stays start_dir so existing installs are unchanged; the <id> leaf
+        #    is preserved so downstream `info_dir.replace(app.id, '')` still works.
+        _data_root = os.getenv("TB_DATA_DIR") or self.start_dir
         if "test" in prefix:
             if self.system_flag == "Darwin" or self.system_flag == "Linux":
                 start_dir = self.start_dir.replace("ToolBoxV2/toolboxv2", "toolboxv2")
             else:
                 start_dir = self.start_dir.replace("ToolBoxV2\\toolboxv2", "toolboxv2")
-            self.data_dir = start_dir + '\\.data\\' + "test"
-            self.config_dir = start_dir + '\\.config\\' + "test"
-            self.info_dir = start_dir + '\\.info\\' + "test"
+            _root = os.getenv("TB_DATA_DIR") or start_dir
+            self.data_dir = os.path.join(_root, ".data", "test")
+            self.config_dir = os.path.join(_root, ".config", "test")
+            self.info_dir = os.path.join(_root, ".info", "test")
         elif identification.startswith('collective-'):
             collective_identification = identification.split('-')[1]
-            self.data_dir = self.start_dir + '\\.data\\' + collective_identification
-            self.config_dir = self.start_dir + '\\.config\\' + collective_identification
-            self.info_dir = self.start_dir + '\\.info\\' + collective_identification
+            self.data_dir = os.path.join(_data_root, ".data", collective_identification)
+            self.config_dir = os.path.join(_data_root, ".config", collective_identification)
+            self.info_dir = os.path.join(_data_root, ".info", collective_identification)
             self.id = collective_identification
         else:
-            self.data_dir = self.start_dir + '\\.data\\' + identification
-            self.config_dir = self.start_dir + '\\.config\\' + identification
-            self.info_dir = self.start_dir + '\\.info\\' + identification
+            self.data_dir = os.path.join(_data_root, ".data", identification)
+            self.config_dir = os.path.join(_data_root, ".config", identification)
+            self.info_dir = os.path.join(_data_root, ".info", identification)
 
         if self.appdata is None:
             self.appdata = self.data_dir
@@ -2573,8 +2581,9 @@ class App(AppType, metaclass=Singleton):
         use_cache = memory_cache or file_cache
         cache = {}
         if file_cache:
-            cache = FileCache(folder=self.data_dir + f'\\cache\\{mod_name}\\',
-                              filename=self.data_dir + f'\\cache\\{mod_name}\\{name}cache.db')
+            _cache_dir = os.path.join(self.data_dir, "cache", mod_name)
+            cache = FileCache(folder=_cache_dir + os.sep,
+                              filename=os.path.join(_cache_dir, f"{name}cache.db"))
         if memory_cache:
             cache = MemoryCache(maxsize=memory_cache_max_size, ttl=memory_cache_ttl)
 

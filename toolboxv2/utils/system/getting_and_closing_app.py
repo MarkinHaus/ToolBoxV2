@@ -37,6 +37,16 @@ def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=
     if registered_apps[0] is not None:
         return registered_apps[0]
 
+    # Fail-safe: someone called get_app() straight from their own code/menu
+    # before any onboarding ran. If no manifest exists, prepare 'mini headless'
+    # (secret + offline env + mini manifest) so the App boots cleanly and login
+    # works. Non-recursive: prepare only, this function builds the App below.
+    try:
+        from toolboxv2.init_onboarding import prepare_mini_failsafe
+        prepare_mini_failsafe()
+    except Exception:
+        pass  # never block app creation on onboarding prep
+
     if app_con is None:
         try:
             from ... import App

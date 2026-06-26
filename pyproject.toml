@@ -223,14 +223,6 @@ production = [
     "toolboxv2[web]",
 ]
 
-dev = [
-    "toolboxv2[all]",
-    "pytest>=9.0.2",
-    "ruff>=0.8.0",
-    "pytest",
-    "build",
-    "pytest-asyncio",
-]
 
 
 [tool.uv.sources]
@@ -342,12 +334,15 @@ asyncio_mode = "auto"
 
 [dependency-groups]
 dev = [
+    "toolboxv2[all]",
     "pytest>=9.0.2",
     "ruff>=0.8.0",
     "pytest",
+    "pytest-xdist",
     "build",
     "pytest-asyncio",
 ]
+
 # Coverage configuration
 [tool.coverage.run]
 source = ["toolboxv2"]

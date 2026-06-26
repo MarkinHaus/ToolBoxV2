@@ -884,9 +884,16 @@ class VirtualFileSystemV2:
         """Initialize root directory"""
         self.directories["/"] = VFSDirectory(name="/", readonly=True)
 
-    def _build_vfs_guide(self) -> str:
-        """Build the VFS usage guide that is injected as /vfs_guide.md."""
-        return (fr"""# VFS (Virtual File System) — System- & Wissensstruktur
+    def _build_vfs_guide(self, has_sandbox: bool = False, has_shell: bool = False) -> str:
+        """Build the VFS usage guide that is injected as /vfs_guide.md.
+
+        Args:
+            has_sandbox: True if sandbox_* tools are available in this session.
+                Adds a Sandbox section + cross-system path mapping.
+            has_shell: True if the real host `shell` tool is registered (self
+                agent, with_dangerous_shell). Adds a RealFS/host-shell section.
+        """
+        guide = (fr"""# VFS (Virtual File System) — System- & Wissensstruktur
 
 ## ⚠️ Wichtigste Grundregel: VFS ist keine Arbeitsumgebung!
 
@@ -950,6 +957,105 @@ INFO
 INFO_END
 """)
 
+        if not has_sandbox:
+            guide_tail_sandbox = ""
+        else:
+            # ── Sandbox section (only if sandbox_* tools are available) ──────
+            guide_tail_sandbox = r"""
+
+---
+
+## 🐳 Sandbox (Docker Container) — Arbeitsumgebung
+
+Die Sandbox ist deine **isolierte Linux-Arbeitsumgebung** in einem Docker-Container.
+Hier wird jegliche produktive Arbeit erledigt: Code schreiben, ausführen, testen.
+
+### Sandbox-Tools
+
+| Tool | Zweck |
+|------|-------|
+| `sandbox_shell` | REAL bash (pipes, rg, sed, git, pip, python) |
+| `sandbox_view` | Datei in Context-Fenster laden |
+| `sandbox_edit` | Präzise Datei-Edits (str_replace, insert, create) |
+| `sandbox_code` | Python im Jupyter Kernel (stateful) |
+| `sandbox_browser` | Browser-Steuerung (screenshot, click, evaluate JS) |
+| `sandbox_import` | Datei VFS → Sandbox kopieren |
+| `sandbox_export` | Datei Sandbox → Host kopieren (nur /work/.../out/) |
+| `sandbox_status` | Backend-Status & Health |
+| `sandbox_permissions` | Policy & erlaubte Operationen anzeigen |
+
+### Sandbox-Pfade
+
+| Pfad | Beschreibung |
+|------|-------------|
+| `/work/` | Arbeitsverzeichnis (CWD) der Sandbox |
+| `/work/global/` | **Geteilter Ordner** — identisch mit VFS `/global/` |
+| `/work/out/` | Export-Ordner — Dateien hier können via `sandbox_export` den Sandbox verlassen |
+
+### ⚠️ Pfad-Regeln Sandbox
+
+* **Alle Pfade sind Linux-Pfade** (`/work/src/main.py`)
+* **CWD ist `/work/`**
+* **`/work/global/` == VFS `/global/`** — gleiche physische Dateien!
+* **Temporäre Dateien** unter `/work/` gelten **nur in dieser Session**
+* **Persistente Daten** immer unter `/work/global/` speichern (sync ins VFS `/global/`)
+"""
+
+        if not has_shell:
+            guide_tail_shell = ""
+        else:
+            # ── RealFS / Host Shell (only if the real `shell` tool exists) ───
+            # This is the self agent's dangerous host shell (with_dangerous_shell).
+            # Shell type is host-dependent (bash / PowerShell / cmd) — resolve at
+            # call time, do NOT assume an OS or a hardcoded path here.
+            guide_tail_shell = r"""
+
+---
+
+## 💻 RealFS (Host Shell) — System- & ToolBox-Ebene
+
+Das `shell`-Tool gibt dir Zugriff auf das **echte Host-Dateisystem** über die
+native Shell des Hosts (bash / PowerShell / cmd — host-abhängig).
+Nutzen für: ToolBox-Verwaltung, System-Config, Git-Operationen auf dem Host.
+
+### ⚠️ WICHTIG: `shell` ist GEFÄHRLICH (`dangerous: True`)
+
+* Kann **alles** auf dem Host verändern. Nur einsetzen, wenn die Aufgabe es klar verlangt.
+* **Pfade & Syntax sind host-abhängig** — nutze die native Shell (Linux: `ls`/`grep`; Windows: `Get-ChildItem`/`Select-Object`).
+* **CWD ist das ToolBoxV2-Projektverzeichnis** des Hosts.
+* Mehrere Befehle in derselben Shell: über `session_id` persistieren.
+
+### Typische Shell-Workflows
+
+* Projektstruktur ansehen, dann gezielt Dateien lesen.
+* Git: `git status` → `git add` → `git commit`.
+* ToolBox-CLI: `tb status`, `tb workers list`.
+"""
+
+        if not (has_sandbox or has_shell):
+            return guide
+
+        # ── Combined cross-system mapping (whichever systems are present) ────
+        mapping = "\n\n---\n\n## 🗺️ Pfad-Mapping & System-Wahl\n\n"
+        if has_sandbox:
+            mapping += (
+                "VFS und Sandbox teilen sich `/global/`:\n\n"
+                "| VFS | Sandbox |\n|-----|---------|\n"
+                "| `/global/` | `/work/global/` |\n\n"
+            )
+        mapping += "### Wann welches System?\n\n| Aufgabe | System | Tool |\n|---------|--------|------|\n"
+        mapping += "| Wissen/Skills lesen | **VFS** | `vfs_shell`, `vfs_view` |\n"
+        if has_sandbox:
+            mapping += "| Code schreiben & ausführen | **Sandbox** | `sandbox_shell`, `sandbox_edit` |\n"
+            mapping += "| Dateien zwischen Systemen | **Schleuse** | `sandbox_import`, `sandbox_export` |\n"
+        if has_shell:
+            mapping += "| ToolBox/Host verwalten | **RealFS** | `shell` (⚠️ dangerous) |\n"
+        mapping += "| Globale Daten teilen | **VFS `/global/`** | `vfs_shell write /global/...` |\n"
+        if has_sandbox:
+            mapping += "\nINFO\n!! vfs /global == sandbox /work/global !!\nINFO_END\n"
+
+        return guide + guide_tail_sandbox + guide_tail_shell + mapping
+
 
     def _init_system_files(self):
         """Initialize read-only system files"""
@@ -961,6 +1067,25 @@ INFO_END
             readonly=True,
             show_full=True,
         )
+
+    def refresh_guide(self, has_sandbox: bool = False, has_shell: bool = False) -> dict:
+        """Regenerate /vfs_guide.md, optionally with sandbox and/or shell sections.
+
+        Called after session tool registration so the guide reflects exactly
+        which tools the agent actually has. Uses the public .content setter so
+        backing-type / dirty tracking stays consistent.
+        """
+        path = "/vfs_guide.md"
+        if path not in self.files:
+            return {"success": False, "error": "Guide file not found"}
+        self.files[path].content = self._build_vfs_guide(
+            has_sandbox=has_sandbox, has_shell=has_shell
+        )
+        self.files[path].updated_at = datetime.now().isoformat()
+        self.files[path].show_full = True
+        self._dirty = True
+        return {"success": True,
+                "message": f"Guide updated (sandbox={has_sandbox}, shell={has_shell})"}
 
     def set_rules_file(self, content: str):
         """Set the active_rules.md file content (from RuleSet)"""

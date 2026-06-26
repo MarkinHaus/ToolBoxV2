@@ -44,7 +44,7 @@ def pytest_configure(config):
         "serial: mark test class to run in a single xdist worker (no distribution)",
     )
 
-
+@pytest.hookimpl(optionalhook=True)
 def pytest_xdist_make_scheduler(config, log):
     """
     Hook into xdist scheduling: tests marked @pytest.mark.serial

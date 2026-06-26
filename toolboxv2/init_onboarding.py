@@ -194,6 +194,127 @@ def build_manifest(profile: str = "mini", save: bool = True,
     return manifest
 
 
+_FAILSAFE_DONE = False
+
+
+def manifest_exists() -> bool:
+    """True if a real tb-manifest.yaml is present at the active location."""
+    return (tb_root_dir / "tb-manifest.yaml").exists()
+
+
+def prepare_mini_failsafe() -> bool:
+    """Idempotent, non-recursive 'mini headless' prepare for bare get_app().
+
+    Fires only when NO manifest exists yet -- e.g. a user calls get_app()
+    straight from their own code/menu before any onboarding ran. Sets the
+    secret + env defaults + a mini manifest so the App boots offline and login
+    works. Does NOT construct the App (the caller does that) -> no recursion.
+
+    Returns True if it ran the prepare, False if it was a no-op.
+    ponytail: cheapest possible guard. One bool, one file check.
+    """
+    global _FAILSAFE_DONE
+    if _FAILSAFE_DONE or manifest_exists():
+        return False
+    _FAILSAFE_DONE = True
+    try:
+        init(profile="mini", headless=True, create_app=False)
+    except Exception:
+        # Never let onboarding prep break get_app(); App has its own defaults.
+        return False
+    return True
+
+
+def _open_browser_later(url: str, delay: float = 1.2) -> None:
+    """Open the browser shortly after the server starts (best-effort)."""
+    import threading, webbrowser
+    threading.Timer(delay, lambda: webbrowser.open(url)).start()
+
+
+def _start_tray(app, url: str) -> bool:
+    """Start the system-tray icon if pystray is available. Best-effort."""
+    try:
+        import pystray  # noqa: F401
+    except Exception:
+        return False
+    try:
+        import os as _os
+        _os.environ.setdefault("TB_TRAY_URL", url)
+        from toolboxv2.utils.extras.fallback_tray import run_fallback_tray
+        import threading
+        threading.Thread(target=run_fallback_tray, args=(app,), daemon=True).start()
+        return True
+    except Exception:
+        return False
+
+
+def _serve_local_ui(host: str = "127.0.0.1", port: int = 5000) -> bool:
+    """Serve the local web UI (FastTB) on a loopback port. Blocks. Returns
+    False immediately if its deps are missing so the caller can fall through.
+    """
+    try:
+        from waitress import serve
+        from toolboxv2.utils.workers.fast.local_ui import app as local_ui_app
+        from toolboxv2.utils.workers.fast_tb_handler import FastTBHandler
+    except Exception:
+        return False
+    handler = FastTBHandler(local_ui_app)
+    serve(handler.as_wsgi_app(enable_ws=False), host=host, port=port)
+    return True
+
+
+def launch_ui(app, prefer: str = "auto", host: str = "127.0.0.1",
+              port: int = 5000) -> str:
+    """headless=False entry: route the user into a usable UI with a fallback
+    chain. Returns which surface was launched.
+
+    Chain (prefer='auto'):
+      1. Tauri desktop app   -- if an installed binary is found (tb gui).
+      2. Local web UI        -- FastTB served on loopback + browser + tray.
+      3. Local CLI dashboard -- terminal, always available.
+
+    ponytail: no new UI is built. Each rung reuses an existing entry and falls
+    through on absence (missing binary / missing waitress / no display).
+    """
+    prefer = (prefer or "auto").lower()
+
+    # 1) Tauri (desktop). Only if a binary is actually installed -- never block
+    #    on a multi-minute download here; that's an explicit `tb gui` action.
+    if prefer in ("auto", "tauri", "gui"):
+        try:
+            from toolboxv2.utils.clis.tauri_cli import get_installed_app_path, run_app
+            if get_installed_app_path():
+                run_app(with_worker=True, http_port=port, ws_port=port + 1,
+                        download_if_missing=False)
+                return "tauri"
+        except Exception:
+            pass
+
+    # 2) Local web UI + tray + browser.
+    if prefer in ("auto", "web", "browser"):
+        url = f"http://{host}:{port}"
+        _start_tray(app, url)
+        _open_browser_later(url)
+        if _serve_local_ui(host, port):   # blocks until Ctrl+C
+            return "web"
+        # waitress missing -> fall through to CLI.
+
+    # 3) Local CLI dashboard -- always works.
+    try:
+        from toolboxv2.utils.clis.local_cli import main as cli_main
+        import asyncio
+        res = cli_main()
+        if asyncio.iscoroutine(res):
+            asyncio.get_event_loop().run_until_complete(res)
+    except Exception:
+        pass
+    return "cli"
+
+
+def _open_browser_later_noop():  # kept for symmetry / future tests
+    pass
+
+
 def init(profile: str = "mini",
          headless: bool = True,
          env: Optional[Mapping[str, str]] = None,
@@ -214,6 +335,8 @@ def init(profile: str = "mini",
         The booted App singleton, or None when create_app=False.
     """
     preset = _resolve_preset(profile)
+    global _FAILSAFE_DONE
+    _FAILSAFE_DONE = True   # an explicit init() satisfies the get_app fail-safe
 
     # 1) secret first -- the one hard crash without it.
     ensure_secret(persist=persist_secret)
@@ -249,7 +372,14 @@ def init(profile: str = "mini",
 
     # 4) boot the singleton with env already in place.
     from toolboxv2 import get_app
-    return get_app(f"init.{profile}")
+    app = get_app(f"init.{profile}")
+
+    # 5) headless=False -> route the user into a UI (Tauri -> web -> CLI).
+    #    Blocks until the chosen surface exits.
+    if not headless:
+        launch_ui(app)
+
+    return app
 
 
 # ----------------------------------------------------------------------------- #

@@ -93,7 +93,7 @@ pipeline_arr = [
 
 row_agent_builder_sto = {}
 
-ISAA_SYSPROMPT_FULL = """# ISAA Agent System Prompt v2.1
+ISAA_SYSPROMPT = """# ISAA Agent System Prompt v2.1
 
 ---
 
@@ -376,7 +376,7 @@ uncertain_about_X
 - No markdown lists unless user is reading on screen
 - Short sentences in audio context
 - End with a question or an offer: "Want me to investigate that?" / "Should we go deeper on X?"""
-ISAA_SYSPROMPT = """ISAA Agents SYSPROMPT.
+ISAA_SYSPROMPT_ = """ISAA Agents SYSPROMPT.
 
 Identity: FlowAgent part of the ISAA system.
 
@@ -563,7 +563,7 @@ class Tools(MainTool):
             "SUMMARYMODEL": os.getenv("SUMMARYMODEL", "ollama/llama3.1"),
             "IMAGEMODEL": os.getenv("IMAGEMODEL", "ollama/llama3.1"),
             "DEFAULTMODELEMBEDDING": os.getenv(
-                "DEFAULTMODELEMBEDDING", "gemini/text-embedding-004"
+                "DEFAULTMODELEMBEDDING", "gemini/gemini-embedding-001"
             ),
         }
         self.per_data = {}

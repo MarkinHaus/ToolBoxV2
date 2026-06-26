@@ -3655,6 +3655,27 @@ class FlowAgent:
 
         self.add_tools(tools)
         session.tools_initialized = True
+
+        # ── Refresh VFS guide based on actually-registered tools ──────────
+        # has_sandbox: from this session's tool list (sandbox_* tools).
+        # has_shell: the real host `shell` tool is added at builder time (self
+        # agent, with_dangerous_shell), so it lives in tool_manager._registry,
+        # NOT in this local `tools` list — query the registry.
+        has_sandbox = any(t.get("name", "").startswith("sandbox_") for t in tools)
+        try:
+            has_shell = "shell" in getattr(self.tool_manager, "_registry", {})
+        except Exception:
+            has_shell = False
+        if has_sandbox or has_shell:
+            try:
+                session.vfs.refresh_guide(has_sandbox=has_sandbox, has_shell=has_shell)
+                logger.info(
+                    f"[{session.session_id}] VFS guide refreshed "
+                    f"(sandbox={has_sandbox}, shell={has_shell})"
+                )
+            except Exception as e:
+                logger.warning(f"[{session.session_id}] VFS guide refresh failed: {e}")
+
         logger.info(
             f"[{session.session_id}] {len(tools)} tools registered "
             f"(vfs_shell + vfs_view replace ~18 VFS tools"
