@@ -5,7 +5,7 @@ Provides:
 - Tool grouping with categories (instead of showing 50 tools, show "Discord Tools available")
 - Situation-aware instructions based on intent + context
 - Runtime learning of patterns and behaviors
-- Live VFS integration (always visible after system_context.md)
+- Live VFS integration (always visible)
 
 Author: FlowAgent V2
 """
@@ -204,7 +204,7 @@ _VFS_HEADER_TEMPLATE = """\
   - `ruleset.record_rule_success(id)` / `record_rule_failure(id)` → feedback loop
   - `ruleset.rule_on_action(action, context)` → check before destructive actions
 
-## General Rules (ALWAYS ACTIVE)
+## SYSTEM CONSTRAINTS - STRICTLY ENFORCED
 {general_rules_block}
 
 ## Current Situation

@@ -6269,6 +6269,7 @@ class ISAA_Host:
             "min": None,  # Nur das Wichtigste
             "guide": None,  # Nutzungstipps & Prompts
             "discord": None,  # Discord Extension Guide
+            "telegram": None,  # Telegram Extension Guide  #
             "keys": None,  # F-Key Referenz
             "shortcuts": None,
             "chain": None,
@@ -6819,6 +6820,8 @@ class ISAA_Host:
             self._print_help_guide()
         elif sub == "discord":
             self._print_help_discord()
+        elif sub == "telegram":
+            self._print_help_telegram()
         elif sub == "min":
             self._print_help_min()
 
@@ -6946,6 +6949,21 @@ class ISAA_Host:
         print_box_content("/discord voice join <id>    - In Voice Channel gehen", "")
         print_box_content("/discord send <addr> <msg>  - Nachricht an User/Channel", "")
         print_box_content("Hinweis: Der Bot reagiert in Discord auf @Mentions", "info")
+        print_box_footer()
+
+    def _print_help_telegram(self):
+        """Spezifische Hilfe für die Telegram Extension."""
+        print_box_header("Telegram Integration Guide", "✈️")
+        print_box_content("Setup:", "bold")
+        print_box_content("/telegram connect [token]   - Bot starten", "")
+        print_box_content("/telegram status            - Connection prüfen", "")
+        print_separator()
+        print_box_content("Interaction:", "bold")
+        print_box_content("/telegram send <chat_id> <msg> - Nachricht senden", "")
+        print_box_content("/telegram search <query>       - Kontakte durchsuchen", "")
+        print_box_content("/telegram active               - Aktive Chats", "")
+        print_box_content("/telegram admin [add|rm] <id>   - Admin verwalten", "")
+        print_box_content("Hinweis: Bot reagiert in Gruppen auf @Mentions, in DMs immer.", "info")
         print_box_footer()
 
     def _print_help_all(self, args):
@@ -14726,7 +14744,51 @@ async def run(app=None, *args):
         print(e)
         print("⚠️ Discord integration not available.")
         pass
+    try:
+        from toolboxv2.mods.isaa.extras.telegram_interface.telegram_cli_extension import TelegramCliExtension
+        host.telegram_ext = TelegramCliExtension(host)
 
+        original_handle_command = host._handle_command
+
+        async def patched_handle_command_with_telegram(user_input: str):
+            parts = user_input.strip().split()
+            command = parts[0].lower() if parts else ""
+            args_str = " ".join(parts[1:]) if len(parts) > 1 else ""
+
+            if command == "/telegram":
+                result = await host.telegram_ext.handle_command(args_str)
+                if result:
+                    print(result)
+                return
+
+            await original_handle_command(user_input)
+
+        host._handle_command = patched_handle_command_with_telegram
+
+        original_build_completer = host._build_completer
+
+        def patched_build_completer_with_telegram():
+            completer, vfs_c = original_build_completer()
+            completer["/telegram"] = {
+                "connect": None,
+                "disconnect": None,
+                "status": None,
+                "chats": None,
+                "send": None,
+                "search": None,
+                "active": None,
+                "admin": {
+                    "add": None,
+                    "remove": None,
+                },
+            }
+            return completer, vfs_c
+
+        host._build_completer = patched_build_completer_with_telegram
+        print("Telegram integration enabled.")
+    except ImportError as e:
+        print("⚠️ Telegram integration not available.")
+        pass
     await profile_code(override=False, blame_threshold=0.05, min_time=0.15)(host.run)()
 
 

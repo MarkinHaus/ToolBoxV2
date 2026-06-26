@@ -944,18 +944,15 @@ Offene Dateien erscheinen in **jedem folgenden Prompt** und verursachen kontinui
 > ⚠️ **Hinweis zu Zeilenumbrüchen (`\n`):**
 > Ein echter Zeilenumbruch in geschriebenen VFS-Dateien bleibt erhalten.
 > `write /f.py "class Foo:\n    pass"` erzeugt eine formatierte Datei, keinen Batch-Befehl.
+
+INFO
+!! vfs /global == sandbox /work/global  !!
+INFO_END
 """)
 
 
     def _init_system_files(self):
         """Initialize read-only system files"""
-        self.files["/system_context.md"] = VFSFile(
-            filename="system_context.md",
-            _content=self._build_system_context(),
-            state="open",
-            readonly=True,
-            show_full=True,
-        )
 
         self.files["/vfs_guide.md"] = VFSFile(
             filename="vfs_guide.md",
@@ -964,22 +961,6 @@ Offene Dateien erscheinen in **jedem folgenden Prompt** und verursachen kontinui
             readonly=True,
             show_full=True,
         )
-
-    def _build_system_context(self) -> str:
-        """Build system context content"""
-        now = datetime.now()
-        return f"""# System Context
-Current Time: {now.strftime("%Y-%m-%d %H:%M:%S")}
-Agent: {self.agent_name}
-Session: {self.session_id}
-"""
-
-    def update_system_context(self):
-        """Refresh system context"""
-        if "/system_context.md" in self.files:
-            self.files["/system_context.md"].content = self._build_system_context()
-            self.files["/system_context.md"].updated_at = datetime.now().isoformat()
-            self._dirty = True
 
     def set_rules_file(self, content: str):
         """Set the active_rules.md file content (from RuleSet)"""
@@ -2788,16 +2769,13 @@ Session: {self.session_id}
 
     def build_context_string(self) -> str:
         """Build VFS context string for LLM"""
-        self.update_system_context()
         if not self._dirty and hasattr(self, '_context_cache'):
             return self._context_cache
         self._dirty = False
         parts = self.file_tree_string(as_list=True)
 
-        # Order: system_context, active_rules, then others
+        # Order: active_rules, then others
         ordered = []
-        if "/system_context.md" in self.files:
-            ordered.append(("/system_context.md", self.files["/system_context.md"]))
         if "/active_rules.md" in self.files:
             ordered.append(("/active_rules.md", self.files["/active_rules.md"]))
 
