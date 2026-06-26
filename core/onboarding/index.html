@@ -4249,6 +4249,321 @@
 <p>Wenn Sie bereits Python installiert haben:</p>
 <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>toolboxv2
 </code></pre></div>
+<h1 id="toolboxv2-onboarding">ToolBoxV2 — Onboarding<a class="headerlink" href="#toolboxv2-onboarding" title="Permanent link">&para;</a></h1>
+<p>Von <code>pip install</code> zu <em>angemeldet + ISAA-Chat</em> in einem Aufruf — auf Desktop,
+Server und in Colab/Notebooks. Gute Defaults, alles überschreibbar.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2</span><span class="w"> </span><span class="kn">import</span> <span class="n">init</span>
+<span class="n">app</span> <span class="o">=</span> <span class="n">init</span><span class="p">(</span><span class="n">profile</span><span class="o">=</span><span class="s2">&quot;mini&quot;</span><span class="p">,</span> <span class="n">headless</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># fertig: login + chat, kein CLI/Web nötig</span>
+</code></pre></div>
+<hr />
+<h2 id="tldr">TL;DR<a class="headerlink" href="#tldr" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Ziel</th>
+<th>Befehl</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Programmatisch / Colab / CI</td>
+<td><code>init(profile="colab", headless=True)</code></td>
+</tr>
+<tr>
+<td>Desktop (Web/CLI + Tray)</td>
+<td><code>tb</code> (nutzt Profil <code>consumer</code>)</td>
+</tr>
+<tr>
+<td>Server (Services + Autostart)</td>
+<td><code>tb manifest init</code> → Profil <code>server</code>, dann <code>tb --sm</code></td>
+</tr>
+<tr>
+<td>Manifest von Hand anlegen</td>
+<td><code>tb manifest init</code> <strong>oder</strong> <code>tb -init manifest</code></td>
+</tr>
+<tr>
+<td>Env/Manifest später ändern</td>
+<td><code>tb manifest set app.profile server</code> · <code>tb manifest get …</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>init()</code> garantiert beim ersten Aufruf:</p>
+<ol>
+<li><strong>Persistentes JWT/Cookie-Secret</strong> wird auto-generiert → Login crasht nie.</li>
+<li><strong>Fehlende Env-Vars</strong> werden aus <code>env-template</code> + sinnvollen Defaults gefüllt.</li>
+<li><strong>Profil-Manifest</strong> wird angelegt (mini / colab / desktop / server).</li>
+<li><strong>Offline-DB by default</strong> für headless-Profile → kein MinIO-Retry-Sturm.</li>
+</ol>
+<hr />
+<h2 id="installation_1">Installation<a class="headerlink" href="#installation_1" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="c1"># Aus PyPI</span>
+pip<span class="w"> </span>install<span class="w"> </span>toolboxv2
+
+<span class="c1"># Oder direkt von Git (out of the box)</span>
+pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;git+https://github.com/MarkinHaus/ToolBoxV2.git&quot;</span>
+</code></pre></div>
+<p>Empfohlen in einem venv:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>.venv<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">source</span><span class="w"> </span>.venv/bin/activate<span class="w">      </span><span class="c1"># Windows: .venv\Scripts\activate</span>
+pip<span class="w"> </span>install<span class="w"> </span>toolboxv2
+</code></pre></div>
+<hr />
+<h2 id="die-4-profile">Die 4 Profile<a class="headerlink" href="#die-4-profile" title="Permanent link">&para;</a></h2>
+<p><code>init(profile=…)</code> nimmt freundliche Namen; sie mappen auf die echten internen
+Profile und setzen passende Infra-Defaults:</p>
+<table>
+<thead>
+<tr>
+<th>Profil</th>
+<th>internes Profil</th>
+<th>DB</th>
+<th>offline</th>
+<th>Services</th>
+<th>Einsatz</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mini</code></td>
+<td>local</td>
+<td>LC</td>
+<td>✅</td>
+<td>–</td>
+<td>minimal, eingebettet</td>
+</tr>
+<tr>
+<td><code>colab</code></td>
+<td>local</td>
+<td>LC</td>
+<td>✅</td>
+<td>–</td>
+<td>Notebooks / CI</td>
+</tr>
+<tr>
+<td><code>desktop</code></td>
+<td>consumer</td>
+<td>LC</td>
+<td>✅</td>
+<td>workers</td>
+<td>GUI + CLI + Tray</td>
+</tr>
+<tr>
+<td><code>server</code></td>
+<td>server</td>
+<td>RR</td>
+<td>❌</td>
+<td>workers, db</td>
+<td>24/7 Stack</td>
+</tr>
+</tbody>
+</table>
+<p><code>LC</code> = lokales Dict (JSON-Datei, keine externe DB). <code>RR</code> = Remote Redis.
+Offline ⇒ nur SQLite, kein MinIO.</p>
+<hr />
+<h2 id="szenario-1-programmatisch-colab-notebook-headless">Szenario 1 — Programmatisch / Colab / Notebook (headless)<a class="headerlink" href="#szenario-1-programmatisch-colab-notebook-headless" title="Permanent link">&para;</a></h2>
+<p>Kein CLI, kein Web. Nur ein lauffähiges <code>App</code>.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2</span><span class="w"> </span><span class="kn">import</span> <span class="n">init</span>
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">init</span><span class="p">(</span><span class="n">profile</span><span class="o">=</span><span class="s2">&quot;colab&quot;</span><span class="p">,</span> <span class="n">headless</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="anmelden-lokaler-root-ohne-passwort">Anmelden (lokaler Root, ohne Passwort)<a class="headerlink" href="#anmelden-lokaler-root-ohne-passwort" title="Permanent link">&para;</a></h3>
+<p>Im headless-Modus gibt es einen impliziten lokalen Root-Admin. Token wird
+in-process gemintet — kein HTTP, kein Browser.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.CloudM.auth.local_admin</span><span class="w"> </span><span class="kn">import</span> <span class="n">ensure_local_admin</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.CloudM.auth.jwt_tokens</span><span class="w"> </span><span class="kn">import</span> <span class="n">_generate_tokens</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">login</span><span class="p">():</span>
+    <span class="n">user</span>   <span class="o">=</span> <span class="k">await</span> <span class="n">ensure_local_admin</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>     <span class="c1"># legt Anon-Root an (idempotent)</span>
+    <span class="n">tokens</span> <span class="o">=</span> <span class="n">_generate_tokens</span><span class="p">(</span><span class="n">user</span><span class="p">,</span> <span class="s2">&quot;local_admin&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">user</span><span class="p">,</span> <span class="n">tokens</span>
+
+<span class="n">user</span><span class="p">,</span> <span class="n">tokens</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">login</span><span class="p">())</span>            <span class="c1"># im Notebook: `user, tokens = await login()`</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">username</span><span class="p">,</span> <span class="n">user</span><span class="o">.</span><span class="n">level</span><span class="p">)</span>               <span class="c1"># -&gt; root -1</span>
+</code></pre></div>
+<h3 id="mit-isaa-chatten">Mit ISAA chatten<a class="headerlink" href="#mit-isaa-chatten" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="n">isaa</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">get_mod</span><span class="p">(</span><span class="s2">&quot;isaa&quot;</span><span class="p">)</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">chat</span><span class="p">(</span><span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">mini_task_completion</span><span class="p">(</span><span class="n">user_task</span><span class="o">=</span><span class="n">prompt</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">chat</span><span class="p">(</span><span class="s2">&quot;Fasse ToolBoxV2 in einem Satz zusammen.&quot;</span><span class="p">)))</span>
+</code></pre></div>
+<blockquote>
+<p>ISAA braucht einen Modell-Key für echte Antworten (<code>OPENAI_API_KEY</code>,
+<code>ANTHROPIC_API_KEY</code>, <code>GROQ_API_KEY</code>, …) oder ein lokales Ollama. Ohne Key
+lädt ISAA trotzdem; der Fehler kommt erst beim Call, nicht beim Import.</p>
+</blockquote>
+<hr />
+<h2 id="szenario-2-desktop-webcli-als-main-entry-tray">Szenario 2 — Desktop (Web/CLI als Main-Entry + Tray)<a class="headerlink" href="#szenario-2-desktop-webcli-als-main-entry-tray" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>tb<span class="w"> </span>manifest<span class="w"> </span>init<span class="w">            </span><span class="c1"># einmalig (oder beim ersten `tb` automatisch)</span>
+tb<span class="w"> </span>manifest<span class="w"> </span><span class="nb">set</span><span class="w"> </span>app.profile<span class="w"> </span>consumer
+tb<span class="w">                          </span><span class="c1"># startet GUI/CLI passend zum Profil</span>
+</code></pre></div>
+<ul>
+<li><code>consumer</code>/<code>homelab</code> → <code>tb</code> öffnet die GUI.</li>
+<li><code>developer</code>/<code>local</code>   → <code>tb</code> öffnet das CLI-Dashboard.</li>
+<li>Tray-Icon begleitet die Session (System-Tray).</li>
+</ul>
+<p>CLI-Login (interaktiv, bietet auch Magic-Link / OAuth / Passkey):</p>
+<div class="highlight"><pre><span></span><code>tb<span class="w"> </span>login
+</code></pre></div>
+<hr />
+<h2 id="szenario-3-server-services-autostart">Szenario 3 — Server (Services + Autostart)<a class="headerlink" href="#szenario-3-server-services-autostart" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>tb<span class="w"> </span>manifest<span class="w"> </span>init
+tb<span class="w"> </span>manifest<span class="w"> </span><span class="nb">set</span><span class="w"> </span>app.profile<span class="w"> </span>server
+tb<span class="w"> </span>manifest<span class="w"> </span><span class="nb">set</span><span class="w"> </span>services.enabled<span class="w"> </span><span class="s1">&#39;[&quot;workers&quot;,&quot;db&quot;]&#39;</span>
+tb<span class="w"> </span>manifest<span class="w"> </span>apply<span class="w">           </span><span class="c1"># generiert Sub-Configs aus dem Manifest</span>
+tb<span class="w"> </span>--sm<span class="w">                     </span><span class="c1"># Service-Manager: startet Worker</span>
+tb<span class="w"> </span>status<span class="w">                   </span><span class="c1"># Übersicht (DB / API / Worker)</span>
+</code></pre></div>
+<p>Bei <code>profile=server</code> zeigt ein nacktes <code>tb</code> eine ASCII-Status-Übersicht und
+beendet sich — kein interaktives Dashboard.</p>
+<blockquote>
+<p>Autostart on boot (systemd-Unit aus dem Manifest) ist noch nicht verdrahtet.
+Bis dahin: vorhandene <code>tb-workers.service</code> / <code>setup_tb_server.sh</code> nutzen.</p>
+</blockquote>
+<hr />
+<h2 id="konfiguration">Konfiguration<a class="headerlink" href="#konfiguration" title="Permanent link">&para;</a></h2>
+<h3 id="vars-beim-init-mitgeben">Vars beim Init mitgeben<a class="headerlink" href="#vars-beim-init-mitgeben" title="Permanent link">&para;</a></h3>
+<p><code>env=</code> überschreibt explizit (gewinnt gegen Defaults und Template):</p>
+<div class="highlight"><pre><span></span><code><span class="n">init</span><span class="p">(</span><span class="n">profile</span><span class="o">=</span><span class="s2">&quot;mini&quot;</span><span class="p">,</span> <span class="n">env</span><span class="o">=</span><span class="p">{</span>
+    <span class="s2">&quot;OPENAI_API_KEY&quot;</span><span class="p">:</span> <span class="s2">&quot;sk-…&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;APP_BASE_URL&quot;</span><span class="p">:</span>   <span class="s2">&quot;http://localhost:8080&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;FASTMODEL&quot;</span><span class="p">:</span>      <span class="s2">&quot;openai/gpt-4o-mini&quot;</span><span class="p">,</span>
+<span class="p">})</span>
+</code></pre></div>
+<h3 id="eigenes-manifest-mitgeben">Eigenes Manifest mitgeben<a class="headerlink" href="#eigenes-manifest-mitgeben" title="Permanent link">&para;</a></h3>
+<p>Als Pfad oder als Dict:</p>
+<div class="highlight"><pre><span></span><code><span class="n">init</span><span class="p">(</span><span class="n">profile</span><span class="o">=</span><span class="s2">&quot;server&quot;</span><span class="p">,</span> <span class="n">manifest</span><span class="o">=</span><span class="s2">&quot;/etc/toolbox/tb-manifest.yaml&quot;</span><span class="p">)</span>
+
+<span class="n">init</span><span class="p">(</span><span class="n">profile</span><span class="o">=</span><span class="s2">&quot;server&quot;</span><span class="p">,</span> <span class="n">manifest</span><span class="o">=</span><span class="p">{</span>
+    <span class="s2">&quot;manifest_version&quot;</span><span class="p">:</span> <span class="s2">&quot;1.0.0&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;app&quot;</span><span class="p">:</span>      <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;MyStack&quot;</span><span class="p">,</span> <span class="s2">&quot;profile&quot;</span><span class="p">:</span> <span class="s2">&quot;server&quot;</span><span class="p">},</span>
+    <span class="s2">&quot;database&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;mode&quot;</span><span class="p">:</span> <span class="s2">&quot;RR&quot;</span><span class="p">},</span>
+    <span class="s2">&quot;services&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;enabled&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;workers&quot;</span><span class="p">,</span> <span class="s2">&quot;db&quot;</span><span class="p">]},</span>
+<span class="p">})</span>
+</code></pre></div>
+<h3 id="nur-vorbereiten-app-spater-bauen">Nur vorbereiten, App später bauen<a class="headerlink" href="#nur-vorbereiten-app-spater-bauen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="n">init</span><span class="p">(</span><span class="n">profile</span><span class="o">=</span><span class="s2">&quot;mini&quot;</span><span class="p">,</span> <span class="n">create_app</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>     <span class="c1"># Secret + env + Manifest, kein App-Boot</span>
+<span class="c1"># … später:</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_app</span>
+<span class="n">app</span> <span class="o">=</span> <span class="n">get_app</span><span class="p">(</span><span class="s2">&quot;my.app&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="manifest-nachtraglich-andern-programmatisch-oder-cli">Manifest nachträglich ändern (programmatisch oder CLI)<a class="headerlink" href="#manifest-nachtraglich-andern-programmatisch-oder-cli" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>tb<span class="w"> </span>manifest<span class="w"> </span>get<span class="w"> </span>app.profile
+tb<span class="w"> </span>manifest<span class="w"> </span><span class="nb">set</span><span class="w"> </span>database.mode<span class="w"> </span>LC<span class="w">          </span><span class="c1"># synct auch .env</span>
+tb<span class="w"> </span>manifest<span class="w"> </span><span class="nb">set</span><span class="w"> </span>app.profile<span class="w"> </span>desktop
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_manifest</span>
+<span class="n">build_manifest</span><span class="p">(</span><span class="s2">&quot;server&quot;</span><span class="p">,</span> <span class="n">save</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>        <span class="c1"># überschreibt das aktive Manifest</span>
+</code></pre></div>
+<hr />
+<h2 id="init-referenz"><code>init()</code> — Referenz<a class="headerlink" href="#init-referenz" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="n">init</span><span class="p">(</span>
+    <span class="n">profile</span><span class="o">=</span><span class="s2">&quot;mini&quot;</span><span class="p">,</span>        <span class="c1"># mini | colab | desktop | server</span>
+    <span class="n">headless</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>         <span class="c1"># kein CLI/Web; gibt App zurück (oder None bei create_app=False)</span>
+    <span class="n">env</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>              <span class="c1"># dict: zusätzliche/überschreibende Env-Vars (gewinnt)</span>
+    <span class="n">manifest</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>         <span class="c1"># Pfad | dict: eigenes Manifest statt Profil-Default</span>
+    <span class="n">create_app</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>       <span class="c1"># False = nur Env+Secret+Manifest vorbereiten</span>
+    <span class="n">persist_secret</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>   <span class="c1"># False = Secret nur im Prozess (z. B. ephemeres CI)</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">App</span> <span class="o">|</span> <span class="kc">None</span>
+</code></pre></div>
+<p>Weitere Helfer:</p>
+<ul>
+<li><code>ensure_secret(persist=True) -&gt; str</code> — stabiles JWT/Cookie-Secret, generiert+persistiert beim ersten Aufruf.</li>
+<li><code>build_manifest(profile="mini", save=True, path=None) -&gt; TBManifest</code> — Profil-Manifest erstellen.</li>
+</ul>
+<h3 id="wo-landet-das-secret">Wo landet das Secret?<a class="headerlink" href="#wo-landet-das-secret" title="Permanent link">&para;</a></h3>
+<p>In der ersten beschreibbaren Stelle, in dieser Reihenfolge:</p>
+<ol>
+<li><code>$TB_DATA_DIR/.env</code></li>
+<li><code>&lt;repo&gt;/.env</code> (editable install)</li>
+<li><code>./.env</code> (cwd-Fallback, z. B. bei read-only site-packages)</li>
+</ol>
+<p><code>TB_JWT_SECRET</code> aus der Umgebung gewinnt immer. In <code>TB_ENV=production</code> wird
+<strong>nicht</strong> auto-generiert — dort muss das Secret explizit gesetzt sein.</p>
+<hr />
+<h2 id="gute-env-defaults-auszug">Gute Env-Defaults (Auszug)<a class="headerlink" href="#gute-env-defaults-auszug" title="Permanent link">&para;</a></h2>
+<p>Werden beim Init via <code>setdefault</code> gesetzt — schon gesetzte Werte bleiben:</p>
+<table>
+<thead>
+<tr>
+<th>Var</th>
+<th>Default</th>
+<th>Zweck</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>TB_ENV</code></td>
+<td><code>development</code></td>
+<td>dev vs. production</td>
+</tr>
+<tr>
+<td><code>IS_OFFLINE_DB</code></td>
+<td><code>true</code> (mini/colab/desktop)</td>
+<td>nur SQLite, kein MinIO</td>
+</tr>
+<tr>
+<td><code>DB_MODE_KEY</code></td>
+<td>profilabhängig (<code>LC</code>/<code>RR</code>)</td>
+<td>DB-Backend</td>
+</tr>
+<tr>
+<td><code>APP_BASE_URL</code></td>
+<td><code>http://localhost:8000</code></td>
+<td>Basis-URL</td>
+</tr>
+<tr>
+<td><code>FASTMODEL</code> / <code>COMPLEXMODEL</code></td>
+<td><code>ollama/llama3.1</code></td>
+<td>ISAA-Fallback-Modelle</td>
+</tr>
+<tr>
+<td><code>DEFAULTMODELEMBEDDING</code></td>
+<td><code>gemini/text-embedding-004</code></td>
+<td>Embeddings</td>
+</tr>
+</tbody>
+</table>
+<p>Security-Keys (<code>TB_R_KEY</code>, <code>TB_JWT_SECRET</code>, <code>TOKEN_SECRET</code>, …) werden <strong>nicht</strong>
+aus dem Template injiziert — sie bleiben user-kontrolliert.</p>
+<hr />
+<h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Ursache / Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>TB_JWT_SECRET … not set</code></td>
+<td>Nur in <code>TB_ENV=production</code>. Secret explizit setzen oder <code>TB_ENV=development</code>.</td>
+</tr>
+<tr>
+<td>MinIO-Connection-refused-Spam</td>
+<td><code>IS_OFFLINE_DB=true</code> setzen (für mini/colab/desktop default).</td>
+</tr>
+<tr>
+<td><code>Invalid Device Key</code></td>
+<td>Behoben: stale <code>device.enc</code> wird automatisch neu erzeugt. Sonst <code>device.enc</code> löschen.</td>
+</tr>
+<tr>
+<td><code>tb -init manifest</code> Fehler</td>
+<td>Behoben. Alternativ <code>tb manifest init</code>.</td>
+</tr>
+<tr>
+<td>Notebook: <em>event loop already running</em></td>
+<td>Im Notebook <code>await coro</code> statt <code>asyncio.run(coro)</code>.</td>
+</tr>
+<tr>
+<td>ISAA antwortet nicht</td>
+<td>Modell-Key setzen (<code>OPENAI_API_KEY</code> etc.) oder lokales Ollama.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="erster-start">Erster Start<a class="headerlink" href="#erster-start" title="Permanent link">&para;</a></h2>
 <p>Führen Sie den Befehl <code>tb</code> aus. Sie werden gefragt, welches Profil Sie verwenden möchten:</p>
 <table>
@@ -4415,7 +4730,7 @@ tb<span class="w"> </span>manifest<span class="w"> </span>apply<span class="w"> 
 - Multi-Node Deployments betreiben
 - Remote User Management benötigen
 - Produktionssysteme überwachen</p>
-<h2 id="installation_1">Installation<a class="headerlink" href="#installation_1" title="Permanent link">&para;</a></h2>
+<h2 id="installation_2">Installation<a class="headerlink" href="#installation_2" title="Permanent link">&para;</a></h2>
 <h3 id="server-installation">Server-Installation<a class="headerlink" href="#server-installation" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>toolboxv2<span class="o">[</span>web<span class="o">]</span><span class="w">   </span><span class="c1"># Web-Features inkludieren</span>
 </code></pre></div>
