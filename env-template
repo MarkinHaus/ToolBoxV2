@@ -27,6 +27,8 @@ TB_COOKIE_SECRET=                           # REQUIRED: Session cookie signing s
 TOKEN_SECRET="012345678900000987654321asdfghjkl"
 TB_R_KEY="root@remote"                      # for your remote server connection
 
+DEV_MODULES="welcome CloudM"
+
 # --- Database & Caching ---
 IS_OFFLINE_DB="false"                       # true = nur SQLite, false = full DB
 DB_CONNACTION_URI=
@@ -72,14 +74,37 @@ PINECONE_API_ENV=
 
 # --- AI Model Configuration & Defaults ---
 MOD_PROVIDER="https://simplecore.app"
-DEFAULTMODEL0="gpt-3.5-turbo-0613"
-DEFAULTMODEL1="gpt-3.5-turbo-0613"
-DEFAULTMODEL2="text-davinci-003"
-DEFAULTMODELCODE="code-davinci-edit-001"
-DEFAULTMODELSUMMERY="text-curie-001"
+
+VOTING_MODEL="groq/llama-3.1-8b-instant"
+
+FASTMODEL="9rou/fast"#"mm/MiniMax-M2.7"
+BLITZMODEL="cerebras/gpt-oss-120b"#"groq/llama-3.1-8b-instant"# "cerebras/qwen-3-235b-a22b-instruct-2507"#
+
+LIGHNIGMODEL="zglm/glm-4.7"
+
+COMPLEXMODEL="9rou/complex"# "mm/MiniMax-M2.7"
+SUMMARYMODEL="openrouter/mistralai/ministral-8b"
+AUDIOMODEL="groq/whisper-large-v3-turbo"
+IMAGEMODEL="openrouter/google/gemini-2.5-flash-image-preview:free"
+
 DEFAULTMODELEMBEDDING="gemini/text-embedding-004"
 FALLBACKS_MODELS=
-DEV_MODULES="welcome CloudM"
+
+NARRATOR_MAX_INPUT_TPM=10000   # input tokens per minute
+NARRATOR_MAX_OUTPUT_TPM=1000   # output tokens per minute
+
+# --- sandbox ---
+TB_SANDBOX_LIVE="0"
+# TB_SANDBOX_GLOBAL_DIR=
+TB_SANDBOX_IMPORT_DIRS=
+TB_SANDBOX_EXPORT_DIRS=
+TB_SANDBOX_EXPORT_PREFIX="/out"
+TB_SANDBOX_ALLOW_SHELL="1"
+TB_SANDBOX_ALLOW_CODE="1"
+TB_SANDBOX_ALLOW_BROWSER="1"
+TB_SANDBOX_ALLOW_NETWORK="1"
+TB_SANDBOX_MAX_TRANSFER_MB="1"
+ISAA_TASKMAP_PREINJECT="ture"
 
 # --- Python & Runtime Environment ---
 TB_RUNTIME_PATH=
