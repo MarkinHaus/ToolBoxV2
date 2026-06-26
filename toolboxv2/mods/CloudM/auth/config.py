@@ -23,9 +23,15 @@ def is_production() -> bool:
 
 def get_jwt_secret() -> str:
     secret = os.getenv("TB_JWT_SECRET") or os.getenv("TB_COOKIE_SECRET")
-    if not secret:
+    if secret:
+        return secret
+    # ponytail: no secret set -> auto-generate + persist instead of crashing
+    # login on a fresh install. Production should still set TB_JWT_SECRET
+    # explicitly; in production we refuse the autogen fallback.
+    if is_production():
         raise ValueError("TB_JWT_SECRET or TB_COOKIE_SECRET not set")
-    return secret
+    from toolboxv2.init_onboarding import ensure_secret
+    return ensure_secret()
 
 
 def get_base_url() -> str:

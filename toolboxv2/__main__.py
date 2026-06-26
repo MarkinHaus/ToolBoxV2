@@ -479,6 +479,10 @@ def split_args_by_runner(
 ) -> Tuple[List[str], str, List[str]]:
     """Split arguments into main args, runner name, and runner args."""
     for i, arg in enumerate(args):
+        # ponytail: -init takes a value that can equal a runner key (e.g.
+        # 'manifest'). The value is not a runner -- skip it.
+        if i > 0 and args[i - 1] == "-init":
+            continue
         if arg in runner_keys:
             return args[:i], arg, args[i + 1 :]
     return args, None, []
@@ -913,7 +917,7 @@ def parse_args():
         prog="tb",
         description=textwrap.dedent("""
         ╔════════════════════════════════════════════════════════════════════════╗
-        ║                   🧰 ToolBoxV2 - CLI Interface 🧰                        ║
+        ║                        ToolBoxV2 - CLI Interface                       ║
         ╚════════════════════════════════════════════════════════════════════════╝
 
         A powerful, modular Python framework for building and managing tools.
@@ -1707,6 +1711,13 @@ async def main(App=TbApp, do_exit=True):
         exit_code = run_config_wizard()
         await a_save_closing_app()
         exit(exit_code)
+    elif args.init == "manifest":
+        from toolboxv2 import build_manifest
+        from toolboxv2 import tb_root_dir
+        m = build_manifest("mini", save=True)
+        tb_app.print(f"Created manifest at {tb_root_dir}/tb-manifest.yaml (profile={m.app.profile.value})")
+        await a_save_closing_app()
+        exit(0)
     elif args.init is not None:
         tb_app.print(
             "No init action specified valid options are ['main', 'config', 'manifest']"

@@ -363,6 +363,14 @@ except ImportError:
     profile_code = None
 
 # =============================================================================
+# Programmatic onboarding  (from toolboxv2 import init)
+# =============================================================================
+try:
+    from .init_onboarding import init, ensure_secret, build_manifest
+except ImportError:
+    init = ensure_secret = build_manifest = None
+
+# =============================================================================
 # __all__
 # =============================================================================
 
@@ -381,4 +389,6 @@ __all__ = [
     # Conditional (None wenn Feature disabled)
     "show_console",
     "TBxSetup", "profile_code",
+    # Programmatic onboarding
+    "init", "ensure_secret", "build_manifest",
 ]

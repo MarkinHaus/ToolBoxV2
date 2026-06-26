@@ -160,7 +160,6 @@ class App(AppType, metaclass=Singleton):
             self.manifest = manifest
         except Exception as e:
             self.print("Error loading manifest",e)
-            self.debug_rains(e)
             from toolboxv2.utils.manifest.schema import TBManifest
             self.manifest = TBManifest()
 

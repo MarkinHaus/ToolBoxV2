@@ -25,6 +25,39 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _global_root():
+    from pathlib import Path
+    try:
+        from toolboxv2.mods.isaa.base.patch.power_vfs import get_toolboxv2_data_dir
+        return (get_toolboxv2_data_dir() / "global").resolve()
+    except Exception:
+        return (Path.home() / ".toolboxv2" / "global").resolve()
+
+
+def _global_media_dir():
+    d = (_global_root() / "telegram" / "media")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _resolve_global_file(path: str):
+    """Resolve a path under the global store; None if outside global / not a file."""
+    from pathlib import Path
+    root = _global_root()
+    raw = str(path).strip()
+    if raw.startswith("/global/") or raw.startswith("global/"):
+        raw = raw.split("global/", 1)[1]
+    p = Path(raw)
+    if not p.is_absolute():
+        p = root / p
+    p = p.resolve()
+    try:
+        p.relative_to(root)
+    except ValueError:
+        return None
+    return p if p.is_file() else None
+
 # ─── Lazy import telegram ─────────────────────────────────────────────
 def _import_telegram():
     try:
@@ -163,6 +196,9 @@ class TelegramInterface:
         self.user_prefs: dict[int, dict[str, str]] = {}
         self.address_book = AddressBook()
         self._application = None
+        self._stop_event: Optional[asyncio.Event] = None
+        # Downloaded Telegram media lives in the global store (not /tmp)
+        self._media_dir = _global_media_dir()
 
         # Apply safe mode to moderator agent
         self._apply_moderator_safe_mode()
@@ -276,6 +312,46 @@ class TelegramInterface:
 
     # ─── Message Handling (uses run_agent_monitored) ──────────────────
 
+    async def _download_media(self, msg) -> list[str]:
+        """Download any media on a Telegram message into the global store.
+
+        Returns a list of media references for [media:] tags. Images become a
+        base64 data: URI so the LLM can read them (Telegram's file URL carries
+        the bot token, so it must NOT be handed to an external provider). Non-image
+        media is downloaded for tool access but not vision-tagged.
+        """
+        import base64
+        refs: list[str] = []
+        candidates = []  # (telegram_object, default_ext, is_image)
+        if msg.photo:
+            candidates.append((msg.photo[-1], ".jpg", True))
+        if getattr(msg, "voice", None):
+            candidates.append((msg.voice, ".ogg", False))
+        if getattr(msg, "audio", None):
+            candidates.append((msg.audio, ".mp3", False))
+        if getattr(msg, "video", None):
+            candidates.append((msg.video, ".mp4", False))
+        if getattr(msg, "document", None):
+            doc = msg.document
+            is_img = bool((doc.mime_type or "").startswith("image/"))
+            candidates.append((doc, "", is_img))
+
+        for obj, default_ext, is_image in candidates:
+            try:
+                tg_file = await obj.get_file()
+                fname = getattr(obj, "file_name", None)
+                ext = (("." + fname.rsplit(".", 1)[-1]) if fname and "." in fname else default_ext) or ".bin"
+                dest = self._media_dir / f"{int(time.time())}_{tg_file.file_unique_id}{ext}"
+                await tg_file.download_to_drive(custom_path=str(dest))
+                logger.info("[Telegram] media -> %s", dest)
+                if is_image:
+                    mime = getattr(obj, "mime_type", None) or "image/jpeg"
+                    b64 = base64.b64encode(dest.read_bytes()).decode("ascii")
+                    refs.append(f"data:{mime};base64,{b64}")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[Telegram] media download failed: %s", e)
+        return refs
+
     async def _build_message_context(self, update) -> MessageContext:
         msg = update.message or update.edited_message
         user = update.effective_user
@@ -328,7 +404,9 @@ class TelegramInterface:
         context_prefix = ctx.to_agent_context()
 
         # Use run_agent_monitored for streaming agent execution
-        full_response: list[str] = []
+        final_answer = ""
+        streamed: list[str] = []
+        err: Optional[str] = None
 
         try:
             async for chunk in self.icli.run_agent_monitored(
@@ -339,20 +417,22 @@ class TelegramInterface:
                 take_focus=False,
                 system_prompt_override=None,
             ):
-                chunk_type = chunk.get("type", "")
-                if chunk_type == "text":
-                    full_response.append(chunk.get("content", ""))
-                elif chunk_type == "final":
-                    content = chunk.get("content", "")
-                    if content:
-                        full_response.append(content)
-                elif chunk_type == "error":
-                    full_response.append(f"[Error: {chunk.get('message', '')}]")
+                ctype = chunk.get("type", "")
+                if ctype in ("final_answer", "max_iterations"):
+                    final_answer = chunk.get("answer", "") or final_answer
+                elif ctype == "content":
+                    streamed.append(chunk.get("chunk", "") or chunk.get("content", ""))
+                elif ctype == "done":
+                    final_answer = chunk.get("final_answer", "") or final_answer
+                elif ctype == "error":
+                    err = chunk.get("message") or chunk.get("error")
         except Exception as e:
-            logger.error(f"[Telegram] run_agent_monitored error: {e}")
-            return f"Error processing message: {e}"
+            logger.exception("[Telegram] run_agent_monitored failed")
+            return f"⚠️ Error processing message: {e}"
 
-        return "".join(full_response).strip() or "[no response]"
+        if err and not final_answer:
+            return f"⚠️ {err}"
+        return final_answer or "".join(streamed).strip() or "[no response]"
 
     # ─── Agent Tool Registration ──────────────────────────────────────
 
@@ -391,6 +471,26 @@ class TelegramInterface:
             """Get all active Telegram conversations."""
             return json.dumps(interface.address_book.get_active_conversations())
 
+        async def telegram_send_file(target_chat_id: int, path: str, caption: str = "") -> str:
+            """Send a file to a Telegram chat. Only files inside the global store
+            (/global/...) may be sent."""
+            safe = _resolve_global_file(path)
+            if safe is None:
+                return json.dumps({"error": f"file not found or outside global/: {path}"})
+            app = interface._application
+            if app is None:
+                return json.dumps({"error": "Bot not running"})
+            try:
+                with open(safe, "rb") as fh:
+                    mime = (safe.suffix or "").lower()
+                    if mime in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
+                        msg = await app.bot.send_photo(chat_id=target_chat_id, photo=fh, caption=caption or None)
+                    else:
+                        msg = await app.bot.send_document(chat_id=target_chat_id, document=fh, caption=caption or None)
+                return json.dumps({"success": True, "message_id": msg.message_id, "file": safe.name})
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
         # Register on moderator agent
         try:
             agent = await self.icli.isaa_tools.get_agent(self.moderator_agent_name)
@@ -412,6 +512,12 @@ class TelegramInterface:
                 description="Get all active Telegram conversations.",
                 category=["telegram", "context"],
             )
+            agent.add_tool(
+                telegram_send_file,
+                "telegram_send_file",
+                description="Send a file to a Telegram chat. Only files inside the global store (/global/...) may be sent. Args: target_chat_id, path (under global), optional caption.",
+                category=["telegram", "communication"],
+            )
             logger.info("[Telegram] Registered telegram_* tools on moderator agent")
         except Exception as e:
             logger.warning(f"[Telegram] Could not register tools: {e}")
@@ -431,38 +537,90 @@ class TelegramInterface:
         app = Application.builder().token(self.token).build()
         self._application = app
 
-        me = await app.bot.get_me()
+        try:
+            me = await app.bot.get_me()
+        except Exception as e:
+            logger.exception("[Telegram] get_me failed — bad token / no network?")
+            self._application = None
+            raise RuntimeError(f"Telegram auth failed: {e}") from e
         self.bot_username = me.username
-        logger.info(f"[Telegram] Bot started as @{self.bot_username}")
+        logger.info("[Telegram] Bot authenticated as @%s (id=%s)", self.bot_username, me.id)
 
         async def handle_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            ctx = await self._build_message_context(update)
-            if not self._should_respond(ctx):
-                return
-            # Strip mention prefix
-            if self.bot_username:
-                ctx.content = ctx.content.replace(f"@{self.bot_username}", "").strip()
+            try:
+                ctx = await self._build_message_context(update)
+                if not self._should_respond(ctx):
+                    return
+                # Strip mention prefix
+                if self.bot_username:
+                    ctx.content = ctx.content.replace(f"@{self.bot_username}", "").strip()
 
-            response = await self._handle_message(ctx)
-            if response:
-                # Split long responses (Telegram limit: 4096)
-                chunks = [response[i:i+4096] for i in range(0, len(response), 4096)]
-                for chunk_text in chunks:
-                    await update.message.reply_text(chunk_text)
+                # Native multimedia: download any media to absolute paths and hand
+                # them to the agent as [media:] tags (a_run decides compatibility).
+                msg = update.message or update.edited_message
+                if msg is not None:
+                    media_paths = await self._download_media(msg)
+                    if media_paths:
+                        tags = " ".join(f"[media:{p}]" for p in media_paths)
+                        ctx.content = (ctx.content + " " + tags).strip()
 
+                response = await self._handle_message(ctx)
+                if response and update.message:
+                    for chunk_text in [response[i:i+4096] for i in range(0, len(response), 4096)]:
+                        await update.message.reply_text(chunk_text)
+            except Exception as e:  # noqa: BLE001 — never let a handler crash the bot
+                logger.exception("[Telegram] handle_update error")
+                try:
+                    if update.message:
+                        await update.message.reply_text(f"⚠️ Internal error: {e}")
+                except Exception:
+                    pass
+
+        async def on_error(update_obj, context):
+            logger.error("[Telegram] update error: %s", getattr(context, "error", None), exc_info=context.error)
+
+        # Text + all command aliases
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_update))
-        app.add_handler(CommandHandler("agent", handle_update))
-        app.add_handler(CommandHandler("session", handle_update))
-        app.add_handler(CommandHandler("whoami", handle_update))
-        app.add_handler(CommandHandler("start", handle_update))
+        # Multimedia
+        app.add_handler(MessageHandler(
+            filters.PHOTO | filters.VOICE | filters.AUDIO | filters.VIDEO | filters.Document.ALL,
+            handle_update,
+        ))
+        for _cmd in ("agent", "session", "whoami", "start"):
+            app.add_handler(CommandHandler(_cmd, handle_update))
+        app.add_error_handler(on_error)
 
-        await app.run_polling()
+        # Run inside the existing (icli) event loop — run_polling() would raise here
+        # because a loop is already running, so drive the lifecycle manually.
+        self._stop_event = asyncio.Event()
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling(drop_pending_updates=True)
+        logger.info("[Telegram] Polling started — @%s is live.", self.bot_username)
+        try:
+            await self._stop_event.wait()
+        finally:
+            logger.info("[Telegram] Polling loop exiting.")
 
     async def stop(self):
-        """Stop the Telegram bot."""
+        """Stop the Telegram bot cleanly (updater -> app -> shutdown)."""
         logger.info("[Telegram] Stopping interface...")
-        if self._application:
-            await self._application.stop()
+        app = self._application
+        if app is None:
+            return
+        try:
+            if getattr(app, "updater", None) and app.updater.running:
+                await app.updater.stop()
+            if app.running:
+                await app.stop()
+            await app.shutdown()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[Telegram] Error during shutdown: %s", e)
+        finally:
+            if self._stop_event is not None:
+                self._stop_event.set()
+            self._application = None
+            logger.info("[Telegram] Stopped.")
 
 
 # ═══════════════════════════════════════════════════════════════════════

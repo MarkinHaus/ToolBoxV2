@@ -1,5 +1,7 @@
 recursive-include toolboxv2/features_packed *.zip *.md
 recursive-include toolboxv2/features/core *
 recursive-include toolboxv2/features/mini *
+include env-template
+include toolboxv2/utils/manifest/*.yaml
 global-exclude __pycache__
 global-exclude *.py[cod]

@@ -389,7 +389,36 @@ def _stream_vibevoice(text: str, config: TTSConfig) -> Generator[bytes, None, No
 # =============================================================================
 
 
-def _synthesize_groq_tts(text: str, config: TTSConfig) -> TTSResult:
+_GROQ_TTS_CHAR_LIMIT = 3900  # groq TTS rejects input >= 4000 chars
+
+
+def _split_text_for_tts(text: str, limit: int = _GROQ_TTS_CHAR_LIMIT) -> list[str]:
+    """Split text into <=limit pieces on sentence boundaries (hard-wrap if needed)."""
+    import re
+    parts: list[str] = []
+    cur = ""
+    for sent in re.split(r"(?<=[.!?])\s+", text.strip()):
+        if not sent:
+            continue
+        if len(sent) > limit:
+            if cur:
+                parts.append(cur)
+                cur = ""
+            for i in range(0, len(sent), limit):
+                parts.append(sent[i:i + limit])
+            continue
+        if len(cur) + len(sent) + 1 > limit:
+            if cur:
+                parts.append(cur)
+            cur = sent
+        else:
+            cur = f"{cur} {sent}".strip()
+    if cur:
+        parts.append(cur)
+    return [p for p in parts if p.strip()] or [text[:limit]]
+
+
+def _groq_tts_once(text: str, config: "TTSConfig") -> "TTSResult":
     try:
         from groq import Groq
     except ImportError:
@@ -417,6 +446,34 @@ def _synthesize_groq_tts(text: str, config: TTSConfig) -> TTSResult:
 
     return TTSResult(audio=audio_bytes, format="wav",
                      sample_rate=sample_rate, duration=duration, channels=channels)
+
+
+def _synthesize_groq_tts(text: str, config: TTSConfig) -> TTSResult:
+    # groq caps input at <4000 chars — for longer replies, synthesize per chunk
+    # and concatenate the WAV frames into a single clip.
+    if len(text) < _GROQ_TTS_CHAR_LIMIT:
+        return _groq_tts_once(text, config)
+
+    chunks = _split_text_for_tts(text)
+    results = [_groq_tts_once(c, config) for c in chunks]
+
+    first = results[0]
+    out = io.BytesIO()
+    with wave.open(out, "wb") as w_out:
+        with io.BytesIO(first.audio) as b0, wave.open(b0, "rb") as w0:
+            w_out.setnchannels(w0.getnchannels())
+            w_out.setsampwidth(w0.getsampwidth())
+            w_out.setframerate(w0.getframerate())
+            w_out.writeframes(w0.readframes(w0.getnframes()))
+        for r in results[1:]:
+            with io.BytesIO(r.audio) as b, wave.open(b, "rb") as w:
+                w_out.writeframes(w.readframes(w.getnframes()))
+
+    merged = out.getvalue()
+    total_dur = sum(r.duration for r in results)
+    return TTSResult(audio=merged, format="wav",
+                     sample_rate=first.sample_rate, duration=total_dur,
+                     channels=first.channels)
 
 
 def _stream_groq_tts(text: str, config: TTSConfig) -> Generator[bytes, None, None]:

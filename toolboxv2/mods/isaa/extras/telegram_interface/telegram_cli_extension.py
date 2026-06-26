@@ -50,10 +50,19 @@ class TelegramCliExtension:
                 icli_host=self.icli,
                 token=token,
             )
+
+            def _on_done(fut):
+                exc = fut.exception() if not fut.cancelled() else None
+                if exc:
+                    logger.error("[Telegram] bot task ended with error: %s", exc, exc_info=exc)
+                    self._interface = None
+
             self._task = asyncio.create_task(self._interface.start())
-            return "Telegram bot connecting... Check /telegram status."
+            self._task.add_done_callback(_on_done)
+            return "Telegram bot connecting... Check /telegram status (errors appear in the log)."
         except Exception as e:
             self._interface = None
+            logger.exception("[Telegram] connect failed")
             return f"Failed to connect: {e}"
 
     async def cmd_disconnect(self) -> str:
@@ -153,11 +162,36 @@ class TelegramCliExtension:
             return f"{uid} is not an admin."
         return "Usage: /telegram admin [add|remove] <user_id>"
 
+    async def cmd_setup(self) -> str:
+        """How to create a Telegram bot and get the token + your user id."""
+        return (
+            "Telegram Bot Setup\n"
+            "──────────────────\n"
+            "1) Create the bot (get the TOKEN):\n"
+            "   • Open Telegram, search for @BotFather (the verified one).\n"
+            "   • Send /newbot → pick a name and a username ending in 'bot'.\n"
+            "   • BotFather replies with a token like 123456789:ABCdef...\n"
+            "   • Put it in env TELEGRAM_BOT_TOKEN, or run: /telegram connect <token>\n"
+            "\n"
+            "2) Get YOUR Telegram user id (for the admin list):\n"
+            "   • Message @userinfobot (or @RawDataBot) → it replies with your numeric id.\n"
+            "   • Or DM your own bot after connecting and send /whoami.\n"
+            "   • Add it: /telegram admin add <your_id>  (or env TELEGRAM_ADMIN_IDS=111,222)\n"
+            "\n"
+            "3) Optional bot tuning via @BotFather:\n"
+            "   • /setprivacy → Disable  (so the bot can read all group messages)\n"
+            "   • /setjoingroups, /setcommands as needed.\n"
+            "\n"
+            "Then: /telegram connect   →   message your bot   →   it answers via the agent.\n"
+            "Multimedia (photo/voice/audio/video/document) is downloaded and passed to the agent natively."
+        )
+
     async def handle_command(self, args: str) -> str:
         parts = args.strip().split(maxsplit=2)
         if not parts:
             return (
                 "Telegram Commands:\n"
+                "  setup            — How to create a bot + get token/id\n"
                 "  connect [token]  — Start bot\n"
                 "  disconnect       — Stop bot\n"
                 "  status           — Connection status\n"
@@ -168,6 +202,8 @@ class TelegramCliExtension:
                 "  admin [add|rm] <id> — Manage admins"
             )
         cmd = parts[0].lower()
+        if cmd in ("setup", "help"):
+            return await self.cmd_setup()
         if cmd == "connect":
             return await self.cmd_connect(parts[1] if len(parts) > 1 else None)
         elif cmd == "disconnect":

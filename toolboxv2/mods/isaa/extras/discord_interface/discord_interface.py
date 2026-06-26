@@ -115,6 +115,7 @@ class AttachmentInfo:
     content_type: Optional[str]
     size: int
     transcription: Optional[str] = None  # Für Audio
+    url: Optional[str] = None  # Discord public CDN URL — preferred for [media:] tags
 
     @property
     def media_type(self) -> str:
@@ -149,8 +150,11 @@ class AttachmentInfo:
         return self.media_type == "image"
 
     def to_media_tag(self) -> str:
-        """Generiert den [media:path] Tag für den Agent"""
-        return f"[media:{self.path}]"
+        """Generiert den [media:url|path] Tag für den Agent.
+
+        Prefers the public CDN URL (LLM providers fetch it directly; a local
+        path would be rejected as 'Invalid URL'). Falls back to path."""
+        return f"[media:{self.url or self.path}]"
 
     def to_context_line(self) -> str:
         """Generiert eine kontextuelle Beschreibung für den Agent"""
@@ -250,8 +254,11 @@ class MessageContext:
             transcriptions = []
 
             for att in self.attachments:
-                # Kategorisiere Attachments
-                if att.is_native_llm_compatible:
+                # All media types parse_media_from_query understands are handed to
+                # the agent as [media:] tags; a_run/a_stream parse compatible media
+                # and drop incompatible ones (with a note to the agent). Everything
+                # else (zip, txt, ...) stays a path hint for tool processing.
+                if att.media_type in ("image", "audio", "video", "pdf"):
                     native_media.append(att)
                 else:
                     non_native_media.append(att)
@@ -260,9 +267,9 @@ class MessageContext:
                 if att.transcription:
                     transcriptions.append((att.filename, att.transcription))
 
-            # Native Media (Bilder) - Direkt als [media:] Tags
+            # Native Media — direkt als [media:] Tags (a_run entscheidet Kompatibilität)
             if native_media:
-                lines.append("Native Media (direkt verarbeitbar):")
+                lines.append("Native Media (dem Agent direkt übergeben):")
                 for att in native_media:
                     lines.append(f"  {att.to_media_tag()}")
                     lines.append(f"    ↳ {att.filename} ({att.media_type})")
@@ -818,18 +825,53 @@ class AutoRouter:
 # MEDIA HANDLER - Attachments verarbeiten + TTS/STT
 # =============================================================================
 
+def _global_root() -> Path:
+    from toolboxv2.mods.isaa.base.patch.power_vfs import get_toolboxv2_data_dir
+    return (get_toolboxv2_data_dir() / "global").resolve()
+
+
+def _resolve_global_file(path: str) -> Optional[Path]:
+    """Resolve a path and ensure it lives under the global store. Accepts an
+    absolute path under global, a /global/... VFS-style path, or a path relative
+    to global. Returns None if outside global or not an existing file."""
+    root = _global_root()
+    raw = str(path).strip()
+    if raw.startswith("/global/") or raw.startswith("global/"):
+        raw = raw.split("global/", 1)[1]
+    p = Path(raw)
+    if not p.is_absolute():
+        p = root / p
+    p = p.resolve()
+    try:
+        p.relative_to(root)
+    except ValueError:
+        return None
+    return p if p.is_file() else None
+
+
+def _global_media_dir(platform: str) -> Path:
+    """Disk dir backing VFS /global/<platform>/media. Avoids /tmp (perm issues
+    on Linux, breakage on Windows) and keeps media inside the shared global store
+    so the send_file tool can reach it."""
+    from toolboxv2.mods.isaa.base.patch.power_vfs import get_toolboxv2_data_dir
+    base = get_toolboxv2_data_dir() / "global"
+    d = (base / platform / "media").resolve()
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 class MediaHandler:
     """Verarbeitet Discord Attachments und Audio I/O"""
 
     def __init__(
         self,
-        temp_dir: str = "/tmp/discord_media",
+        temp_dir: Optional[str] = None,
         tts_backend: str = "groq",  # "piper", "groq", "elevenlabs"
         tts_voice: str = "autumn",  # Backend-spezifisch
         stt_backend: str = "groq",  # "faster_whisper", "groq"
         language: str = "de",
     ):
-        self.temp_dir = Path(temp_dir)
+        self.temp_dir = Path(temp_dir).resolve() if temp_dir else _global_media_dir("discord")
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.max_size_mb = 25
 
@@ -860,6 +902,7 @@ class MediaHandler:
                 "filename": attachment.filename,
                 "content_type": attachment.content_type,
                 "size": attachment.size,
+                "url": attachment.url,
             }
         except Exception as e:
             print(f"[MediaHandler] Download failed: {e}")
@@ -1286,6 +1329,7 @@ class DiscordInterface:
                     filename=att_data["filename"],
                     content_type=att_data["content_type"],
                     size=att_data["size"],
+                    url=att_data.get("url"),
                 )
 
                 # Audio transkribieren
@@ -1568,6 +1612,24 @@ class DiscordInterface:
 
         interface = self  # Closure reference
 
+        async def discord_send_file(
+            channel_id: int,
+            path: str,
+            caption: str = "",
+        ) -> str:
+            """Send a file to a Discord channel. Only files inside the global
+            store (/global/...) may be sent."""
+            safe = _resolve_global_file(path)
+            if safe is None:
+                return json.dumps({"error": f"file not found or outside global/: {path}"})
+            try:
+                ch = interface.bot.get_channel(int(channel_id)) \
+                    or await interface.bot.fetch_channel(int(channel_id))
+                msg = await ch.send(content=caption or None, file=discord.File(str(safe)))
+                return json.dumps({"success": True, "message_id": msg.id, "file": safe.name})
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
         async def discord_send_message(
             target_address: str,
             content: str,
@@ -1685,6 +1747,13 @@ class DiscordInterface:
             "discord_get_history",
             description="Get recent message history from a Discord channel. Useful for context about what others have said.",
             category=["discord", "context"],
+        )
+
+        agent.add_tool(
+            discord_send_file,
+            "discord_send_file",
+            description="Send a file to a Discord channel. Only files inside the global store (/global/...) may be sent. Args: channel_id, path (under global), optional caption.",
+            category=["discord", "communication"],
         )
 
         # VFS-basierte Tools sind automatisch über die Standard VFS Tools verfügbar

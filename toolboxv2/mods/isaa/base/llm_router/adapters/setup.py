@@ -18,7 +18,26 @@ def setup_default_adapters(router: CompletionRouter, env: dict | None = None):
 
     # 9Router
     if os.getenv("NINEROUTER_KEY"):
-        router.register("9rou", OpenAICompatAdapter(os.getenv("NINEROUTER_URL", "http://localhost:20128/v1")), env_key_name="NINEROUTER_KEY")
+        adapter = OpenAICompatAdapter(os.getenv("NINEROUTER_URL", "http://localhost:20128/v1"))
+        if os.getenv("NINEROUTER_URL", "").count("https://9router.") == 1:
+
+            def build_headers(self, api_key: str) -> dict:
+                """Default: Bearer token. Subclass overrides for x-api-key etc."""
+                import base64
+                auth_str = f"{os.getenv("NINEROUTER_USER", "")}:{os.getenv("NINEROUTER_PASSWORD", "")}"
+                auth_b64 = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
+
+                headers = {"Content-Type": "application/json", **self.default_headers}
+
+                headers["Authorization"] = f"Basic {auth_b64}"
+                if api_key:
+                    headers["X-API-Key"] = f"Bearer {api_key}"
+
+                return headers
+
+            adapter.build_headers = build_headers
+
+        router.register("9rou", adapter=adapter, env_key_name="NINEROUTER_KEY")
 
     # Groq
     if os.getenv("GROQ_API_KEY"):

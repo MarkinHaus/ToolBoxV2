@@ -42,6 +42,273 @@ Wenn Sie bereits Python installiert haben:
 pip install toolboxv2
 ```
 
+# ToolBoxV2 — Onboarding
+
+Von `pip install` zu *angemeldet + ISAA-Chat* in einem Aufruf — auf Desktop,
+Server und in Colab/Notebooks. Gute Defaults, alles überschreibbar.
+
+```python
+from toolboxv2 import init
+app = init(profile="mini", headless=True)   # fertig: login + chat, kein CLI/Web nötig
+```
+
+---
+
+## TL;DR
+
+| Ziel | Befehl |
+|------|--------|
+| Programmatisch / Colab / CI | `init(profile="colab", headless=True)` |
+| Desktop (Web/CLI + Tray) | `tb` (nutzt Profil `consumer`) |
+| Server (Services + Autostart) | `tb manifest init` → Profil `server`, dann `tb --sm` |
+| Manifest von Hand anlegen | `tb manifest init` **oder** `tb -init manifest` |
+| Env/Manifest später ändern | `tb manifest set app.profile server` · `tb manifest get …` |
+
+`init()` garantiert beim ersten Aufruf:
+
+1. **Persistentes JWT/Cookie-Secret** wird auto-generiert → Login crasht nie.
+2. **Fehlende Env-Vars** werden aus `env-template` + sinnvollen Defaults gefüllt.
+3. **Profil-Manifest** wird angelegt (mini / colab / desktop / server).
+4. **Offline-DB by default** für headless-Profile → kein MinIO-Retry-Sturm.
+
+---
+
+## Installation
+
+```bash
+# Aus PyPI
+pip install toolboxv2
+
+# Oder direkt von Git (out of the box)
+pip install "git+https://github.com/MarkinHaus/ToolBoxV2.git"
+```
+
+Empfohlen in einem venv:
+
+```bash
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install toolboxv2
+```
+
+---
+
+## Die 4 Profile
+
+`init(profile=…)` nimmt freundliche Namen; sie mappen auf die echten internen
+Profile und setzen passende Infra-Defaults:
+
+| Profil    | internes Profil | DB    | offline | Services            | Einsatz |
+|-----------|-----------------|-------|---------|---------------------|---------|
+| `mini`    | local           | LC    | ✅      | –                   | minimal, eingebettet |
+| `colab`   | local           | LC    | ✅      | –                   | Notebooks / CI |
+| `desktop` | consumer        | LC    | ✅      | workers             | GUI + CLI + Tray |
+| `server`  | server          | RR    | ❌      | workers, db         | 24/7 Stack |
+
+`LC` = lokales Dict (JSON-Datei, keine externe DB). `RR` = Remote Redis.
+Offline ⇒ nur SQLite, kein MinIO.
+
+---
+
+## Szenario 1 — Programmatisch / Colab / Notebook (headless)
+
+Kein CLI, kein Web. Nur ein lauffähiges `App`.
+
+```python
+from toolboxv2 import init
+
+app = init(profile="colab", headless=True)
+```
+
+### Anmelden (lokaler Root, ohne Passwort)
+
+Im headless-Modus gibt es einen impliziten lokalen Root-Admin. Token wird
+in-process gemintet — kein HTTP, kein Browser.
+
+```python
+import asyncio
+from toolboxv2.mods.CloudM.auth.local_admin import ensure_local_admin
+from toolboxv2.mods.CloudM.auth.jwt_tokens import _generate_tokens
+
+async def login():
+    user   = await ensure_local_admin(app)     # legt Anon-Root an (idempotent)
+    tokens = _generate_tokens(user, "local_admin")
+    return user, tokens
+
+user, tokens = asyncio.run(login())            # im Notebook: `user, tokens = await login()`
+print(user.username, user.level)               # -> root -1
+```
+
+### Mit ISAA chatten
+
+```python
+isaa = app.get_mod("isaa")
+
+async def chat(prompt: str) -> str:
+    return await isaa.mini_task_completion(user_task=prompt)
+
+print(asyncio.run(chat("Fasse ToolBoxV2 in einem Satz zusammen.")))
+```
+
+> ISAA braucht einen Modell-Key für echte Antworten (`OPENAI_API_KEY`,
+> `ANTHROPIC_API_KEY`, `GROQ_API_KEY`, …) oder ein lokales Ollama. Ohne Key
+> lädt ISAA trotzdem; der Fehler kommt erst beim Call, nicht beim Import.
+
+---
+
+## Szenario 2 — Desktop (Web/CLI als Main-Entry + Tray)
+
+```bash
+tb manifest init            # einmalig (oder beim ersten `tb` automatisch)
+tb manifest set app.profile consumer
+tb                          # startet GUI/CLI passend zum Profil
+```
+
+- `consumer`/`homelab` → `tb` öffnet die GUI.
+- `developer`/`local`   → `tb` öffnet das CLI-Dashboard.
+- Tray-Icon begleitet die Session (System-Tray).
+
+CLI-Login (interaktiv, bietet auch Magic-Link / OAuth / Passkey):
+
+```bash
+tb login
+```
+
+---
+
+## Szenario 3 — Server (Services + Autostart)
+
+```bash
+tb manifest init
+tb manifest set app.profile server
+tb manifest set services.enabled '["workers","db"]'
+tb manifest apply           # generiert Sub-Configs aus dem Manifest
+tb --sm                     # Service-Manager: startet Worker
+tb status                   # Übersicht (DB / API / Worker)
+```
+
+Bei `profile=server` zeigt ein nacktes `tb` eine ASCII-Status-Übersicht und
+beendet sich — kein interaktives Dashboard.
+
+> Autostart on boot (systemd-Unit aus dem Manifest) ist noch nicht verdrahtet.
+> Bis dahin: vorhandene `tb-workers.service` / `setup_tb_server.sh` nutzen.
+
+---
+
+## Konfiguration
+
+### Vars beim Init mitgeben
+
+`env=` überschreibt explizit (gewinnt gegen Defaults und Template):
+
+```python
+init(profile="mini", env={
+    "OPENAI_API_KEY": "sk-…",
+    "APP_BASE_URL":   "http://localhost:8080",
+    "FASTMODEL":      "openai/gpt-4o-mini",
+})
+```
+
+### Eigenes Manifest mitgeben
+
+Als Pfad oder als Dict:
+
+```python
+init(profile="server", manifest="/etc/toolbox/tb-manifest.yaml")
+
+init(profile="server", manifest={
+    "manifest_version": "1.0.0",
+    "app":      {"name": "MyStack", "profile": "server"},
+    "database": {"mode": "RR"},
+    "services": {"enabled": ["workers", "db"]},
+})
+```
+
+### Nur vorbereiten, App später bauen
+
+```python
+init(profile="mini", create_app=False)     # Secret + env + Manifest, kein App-Boot
+# … später:
+from toolboxv2 import get_app
+app = get_app("my.app")
+```
+
+### Manifest nachträglich ändern (programmatisch oder CLI)
+
+```bash
+tb manifest get app.profile
+tb manifest set database.mode LC          # synct auch .env
+tb manifest set app.profile desktop
+```
+
+```python
+from toolboxv2 import build_manifest
+build_manifest("server", save=True)        # überschreibt das aktive Manifest
+```
+
+---
+
+## `init()` — Referenz
+
+```python
+init(
+    profile="mini",        # mini | colab | desktop | server
+    headless=True,         # kein CLI/Web; gibt App zurück (oder None bei create_app=False)
+    env=None,              # dict: zusätzliche/überschreibende Env-Vars (gewinnt)
+    manifest=None,         # Pfad | dict: eigenes Manifest statt Profil-Default
+    create_app=True,       # False = nur Env+Secret+Manifest vorbereiten
+    persist_secret=True,   # False = Secret nur im Prozess (z. B. ephemeres CI)
+) -> App | None
+```
+
+Weitere Helfer:
+
+- `ensure_secret(persist=True) -> str` — stabiles JWT/Cookie-Secret, generiert+persistiert beim ersten Aufruf.
+- `build_manifest(profile="mini", save=True, path=None) -> TBManifest` — Profil-Manifest erstellen.
+
+### Wo landet das Secret?
+
+In der ersten beschreibbaren Stelle, in dieser Reihenfolge:
+
+1. `$TB_DATA_DIR/.env`
+2. `<repo>/.env` (editable install)
+3. `./.env` (cwd-Fallback, z. B. bei read-only site-packages)
+
+`TB_JWT_SECRET` aus der Umgebung gewinnt immer. In `TB_ENV=production` wird
+**nicht** auto-generiert — dort muss das Secret explizit gesetzt sein.
+
+---
+
+## Gute Env-Defaults (Auszug)
+
+Werden beim Init via `setdefault` gesetzt — schon gesetzte Werte bleiben:
+
+| Var | Default | Zweck |
+|-----|---------|-------|
+| `TB_ENV` | `development` | dev vs. production |
+| `IS_OFFLINE_DB` | `true` (mini/colab/desktop) | nur SQLite, kein MinIO |
+| `DB_MODE_KEY` | profilabhängig (`LC`/`RR`) | DB-Backend |
+| `APP_BASE_URL` | `http://localhost:8000` | Basis-URL |
+| `FASTMODEL` / `COMPLEXMODEL` | `ollama/llama3.1` | ISAA-Fallback-Modelle |
+| `DEFAULTMODELEMBEDDING` | `gemini/text-embedding-004` | Embeddings |
+
+Security-Keys (`TB_R_KEY`, `TB_JWT_SECRET`, `TOKEN_SECRET`, …) werden **nicht**
+aus dem Template injiziert — sie bleiben user-kontrolliert.
+
+---
+
+## Troubleshooting
+
+| Symptom | Ursache / Fix |
+|---------|---------------|
+| `TB_JWT_SECRET … not set` | Nur in `TB_ENV=production`. Secret explizit setzen oder `TB_ENV=development`. |
+| MinIO-Connection-refused-Spam | `IS_OFFLINE_DB=true` setzen (für mini/colab/desktop default). |
+| `Invalid Device Key` | Behoben: stale `device.enc` wird automatisch neu erzeugt. Sonst `device.enc` löschen. |
+| `tb -init manifest` Fehler | Behoben. Alternativ `tb manifest init`. |
+| Notebook: *event loop already running* | Im Notebook `await coro` statt `asyncio.run(coro)`. |
+| ISAA antwortet nicht | Modell-Key setzen (`OPENAI_API_KEY` etc.) oder lokales Ollama. |
+
+
+
 ## Erster Start
 
 Führen Sie den Befehl `tb` aus. Sie werden gefragt, welches Profil Sie verwenden möchten:

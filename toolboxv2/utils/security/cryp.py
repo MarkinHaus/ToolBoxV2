@@ -55,18 +55,20 @@ def get_or_create_device_key():
             import cryptography
             try:
                 decrypted_key = decrypt_with_key(encrypted_data, aes_key)
+                return decrypted_key.decode()
             except cryptography.exceptions.InvalidTag:
-                raise RuntimeError("Invalid Device Key | or started tb thru code?")
-
-            return decrypted_key.decode()
-        else:
-            print("Creating new device key")
-            get_logger().info("Creating new device key")
-            key = Fernet.generate_key()  # 32 Byte Base64
-            encrypted = encrypt_with_key(key, aes_key)
-            with open(DEVICE_KEY_PATH, "wb") as key_file:
-                key_file.write(encrypted)
-            return key.decode()
+                # ponytail: stale/foreign device.enc (different TB_R_KEY) must
+                # not brick startup -- regenerate. Falls through to create.
+                get_logger().warning(
+                    "device.enc unreadable with current TB_R_KEY; regenerating"
+                )
+        print("Creating new device key")
+        get_logger().info("Creating new device key")
+        key = Fernet.generate_key()  # 32 Byte Base64
+        encrypted = encrypt_with_key(key, aes_key)
+        with open(DEVICE_KEY_PATH, "wb") as key_file:
+            key_file.write(encrypted)
+        return key.decode()
     except Exception as e:
         get_logger().error(f"Error get_or_create_device_key {e}")
         import traceback

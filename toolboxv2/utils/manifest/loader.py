@@ -96,10 +96,9 @@ class ManifestLoader:
         """Get the manifest file path."""
         if self._manifest_path:
             return self._manifest_path
-        if (self.base_dir / self.DEFAULT_FILENAME).exists():
-            return self.base_dir / self.DEFAULT_FILENAME
-        if (self.base_dir / ".config.yaml").exists():
-            return self.base_dir / ".config.yaml"
+        # ponytail: only a real tb-manifest.yaml counts. .config.yaml is a
+        # generated sub-config with a different schema -- using it as the
+        # manifest forced exists()->True and broke first-run autoinit.
         return self.base_dir / self.DEFAULT_FILENAME
 
     @property
@@ -134,7 +133,7 @@ class ManifestLoader:
         if not manifest_file.exists():
             raise FileNotFoundError(
                 f"Manifest not found: {manifest_file}\n"
-                f"Run 'tb init config' to create one."
+                f"Run 'tb manifest init' to create one."
             )
 
         with open(manifest_file, "r", encoding="utf-8") as f:

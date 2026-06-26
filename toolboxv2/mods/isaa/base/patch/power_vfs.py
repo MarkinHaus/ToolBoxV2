@@ -61,14 +61,10 @@ if TYPE_CHECKING:
 def get_toolboxv2_data_dir() -> Path:
     """Get the ToolBoxV2 data directory for VFS sharing"""
     # Try to get from app
-    try:
-        from toolboxv2 import get_app
+    from toolboxv2 import get_app
 
-        app = get_app()
-        data_dir = Path(app.data_dir) / "Agents" / "VFS"
-    except:
-        # Fallback
-        data_dir = Path.home() / ".toolboxv2" / "data" / "Agents" / "VFS"
+    app = get_app()
+    data_dir = Path(app.data_dir) / "Agents" / "VFS"
 
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir
