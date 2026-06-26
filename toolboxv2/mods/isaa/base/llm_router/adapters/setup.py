@@ -24,7 +24,7 @@ def setup_default_adapters(router: CompletionRouter, env: dict | None = None):
             def build_headers(self, api_key: str) -> dict:
                 """Default: Bearer token. Subclass overrides for x-api-key etc."""
                 import base64
-                auth_str = f"{os.getenv("NINEROUTER_USER", "")}:{os.getenv("NINEROUTER_PASSWORD", "")}"
+                auth_str = f'{os.getenv("NINEROUTER_USER", "")}:{os.getenv("NINEROUTER_PASSWORD", "")}'
                 auth_b64 = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
 
                 headers = {"Content-Type": "application/json", **self.default_headers}
