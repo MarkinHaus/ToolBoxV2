@@ -232,7 +232,7 @@ def create_share(vault_path: str, ws_host: str = None, ws_port: int = 8765) -> d
     token = create_share_token(
         share_id=share_id,
         encryption_key=enc_key,
-        minio_endpoint=env["endpoint"],
+        minio_endpoint=os.getenv("LIVESYNC_MINIO", _get_lan_ip() + ":" + env["endpoint"].split(":")[-1]),
         ws_endpoint=ws_endpoint,
         bucket=env.get("bucket", "tb-shared"),
     )
@@ -483,7 +483,7 @@ if _TB_AVAILABLE:
         token = create_share_token(
             share_id=share_id,
             encryption_key=enc_key,
-            minio_endpoint=env["endpoint"],
+            minio_endpoint=os.getenv("LIVESYNC_MINIO", _get_lan_ip() + ":" + env["endpoint"].split(":")[-1]),
             ws_endpoint=ws_endpoint,
             bucket=env.get("bucket", "tb-shared"),
         )

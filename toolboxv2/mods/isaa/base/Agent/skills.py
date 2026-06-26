@@ -720,6 +720,8 @@ class Skill:
     triggers: List[str]  # Keywords für Matching
     instruction: str  # Nummerierte Anleitung (das Herzstück)
 
+    description: str = field(default="")
+
     # Tool Context
     tools_used: List[str] = field(default_factory=list)
     tool_groups: List[str] = field(default_factory=list)
@@ -845,6 +847,7 @@ class Skill:
         return {
             'id': self.id,
             'name': self.name,
+            'description': self.description,
             'triggers': self.triggers,
             'instruction': self.instruction,
             'tools_used': self.tools_used,
@@ -868,6 +871,7 @@ class Skill:
             name=data['name'],
             triggers=data['triggers'],
             instruction=data['instruction'],
+            description=data.get('description', ""),
             tools_used=data.get('tools_used', []),
             tool_groups=data.get('tool_groups', []),
             source=data.get('source', 'predefined'),
@@ -977,310 +981,64 @@ class SkillsManager:
     def _init_predefined_skills(self):
         """Initialize predefined skills focused on user management and interaction"""
         predefined = [
-            # === USER PREFERENCE SKILLS ===
+
+            # ═══════════════════════════════════════════════════════════════
+            # 🟢 CLEANUP (9) — Solide Skills, SDO-Format hinzugefügt
+            # ═══════════════════════════════════════════════════════════════
+
+            # === 1. USER PREFERENCE SAVE ===
             Skill(
                 id="user_preference_save",
                 name="User Preference Save",
+                description="Use when user expresses a preference to remember, says 'merke', 'speicher', 'vergiss nicht', or wants a setting saved for future sessions",
                 triggers=[
-                    "merke", "speicher", "remember", "präferenz", "preference",
-                    "mag ich", "bevorzuge", "ich will dass du", "vergiss nicht"
+                    "merke", "speicher", "präferenz", "preference",
+                    "bevorzuge", "vergiss nicht", "einstellung speichern",
+                    "mach das zum standard"
                 ],
                 instruction="""Für das Speichern von User Präferenzen:
-1. Identifiziere die konkrete Präferenz aus der Anfrage
-2. Formuliere sie als klares Key-Value Paar
-3. Nutze think() um die Präferenz zu strukturieren
-4. Speichere mit memory_inject oder geeignetem Tool
-5. Bestätige dem User WAS GENAU gespeichert wurde
-6. Frage nach falls die Präferenz unklar ist - rate NICHT""",
-                tools_used=["think", "memory_inject", "final_answer"],
-                tool_groups=["memory"],
-                source="predefined"
-            ),
-            Skill(
-            id="user_profile_manager",
-            name="User Profile Manager",
-            triggers=[
-                "profil", "profile", "wer bin ich", "who am i",
-                "was weißt du über mich", "what do you know about me",
-                "mein profil", "my profile", "zeig mein profil"
-            ],
-            instruction="""Für User Profile Management:
-1. Lade das User-Profil aus der persistenten Datei (user_profiles/{user_id}.json)
-2. Bei Anfrage "wer bin ich" - fasse das Profil zusammen
-3. Bei Anfrage "was weißt du" - zeige relevante Kategorien
-4. Nutze think() um zu entscheiden welche Profilteile relevant sind
-5. Antworte personalisiert basierend auf dem Kontext
-6. Aktualisiere last_interaction Timestamp""",
-            tools_used=["think", "file_read", "file_write", "final_answer"],
-            tool_groups=["memory", "filesystem"],
-            source="predefined"
-            ),
-            Skill(
-                id="user_preference_recall",
-                name="User Preference Recall",
-                triggers=[
-                    "was mag ich", "meine präferenzen", "erinnerst du",
-                    "weißt du noch", "meine vorlieben", "was weißt du über mich",
-                    "kennst du mich"
-                ],
-                instruction="""Für das Abrufen von User Präferenzen:
-1. Durchsuche den Kontext nach relevanten gespeicherten Präferenzen
-2. Falls nicht im Kontext: Nutze memory_query Tool
-3. Präsentiere gefundene Präferenzen klar strukturiert
-4. Sei EHRLICH: Falls keine gefunden, sage das klar
-5. Biete an, Präferenzen zu speichern wenn gewünscht""",
-                tools_used=["memory_query", "final_answer"],
-                tool_groups=["memory"],
-                source="predefined"
-            ),
-            Skill(
-                id="user_context_update",
-                name="User Context Update",
-                triggers=[
-                    "ich bin jetzt", "ich habe gewechselt", "neu bei mir",
-                    "update", "aktualisiere", "ändere mein"
-                ],
-                instruction="""Für das Aktualisieren von User-Kontext:
-1. Identifiziere was sich geändert hat (alt → neu)
-2. Bestätige das Verständnis mit dem User
-3. Aktualisiere die relevanten Einträge
-4. Zeige was aktualisiert wurde
-5. Frage ob weitere Updates nötig sind""",
-                tools_used=["think", "memory_query", "memory_inject", "final_answer"],
-                tool_groups=["memory"],
-                source="predefined"
-            ),
-            Skill(
-                id="user_context_learn",
-                name="User Context Learning",
-                triggers=[],  # Kein expliziter Trigger - wird automatisch angewendet
-                instruction="""Implizites Lernen aus Interaktionen (AUTOMATISCH):
-1. Nach jeder Interaktion: Analysiere ob neue Informationen gelernt wurden
-2. Kategorien für implizites Lernen:
-   - work_context: Projekte, Tools, Technologien
-   - communication_style: Sprache, Formalität, Präferenzen
-   - current_focus: Aktuelle Aufgaben, Deadlines, Prioritäten
-   - pain_points: Wiederkehrende Probleme, Frustrationen
-3. Nutze think() um zu entscheiden ob Info speicherwürdig ist
-4. Speichere nur FAKTEN, keine Vermutungen
-5. Update brief_history mit signifikanten Interaktionen
-6. Halte top_of_mind aktuell""",
-                tools_used=["think", "file_read", "file_write"],
-                tool_groups=["memory", "filesystem"],
-                source="predefined"
-            ),
-
-            # Skill: Profil bearbeiten/löschen
-            Skill(
-            id="user_profile_edit",
-            name="User Profile Edit",
-            triggers=[
-                "lösche", "delete", "entferne", "remove", "korrigiere", "correct",
-                "das stimmt nicht", "that's wrong", "update", "ändere", "change"
-            ],
-            instruction="""Für Profil-Bearbeitungen:
-1. Identifiziere WAS geändert/gelöscht werden soll
-2. Lade aktuelles Profil
-3. Bei Löschung: Bestätige VOR dem Löschen was entfernt wird
-4. Bei Korrektur: Zeige alt vs. neu
-5. Bei Update: Merge mit existierenden Daten
-6. Speichere und bestätige die Änderung
-7. Bei "lösche alles": Doppelte Bestätigung erforderlich""",
-            tools_used=["think", "file_read", "file_write", "final_answer"],
-            tool_groups=["memory", "filesystem"],
-            source="predefined"
-        ),
-
-        # === HABITS SKILLS ===
-            Skill(
-                id="habits_tracking",
-                name="Habits Tracking",
-                triggers=[
-                    "gewohnheit", "habit", "täglich", "routine", "tracking",
-                    "streak", "ich habe heute", "erledigt", "done"
-                ],
-                instruction="""Für Gewohnheits-Tracking:
-1. Identifiziere welche Gewohnheit getrackt werden soll
-2. Prüfe ob bereits Daten existieren (memory_query)
-3. Für neuen Eintrag: Speichere mit Datum und Status
-4. Für Abfrage: Zeige Historie und Streak an
-5. Motiviere bei Erfolgen, ermutige bei Lücken
-6. Schlage Verbesserungen vor wenn Pattern erkennbar""",
-                tools_used=["think", "memory_query", "memory_inject", "final_answer"],
-                tool_groups=["memory"],
-                source="predefined"
-            ),
-            Skill(
-                id="habits_analysis",
-                name="Habits Analysis",
-                triggers=[
-                    "analyse gewohnheit", "habit statistik", "wie läuft",
-                    "fortschritt", "mein streak", "gewohnheit übersicht"
-                ],
-                instruction="""Für Gewohnheits-Analyse:
-1. Lade alle Daten zur angefragten Gewohnheit
-2. Berechne: Erfolgsrate, längster Streak, aktueller Streak
-3. Nutze think() für Muster-Analyse (Wochentage, Zeiten)
-4. Gib konstruktives, ehrliches Feedback
-5. Schlage KONKRETE Verbesserungen vor
-6. Sei motivierend aber realistisch""",
-                tools_used=["think", "memory_query", "final_answer"],
-                tool_groups=["memory"],
-                source="predefined"
-            ),
-            Skill(
-                id="habits_setup",
-                name="Habits Setup",
-                triggers=[
-                    "neue gewohnheit", "habit erstellen", "will anfangen",
-                    "möchte tracken", "routine einrichten"
-                ],
-                instruction="""Für das Einrichten neuer Gewohnheiten:
-1. Frage nach: Was genau? Wie oft? Wann?
-2. Definiere klare, messbare Kriterien
-3. Erstelle initiale Tracking-Struktur
-4. Erkläre wie der User Fortschritte melden kann
-5. Setze realistische Erwartungen
-6. Biete Reminder-Optionen an wenn verfügbar""",
+        1. Identifiziere die konkrete Präferenz aus der Anfrage
+        2. Formuliere sie als klares Key-Value Paar
+        3. Nutze think() um die Präferenz zu strukturieren
+        4. Speichere mit memory_inject oder geeignetem Tool
+        5. Bestätige dem User WAS GENAU gespeichert wurde
+        6. Frage nach falls die Präferenz unklar ist - rate NICHT""",
                 tools_used=["think", "memory_inject", "final_answer"],
                 tool_groups=["memory"],
                 source="predefined"
             ),
 
-            # === MULTI-STEP TASK ===
-            Skill(
-                id="multi_step_task",
-                name="Multi-Step Task Planning",
-                triggers=[
-                    "mehrere schritte", "komplex", "projekt", "plan",
-                    "umfangreich", "aufgabe mit", "großes vorhaben"
-                ],
-                instruction="""Für komplexe Multi-Step Aufgaben:
-1. ZUERST: Nutze think() um einen Plan zu erstellen
-2. Liste alle benötigten Schritte auf (max 5-7)
-3. Identifiziere welche Tools du brauchen wirst
-4. Lade benötigte Tools VOR dem Start
-5. Führe Schritte SEQUENTIELL aus
-6. Nach jedem Schritt: Kurz verifizieren ob erfolgreich
-7. Bei Fehler: STOPPEN und User informieren
-8. Am Ende: Zusammenfassung was getan wurde""",
-                tools_used=["think", "list_tools", "load_tools", "final_answer"],
-                tool_groups=[],
-                source="predefined"
-            ),
-            Skill(
-                id="autonomous_execution",
-                name="Autonomous Task Execution",
-                triggers=["analyze", "create", "check", "files", "project", "fix", "solve"],
-                instruction="""PROTOCOL FOR COMPLEX TASKS:
-        1. ANALYSIS: Use `think()` to map out dependencies. What files/info do I need?
-        2. RECON: Use `vfs_list` or `list_tools` to understand the environment.
-        3. EXECUTION:
-           - If tools are missing: `load_tools(["category"])`
-           - If files are missing: Create them or ask for content.
-        4. PERSISTENCE: Save intermediate results to VFS (`vfs_write`) if the task is long.
-        5. COMPLETION: Present the result definitively.""",
-                tools_used=["think", "vfs_list", "load_tools", "final_answer"],
-                tool_groups=["vfs", "system"],
-                source="predefined"
-            ),
-            # === INTERACTION SKILLS ===
+            # === 2. CLARIFICATION NEEDED ===
             Skill(
                 id="clarification_needed",
                 name="Clarification Request",
+                description="Use when request is ambiguous, multiple interpretations exist, or agent is uncertain about context or specific details",
                 triggers=[
                     "unklar", "was meinst du", "verstehe nicht",
-                    "kannst du erklären", "mehr details"
+                    "mehr details", "genauer", "konkretisier",
+                    "ich bin mir unsicher", "mehrere möglichkeiten", "welche meinst du"
                 ],
                 instruction="""Wenn Klarstellung nötig ist:
-1. Identifiziere WAS genau unklar ist
-2. Formuliere SPEZIFISCHE Fragen (nicht "was meinst du?")
-3. Biete Optionen an wenn möglich ("Meinst du A oder B?")
-4. Erkläre warum die Info wichtig ist
-5. Warte auf Antwort bevor du fortfährst
-6. NIEMALS raten bei wichtigen Details""",
+        1. Identifiziere WAS genau unklar ist
+        2. Formuliere SPEZIFISCHE Fragen (nicht "was meinst du?")
+        3. Biete Optionen an wenn möglich ("Meinst du A oder B?")
+        4. Erkläre warum die Info wichtig ist
+        5. Warte auf Antwort bevor du fortfährst
+        6. NIEMALS raten bei wichtigen Details""",
                 tools_used=["think", "final_answer"],
                 tool_groups=[],
                 source="predefined"
             ),
-            Skill(
-                id="error_recovery",
-                name="Error Recovery",
-                triggers=[
-                    "fehler", "funktioniert nicht", "problem", "geht nicht",
-                    "error", "kaputt", "falsch"
-                ],
-                instruction="""Für Fehlerbehandlung:
-1. Analysiere den Fehler genau (was ging schief?)
-2. Nutze think() um Ursachen zu identifizieren
-3. Prüfe ob es ein Tool-Fehler oder Logik-Fehler ist
-4. Bei Tool-Fehler: Versuche alternativen Ansatz
-5. Bei unklarer Ursache: Frage User nach mehr Kontext
-6. Sei EHRLICH wenn du den Fehler nicht beheben kannst
-7. Schlage nächste Schritte vor""",
-                tools_used=["think", "final_answer"],
-                tool_groups=[],
-                source="predefined"
-            ),
-            # === VFS PERSISTENCE SKILLS ===
 
-            Skill(
-                id="vfs_info_persist",
-                name="Information Persistence",
-                triggers=[
-                    "merke dir", "speicher das", "wichtig", "behalten",
-                    "notiz", "note", "remember", "für später",
-                    "zusammenfassung", "ergebnis", "resultat"
-                ],
-                instruction="""Wenn Informationen persistent gespeichert werden sollen:
-        1. Identifiziere WAS gespeichert werden soll (Fakten, Ergebnisse, Notizen)
-        2. Wähle passenden Speicherort:
-           - /info/[thema].md für thematische Sammlungen
-           - /[aufgabe]_result.md für Aufgaben-Ergebnisse
-           - /notes.md für schnelle Notizen
-        3. Strukturiere den Inhalt klar (Überschriften, Listen)
-        4. Nutze vfs_write() um zu speichern
-        5. Bestätige dem User WO und WAS gespeichert wurde
-        6. Bei Updates: Erst vfs_read(), dann ergänzen, dann vfs_write()""",
-                tools_used=["think", "vfs_read", "vfs_write", "vfs_list", "final_answer"],
-                tool_groups=["vfs"],
-                source="predefined"
-            ),
-
-            Skill(
-                id="vfs_task_planning",
-                name="Task Planning with Persistence",
-                triggers=[
-                    "plane", "projekt", "aufgabe", "task", "todo",
-                    "schritte", "workflow", "prozess", "ablauf",
-                    "großes vorhaben", "mehrteilig"
-                ],
-                instruction="""Für komplexe Aufgaben mit Planung:
-        1. ZUERST: Nutze think() um die Aufgabe zu analysieren
-        2. Erstelle Plan in /plan.md oder /[aufgabe]_plan.md:
-           - Ziel der Aufgabe
-           - Geschätzte Schritte (nummeriert)
-           - Benötigte Tools/Ressourcen
-           - Erfolgskriterien
-        3. Arbeite Schritte ab und UPDATE den Plan:
-           - [x] Erledigt
-           - [ ] Offen
-           - [!] Problem
-        4. Zwischenergebnisse in /[aufgabe]/[schritt].md speichern
-        5. Finale Zusammenfassung in /[aufgabe]_result.md
-        6. Bei Unterbrechung: Plan zeigt wo weitermachen""",
-                tools_used=["think", "vfs_write", "vfs_read", "vfs_mkdir", "vfs_list", "final_answer"],
-                tool_groups=["vfs"],
-                source="predefined"
-            ),
-
+            # === 3. VFS KNOWLEDGE BASE ===
             Skill(
                 id="vfs_knowledge_base",
                 name="Knowledge Base Management",
+                description="Use when managing structured knowledge in VFS, creating topic files in /info/, or querying persistent documentation",
                 triggers=[
                     "wissen", "knowledge", "dokumentation", "docs",
                     "sammlung", "archiv", "referenz", "nachschlagen",
-                    "was weiß ich über", "zeig mir alles zu"
+                    "was weiß ich über", "zeig mir alles zu", "thema"
                 ],
                 instruction="""Für Wissensmanagement im VFS:
         1. Struktur der Knowledge Base:
@@ -1306,12 +1064,16 @@ class SkillsManager:
                 tool_groups=["vfs"],
                 source="predefined"
             ),
+
+            # === 4. PARALLEL SUBTASKS ===
             Skill(
                 id="parallel_subtasks",
                 name="Parallel Sub-Task Execution",
+                description="Use when tasks are independent and can run in parallel, comparing multiple sources, or gathering data simultaneously",
                 triggers=[
                     "parallel", "gleichzeitig", "recherchiere mehrere",
-                    "vergleiche", "sammle von verschiedenen", "und dann zusammen"
+                    "vergleiche", "sammle von verschiedenen", "und dann zusammen",
+                    "gleichzeitig prüfen"
                 ],
                 instruction="""Für parallelisierbare Aufgaben:
         1. Identifiziere UNABHÄNGIGE Teilaufgaben (die nicht aufeinander warten)
@@ -1325,13 +1087,15 @@ class SkillsManager:
                 tool_groups=["vfs"],
                 source="predefined"
             ),
-            # === 1. THE ARCHITECT SOP (When to use what) ===
+
+            # === 5. MASTER ORCHESTRATOR ===
             Skill(
                 id="master_orchestrator",
                 name="System Orchestration Protocol",
+                description="Use when deciding between Coder, Chains, or Sub-Agents for implementation work, or delegating complex tasks to specialized subsystems",
                 triggers=[
-                    "entwickle", "programmiere", "bau mir", "schreibe code",
-                    "refactor", "projekt", "architektur", "feature"
+                    "entwickle", "bau mir", "refactor", "architektur",
+                    "feature", "delegiere", "was ist der beste weg für"
                 ],
                 instruction="""DU BIST DER TECH-LEAD, NICHT DER PROGRAMMIERER. Schreibe NIEMALS manuell Code mit vfs_write!
         Befolge strikt diese Delegations-Hierarchie:
@@ -1359,12 +1123,14 @@ class SkillsManager:
                 source="predefined"
             ),
 
-            # === 2. CODER DELEGATION SOP ===
+            # === 6. CODER DELEGATION SOP ===
             Skill(
                 id="coder_delegation_sop",
                 name="CoderAgent Delegation Workflow",
+                description="Use when delegating code generation to the isolated CoderAgent environment for features, bugfixes, or refactoring",
                 triggers=[
-                    "coder", "lass den coder", "delegiere code", "bugfix", "schreibe das script"
+                    "coder", "lass den coder", "delegiere code", "bugfix",
+                    "schreibe das script", "implementierung durch coder"
                 ],
                 instruction="""Workflow für Code-Generierung (Der Coder ist eine isolierte Umgebung):
         1. KONTEXT SCHAFFEN: Nutze `analyze_codebase(root=".")`, um den Baum und TODOs zu sehen.
@@ -1381,9 +1147,11 @@ class SkillsManager:
                 source="predefined"
             ),
 
+            # === 7. MEMORY INTELLIGENCE SOP ===
             Skill(
                 id="memory_intelligence_sop",
                 name="Deep Memory Utilization",
+                description="Use when recalling stored knowledge, analyzing project context, or deciding between memory_recall and memory_analyse",
                 triggers=[
                     "erinnere dich", "zusammenhang", "kontext", "verstehe nicht",
                     "analysiere projekt", "wie funktioniert", "was wissen wir über"
@@ -1408,33 +1176,14 @@ class SkillsManager:
                 source="predefined"
             ),
 
-            # === 3. VFS USAGE SOP ===
-            Skill(
-                id="vfs_strict_usage",
-                name="Strict VFS Guidelines",
-                triggers=[
-                    "lese datei", "schreibe datei", "vfs", "ordner", "filesystem"
-                ],
-                instruction="""VFS (Virtual File System) Richtlinien für den FlowAgent:
-        1. READ-ONLY FÜR CODE: Du darfst Code-Dateien via `vfs_read` oder `vfs_grep` LESEN, um sie zu verstehen.
-        2. NO CODE WRITING: Benutze `vfs_write`, `vfs_edit` oder `vfs_append` NIEMALS für Quellcode (.py, .js, .html etc.). Überlasse das dem CoderAgent!
-        3. ERLAUBTE WRITES: Du darfst VFS-Write-Tools NUR nutzen für:
-           - Markdown-Dateien für Pläne (/plan.md)
-           - Readme-Aktualisierungen
-           - Temporäre Log-Dateien
-           - JSON-Konfigurationen (nach Bestätigung)
-        4. ISOLIERUNG: Respektiere die Ordner von Sub-Agenten (/sub/...). Manipuliere deren Output nicht, bis sie fertig sind.""",
-                tools_used=["vfs_read", "vfs_grep", "vfs_list"],
-                tool_groups=["vfs"],
-                source="predefined"
-            ),
-
-            # === 4. CHAINS USAGE SOP ===
+            # === 8. CHAIN AUTOMATION SOP ===
             Skill(
                 id="chain_automation_sop",
                 name="Workflow Automation via Chains",
+                description="Use when automating recurring workflows via Chains, or checking if a Chain exists for a standard process",
                 triggers=[
-                    "prozess", "ablauf", "kette", "chain", "standard operating procedure"
+                    "prozess", "ablauf", "kette", "chain",
+                    "standard operating procedure", "automatisierung"
                 ],
                 instruction="""Richtlinien für Chains (SOPs):
         1. DISCOVERY: Bevor du eine Standard-Aufgabe manuell in 10 LLM-Loops löst, nutze `list_auto_get_fitting("beschreibung")`, um zu sehen, ob eine Chain existiert.
@@ -1446,7 +1195,251 @@ class SkillsManager:
                 tools_used=["list_auto_get_fitting", "run_chain", "create_validate_chain"],
                 tool_groups=["automation"],
                 source="predefined"
-            )
+            ),
+
+            # === 9. VFS TASK PLANNING ===
+            Skill(
+                id="vfs_task_planning",
+                name="Task Planning with Persistence",
+                description="Use when planning multi-step tasks with persistent progress tracking in VFS, creating /plan.md, or tracking intermediate results",
+                triggers=[
+                    "plane", "aufgaben planen", "task planen", "todo liste",
+                    "schritte planen", "workflow definieren", "mehrteilige aufgabe"
+                ],
+                instruction="""Für komplexe Aufgaben mit Planung:
+        1. ZUERST: Nutze think() um die Aufgabe zu analysieren
+        2. Erstelle Plan in /plan.md oder /[aufgabe]_plan.md:
+           - Ziel der Aufgabe
+           - Geschätzte Schritte (nummeriert)
+           - Benötigte Tools/Ressourcen
+           - Erfolgskriterien
+        3. Arbeite Schritte ab und UPDATE den Plan:
+           - [x] Erledigt
+           - [ ] Offen
+           - [!] Problem
+        4. Zwischenergebnisse in /[aufgabe]/[schritt].md speichern
+        5. Finale Zusammenfassung in /[aufgabe]_result.md
+        6. Bei Unterbrechung: Plan zeigt wo weitermachen""",
+                tools_used=["think", "vfs_write", "vfs_read", "vfs_mkdir", "vfs_list", "final_answer"],
+                tool_groups=["vfs"],
+                source="predefined"
+            ),
+
+            # ═══════════════════════════════════════════════════════════════
+            # 🟡 ÜBERARBEITET (7) — Trigger repariert, Instructions verbessert
+            # ═══════════════════════════════════════════════════════════════
+
+            # === 10. AGENT ONBOARDING (ehemals habits_setup) ===
+            Skill(
+                id="agent_onboarding",
+                name="Agent System Onboarding",
+                description="Use when starting a new session, user asks what tools are available, or agent needs to understand the automation infrastructure",
+                triggers=[
+                    "onboarding", "was kannst du", "welche tools",
+                    "wie funktioniert das system", "übersicht", "capabilities",
+                    "was steht mir zur verfügung", "toolset", "job management",
+                    "was sind chains", "was sind jobs"
+                ],
+                instruction="""DU HAST ZUGRIFF AUF FOLGENDE SYSTEME — nutze sie bewusst:
+
+        1. CODER (isolierte Umgebung): Für ALLEN Code. spawn_coder() -> observe() -> validate_worktree() -> accept()
+           NIEMALS Code direkt in VFS schreiben!
+
+        2. CHAINS (deterministische Automatisierung): list_auto_get_fitting() -> run_chain()
+           Für wiederkehrende Prozesse (Scraping, Reports, Deployments).
+
+        3. JOBS (geplante Aufgaben): createJob(cron_expression=..., query=...) -> listJobs()
+           Für zeitgesteuerte Tasks (täglich, wöchentlich).
+           IMMER nach createJob() listJobs() aufrufen zur Verifizierung!
+
+        4. SUB-AGENTS (parallele Ausführung): spawn_sub_agent(task=..., wait=False) -> wait_for()
+           Für unabhängige Recherche- oder Datenverarbeitungsaufgaben.
+
+        5. MEMORY (Langzeitgedächtnis): memory_recall() -> memory_analyse() -> memory_save()
+           recall = schnell/konkret, analyse = tief/komplex, save = nur 'Ewige Wahrheiten'.
+
+        6. VFS (Wissensspeicher): READ-ONLY für Code. vfs_write() NUR für Pläne/Markdown.
+           Code-Änderungen gehen IMMER über den Coder.
+
+        ENTSCHEIDUNGSLEITFADEN:
+        - Code schreiben/ändern? -> Coder
+        - Wiederkehrender Prozess? -> Chain
+        - Zeitgesteuert? -> Job
+        - Parallele Recherche? -> Sub-Agent
+        - Fakten speichern? -> Memory
+        - Pläne/Notizen? -> VFS (Markdown only)""",
+                tools_used=["think", "final_answer"],
+                tool_groups=[],
+                source="predefined"
+            ),
+
+            # === 11. VFS STRICT USAGE (bulletproofed) ===
+            Skill(
+                id="vfs_strict_usage",
+                name="Strict VFS Guidelines",
+                description="Use when working with VFS files, especially when tempted to write code or configuration directly instead of using the Coder",
+                triggers=[
+                    "lese datei", "schreibe datei", "vfs", "ordner", "filesystem",
+                    "datei erstellen", "datei bearbeiten"
+                ],
+                instruction="""**VFS = WISSENSSPEICHER, NICHT CODE-EDITOR.**
+
+        VFS (Virtual File System) Richtlinien für den FlowAgent:
+
+        1. READ-ONLY FÜR CODE: Du darfst Code-Dateien via `vfs_read` oder `vfs_grep` LESEN, um sie zu verstehen.
+        2. NO CODE WRITING: Benutze `vfs_write`, `vfs_edit` oder `vfs_append` NIEMALS für Quellcode (.py, .js, .html etc.). Überlasse das dem CoderAgent!
+        3. ERLAUBTE WRITES: Du darfst VFS-Write-Tools NUR nutzen für:
+           - Markdown-Dateien für Pläne (/plan.md)
+           - Readme-Aktualisierungen
+           - Temporäre Log-Dateien
+           - JSON-Konfigurationen (nach Bestätigung)
+        4. ISOLIERUNG: Respektiere die Ordner von Sub-Agenten (/sub/...). Manipuliere deren Output nicht, bis sie fertig sind.
+
+        **Violating the letter of the rules is violating the spirit of the rules.**
+
+        ## Red Flags - STOP and Use Coder Instead
+        - You're about to write a .py/.js/.html/.css file to VFS
+        - "I just need to test this quickly" in VFS
+        - Using vfs_write for code edits
+        - "The sandbox is too slow" as a reason
+        - "It's just a small change, I'll do it directly"
+
+        ## Rationalization Table
+        | Excuse | Reality |
+        |--------|---------|
+        | "Just this once, it's temporary" | Temporary writes become permanent. Use Coder. |
+        | "The VFS is easier than Coder" | VFS is for knowledge only. Code goes to Coder. |
+        | "I'll move it to sandbox later" | Later = never. Start in Coder. |
+        | "This is config, not code" | Config changes need testing. Use Coder. |
+        | "The Coder takes too long" | A broken codebase takes longer. |""",
+                tools_used=["vfs_read", "vfs_grep", "vfs_list"],
+                tool_groups=["vfs"],
+                source="predefined"
+            ),
+
+            # === 12. USER PROFILE EDIT (trigger fix) ===
+            Skill(
+                id="user_profile_edit",
+                name="User Profile Edit",
+                description="Use when user wants to edit, delete, or correct their stored profile data or preferences",
+                triggers=[
+                    "profil löschen", "meine daten ändern", "profil bearbeiten",
+                    "daten aktualisieren", "korrigiere mein profil", "das stimmt nicht",
+                    "profil korrigieren", "entferne aus meinem profil"
+                ],
+                instruction="""Für Profil-Bearbeitungen:
+        1. Identifiziere WAS geändert/gelöscht werden soll
+        2. Lade aktuelles Profil
+        3. Bei Löschung: Bestätige VOR dem Löschen was entfernt wird
+        4. Bei Korrektur: Zeige alt vs. neu
+        5. Bei Update: Merge mit existierenden Daten
+        6. Speichere und bestätige die Änderung
+        7. Bei "lösche alles": Doppelte Bestätigung erforderlich""",
+                tools_used=["think", "file_read", "file_write", "final_answer"],
+                tool_groups=["memory", "filesystem"],
+                source="predefined"
+            ),
+
+            # === 13. ERROR RECOVERY (trigger fix + align_10 reference) ===
+            Skill(
+                id="error_recovery",
+                name="Error Recovery",
+                description="Use when encountering tool errors, exceptions, stacktraces, or unexpected failures that need structured diagnosis",
+                triggers=[
+                    "stacktrace", "exception", "traceback", "error code",
+                    "tool fehler", "diagnose fehler", "crash analyse",
+                    "returncode", "unexpected error"
+                ],
+                instruction="""Für Fehlerbehandlung — befolge align_10_four_phase_debug:
+
+        1. ANALYSE: Sammle Symptome (Fehlermeldung, Return Code, Stacktrace)
+        2. NARROW: Isoliere die fehlerhafte Komponente (welches Tool, welche Datei, welche Zeile)
+        3. ROOT CAUSE: Identifiziere die exakte Ursache — nicht das Symptom
+        4. FIX: Minimaler Patch, dann Verifikation
+
+        Bei Tool-Fehler: Versuche alternativen Ansatz.
+        Bei unklarer Ursache: Frage User nach mehr Kontext.
+        Sei EHRLICH wenn du den Fehler nicht beheben kannst.
+        Schlage nächste Schritte vor.""",
+                tools_used=["think", "final_answer"],
+                tool_groups=[],
+                source="predefined"
+            ),
+
+            # === 14. MULTI STEP TASK (trigger fix) ===
+            Skill(
+                id="multi_step_task",
+                name="Multi-Step Task Planning",
+                description="Use when a task requires multiple sequential steps that must be coordinated, or when planning tool loading before execution",
+                triggers=[
+                    "mehrere schritte", "sequenzielle aufgabe", "koordinierte schritte",
+                    "aufgabe mit mehreren phasen", "großes vorhaben", "mehrphasig"
+                ],
+                instruction="""Für komplexe Multi-Step Aufgaben:
+        1. ZUERST: Nutze think() um einen Plan zu erstellen
+        2. Liste alle benötigten Schritte auf (max 5-7)
+        3. Identifiziere welche Tools du brauchen wirst
+        4. Lade benötigte Tools VOR dem Start
+        5. Führe Schritte SEQUENTIELL aus
+        6. Nach jedem Schritt: Kurz verifizieren ob erfolgreich
+        7. Bei Fehler: STOPPEN und User informieren
+        8. Am Ende: Zusammenfassung was getan wurde
+
+        Hinweis: Für Aufgaben die persistente Plan-Dateien benötigen, nutze vfs_task_planning.""",
+                tools_used=["think", "list_tools", "load_tools", "final_answer"],
+                tool_groups=[],
+                source="predefined"
+            ),
+
+            # === 15. USER PROFILE MANAGER (pfade fix) ===
+            Skill(
+                id="user_profile_manager",
+                name="User Profile Manager",
+                description="Use when user asks who they are, what is known about them, or wants to see their stored profile",
+                triggers=[
+                    "profil", "profile", "wer bin ich", "who am i",
+                    "was weißt du über mich", "what do you know about me",
+                    "mein profil", "my profile", "zeig mein profil"
+                ],
+                instruction="""Für User Profile Management:
+        1. Lade das User-Profil via memory_recall("user profile") oder world_model_get
+        2. Bei Anfrage "wer bin ich" - fasse das Profil zusammen
+        3. Bei Anfrage "was weißt du" - zeige relevante Kategorien
+        4. Nutze think() um zu entscheiden welche Profilteile relevant sind
+        5. Antworte personalisiert basierend auf dem Kontext
+        6. Aktualisiere last_interaction Timestamp""",
+                tools_used=["think", "memory_recall", "world_model_get", "final_answer"],
+                tool_groups=["memory"],
+                source="predefined"
+            ),
+
+            # === 16. VFS INFO PERSIST (abgrenzung zu user_preference_save) ===
+            Skill(
+                id="vfs_info_persist",
+                name="Information Persistence",
+                description="Use when persisting task results, notes, or structured information to VFS files — NOT for user preferences (use memory tools for those)",
+                triggers=[
+                    "speicher ergebnis", "notiz im vfs", "datei für später",
+                    "vfs notiz", "aufgabe dokumentieren", "resultat speichern",
+                    "zusammenfassung als datei"
+                ],
+                instruction="""Wenn Informationen als DATEIEN im VFS gespeichert werden sollen (nicht im Memory!):
+
+        ABGRENZUNG: User-Präferenzen -> memory_save/memory_inject. Dateien/Pläne/Ergebnisse -> vfs_write.
+
+        1. Identifiziere WAS gespeichert werden soll (Ergebnisse, Notizen, Pläne)
+        2. Wähle passenden Speicherort:
+           - /info/[thema].md für thematische Sammlungen
+           - /[aufgabe]_result.md für Aufgaben-Ergebnisse
+           - /notes.md für schnelle Notizen
+        3. Strukturiere den Inhalt klar (Überschriften, Listen)
+        4. Nutze vfs_write() um zu speichern
+        5. Bestätige dem User WO und WAS gespeichert wurde
+        6. Bei Updates: Erst vfs_read(), dann ergänzen, dann vfs_write()""",
+                tools_used=["think", "vfs_read", "vfs_write", "vfs_list", "final_answer"],
+                tool_groups=["vfs"],
+                source="predefined"
+            ),
         ]
 
 

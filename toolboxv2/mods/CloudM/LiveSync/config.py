@@ -59,56 +59,76 @@ class ShareToken:
     prefix: str
     encryption_key: str  # Base64 AES key
     ws_endpoint: str
-    version: int = 2  # FIX 3b: v2 = encrypted, v1 = legacy plaintext
+    version: int = 3
+    expires_at: float = 0  # Unix timestamp, 0 = no expiry
 
     def encode(self) -> str:
-        """Encode token — encrypted with TB Device Key (v2)."""
-        data = {
-            "v": self.version,
+        """Encode token v3 = split: endpoints Klartext, Secrets verschlüsselt."""
+        # SECRET part (verschlüsselt mit Device Key)
+        if not self.expires_at:
+            import time as _time
+            self.expires_at = _time.time() + 86400  # 24 Stunden
+        secret = {
             "share_id": self.share_id,
-            "minio_endpoint": self.minio_endpoint,
             "bucket": self.bucket,
             "prefix": self.prefix,
             "enc_key": self.encryption_key,
-            "ws_endpoint": self.ws_endpoint,
+            "exp": self.expires_at,
         }
-        plaintext = json.dumps(data)
 
-        # FIX 3b: Encrypt entire payload with Device Key
+        # PUBLIC part (Klartext — Endpoints, sonst kann Client nicht verbinden)
+        public = {
+            "ws": self.ws_endpoint,
+            "minio": self.minio_endpoint,
+            "v": 3,
+        }
+
         try:
             from toolboxv2.utils.security.cryp import Code
-            encrypted = Code.encode_code(plaintext)
-            return f"v2:{encrypted}"
+            encrypted_secret = Code.encode_code(json.dumps(secret))
         except Exception:
-            # Fallback: legacy v1 (should only happen in standalone without TB)
-            return base64.urlsafe_b64encode(plaintext.encode()).decode()
+            # Standalone fallback
+            encrypted_secret = base64.urlsafe_b64encode(
+                json.dumps(secret).encode()).decode()
+
+        # Format: v3:<public_b64>.<encrypted_secret>
+        public_b64 = base64.urlsafe_b64encode(
+            json.dumps(public).encode()).decode()
+        return f"v3:{public_b64}.{encrypted_secret}"
 
     @classmethod
     def decode(cls, token: str) -> ShareToken:
-        """Decode token. Supports v2 (encrypted) and v1 (legacy)."""
+        """Decode token v3 (split), v2 (encrypted), v1 (legacy)."""
         try:
-            if token.startswith("v2:"):
-                # FIX 3b: Decrypt with Device Key
-                from toolboxv2.utils.security.cryp import Code
-                encrypted = token[3:]
-                plaintext = Code.decode_code(encrypted)
-                data = json.loads(plaintext)
-            else:
-                # Legacy v1: plain base64
-                raw = base64.urlsafe_b64decode(token)
-                data = json.loads(raw)
+            if token.startswith("v3:"):
+                # v3 = split: <public_b64>.<encrypted_secret>
+                payload = token[3:]
+                public_b64, encrypted_secret = payload.split(".", 1)
+                public = json.loads(
+                    base64.urlsafe_b64decode(public_b64).decode())
+
+                try:
+                    from toolboxv2.utils.security.cryp import Code
+                    secret_json = Code.decode_code(encrypted_secret)
+                    secret = json.loads(secret_json)
+                except Exception:
+                    # Server-side: Device Key verfügbar
+                    secret = json.loads(base64.urlsafe_b64decode(
+                        encrypted_secret).decode())
+
+                return cls(
+                    share_id=secret["share_id"],
+                    minio_endpoint=public["minio"],
+                    bucket=secret["bucket"],
+                    prefix=secret["prefix"],
+                    encryption_key=secret["enc_key"],
+                    ws_endpoint=public["ws"],
+                    expires_at=secret.get("exp", 0),
+                    version=3,
+                )
+
         except Exception as exc:
             raise ValueError(f"Invalid share token: {exc}") from exc
-
-        return cls(
-            share_id=data["share_id"],
-            minio_endpoint=data["minio_endpoint"],
-            bucket=data["bucket"],
-            prefix=data["prefix"],
-            encryption_key=data["enc_key"],
-            ws_endpoint=data["ws_endpoint"],
-            version=data.get("v", 1),
-        )
 
     def to_sync_config(self, vault_path: str) -> SyncConfig:
         """Convert token data into a SyncConfig for the client."""

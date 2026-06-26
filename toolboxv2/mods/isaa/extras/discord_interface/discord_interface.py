@@ -1123,6 +1123,10 @@ class DiscordInterface:
     - VFS-basiertes Adressbuch
     """
 
+    # Moderator keeps only tools whose name contains "discord" plus this
+    # manually-curated safe list. Extend it by editing MODERATOR_SAFE_TOOLS.
+    MODERATOR_SAFE_TOOLS: set[str] = {"search_web"}
+
     def __init__(
         self,
         agent: "FlowAgent",
@@ -1133,11 +1137,27 @@ class DiscordInterface:
         tts_voice: str = "autumn",
         stt_backend: str = "groq",  # "faster_whisper", "groq"
         language: str = "de",
+        self_agent: "FlowAgent | None" = None,
+        moderator_safelist: Optional[set[str]] = None,
+        voice_user_ids: Optional[list[int]] = None,
     ):
+        # `agent` is the public moderator agent (safe-exposed, discord-only tools).
+        # `self_agent` is the operator's full agent — admins can switch to it.
         self.agent = agent
+        self.moderator_agent = agent
+        self.self_agent = self_agent
         self.token = token
         self.respond_to_mentions_only = respond_to_mentions_only
         self.admin_ids = admin_ids or []
+        # Extra non-admin user IDs allowed to interact via voice "like admins".
+        self.voice_user_ids = voice_user_ids or []
+        self.moderator_safelist = (
+            moderator_safelist if moderator_safelist is not None
+            else set(self.MODERATOR_SAFE_TOOLS)
+        )
+        # Per-user routing prefs (admins only): user_id -> {"agent": "moderator"|"self",
+        # "session": "dm"|"default"}. Missing user => moderator + isolated session.
+        self.user_prefs: dict[int, dict[str, str]] = {}
 
         # Bot Setup
         intents = discord.Intents.default()
@@ -1165,8 +1185,14 @@ class DiscordInterface:
         # Register Events
         self._register_events()
 
-        # Register Agent Tools
-        self._register_agent_tools()
+        # Register Discord tools on moderator (and self agent if present)
+        self._register_agent_tools(self.moderator_agent)
+        if self.self_agent is not None and self.self_agent is not self.moderator_agent:
+            self._register_agent_tools(self.self_agent)
+
+        # Make the moderator safe to expose: prune non-discord tools on every
+        # session init (init_session_tools re-registers system tools per session).
+        self._apply_moderator_safe_mode(self.moderator_agent)
 
     def _register_events(self):
         """Registriert Discord Event Handler"""
@@ -1295,11 +1321,12 @@ class DiscordInterface:
         )
 
     def _should_respond(self, ctx: MessageContext) -> bool:
-        """Entscheidet ob der Bot antworten soll"""
+        """Entscheidet ob der Bot antworten soll.
 
-        # Whitelist check: Falls konfiguriert, nur erlaubte Nutzer zulassen [3]
-        if self.admin_ids and ctx.user_id not in self.admin_ids:
-            return False
+        Der Moderator-Agent ist oeffentlich: er antwortet allen (DMs + Mentions).
+        admin_ids steuert NICHT mehr ob geantwortet wird, sondern nur wer per
+        !agent/!session auf den Self-Agent / die Default-Session umschalten darf.
+        """
 
         # DMs: immer antworten
         if ctx.source == MessageSource.DM:
@@ -1338,10 +1365,29 @@ class DiscordInterface:
             self.router.set_pending_context(ctx)
 
             try:
+                # Admin control commands (DM only): !agent / !session / !whoami
+                if (
+                    ctx.source == MessageSource.DM
+                    and ctx.content.strip().startswith("!")
+                    and ctx.user_id in self.admin_ids
+                ):
+                    reply = self._handle_admin_command(ctx)
+                    if reply is not None:
+                        await message.channel.send(reply)
+                        return
+
+                # Resolve which agent + session this message routes to
+                agent, session_id = self._resolve_route(ctx)
+
                 # Omni one-shot: audio attachment -> S2S audio reply (reuses a_audio)
                 omni = getattr(self, "omni_controller", None)
                 audio_atts = [a for a in ctx.attachments if a.media_type == "audio"]
                 if omni and audio_atts:
+                    if not self.is_voice_allowed(ctx.user_id):
+                        await message.channel.send(
+                            "🔒 Voice ist auf Admins + Voice-Allowlist beschränkt."
+                        )
+                        return
                     import io
                     from pathlib import Path as _P
                     wav = _P(audio_atts[0].path).read_bytes()
@@ -1361,10 +1407,10 @@ class DiscordInterface:
                 if self.bot.user:
                     agent_input = agent_input.replace(f"<@{self.bot.user.id}>", "").strip()
 
-                # Call Agent
-                response = await self.agent.a_run(
+                # Call Agent (resolved above)
+                response = await agent.a_run(
                     query=agent_input,
-                    session_id=f"discord_{ctx.source_address.replace('://', '_').replace('/', '_')}",
+                    session_id=session_id,
                 )
 
                 # Route Response
@@ -1389,7 +1435,103 @@ class DiscordInterface:
             finally:
                 self.router.clear_pending_context()
 
-    def _register_agent_tools(self):
+    def is_voice_allowed(self, user_id: int) -> bool:
+        """Voice interaction is limited to admins plus the voice allowlist."""
+        return user_id in self.admin_ids or user_id in self.voice_user_ids
+
+    def _isolated_session_id(self, ctx: MessageContext) -> str:
+        """Per-source isolated session id (DM vs channel auto-separated)."""
+        return f"discord_{ctx.source_address.replace('://', '_').replace('/', '_')}"
+
+    def _resolve_route(self, ctx: MessageContext):
+        """Pick (agent, session_id) for this message based on admin prefs.
+
+        Non-admins always get the moderator on an isolated session.
+        Admins may switch to the self agent and/or the shared default session.
+        """
+        pref = self.user_prefs.get(ctx.user_id, {})
+        want_self = (
+            ctx.user_id in self.admin_ids
+            and pref.get("agent") == "self"
+            and self.self_agent is not None
+        )
+        agent = self.self_agent if want_self else self.moderator_agent
+
+        use_default = (
+            ctx.user_id in self.admin_ids and pref.get("session") == "default"
+        )
+        session_id = "default" if use_default else self._isolated_session_id(ctx)
+        return agent, session_id
+
+    def _handle_admin_command(self, ctx: MessageContext) -> Optional[str]:
+        """Parse !agent / !session / !whoami. Returns reply text, or None if not a command."""
+        parts = ctx.content.strip().split()
+        cmd = parts[0].lower()
+        arg = parts[1].lower() if len(parts) > 1 else ""
+        pref = self.user_prefs.setdefault(ctx.user_id, {})
+
+        if cmd == "!agent":
+            if arg == "self" and self.self_agent is None:
+                return "⚠️ Kein Self-Agent konfiguriert."
+            if arg in ("self", "moderator"):
+                pref["agent"] = arg
+                return f"✅ Agent → **{arg}**"
+            return "Usage: `!agent moderator|self`"
+
+        if cmd == "!session":
+            if arg in ("dm", "default"):
+                pref["session"] = arg
+                return f"✅ Session → **{arg}**"
+            return "Usage: `!session dm|default`"
+
+        if cmd == "!whoami":
+            a = pref.get("agent", "moderator")
+            s = pref.get("session", "dm")
+            return f"Agent: **{a}** | Session: **{s}**"
+
+        if cmd == "!voice":
+            if arg == "list":
+                ids = ", ".join(str(i) for i in self.voice_user_ids) or "(leer)"
+                return f"Voice-Allowlist (zusätzlich zu Admins): {ids}"
+            if arg in ("add", "remove"):
+                if len(parts) < 3 or not parts[2].lstrip("-").isdigit():
+                    return f"Usage: `!voice {arg} <user_id>`"
+                uid = int(parts[2])
+                if arg == "add":
+                    if uid not in self.voice_user_ids:
+                        self.voice_user_ids.append(uid)
+                    return f"✅ Voice add: {uid}"
+                if uid in self.voice_user_ids:
+                    self.voice_user_ids.remove(uid)
+                return f"✅ Voice remove: {uid}"
+            return "Usage: `!voice add|remove <user_id>` | `!voice list`"
+
+        return None
+
+    def _apply_moderator_safe_mode(self, agent: "FlowAgent"):
+        """Wrap agent.init_session_tools so that after each session-init every tool
+        whose name lacks 'discord' and is not in the safelist is unregistered.
+
+        init_session_tools re-registers system tools per new session, so pruning
+        once is not enough — the wrapper re-prunes on every session init.
+        """
+        safelist = self.moderator_safelist
+        orig_init = agent.init_session_tools
+
+        def safe_init(session):
+            orig_init(session)
+            for name in list(agent.tool_manager.list_names()):
+                if "discord" in name.lower() or name in safelist:
+                    continue
+                agent.remove_tool(name)
+
+        agent.init_session_tools = safe_init
+        print(
+            f"[Discord] Moderator safe-mode active: only discord* tools "
+            f"+ safelist {sorted(safelist)} survive session init."
+        )
+
+    def _register_agent_tools(self, agent: "FlowAgent"):
         """Registriert Discord-spezifische Tools beim Agent"""
 
         interface = self  # Closure reference
@@ -1485,28 +1627,28 @@ class DiscordInterface:
                 return json.dumps({"error": str(e)})
 
         # Register Tools
-        self.agent.add_tool(
+        agent.add_tool(
             discord_send_message,
             "discord_send_message",
             description="Send a message to a specific Discord address. Use as_audio=True to send as voice message. Use this to reply to different channels or users than the current conversation.",
             category=["discord", "communication"],
         )
 
-        self.agent.add_tool(
+        agent.add_tool(
             discord_search_address,
             "discord_search_address",
             description="Search for Discord users, channels, or servers by name. Returns addresses you can use with discord_send_message.",
             category=["discord", "lookup"],
         )
 
-        self.agent.add_tool(
+        agent.add_tool(
             discord_get_active_conversations,
             "discord_get_active",
             description="Get all active Discord conversations you're currently engaged in.",
             category=["discord", "context"],
         )
 
-        self.agent.add_tool(
+        agent.add_tool(
             discord_get_channel_history,
             "discord_get_history",
             description="Get recent message history from a Discord channel. Useful for context about what others have said.",
@@ -1542,6 +1684,9 @@ def create_discord_interface(
     tts_voice: str = "autumn",
     stt_backend: str = "groq",  # "faster_whisper", "groq"
     language: str = "de",
+    self_agent: "FlowAgent | None" = None,
+    moderator_safelist: Optional[set[str]] = None,
+    voice_user_ids: Optional[list[int]] = None,
 ) -> DiscordInterface:
     """
     Factory für DiscordInterface.
@@ -1582,6 +1727,12 @@ def create_discord_interface(
             admin_ids = [int(x.strip()) for x in os.environ.get("DISCORD_ADMIN_IDS").split(",") if x.strip()]
         except ValueError:
             print("[Discord] Invalid DISCORD_ADMIN_IDS env value")
+    # Voice allowlist (extra non-admin IDs allowed in voice)
+    if voice_user_ids is None and os.environ.get("DISCORD_VOICE_IDS"):
+        try:
+            voice_user_ids = [int(x.strip()) for x in os.environ.get("DISCORD_VOICE_IDS").split(",") if x.strip()]
+        except ValueError:
+            print("[Discord] Invalid DISCORD_VOICE_IDS env value")
     return DiscordInterface(
         agent=agent,
         token=token,
@@ -1591,4 +1742,7 @@ def create_discord_interface(
         tts_voice=tts_voice,
         stt_backend=stt_backend,
         language=language,
+        self_agent=self_agent,
+        moderator_safelist=moderator_safelist,
+        voice_user_ids=voice_user_ids,
     )

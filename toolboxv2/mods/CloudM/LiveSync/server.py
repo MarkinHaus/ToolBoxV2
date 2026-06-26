@@ -427,6 +427,19 @@ class SyncServer:
                     from .config import ShareToken
                     tok = ShareToken.decode(client_token)
                     token_valid = (tok.share_id == share_id)
+                    # Expiry-Check: Token nach 24h ungültig
+                    if token_valid and tok.expires_at > 0:
+                        if time.time() > tok.expires_at:
+                            token_valid = False
+                            logger.warning(
+                                f"[LiveSync] AUTH_DENIED: token expired. "
+                                f"Client={client_id} share={share_id} "
+                                f"expired_at={tok.expires_at}",
+                                extra={"audit_action": "AUTH_DENIED",
+                                       "client_id": client_id,
+                                       "share_id": share_id,
+                                       "reason": "token_expired"}
+                            )
                 except Exception:
                     token_valid = False
 

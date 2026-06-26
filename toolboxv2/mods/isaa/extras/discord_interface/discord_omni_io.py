@@ -151,6 +151,7 @@ class DiscordOmniRecorder:
         *,
         frame_ms: int = FRAME_MS,
         max_user_frames: int = 100,  # ~2 s jitter buffer per user
+        emit_silence: bool = False,  # True for needs_silence backends (pipeline)
     ):
         self._loop = loop
         self._on_speaker = on_speaker
@@ -163,6 +164,11 @@ class DiscordOmniRecorder:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._last_speaker: Optional[str] = None
+        # One 16k-mono silence frame; emitted in gaps so a backend whose own VAD
+        # ends turns (needs_silence=True) actually sees the silence. Cloud backends
+        # (needs_silence=False) leave this off and stay gap-gated.
+        self._emit_silence = emit_silence
+        self._silence = b"\x00" * (int(TARGET_SR * frame_ms / 1000) * 2)
 
     # -- thread side (called from voice_recv reader thread) ------------------
     def feed(self, user_id: int, name: str, pcm: bytes) -> None:
@@ -221,6 +227,10 @@ class DiscordOmniRecorder:
                     mixed = _mix_downsample([p[2] for p in present])
                     if mixed:
                         self._out.put_nowait(mixed)
+                elif self._emit_silence:
+                    # gap: feed silence so needs_silence backends can end the turn
+                    self._last_speaker = None
+                    self._out.put_nowait(self._silence)
                 delay = next_t - self._loop.time()
                 if delay > 0:
                     await asyncio.sleep(delay)
@@ -246,17 +256,25 @@ class DiscordOmniRecorder:
 if VOICE_RECV_AVAILABLE:
 
     class OmniMixSink(voice_recv.AudioSink):
-        """Per-user PCM -> DiscordOmniRecorder.feed(). PCM (not opus)."""
+        """Per-user PCM -> DiscordOmniRecorder.feed(). PCM (not opus).
 
-        def __init__(self, recorder: DiscordOmniRecorder):
+        `is_allowed(user_id)` gates whose audio is ingested — only admins +
+        the voice allowlist are heard; everyone else in the channel is ignored.
+        """
+
+        def __init__(self, recorder: DiscordOmniRecorder,
+                     is_allowed: Optional[Callable[[int], bool]] = None):
             super().__init__()
             self.recorder = recorder
+            self._is_allowed = is_allowed
 
         def wants_opus(self) -> bool:
             return False
 
         def write(self, user, data: "voice_recv.VoiceData") -> None:
             if user is None or not getattr(data, "pcm", None):
+                return
+            if self._is_allowed is not None and not self._is_allowed(user.id):
                 return
             self.recorder.feed(
                 user.id,
@@ -270,7 +288,7 @@ if VOICE_RECV_AVAILABLE:
 else:
 
     class OmniMixSink:  # type: ignore[no-redef]
-        def __init__(self, recorder):
+        def __init__(self, recorder, is_allowed=None):
             raise RuntimeError("discord-ext-voice-recv not installed")
 
 
@@ -336,8 +354,9 @@ class DiscordOmniPlayer:
                 while vc.is_playing():
                     await asyncio.sleep(0.05)
                 self._playing = True
-                tmp = Path(tempfile.mktemp(suffix=".wav"))
-                tmp.write_bytes(wav)
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as _tf:
+                    _tf.write(wav)
+                    tmp = Path(_tf.name)
                 done = asyncio.Event()
 
                 def _after(err, _ev=done):
@@ -485,7 +504,9 @@ class DiscordOmniController:
             return {"success": False, "error": f"mode={self.mode!r} produced no backend"}
 
         recorder = DiscordOmniRecorder(
-            loop, on_speaker=lambda name, g=guild_id: self._inject_speaker(g, name)
+            loop,
+            on_speaker=lambda name, g=guild_id: self._inject_speaker(g, name),
+            emit_silence=getattr(backend, "needs_silence", False),
         )
         player = DiscordOmniPlayer(lambda g=guild_id: self._vcs.get(g), loop)
 
@@ -505,8 +526,17 @@ class DiscordOmniController:
         self._recorders[guild_id] = recorder
         self._add_tools_once(session)
 
-        await session.start(tool_specs=self._tool_specs())
-        vc.listen(OmniMixSink(recorder))  # begin feeding after the loop is up
+        try:
+            await session.start(tool_specs=self._tool_specs())
+        except Exception as e:  # noqa: BLE001 - roll back partial registration
+            self._sessions.pop(guild_id, None)
+            self._recorders.pop(guild_id, None)
+            self._vcs.pop(guild_id, None)
+            logger.warning("Omni attach failed, rolled back guild %s: %s", guild_id, e)
+            return {"success": False, "error": str(e)}
+
+        is_allowed = getattr(self.interface, "is_voice_allowed", None)
+        vc.listen(OmniMixSink(recorder, is_allowed))  # feeding starts after loop is up
         logger.info("Omni attached to guild %s (backend=%s)", guild_id, backend.backend_name)
         return {"success": True, "backend": backend.backend_name}
 

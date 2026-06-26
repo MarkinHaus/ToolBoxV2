@@ -72,6 +72,8 @@ class DiscordCLIExtension:
         self.voice_mode = None  # VoiceModeExtension
         self._discord_task: Optional[Thread] = None
         self._connected = False
+        # Voice backend mode: "omni_cloud" (streaming S2S) | "pipeline" (classic turn)
+        self._omni_mode = "omni_cloud"
 
     async def handle_command(self, args: list[str]):
         """
@@ -159,12 +161,16 @@ class DiscordCLIExtension:
             from .discord_interface import create_discord_interface
             from .voice_mode import create_voice_mode, VOICE_RECV_AVAILABLE
 
-            # Agent holen
-            agent = await self.host.isaa_tools.get_agent(self.host.active_agent_name)
+            # Self-Agent (operator's full agent) — admins can switch to it
+            self_agent = await self.host.isaa_tools.get_agent(self.host.active_agent_name)
+
+            # Dedicated public moderator agent (discord-only tools, safe to expose)
+            moderator_agent = await self.host.isaa_tools.get_agent("discord_moderator")
 
             # Interface erstellen
             self.interface = create_discord_interface(
-                agent=agent,
+                agent=moderator_agent,
+                self_agent=self_agent,
                 token=token,
                 respond_to_mentions_only=True,
                 tts_backend="groq",
@@ -174,7 +180,7 @@ class DiscordCLIExtension:
             )
 
             # Voice Mode hinzufügen
-            self.voice_mode = create_voice_mode(self.interface)
+            self.voice_mode = create_voice_mode(self.interface, omni_mode=self._omni_mode)
 
             # In Background Task starten
             self._discord_task = get_app().run_bg_task_advanced(self._run_discord)
@@ -496,9 +502,40 @@ class DiscordCLIExtension:
             await self._voice_set(sub_args)
         elif cmd == "channels":
             await self._voice_channels()
+        elif cmd == "backend":
+            await self._voice_backend(sub_args)
         else:
             print_status(f"Unknown voice command: {cmd}", "error")
             await self._show_voice_help()
+
+    async def _voice_backend(self, args: list[str]):
+        """/discord voice backend <omni|pipeline> — select the voice mode.
+
+        omni     -> omni_cloud streaming S2S (server VAD ends turns)
+        pipeline -> classic STT->LLM->TTS turn pipeline (own VAD, needs silence)
+        """
+        _MAP = {
+            "omni": "omni_cloud", "cloud": "omni_cloud", "streaming": "omni_cloud",
+            "pipeline": "pipeline", "classic": "pipeline", "turn": "pipeline",
+        }
+        if not args:
+            print_status(f"Current voice backend: {self._omni_mode}", "info")
+            print_status("Usage: /discord voice backend <omni|pipeline>", "info")
+            return
+
+        choice = _MAP.get(args[0].lower())
+        if choice is None:
+            print_status(f"Unknown backend: {args[0]} (use omni|pipeline)", "error")
+            return
+
+        ctrl = getattr(self.voice_mode, "omni_controller", None)
+        if ctrl is not None and getattr(ctrl, "_sessions", None):
+            print_status("Active voice session — leave and rejoin to apply.", "warning")
+
+        self._omni_mode = choice
+        if ctrl is not None:
+            ctrl.mode = choice  # next attach() builds this backend
+        print_status(f"Voice backend -> {choice} (effective on next join)", "success")
 
     async def _show_voice_help(self):
         """Zeigt Voice-Hilfe"""
