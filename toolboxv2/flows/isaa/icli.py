@@ -13321,39 +13321,154 @@ class ISAA_Host:
             import traceback
             c_print(traceback.format_exc())
 
-    # ─── Add to ICli class ────────────────────────────────────────────────────────
+    # ─── ICli agent monitored ────────────────────────────────────────────────────────
 
-    async def run_agent_for_web(self, agent_name: str, query: str):
+    async def run_agent_monitored(
+        self,
+        agent_name: str,
+        query: str,
+        kind: str = "native",
+        session_id: str | None = None,
+        take_focus: bool = False,
+        should_speak: bool = False,
+        system_prompt_override: str | None = None,
+        user_lightning_model: bool = False,
+    ):
         """
-        Web-facing agent entry point.
-
-        Uses the same execution pipeline as _handle_agent_interaction but:
-          - kind="web" (Zen+ / monitor filtering)
-          - take_focus=False (web queries don't steal terminal focus)
-          - should_speak=False (TTS is done web-side via AudioStreamPlayer
-                                in icli_web.client, not self.audio_player)
-
-        Yields raw stream chunks to the caller (icli_web.client.IcliWebClient)
-        while simultaneously feeding _drain_agent_stream which updates
-        _task_views and publishes to the registry.
-
-        Cancellation: if the caller cancels (browser disconnect), we cancel
-        the drain task too so the agent stops burning tokens.
+        Generischer Einstiegspunkt, um einen Agenten nativ auszuführen.
+        Erlaubt es jedem aufrufenden Modul, den Stream live zu konsumieren,
+        während die TUI (Zen+) die Ausführung überwacht und im Dashboard anzeigt.
         """
+        import asyncio
+        effective_session_id = session_id or self.active_session_id
+
         try:
             agent = await self.isaa_tools.get_agent(agent_name)
         except Exception as e:
-            # Surface the error through the stream protocol
+            # Fehler direkt als Stream-Chunk an den Aufrufer zurückgeben
             yield {"type": "error", "message": f"agent '{agent_name}': {e}"}
             return
 
+        # World Model für den Agenten sicherstellen
+        await self._ensure_world_model(agent)
+
+        # Überprüfen, ob die Sitzung fortgesetzt werden soll (#new-ctx logik)
+        wants_new = query.strip().endswith("#new-ctx")
+        effective_query = query.rsplit("#new-ctx", 1)[0].strip() if wants_new else query
+
+        engine = agent._get_execution_engine()
+        resumable_ctx = None
+        run_id = engine._session_last_run.get(effective_session_id)
+        if run_id:
+            resumable_ctx = engine.get_execution(run_id)
+            if resumable_ctx and resumable_ctx.status != "paused":
+                resumable_ctx = None
+
+        # Stream initialisieren (Resume oder neuer Start)
+        if not wants_new and resumable_ctx:
+            original_stream = _resume_as_stream(
+                engine, run_id, self.max_iteration, effective_query
+            )
+        else:
+            # Falls ein Prompt-Template mitgegeben wird, den Query darin einbetten
+            if system_prompt_override:
+                formatted_query = system_prompt_override.replace("{query}", effective_query)
+            else:
+                formatted_query = effective_query
+
+            # Aktive Skills des Host-Systems injizieren
+            if self._active_skill_context:
+                blocks = "\n\n".join(
+                    f"[ACTIVE SKILL: {sid}]\n{instr}"
+                    for sid, instr in self._active_skill_context.items()
+                )
+                formatted_query = f"{blocks}\n\n---\nUser request:\n{formatted_query}"
+
+            original_stream = agent.a_stream(
+                query=formatted_query,
+                session_id=effective_session_id,
+                max_iterations=self.max_iteration,
+                user_lightning_model=user_lightning_model,
+            )
+
+        # Queue für die Abspaltung (Tee) des Streams aufbauen
+        chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=512)
+
+        async def tee_stream():
+            try:
+                async for chunk in original_stream:
+                    try:
+                        chunk_queue.put_nowait(chunk)
+                    except asyncio.QueueFull:
+                        # Falls die Queue voll ist, das älteste Element verwerfen
+                        try:
+                            chunk_queue.get_nowait()
+                        except Exception:
+                            pass
+                        try:
+                            chunk_queue.put_nowait(chunk)
+                        except Exception:
+                            pass
+                    yield chunk
+            finally:
+                await chunk_queue.put(None)  # Sentinel für das Ende des Streams
+
+        stream = tee_stream()
+
+        # Registrierung in der ICli-Zentrale (generiert eine eindeutige Task-ID)
+        exc = self._create_execution(
+            kind=kind,
+            agent_name=agent_name,
+            query=query,
+            async_task=None,
+            stream=stream,
+            take_focus=take_focus,
+        )
+        exc.session_id = effective_session_id
+        task_id = exc.task_id
+
+        # Hintergrund-Task starten, der den Stream für das TUI-Dashboard verarbeitet (entleert)
+        async_task = asyncio.create_task(
+            self._drain_agent_stream(task_id, stream, should_speak=should_speak)
+        )
+        exc.async_task = async_task
+        async_task.add_done_callback(
+            lambda fut: self._on_agent_task_done(task_id, fut)
+        )
+
+        # Stream-Chunks an den ursprünglichen Aufrufer zurückgeben
         try:
+            while True:
+                chunk = await chunk_queue.get()
+                if chunk is None:
+                    break
+                yield chunk
+        except asyncio.CancelledError:
+            # Wenn der Aufrufer den Iterator abbricht, stoppen wir auch den Hintergrund-Task
+            if not async_task.done():
+                async_task.cancel()
+            raise
+        except Exception:
+            if not async_task.done():
+                async_task.cancel()
+            raise
+
+    # ─── ICli web runner ────────────────────────────────────────────────────────
+
+    async def run_agent_for_web(self, agent_name: str, query: str):
+        """
+        Spezifischer Web-Einstiegspunkt, der die verallgemeinerte
+        monitored-Ausführung nutzt.
+        """
+        try:
+            agent = await self.isaa_tools.get_agent(agent_name)
             from toolboxv2.mods.icli_web._icli_web_tool import register_icli_web_tools
             register_icli_web_tools(agent)
         except Exception as e:
             c_print(e)
 
-        WEB_TALK_PROMPT = f"""Du bist im Web-TALK Modus. Alle deine Ausgaben werden dem Nutzer vorgelesen — außer Tool-Calls, die laufen still im Hintergrund.
+        # Definition des Web-Verhaltens
+        WEB_TALK_PROMPT = """Du bist im Web-TALK Modus. Alle deine Ausgaben werden dem Nutzer vorgelesen — außer Tool-Calls, die laufen still im Hintergrund.
 
 ## Verhalten
 
@@ -13375,93 +13490,16 @@ class ISAA_Host:
 
 {query}"""
 
-        # ── Stream: resume or new (same logic as _handle_agent_interaction) ──
-        wants_new = query.strip().endswith("#new-ctx")
-        effective_query = query.rsplit("#new-ctx", 1)[0].strip() if wants_new else query
-
-        engine = agent._get_execution_engine()
-        resumable_ctx = None
-        run_id = engine._session_last_run.get(self.active_session_id)
-        if run_id:
-            resumable_ctx = engine.get_execution(run_id)
-            if resumable_ctx and resumable_ctx.status != "paused":
-                resumable_ctx = None
-
-        if not wants_new and resumable_ctx:
-            original_stream = _resume_as_stream(
-                engine, run_id, self.max_iteration, effective_query
-            )
-        else:
-            # Build the full web prompt only for fresh sessions
-            original_stream = agent.a_stream(
-                query=WEB_TALK_PROMPT.replace(query, effective_query) if wants_new else WEB_TALK_PROMPT,
-                session_id=self.active_session_id,
-                max_iterations=self.max_iteration,
-                user_lightning_model=True
-            )
-
-        # Tee: both _drain_agent_stream AND our caller see every chunk.
-        import asyncio
-        web_queue: asyncio.Queue = asyncio.Queue(maxsize=512)
-
-        async def tee_stream():
-            try:
-                async for chunk in original_stream:
-                    try:
-                        web_queue.put_nowait(chunk)
-                    except asyncio.QueueFull:
-                        # Drop oldest to make room — web view is best-effort,
-                        # monitor is authoritative
-                        try:
-                            web_queue.get_nowait()
-                        except Exception:
-                            pass
-                        try:
-                            web_queue.put_nowait(chunk)
-                        except Exception:
-                            pass
-                    yield chunk
-            finally:
-                await web_queue.put(None)  # sentinel
-
-        stream = tee_stream()
-
-        # Register execution via the canonical factory — same as chat path.
-        exc = self._create_execution(
-            kind="web",
+        async for chunk in self.run_agent_monitored(
             agent_name=agent_name,
             query=query,
-            async_task=None,
-            stream=stream,
+            kind="web",
             take_focus=False,
-        )
-        task_id = exc.task_id
-
-        # Drain consumer (handles _ingest_chunk → registry → monitor SSE)
-        async_task = asyncio.create_task(
-            self._drain_agent_stream(task_id, stream, should_speak=False)
-        )
-        exc.async_task = async_task
-        async_task.add_done_callback(
-            lambda fut: self._on_agent_task_done(task_id, fut)
-        )
-
-        # Yield chunks to the web client until sentinel or cancellation
-        try:
-            while True:
-                chunk = await web_queue.get()
-                if chunk is None:
-                    break
-                yield chunk
-        except asyncio.CancelledError:
-            # Browser disconnected or orb explicitly cancelled
-            if not async_task.done():
-                async_task.cancel()
-            raise
-        except Exception:
-            if not async_task.done():
-                async_task.cancel()
-            raise
+            should_speak=False,
+            system_prompt_override=WEB_TALK_PROMPT,
+            user_lightning_model=True
+        ):
+            yield chunk
 
     # =========================================================================
     # UNIFIED EXECUTION FACTORY
