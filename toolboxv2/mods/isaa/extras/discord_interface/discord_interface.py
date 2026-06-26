@@ -1140,6 +1140,8 @@ class DiscordInterface:
         self_agent: "FlowAgent | None" = None,
         moderator_safelist: Optional[set[str]] = None,
         voice_user_ids: Optional[list[int]] = None,
+        host: Any = None,
+        runner_loop: Any = None,
     ):
         # `agent` is the public moderator agent (safe-exposed, discord-only tools).
         # `self_agent` is the operator's full agent — admins can switch to it.
@@ -1151,6 +1153,10 @@ class DiscordInterface:
         self.admin_ids = admin_ids or []
         # Extra non-admin user IDs allowed to interact via voice "like admins".
         self.voice_user_ids = voice_user_ids or []
+        # icli runner bridge: when launched from icli, route agent runs through
+        # host.run_agent_monitored (on the icli loop) so they show in the dashboard.
+        self.host = host
+        self.runner_loop = runner_loop
         self.moderator_safelist = (
             moderator_safelist if moderator_safelist is not None
             else set(self.MODERATOR_SAFE_TOOLS)
@@ -1377,7 +1383,7 @@ class DiscordInterface:
                         return
 
                 # Resolve which agent + session this message routes to
-                agent, session_id = self._resolve_route(ctx)
+                agent, agent_name, session_id = self._resolve_route(ctx)
 
                 # Omni one-shot: audio attachment -> S2S audio reply (reuses a_audio)
                 omni = getattr(self, "omni_controller", None)
@@ -1407,10 +1413,10 @@ class DiscordInterface:
                 if self.bot.user:
                     agent_input = agent_input.replace(f"<@{self.bot.user.id}>", "").strip()
 
-                # Call Agent (resolved above)
-                response = await agent.a_run(
-                    query=agent_input,
-                    session_id=session_id,
+                # Call Agent through the icli runner (visible in dashboard) when
+                # available, else direct.
+                response = await self._run_via_runner(
+                    agent, agent_name, agent_input, session_id
                 )
 
                 # Route Response
@@ -1444,7 +1450,7 @@ class DiscordInterface:
         return f"discord_{ctx.source_address.replace('://', '_').replace('/', '_')}"
 
     def _resolve_route(self, ctx: MessageContext):
-        """Pick (agent, session_id) for this message based on admin prefs.
+        """Pick (agent, agent_name, session_id) for this message based on admin prefs.
 
         Non-admins always get the moderator on an isolated session.
         Admins may switch to the self agent and/or the shared default session.
@@ -1456,12 +1462,38 @@ class DiscordInterface:
             and self.self_agent is not None
         )
         agent = self.self_agent if want_self else self.moderator_agent
+        agent_name = getattr(getattr(agent, "amd", None), "name", None) or "discord_moderator"
 
         use_default = (
             ctx.user_id in self.admin_ids and pref.get("session") == "default"
         )
         session_id = "default" if use_default else self._isolated_session_id(ctx)
-        return agent, session_id
+        return agent, agent_name, session_id
+
+    async def _run_via_runner(self, agent, agent_name: str, query: str, session_id: str) -> str:
+        """Run through the icli dashboard runner if available (visible in TUI),
+        else fall back to a direct a_run. Bridges the icli loop from the Discord
+        thread's own loop and returns only the final answer text."""
+        if self.host is None or self.runner_loop is None:
+            return await agent.a_run(query=query, session_id=session_id)
+
+        from .discord_omni_io import bridge_monitored_stream
+
+        async def _collect():  # consumed on the Discord loop; pump runs on icli loop
+            result, err = "", None
+            async for ch in bridge_monitored_stream(
+                self.host, self.runner_loop, agent_name, query, session_id, "discord"
+            ):
+                t = ch.get("type")
+                if t in ("final_answer", "max_iterations"):
+                    result = ch.get("answer", "") or result
+                elif t == "error":
+                    err = ch.get("message") or ch.get("error")
+            if err and not result:
+                return f"⚠️ {err}"
+            return result
+
+        return await _collect()
 
     def _handle_admin_command(self, ctx: MessageContext) -> Optional[str]:
         """Parse !agent / !session / !whoami. Returns reply text, or None if not a command."""
@@ -1687,6 +1719,8 @@ def create_discord_interface(
     self_agent: "FlowAgent | None" = None,
     moderator_safelist: Optional[set[str]] = None,
     voice_user_ids: Optional[list[int]] = None,
+    host: Any = None,
+    runner_loop: Any = None,
 ) -> DiscordInterface:
     """
     Factory für DiscordInterface.
@@ -1745,4 +1779,6 @@ def create_discord_interface(
         self_agent=self_agent,
         moderator_safelist=moderator_safelist,
         voice_user_ids=voice_user_ids,
+        host=host,
+        runner_loop=runner_loop,
     )

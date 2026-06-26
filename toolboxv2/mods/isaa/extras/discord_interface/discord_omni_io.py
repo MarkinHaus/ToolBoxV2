@@ -380,6 +380,58 @@ class DiscordOmniPlayer:
 
 
 # ---------------------------------------------------------------------------
+# icli-runner bridge — route agent runs through host.run_agent_monitored so
+# they appear in the icli dashboard, across the Discord thread's own loop.
+# ---------------------------------------------------------------------------
+
+def bridge_monitored_stream(host, icli_loop, agent_name, query, session_id, kind):
+    """Drive host.run_agent_monitored ON the icli loop; expose its chunks as an
+    async generator consumed on the CALLER's loop (Discord runs on its own loop
+    via run_bg_task_advanced). Chunks cross loops through a threadsafe handoff."""
+    async def _agen():
+        out: "asyncio.Queue" = asyncio.Queue()
+        caller_loop = asyncio.get_running_loop()
+
+        async def _pump():  # runs on the icli loop
+            try:
+                async for ch in host.run_agent_monitored(
+                    agent_name, query, kind=kind, session_id=session_id
+                ):
+                    caller_loop.call_soon_threadsafe(out.put_nowait, ch)
+            except Exception as e:  # noqa: BLE001
+                caller_loop.call_soon_threadsafe(
+                    out.put_nowait, {"type": "error", "message": str(e)}
+                )
+            finally:
+                caller_loop.call_soon_threadsafe(out.put_nowait, None)
+
+        asyncio.run_coroutine_threadsafe(_pump(), icli_loop)
+        while True:
+            ch = await out.get()
+            if ch is None:
+                return
+            yield ch
+
+    return _agen()
+
+
+class _MonitoredAgentProxy:
+    """Stands in for a FlowAgent in omni's make_agent_tools provider. Its only
+    job: a_stream(query, session_id) bridges to host.run_agent_monitored so omni
+    delegations show up in the icli dashboard. omni only ever calls a_stream."""
+
+    def __init__(self, host, icli_loop, agent_name: str):
+        self._host = host
+        self._loop = icli_loop
+        self.amd = type("amd", (), {"name": agent_name})()
+
+    def a_stream(self, query, session_id=None, **_kw):
+        return bridge_monitored_stream(
+            self._host, self._loop, self.amd.name, query, session_id, "omni-delegate"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Controller — builds + owns OmniSession(s); mirrors icli _handle_omni_command
 # ---------------------------------------------------------------------------
 
@@ -401,6 +453,10 @@ class DiscordOmniController:
     ):
         self.interface = interface
         self.agent = interface.agent
+        # icli runner bridge (set when launched from icli): route delegations
+        # through host.run_agent_monitored so they show in the dashboard.
+        self.host = getattr(interface, "host", None)
+        self.runner_loop = getattr(interface, "runner_loop", None)
         self.mode = mode
         self.state_path = state_path
         self._sessions: dict[int, OmniSession] = {}
@@ -431,9 +487,18 @@ class DiscordOmniController:
         Uses the GENERIC omni.py tool factories (no icli all_executions needed)."""
         agent = self.agent
         jobs = self._ensure_jobs()
+        # Omni delegations go through the icli runner (visible in dashboard) when
+        # launched from icli; otherwise fall back to the raw agent provider.
+        if self.host is not None and self.runner_loop is not None:
+            _name = getattr(getattr(agent, "amd", None), "name", "default")
+            provider = lambda name="default", _n=_name: _MonitoredAgentProxy(
+                self.host, self.runner_loop, _n
+            )
+        else:
+            provider = lambda name="default": agent
         try:
             if not self._tools_added:
-                agent.add_tools(make_agent_tools(jobs, lambda name="default": agent))
+                agent.add_tools(make_agent_tools(jobs, provider))
                 agent.add_tools(make_vfs_peek_tools(agent, jobs))
 
                 def _history(n: int) -> list:

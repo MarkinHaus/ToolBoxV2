@@ -167,6 +167,10 @@ class DiscordCLIExtension:
             # Dedicated public moderator agent (discord-only tools, safe to expose)
             moderator_agent = await self.host.isaa_tools.get_agent("discord_moderator")
 
+            # _connect runs on the icli event loop; capture it so Discord (own
+            # thread/loop) can bridge agent runs onto the dashboard runner.
+            runner_loop = asyncio.get_running_loop()
+
             # Interface erstellen
             self.interface = create_discord_interface(
                 agent=moderator_agent,
@@ -177,6 +181,8 @@ class DiscordCLIExtension:
                 tts_voice="autumn",
                 stt_backend="groq",
                 language="de",
+                host=self.host,
+                runner_loop=runner_loop,
             )
 
             # Voice Mode hinzufügen

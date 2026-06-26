@@ -5859,6 +5859,136 @@ class ISAA_Host:
         async_task.add_done_callback(lambda fut: self._on_agent_task_done(exc.task_id, fut))
         return exc
 
+    async def run_agent_monitored(
+        self,
+        agent_name: str,
+        query: str,
+        kind: str = "native",
+        session_id: str | None = None,
+        take_focus: bool = False,
+        should_speak: bool = False,
+        system_prompt_override: str | None = None,
+        user_lightning_model: bool = False,
+    ):
+        """
+        Generischer Einstiegspunkt, um einen Agenten nativ auszuführen.
+        Erlaubt es jedem aufrufenden Modul, den Stream live zu konsumieren,
+        während die TUI (Zen+) die Ausführung überwacht und im Dashboard anzeigt.
+        """
+        import asyncio
+        effective_session_id = session_id or self.active_session_id
+
+        try:
+            agent = await self.isaa_tools.get_agent(agent_name)
+        except Exception as e:
+            # Fehler direkt als Stream-Chunk an den Aufrufer zurückgeben
+            yield {"type": "error", "message": f"agent '{agent_name}': {e}"}
+            return
+
+        # World Model für den Agenten sicherstellen
+        await self._ensure_world_model(agent)
+
+        # Überprüfen, ob die Sitzung fortgesetzt werden soll (#new-ctx logik)
+        wants_new = query.strip().endswith("#new-ctx")
+        effective_query = query.rsplit("#new-ctx", 1)[0].strip() if wants_new else query
+
+        engine = agent._get_execution_engine()
+        resumable_ctx = None
+        run_id = engine._session_last_run.get(effective_session_id)
+        if run_id:
+            resumable_ctx = engine.get_execution(run_id)
+            if resumable_ctx and resumable_ctx.status != "paused":
+                resumable_ctx = None
+
+        # Stream initialisieren (Resume oder neuer Start)
+        if not wants_new and resumable_ctx:
+            original_stream = _resume_as_stream(
+                engine, run_id, self.max_iteration, effective_query
+            )
+        else:
+            # Falls ein Prompt-Template mitgegeben wird, den Query darin einbetten
+            if system_prompt_override:
+                formatted_query = system_prompt_override.replace("{query}", effective_query)
+            else:
+                formatted_query = effective_query
+
+            # Aktive Skills des Host-Systems injizieren
+            if self._active_skill_context:
+                blocks = "\n\n".join(
+                    f"[ACTIVE SKILL: {sid}]\n{instr}"
+                    for sid, instr in self._active_skill_context.items()
+                )
+                formatted_query = f"{blocks}\n\n---\nUser request:\n{formatted_query}"
+
+            original_stream = agent.a_stream(
+                query=formatted_query,
+                session_id=effective_session_id,
+                max_iterations=self.max_iteration,
+                user_lightning_model=user_lightning_model,
+            )
+
+        # Queue für die Abspaltung (Tee) des Streams aufbauen
+        chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=512)
+
+        async def tee_stream():
+            try:
+                async for chunk in original_stream:
+                    try:
+                        chunk_queue.put_nowait(chunk)
+                    except asyncio.QueueFull:
+                        # Falls die Queue voll ist, das älteste Element verwerfen
+                        try:
+                            chunk_queue.get_nowait()
+                        except Exception:
+                            pass
+                        try:
+                            chunk_queue.put_nowait(chunk)
+                        except Exception:
+                            pass
+                    yield chunk
+            finally:
+                await chunk_queue.put(None)  # Sentinel für das Ende des Streams
+
+        stream = tee_stream()
+
+        # Registrierung in der ICli-Zentrale (generiert eine eindeutige Task-ID)
+        exc = self._create_execution(
+            kind=kind,
+            agent_name=agent_name,
+            query=query,
+            async_task=None,
+            stream=stream,
+            take_focus=take_focus,
+        )
+        exc.session_id = effective_session_id
+        task_id = exc.task_id
+
+        # Hintergrund-Task starten, der den Stream für das TUI-Dashboard verarbeitet (entleert)
+        async_task = asyncio.create_task(
+            self._drain_agent_stream(task_id, stream, should_speak=should_speak)
+        )
+        exc.async_task = async_task
+        async_task.add_done_callback(
+            lambda fut: self._on_agent_task_done(task_id, fut)
+        )
+
+        # Stream-Chunks an den ursprünglichen Aufrufer zurückgeben
+        try:
+            while True:
+                chunk = await chunk_queue.get()
+                if chunk is None:
+                    break
+                yield chunk
+        except asyncio.CancelledError:
+            # Wenn der Aufrufer den Iterator abbricht, stoppen wir auch den Hintergrund-Task
+            if not async_task.done():
+                async_task.cancel()
+            raise
+        except Exception:
+            if not async_task.done():
+                async_task.cancel()
+            raise
+
     async def _tool_delegate(self, agent_name: str, task: str, wait: bool, session_id: str) -> str:
         """Delegate task — unverändertes Verhalten, nutzt _start_delegation."""
         try:
@@ -13338,138 +13468,6 @@ class ISAA_Host:
             print_status(f"Error: {e}", "error")
             import traceback
             c_print(traceback.format_exc())
-
-    # ─── ICli agent monitored ────────────────────────────────────────────────────────
-
-    async def run_agent_monitored(
-        self,
-        agent_name: str,
-        query: str,
-        kind: str = "native",
-        session_id: str | None = None,
-        take_focus: bool = False,
-        should_speak: bool = False,
-        system_prompt_override: str | None = None,
-        user_lightning_model: bool = False,
-    ):
-        """
-        Generischer Einstiegspunkt, um einen Agenten nativ auszuführen.
-        Erlaubt es jedem aufrufenden Modul, den Stream live zu konsumieren,
-        während die TUI (Zen+) die Ausführung überwacht und im Dashboard anzeigt.
-        """
-        import asyncio
-        effective_session_id = session_id or self.active_session_id
-
-        try:
-            agent = await self.isaa_tools.get_agent(agent_name)
-        except Exception as e:
-            # Fehler direkt als Stream-Chunk an den Aufrufer zurückgeben
-            yield {"type": "error", "message": f"agent '{agent_name}': {e}"}
-            return
-
-        # World Model für den Agenten sicherstellen
-        await self._ensure_world_model(agent)
-
-        # Überprüfen, ob die Sitzung fortgesetzt werden soll (#new-ctx logik)
-        wants_new = query.strip().endswith("#new-ctx")
-        effective_query = query.rsplit("#new-ctx", 1)[0].strip() if wants_new else query
-
-        engine = agent._get_execution_engine()
-        resumable_ctx = None
-        run_id = engine._session_last_run.get(effective_session_id)
-        if run_id:
-            resumable_ctx = engine.get_execution(run_id)
-            if resumable_ctx and resumable_ctx.status != "paused":
-                resumable_ctx = None
-
-        # Stream initialisieren (Resume oder neuer Start)
-        if not wants_new and resumable_ctx:
-            original_stream = _resume_as_stream(
-                engine, run_id, self.max_iteration, effective_query
-            )
-        else:
-            # Falls ein Prompt-Template mitgegeben wird, den Query darin einbetten
-            if system_prompt_override:
-                formatted_query = system_prompt_override.replace("{query}", effective_query)
-            else:
-                formatted_query = effective_query
-
-            # Aktive Skills des Host-Systems injizieren
-            if self._active_skill_context:
-                blocks = "\n\n".join(
-                    f"[ACTIVE SKILL: {sid}]\n{instr}"
-                    for sid, instr in self._active_skill_context.items()
-                )
-                formatted_query = f"{blocks}\n\n---\nUser request:\n{formatted_query}"
-
-            original_stream = agent.a_stream(
-                query=formatted_query,
-                session_id=effective_session_id,
-                max_iterations=self.max_iteration,
-                user_lightning_model=user_lightning_model,
-            )
-
-        # Queue für die Abspaltung (Tee) des Streams aufbauen
-        chunk_queue: asyncio.Queue = asyncio.Queue(maxsize=512)
-
-        async def tee_stream():
-            try:
-                async for chunk in original_stream:
-                    try:
-                        chunk_queue.put_nowait(chunk)
-                    except asyncio.QueueFull:
-                        # Falls die Queue voll ist, das älteste Element verwerfen
-                        try:
-                            chunk_queue.get_nowait()
-                        except Exception:
-                            pass
-                        try:
-                            chunk_queue.put_nowait(chunk)
-                        except Exception:
-                            pass
-                    yield chunk
-            finally:
-                await chunk_queue.put(None)  # Sentinel für das Ende des Streams
-
-        stream = tee_stream()
-
-        # Registrierung in der ICli-Zentrale (generiert eine eindeutige Task-ID)
-        exc = self._create_execution(
-            kind=kind,
-            agent_name=agent_name,
-            query=query,
-            async_task=None,
-            stream=stream,
-            take_focus=take_focus,
-        )
-        exc.session_id = effective_session_id
-        task_id = exc.task_id
-
-        # Hintergrund-Task starten, der den Stream für das TUI-Dashboard verarbeitet (entleert)
-        async_task = asyncio.create_task(
-            self._drain_agent_stream(task_id, stream, should_speak=should_speak)
-        )
-        exc.async_task = async_task
-        async_task.add_done_callback(
-            lambda fut: self._on_agent_task_done(task_id, fut)
-        )
-
-        # Stream-Chunks an den ursprünglichen Aufrufer zurückgeben
-        try:
-            while True:
-                chunk = await chunk_queue.get()
-                if chunk is None:
-                    break
-                yield chunk
-        except asyncio.CancelledError:
-            # Wenn der Aufrufer den Iterator abbricht, stoppen wir auch den Hintergrund-Task
-            if not async_task.done():
-                async_task.cancel()
-            raise
-        except Exception:
-            if not async_task.done():
-                async_task.cancel()
-            raise
 
     # ─── ICli web runner ────────────────────────────────────────────────────────
 
