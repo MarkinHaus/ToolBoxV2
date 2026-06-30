@@ -3,15 +3,15 @@
 ToolBoxV2 CI Pipeline — Build · Test · Report · Upload
 
 Usage:
-    tb fbuild build                    # Pack features → wheel/sdist
-    tb fbuild test                     # Build + venv-isolated tests per feature
-    tb fbuild upload --test            # Upload to test.pypi.org
-    tb fbuild upload --prod            # Upload to pypi.org
-    tb fbuild deps --analyze           # Show dependency map
-    tb fbuild deps --update            # Check for newer versions
-    tb fbuild deps --minimize          # Rewrite pyproject.toml base deps to mini-only
-    tb fbuild all --test               # Full pipeline → test.pypi
-    tb fbuild all --prod               # Full pipeline → pypi
+    tb build build                    # Pack features → wheel/sdist
+    tb build test                     # Build + venv-isolated tests per feature
+    tb build upload --test            # Upload to test.pypi.org
+    tb build upload --prod            # Upload to pypi.org
+    tb build deps --analyze           # Show dependency map
+    tb build deps --update            # Check for newer versions
+    tb build deps --minimize          # Rewrite pyproject.toml base deps to mini-only
+    tb build all --test               # Full pipeline → test.pypi
+    tb build all --prod               # Full pipeline → pypi
 """
 from __future__ import annotations
 
@@ -185,11 +185,13 @@ def create_manifest_in():
     )
     (ROOT / "MANIFEST.in").write_text(content, encoding="utf-8")
 
-def cmd_build() -> list[dict]:
+def cmd_build(only_feature: str | None = None) -> list[dict]:
     """Pack features + create wheel/sdist."""
     console.rule("BUILD")
 
     features = discover_features()
+    if only_feature:
+        features = {k: v for k, v in features.items() if k == only_feature}
     if not features:
         _p("  ✗ Keine Features gefunden", style="red")
         return []
@@ -425,7 +427,7 @@ def cmd_test(only_feature: str | None = None, do_build=True) -> list[dict]:
     #if not wheel:
     #    _p("  Kein wheel gefunden — baue zuerst ...")
     if do_build:
-        cmd_build()
+        cmd_build(only_feature=only_feature)
     wheel = _find_wheel()
     if not wheel:
         _p("  ✗ Build fehlgeschlagen", style="red")
@@ -911,7 +913,8 @@ def main():
     )
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("build", help="Pack features + create wheel/sdist")
+    p_build = sub.add_parser("build", help="Pack features + create wheel/sdist")
+    p_build.add_argument("--feature", help="Nur dieses Feature packen (z.B. mini, web)")
 
     p_test = sub.add_parser("test", help="Build + isolated venv tests per feature")
     p_test.add_argument("--feature", help="Nur dieses Feature testen (z.B. mini, web)")
@@ -940,7 +943,7 @@ def main():
     console.rule(f"ToolBoxV2 CI — {args.command}")
 
     if args.command == "build":
-        cmd_build()
+        cmd_build(only_feature=args.feature)
 
 
     elif args.command == "test":

@@ -710,17 +710,19 @@ class Tools(MainTool):
 
             if self.spec == "app":
                 self.load_keys_from_env()
-                from .extras.agent_ui import initialize
+                try:
+                    from .extras.agent_ui import initialize
+                    initialize(self.app)
+                    self.app.run_any(
+                        ("CloudM", "add_ui"),
+                        name="AgentUI",
+                        title="FlowAgent Chat",
+                        description="Chat with your FlowAgents",
+                        path="/",
+                    )
+                except Exception as e:
+                    pass
 
-                initialize(self.app)
-
-                self.app.run_any(
-                    ("CloudM", "add_ui"),
-                    name="AgentUI",
-                    title="FlowAgent Chat",
-                    description="Chat with your FlowAgents",
-                    path="/",
-                )
 
             Path(f"{get_app('isaa-initIsaa').data_dir}/Agents/").mkdir(
                 parents=True, exist_ok=True

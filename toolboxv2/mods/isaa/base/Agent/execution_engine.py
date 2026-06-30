@@ -2087,6 +2087,8 @@ BEISPIELE:
                     "subtype": subtype
                 })
 
+            yield {"type": "status", "status_msg": f"TYPE:{task_type}/{subtype}"}
+
             try:
                 while ctx.current_iteration < ctx.max_iterations:
 

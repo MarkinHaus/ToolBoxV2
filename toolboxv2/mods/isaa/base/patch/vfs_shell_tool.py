@@ -1264,6 +1264,25 @@ def make_vfs_view(session: "AgentSessionV2"):
         try:
             np = vfs._normalize_path(path)
 
+            # ── Directory Tree Mode ──────────────────────────────────────
+            # When path is a directory (not a file), return its tree
+            # structure with depth=3 instead of a confusing "file not
+            # found" error.  Agents exploring the VFS need a clear overview
+            # of the folder contents before diving into individual files.
+            if vfs._is_directory(np):
+                tree = vfs._build_tree_string(np, prefix="", max_depth=3)
+                display = np if np != "/" else "<root>"
+                header = f"📁 Directory tree of {display} (depth=3)\n"
+                header += f"   {'─' * 60}\n"
+                return {
+                    "success": True,
+                    "path": np,
+                    "content": header + (tree if tree else "(empty directory)"),
+                    "showing": f"directory tree (depth=3) of {np}",
+                    "mode": "vfs_shell tree",
+                    "depth": 3,
+                }
+
             if not vfs._is_file(np):
                 return {"success": False, "error": f"file not found: {path}"}
 
