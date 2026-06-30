@@ -21,13 +21,13 @@ def setup_default_adapters(router: CompletionRouter, env: dict | None = None):
         adapter = OpenAICompatAdapter(os.getenv("NINEROUTER_URL", "http://localhost:20128/v1"))
         if os.getenv("NINEROUTER_URL", "").count("https://9router.") == 1:
 
-            def build_headers(self, api_key: str) -> dict:
+            def build_headers(api_key: str) -> dict:
                 """Default: Bearer token. Subclass overrides for x-api-key etc."""
                 import base64
                 auth_str = f'{os.getenv("NINEROUTER_USER", "")}:{os.getenv("NINEROUTER_PASSWORD", "")}'
                 auth_b64 = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
 
-                headers = {"Content-Type": "application/json", **self.default_headers}
+                headers = {"Content-Type": "application/json", **adapter.default_headers}
 
                 headers["Authorization"] = f"Basic {auth_b64}"
                 if api_key:
