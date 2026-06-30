@@ -100,8 +100,8 @@ Ohne aktives Pruning bloated sich das gesamte System über Zeit.
 7. CLEANUP & PRUNING ⚠️ KRITISCH — NICHT ÜBERSPRINGEN!
    - dream_act({"action":"cleanup","payload":{"scope":"all"}})    → führt alle Cleanup-Phasen in einem Call aus
      scope kann sein: "all" (skills+rules+personas), "skills", "rules", "personas"
-     Skills: LÖSCHEN conf<0.15+≥5 uses, DEAKTIVIEREN 3+ Cycles ohne Match, MERGEN Duplikate, COMPRIMIEREN bloat>70%
-     Rules: LÖSCHEN conf<0.2, ZUSAMMENFASSEN Duplikate, LÖSCHEN 5+ Cycles ohne Match, PRUNEN unused patterns
+     Skills: MERGEN Duplikate, COMPRIMIEREN bloat>70%
+     Rules: LÖSCHEN conf<0.2, ZUSAMMENFASSEN Duplikate, LÖSCHEN 50+ Cycles ohne Match, PRUNEN unused patterns
      Personas: LÖSCHEN conf<0.25+≥5 evidence, LÖSCHEN 0 usage+≥3 Cycles
    - Einzel-Delete: dream_act({"action":"delete_skill","payload":{"skill_id":"...","reason":"..."}})
 
