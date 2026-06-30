@@ -31,7 +31,7 @@ def setup_default_adapters(router: CompletionRouter, env: dict | None = None):
 
                 headers["Authorization"] = f"Basic {auth_b64}"
                 if api_key:
-                    headers["X-API-Key"] = f"Bearer {api_key}"
+                    headers["X-API-Key"] = api_key
 
                 return headers
 
