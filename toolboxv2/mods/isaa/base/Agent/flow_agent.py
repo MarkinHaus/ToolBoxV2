@@ -1125,23 +1125,35 @@ class FlowAgent:
                         **followup_kwargs,
                     )
                     if use_stream:
+                        # Die Rekursion yieldet Streaming-Chunks UND als LETZTEN Wert
+                        # ihr terminales Ergebnis. Nur echte Chunks weiterreichen/
+                        # callbacken; der letzte Wert ist das Ergebnis und darf NICHT
+                        # als Chunk in Stream/Callback leaken (sonst falscher last-Wert).
+                        _sentinel = object()
+                        _prev = _sentinel
                         async for _chunk in result_to_return_or_internal_stream():
-                            if isinstance(_chunk, str):
-                                final_text_content = _chunk
-                            yield _chunk
-                            if stream_callback:
-                                _pos_coro = stream_callback(_chunk)
-                                if asyncio.iscoroutine(_pos_coro):
-                                    await _pos_coro
-                    elif isinstance(result_to_return_or_internal_stream, str):
-                        final_text_content += result_to_return_or_internal_stream
-                        yield result_to_return_or_internal_stream
+                            if _prev is not _sentinel:
+                                yield _prev
+                                if stream_callback:
+                                    _pos_coro = stream_callback(_prev)
+                                    if asyncio.iscoroutine(_pos_coro):
+                                        await _pos_coro
+                            _prev = _chunk
+                        rec_result = _prev if _prev is not _sentinel else None
                     else:
-                        content = result_to_return_or_internal_stream.content
-                        tool_calls = result_to_return_or_internal_stream.tool_calls
-                        final_message.content = content or '' if final_message.content else content or ''
-                        yield final_message.content
-                        final_message.tool_calls.append(tool_calls) if final_message.tool_calls and tool_calls else None
+                        rec_result = result_to_return_or_internal_stream
+
+                        # Die finale Rekursions-Antwort (nach Tool-Ausführung) ERSETZT den
+                        # transienten Vor-Tool-Text ("Ich hole gerade ..."). Nur wenn die
+                        # Rekursion nichts liefert, bleibt der bisherige Text (Fallback ->
+                        # nie leere Rückgabe).
+                    _rec_text = rec_result if isinstance(rec_result, str) else (
+                            getattr(rec_result, "content", "") or "")
+                    if _rec_text.strip():
+                        final_text_content = _rec_text
+                        final_message.content = _rec_text
+                    if get_response_message and getattr(rec_result, "tool_calls", None):
+                        final_message.tool_calls = (final_message.tool_calls or []) + rec_result.tool_calls
 
                 result_to_return = final_message if get_response_message else (final_text_content or "")
 
