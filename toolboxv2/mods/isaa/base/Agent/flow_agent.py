@@ -645,6 +645,7 @@ class FlowAgent:
         stream_callback: Callable = False,
         _media_retry: int = 0,
         _removed_types: list[str] | None = None,
+        max_iterations: int = 1,
         **kwargs,
     ) -> str | Any:
 
@@ -1091,7 +1092,7 @@ class FlowAgent:
                 result_to_return = final_message if get_response_message else (final_text_content or "")
 
                 # Wenn Tool-Ausführung in FlowAgent verlangt war
-                if do_tool_execution and original_tools and reconstructed_tool_calls:
+                if do_tool_execution and max_iterations >= 1 and original_tools and reconstructed_tool_calls :
                     tool_response = await self.run_tool_response(final_message, session_id)
                     llm_kwargs["messages"] = original_messages + [
                         {
@@ -1102,7 +1103,7 @@ class FlowAgent:
                     ] + tool_response
                     llm_kwargs["tools"] = original_tools
 
-                    yield await self.a_run_llm_completion(
+                    result_to_return_or_internal_stream = await self.a_run_llm_completion(
                         llm_kwargs["messages"],
                         model_preference,
                         with_context,
@@ -1112,8 +1113,21 @@ class FlowAgent:
                         session_id,
                         _media_retry=_media_retry,
                         _removed_types=_removed_types,
+                        max_iterations=max_iterations-1
                         **kwargs,
                     )
+                    if use_stream:
+                        _last = None
+                        async for _chunk in result_to_return_or_internal_stream():
+                            _last = _chunk
+                            yield _chunk
+                            if stream_callback:
+                                _pos_coro = stream_callback(_chunk)
+                                if asyncio.iscoroutine(_pos_coro):
+                                    await _pos_coro
+                        result_to_return = _last
+                    else:
+                        result_to_return = result_to_return_or_internal_stream
 
                 # NEU: Audit-Log Success (mit echten Kosten aus der Response)
                 try:
@@ -1240,7 +1254,7 @@ class FlowAgent:
         async for chunk in internal_stream():
             last = chunk
             if stream_callback:
-                pos_coro = stream_callback(last)
+                pos_coro = stream_callback(chunk)
                 if asyncio.iscoroutine(pos_coro):
                     await pos_coro
         return last
