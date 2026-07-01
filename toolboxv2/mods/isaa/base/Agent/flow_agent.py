@@ -1279,7 +1279,8 @@ class FlowAgent:
 
         last = None
         async for chunk in internal_stream():
-            last = chunk
+            if chunk:
+                last = chunk
             if stream_callback:
                 pos_coro = stream_callback(chunk)
                 if asyncio.iscoroutine(pos_coro):
