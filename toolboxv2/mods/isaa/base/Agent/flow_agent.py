@@ -1104,13 +1104,15 @@ class FlowAgent:
                     llm_kwargs["tools"] = original_tools
 
                     result_to_return_or_internal_stream = await self.a_run_llm_completion(
-                        llm_kwargs["messages"],
-                        model_preference,
-                        with_context,
-                        stream,
-                        get_response_message,
-                        task_id,
-                        session_id,
+                        messages=llm_kwargs["messages"],
+                        model_preference=model_preference,
+                        with_context=with_context,
+                        stream=stream,
+                        get_response_message=get_response_message,
+                        task_id=task_id,
+                        session_id=session_id,
+                        do_tool_execution=do_tool_execution,
+                        stream_callback=stream_callback,
                         _media_retry=_media_retry,
                         _removed_types=_removed_types,
                         max_iterations=max_iterations-1,
