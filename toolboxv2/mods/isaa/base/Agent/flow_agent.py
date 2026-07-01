@@ -1113,7 +1113,7 @@ class FlowAgent:
                         session_id,
                         _media_retry=_media_retry,
                         _removed_types=_removed_types,
-                        max_iterations=max_iterations-1
+                        max_iterations=max_iterations-1,
                         **kwargs,
                     )
                     if use_stream:

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kurse</title>
+<style>
+  :root { --ink:#111; --acc:#4AEDD9; }
+  html,body { margin:0; height:100%; display:flex; align-items:center; justify-content:center;
+    font-family:system-ui,sans-serif; color:var(--ink); background:#f6f5f2; }
+  .box { text-align:center; }
+  .sq { width:46px; height:46px; margin:0 auto 18px; background:var(--acc);
+    border:3px solid var(--ink); box-shadow:5px 5px 0 var(--ink); animation:spin 1.1s steps(4) infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  h1 { font-size:18px; margin:0 0 4px; }
+  p { color:#555; margin:0; font-size:14px; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <div class="sq"></div>
+    <h1>Hast du einen Kohorten-Link?</h1>
+    <p>Öffne ihn, um zu starten.</p>
+  </div>
+</body>
+</html>

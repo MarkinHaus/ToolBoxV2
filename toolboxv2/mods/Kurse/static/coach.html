@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kurse · Coach</title>
+<style>
+  :root { --ink:#111; --bg:#f6f5f2; --acc:#4AEDD9; --gold:#FCDB05; --grass:#5D8C3E; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,sans-serif; color:var(--ink); background:var(--bg); }
+  header { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:12px 16px;
+           background:#fff; border-bottom:3px solid var(--ink); }
+  h1 { font-size:18px; margin:0; }
+  select, input, textarea, button { font:inherit; border:3px solid var(--ink); }
+  button { cursor:pointer; background:var(--acc); padding:6px 12px; font-weight:700; box-shadow:3px 3px 0 var(--ink); }
+  button:active { transform:translate(2px,2px); box-shadow:1px 1px 0 var(--ink); }
+  button.ghost { background:#fff; box-shadow:none; padding:4px 8px; }
+  main { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:16px; align-items:start; }
+  .card { background:#fff; border:3px solid var(--ink); box-shadow:6px 6px 0 var(--ink); padding:14px; }
+  .card.wide { grid-column:1 / -1; }
+  .card h2 { margin:0 0 10px; font-size:15px; }
+  .file { display:flex; align-items:center; gap:6px; padding:3px 0; border-bottom:1px dashed #ccc; }
+  .file .nm { font-weight:600; cursor:pointer; }
+  .file .ops { margin-left:auto; display:flex; gap:4px; }
+  textarea { width:100%; min-height:200px; padding:8px; font-family:ui-monospace,monospace; font-size:13px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { border:2px solid var(--ink); padding:4px 6px; text-align:left; }
+  tr.stale td { opacity:.55; }
+  td.dots { white-space:nowrap; }
+  .d { display:inline-block; width:11px; height:11px; border:2px solid var(--ink);
+       margin-right:2px; vertical-align:middle; }
+  .d.done { background:var(--grass); }
+  .d.cur { background:var(--acc); }
+  .d.todo { background:#fff; }
+  .d.hopen { background:var(--gold); }
+  .d.hclosed { background:#ddd; }
+  .link { background:var(--gold); padding:6px 8px; border:3px solid var(--ink); word-break:break-all; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:6px 0; }
+  small { color:#555; }
+  .cohort-block { border:2px solid var(--ink); padding:8px; margin:10px 0; }
+  .cohort-block h3 { margin:0 0 6px; font-size:14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎓 Kurse — Coach</h1>
+  <select id="course"></select>
+  <input id="newCourse" placeholder="Neuer Kurs…">
+  <button onclick="addCourse()">+ Kurs</button>
+  <button class="ghost" onclick="delCourse()">Kurs löschen</button>
+  <button class="ghost" onclick="copySkill()" title="Erstellungs-Skill für Claude kopieren">📋 Skill kopieren</button>
+</header>
+<main>
+  <!-- files -->
+  <section class="card">
+    <h2>📄 Dateien (Aufgaben-Blätter)</h2>
+    <div class="row">
+      <input id="fName" placeholder="Dateiname…">
+      <button onclick="addFile()">+ Neue Datei</button>
+    </div>
+    <div id="files"></div>
+  </section>
+
+  <!-- editor -->
+  <section class="card" id="editor" hidden>
+    <h2>📝 <span id="edName"></span></h2>
+    <textarea id="edHtml" placeholder="HTML hier einfügen/bearbeiten (workshop-page Output)…"></textarea>
+    <div class="row">
+      <button onclick="saveFile()">Speichern</button>
+      <button class="ghost" onclick="validateFile()">Testen ✓</button>
+      <button class="ghost" onclick="previewFile()">Vorschau</button>
+      <span id="edMsg"></span>
+    </div>
+  </section>
+
+  <!-- link builder -->
+  <section class="card wide">
+    <h2>🔗 Link erstellen / aktualisieren</h2>
+    <div class="row">
+      <input id="coName" placeholder="Kohorten-Name…">
+      von <select id="coFrom" onchange="refreshAnchor()"></select>
+      bis <select id="coTo" onchange="refreshAnchor()"></select>
+      Einstieg <select id="coAnchor"></select>
+      <button onclick="makeLink()">Link erzeugen</button>
+      <button id="btnUpdate" class="ghost" onclick="updateLink()" hidden>Link aktualisieren</button>
+      <button id="btnCancel" class="ghost" onclick="cancelEdit()" hidden>Abbrechen</button>
+      <small id="editHint"></small>
+    </div>
+    <div id="links"></div>
+  </section>
+
+  <!-- LIVE (top) -->
+  <section class="card wide">
+    <h2>🟢 Live — wer ist gerade wo</h2>
+    <div class="row">
+      <select id="liveCohort"></select>
+      <label><input type="checkbox" id="auto" checked> Auto (4s)</label>
+      <button class="ghost" onclick="loadLive()">Aktualisieren</button>
+    </div>
+    <div id="live"></div>
+  </section>
+
+  <!-- PERSISTENT (bottom) -->
+  <section class="card wide">
+    <h2>🗄️ Verlauf — alle Teilnehmer (persistent)</h2>
+    <div id="hist"></div>
+  </section>
+</main>
+
+<script>
+const J = (u,o)=>fetch(u,Object.assign({credentials:"same-origin",headers:{"Content-Type":"application/json"}},o)).then(r=>r.json());
+let cid=null, files=[], editing=null;
+
+async function boot(){
+  const {courses} = await J("/api/courses");
+  const s=document.getElementById("course"); s.innerHTML="";
+  courses.forEach(c=>s.add(new Option(c.name,c.id)));
+  s.onchange=()=>{cid=s.value; loadFiles(); loadCohorts();};
+  if(courses.length){cid=courses[0].id; loadFiles(); loadCohorts();}
+}
+async function addCourse(){
+  const n=document.getElementById("newCourse").value.trim(); if(!n)return;
+  await J("/api/courses",{method:"POST",body:JSON.stringify({name:n})});
+  document.getElementById("newCourse").value=""; boot();
+}
+async function delCourse(){ if(cid&&confirm("Kurs löschen?")){await J("/api/courses/"+cid,{method:"DELETE"}); boot();} }
+
+// ---- files ---------------------------------------------------------------
+async function loadFiles(){
+  const r=await J("/api/courses/"+cid+"/files"); files=r.files||[];
+  document.getElementById("files").innerHTML = files.length? files.map((f,i)=>`
+    <div class="file">
+      <span class="nm" onclick="edit('${f.id}')">📄 ${f.name}${f.has_html?" ✓":""}</span>
+      <span class="ops">
+        <button class="ghost" onclick="rename('${f.id}')">✎</button>
+        <button class="ghost" onclick="mv('${f.id}',-1)" ${i===0?"disabled":""}>↑</button>
+        <button class="ghost" onclick="mv('${f.id}',1)" ${i===files.length-1?"disabled":""}>↓</button>
+        <button class="ghost" onclick="delFile('${f.id}')">🗑</button>
+      </span></div>`).join("") : "<em>Noch keine Dateien. Lege eine an.</em>";
+  fillLinkSelects();
+}
+async function addFile(){
+  const name=document.getElementById("fName").value.trim(); if(!name)return;
+  await J("/api/files",{method:"POST",body:JSON.stringify({cid,name})});
+  document.getElementById("fName").value=""; loadFiles();
+}
+async function rename(id){
+  const f=files.find(x=>x.id===id); const name=prompt("Neuer Name:",f.name); if(!name)return;
+  await J("/api/files/"+id,{method:"PUT",body:JSON.stringify({cid,name})}); loadFiles();
+}
+async function mv(id,dir){ await J("/api/files/"+id+"/move?cid="+cid+"&dir="+dir,{method:"POST"}); loadFiles(); }
+async function delFile(id){ if(confirm("Datei löschen?")){await J("/api/files/"+id+"?cid="+cid,{method:"DELETE"}); if(editing===id){editing=null;document.getElementById("editor").hidden=true;} loadFiles();} }
+
+async function edit(id){
+  const f=await J("/api/files/"+cid+"/"+id); editing=id;
+  document.getElementById("editor").hidden=false;
+  document.getElementById("edName").textContent=f.name;
+  document.getElementById("edHtml").value=f.html||"";
+  document.getElementById("edMsg").textContent="";
+}
+async function saveFile(){
+  await J("/api/files/"+editing,{method:"PUT",body:JSON.stringify({cid,html:document.getElementById("edHtml").value})});
+  document.getElementById("edMsg").textContent="✓ gespeichert"; loadFiles();
+}
+async function validateFile(){
+  await saveFile();
+  const v=await J("/api/files/"+cid+"/"+editing+"/validate");
+  document.getElementById("edMsg").textContent = (v.ok?"✓ valide  ":"⚠ ")+v.issues.join(" · ");
+}
+function previewFile(){
+  const w=window.open("","_blank");
+  const tag='<'+'script src="/static/kurse.js"><'+'/script>';
+  w.document.write(tag+document.getElementById("edHtml").value);
+  w.document.close();
+}
+
+// ---- skill copy ----------------------------------------------------------
+async function copySkill(){
+  const md=await fetch("/api/skill",{credentials:"same-origin"}).then(r=>r.text());
+  await navigator.clipboard.writeText(md);
+  alert("Erstellungs-Skill in die Zwischenablage kopiert — in Claude einfügen.");
+}
+
+// ---- link builder --------------------------------------------------------
+let cohortsCache=[], editingCohort=null;
+
+function fillLinkSelects(){
+  ["coFrom","coTo"].forEach(id=>{
+    const s=document.getElementById(id); const prev=s.value; s.innerHTML="";
+    files.forEach((f,i)=>s.add(new Option((i+1)+". "+f.name,i)));
+    if(prev!=="") s.value=prev;
+  });
+  if(files.length && document.getElementById("coTo").value==="")
+    document.getElementById("coTo").value=files.length-1;
+  refreshAnchor();
+}
+function refreshAnchor(){                 // Einstieg auto-updates with von/bis
+  const from=+document.getElementById("coFrom").value||0;
+  const to=+document.getElementById("coTo").value||0;
+  const lo=Math.min(from,to), hi=Math.max(from,to);
+  const a=document.getElementById("coAnchor"); const prev=+a.value;
+  a.innerHTML="";
+  for(let i=lo;i<=hi;i++) a.add(new Option((i+1)+". "+files[i].name,i));
+  a.value = (prev>=lo&&prev<=hi)?prev:lo;
+}
+function rangeIds(){
+  const from=+document.getElementById("coFrom").value, to=+document.getElementById("coTo").value;
+  const lo=Math.min(from,to), hi=Math.max(from,to);
+  const ids=files.slice(lo,hi+1).map(f=>f.id);
+  const anchorRel=Math.max(0,Math.min((+document.getElementById("coAnchor").value)-lo,ids.length-1));
+  return {ids, anchorRel, name:document.getElementById("coName").value.trim()||"Kohorte"};
+}
+async function makeLink(){
+  if(!files.length)return alert("Erst Dateien anlegen.");
+  const {ids,anchorRel,name}=rangeIds();
+  await J("/api/cohorts",{method:"POST",body:JSON.stringify({cid,name,session_ids:ids,anchor:anchorRel})});
+  cancelEdit(); document.getElementById("coName").value=""; loadCohorts();
+}
+async function updateLink(){
+  if(!editingCohort)return;
+  const {ids,anchorRel,name}=rangeIds();
+  await J("/api/cohorts/"+editingCohort,{method:"PUT",body:JSON.stringify({name,session_ids:ids,anchor:anchorRel})});
+  cancelEdit(); loadCohorts();
+}
+function editCohort(id){
+  const c=cohortsCache.find(x=>x.id===id); if(!c)return;
+  editingCohort=id;
+  document.getElementById("coName").value=c.name;
+  // map stored file-ids back to their current indexes
+  const idx=c.session_ids.map(sid=>files.findIndex(f=>f.id===sid)).filter(i=>i>=0);
+  if(idx.length){
+    document.getElementById("coFrom").value=Math.min(...idx);
+    document.getElementById("coTo").value=Math.max(...idx);
+  }
+  refreshAnchor();
+  const anchorAbs=idx[c.anchor]!==undefined?idx[c.anchor]:idx[0];
+  document.getElementById("coAnchor").value=anchorAbs;
+  document.getElementById("btnUpdate").hidden=false;
+  document.getElementById("btnCancel").hidden=false;
+  document.getElementById("editHint").textContent="bearbeite: "+c.name+" (gleiche URL)";
+}
+function cancelEdit(){
+  editingCohort=null;
+  document.getElementById("btnUpdate").hidden=true;
+  document.getElementById("btnCancel").hidden=true;
+  document.getElementById("editHint").textContent="";
+}
+async function loadCohorts(){
+  const {cohorts}=await J("/api/cohorts?cid="+cid); cohortsCache=cohorts;
+  document.getElementById("links").innerHTML = cohorts.length? cohorts.map(c=>{
+    const url=location.origin+"/l/"+c.id;
+    return `<div class="row"><b>${c.name}</b> <small>(${c.session_ids.length} Sess.)</small>
+      <span class="link">${url}</span>
+      <button class="ghost" onclick="navigator.clipboard.writeText('${url}')">Kopieren</button>
+      <button class="ghost" onclick="editCohort('${c.id}')">✎ Range</button>
+      <button class="ghost" onclick="delCohort('${c.id}')">🗑</button></div>`;
+  }).join("") : "<em>Noch keine Links.</em>";
+  const lc=document.getElementById("liveCohort"); const prev=lc.value; lc.innerHTML="";
+  cohorts.forEach(c=>lc.add(new Option(c.name,c.id)));
+  if(prev)lc.value=prev;
+  loadLive();
+}
+async function delCohort(id){
+  if(!confirm("Link löschen (inkl. Teilnehmerdaten)?"))return;
+  const r=await J("/api/cohorts/"+id,{method:"DELETE"});
+  if(r&&r.error)alert("Löschen fehlgeschlagen: "+r.error);
+  if(editingCohort===id)cancelEdit();
+  loadCohorts();
+}
+
+// ---- live + persistent ---------------------------------------------------
+function taskDots(cur, total){
+  total=Math.max(total||0, cur+1);
+  let s="";
+  for(let i=0;i<total;i++){
+    const cls = i<cur?"done":(i===cur?"cur":"todo");
+    s+=`<span class="d ${cls}" title="Aufgabe ${i}"></span>`;
+  }
+  return s;
+}
+function hintDots(used, open, total){
+  total = (total!=null? total : 4);
+  if(!total && !used) return "—";
+  total=Math.max(total, used);
+  let s="";
+  for(let i=0;i<total;i++){
+    const cls = i<(used-open)?"hclosed":(i<used?"hopen":"todo");
+    s+=`<span class="d ${cls}" title="Tipp ${i+1}"></span>`;
+  }
+  return s;
+}
+function tableRows(list){
+  return list.map(p=>{
+    const ago=Math.round(Date.now()/1000 - p.last_seen);
+    const stale = ago>120 ? " class='stale'" : "";
+    return `<tr${stale}><td>${p.name}</td><td>Blatt ${p.pos+1}</td>
+      <td class="dots">${taskDots(p.task, p.sheet_tasks)}</td>
+      <td class="dots">${hintDots(p.cur_hints_used, p.cur_hints_open, p.cur_hints_total)}</td>
+      <td>${p.cur_task_since}s</td><td>${p.prev_task_secs}s</td><td>${ago}s</td></tr>`;
+  }).join("");
+}
+const HEAD = `<tr><th>Name</th><th>Blatt</th><th>Aufgabe</th><th>Tipps</th>
+  <th>aktuell</th><th>vorher</th><th>zuletzt</th></tr>`;
+async function loadLive(){
+  const coid=document.getElementById("liveCohort").value;
+  const liveEl=document.getElementById("live"), histEl=document.getElementById("hist");
+  if(!coid){ liveEl.innerHTML=histEl.innerHTML="<em>Keine Kohorte gewählt.</em>"; return; }
+  const {participants}=await J("/api/cohorts/"+coid+"/live");
+  const nowS=Date.now()/1000;
+  const active=participants.filter(p=>nowS-p.last_seen<=120);
+  liveEl.innerHTML = active.length? `<table>${HEAD}${tableRows(active)}</table>` : "<em>Gerade niemand aktiv.</em>";
+  histEl.innerHTML = participants.length? `<table>${HEAD}${tableRows(participants)}</table>` : "<em>Noch niemand beigetreten.</em>";
+}
+setInterval(()=>{ if(document.getElementById("auto").checked) loadLive(); }, 4000);
+
+boot();
+</script>
+</body>
+</html>
