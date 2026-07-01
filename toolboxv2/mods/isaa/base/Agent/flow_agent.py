@@ -1103,7 +1103,7 @@ class FlowAgent:
                     ] + tool_response
                     llm_kwargs["tools"] = original_tools
 
-
+                    print(llm_kwargs["messages"])
                     result_to_return_or_internal_stream = await self.a_run_llm_completion(
                         messages=llm_kwargs["messages"],
                         model_preference=model_preference,
@@ -1119,6 +1119,7 @@ class FlowAgent:
                         max_iterations=max_iterations-1,
                         **kwargs,
                     )
+                    print(result_to_return_or_internal_stream, "result_to_return_or_internal_stream")
                     if use_stream:
                         _last = None
                         async for _chunk in result_to_return_or_internal_stream():
@@ -1129,13 +1130,17 @@ class FlowAgent:
                                 if asyncio.iscoroutine(_pos_coro):
                                     await _pos_coro
 
+                        if get_response_message:
+                            result_to_return.content += f"\n\n {_last}"
+                        else:
+                            result_to_return += f"\n\n {_last}"
                     else:
-                        _last = result_to_return_or_internal_stream
 
-                    if get_response_message:
-                        result_to_return.content += f"\n\n {_last}"
-                    else:
-                        result_to_return += f"\n\n {_last}"
+                        if get_response_message:
+                            result_to_return.content += f"\n\n {result_to_return_or_internal_stream.content}"
+                            result_to_return.tool_calls += result_to_return_or_internal_stream.tool_calls
+                        else:
+                            result_to_return += f"\n\n {result_to_return_or_internal_stream}"
 
                 # NEU: Audit-Log Success (mit echten Kosten aus der Response)
                 try:
