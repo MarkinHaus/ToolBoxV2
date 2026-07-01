@@ -1089,8 +1089,6 @@ class FlowAgent:
                         output_text=final_text_content
                     )
 
-                result_to_return = final_message if get_response_message else (final_text_content or "")
-
                 # Wenn Tool-Ausführung in FlowAgent verlangt war
                 if do_tool_execution and max_iterations >= 1 and original_tools and reconstructed_tool_calls:
                     tool_response = await self.run_tool_response(final_message, session_id)
@@ -1127,33 +1125,25 @@ class FlowAgent:
                         **followup_kwargs,
                     )
                     if use_stream:
-                        _last = None
                         async for _chunk in result_to_return_or_internal_stream():
-                            _last = _chunk
+                            if isinstance(_chunk, str):
+                                final_text_content = _chunk
                             yield _chunk
                             if stream_callback:
                                 _pos_coro = stream_callback(_chunk)
                                 if asyncio.iscoroutine(_pos_coro):
                                     await _pos_coro
-
-                        follow_text = (getattr(_last, "content", _last) or "") if get_response_message else (_last or "")
-                        if get_response_message:
-                            base = result_to_return.content or ""
-                            result_to_return.content = f"{base}\n\n{follow_text}".strip() if base.strip() else follow_text
-                        else:
-                            result_to_return = f"{result_to_return}\n\n{follow_text}".strip() if result_to_return.strip() else follow_text
+                    elif isinstance(result_to_return_or_internal_stream, str):
+                        final_text_content += result_to_return_or_internal_stream
+                        yield result_to_return_or_internal_stream
                     else:
-                        follow = result_to_return_or_internal_stream
-                        if get_response_message:
-                            follow_text = (getattr(follow, "content", follow) or "")
-                            base = result_to_return.content or ""
-                            result_to_return.content = f"{base}\n\n{follow_text}".strip() if base.strip() else follow_text
-                            follow_calls = getattr(follow, "tool_calls", None)
-                            if follow_calls:
-                                result_to_return.tool_calls = (result_to_return.tool_calls or []) + follow_calls
-                        else:
-                            follow_text = follow or ""
-                            result_to_return = f"{result_to_return}\n\n{follow_text}".strip() if result_to_return.strip() else follow_text
+                        content = result_to_return_or_internal_stream.content
+                        tool_calls = result_to_return_or_internal_stream.tool_calls
+                        final_message.content = content or '' if final_message.content else content or ''
+                        yield final_message.content
+                        final_message.tool_calls.append(tool_calls) if final_message.tool_calls and tool_calls else None
+
+                result_to_return = final_message if get_response_message else (final_text_content or "")
 
                 # NEU: Audit-Log Success (mit echten Kosten aus der Response)
                 try:
@@ -1277,7 +1267,7 @@ class FlowAgent:
         if use_stream:
             return internal_stream
 
-        last = None
+        last = ""
         async for chunk in internal_stream():
             if chunk:
                 last = chunk
