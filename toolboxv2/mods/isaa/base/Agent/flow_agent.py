@@ -1125,9 +1125,9 @@ class FlowAgent:
                                 _pos_coro = stream_callback(_chunk)
                                 if asyncio.iscoroutine(_pos_coro):
                                     await _pos_coro
-                        result_to_return = _last
+                        result_to_return = _last or result_to_return
                     else:
-                        result_to_return = result_to_return_or_internal_stream
+                        result_to_return = result_to_return_or_internal_stream or result_to_return
 
                 # NEU: Audit-Log Success (mit echten Kosten aus der Response)
                 try:
