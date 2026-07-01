@@ -48,11 +48,7 @@ _REQUIRED_DEFAULTS: dict[str, str] = {
     "IS_OFFLINE_DB": "true",
     "DB_MODE_KEY": "LC",
     "APP_BASE_URL": "http://localhost:8000",
-    # ISAA: model fallbacks so a bare agent can answer if a key is present.
-    # Empty keys are fine; litellm just errors at call-time, not at import.
-    "FASTMODEL": "ollama/llama3.1",
-    "COMPLEXMODEL": "ollama/llama3.1",
-    "DEFAULTMODELEMBEDDING": "gemini/text-embedding-004",
+
 }
 
 _SECRET_KEYS = ("TB_JWT_SECRET", "TB_COOKIE_SECRET")

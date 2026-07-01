@@ -1539,6 +1539,36 @@ class DiscordInterface:
 
         return await _collect()
 
+    async def _safe_route_response(self, **kwargs) -> dict:
+        """Route response on bot's loop. Bridges cross-loop calls when agent
+        runs via bridge_monitored_stream (icli loop) but discord.py needs bot loop."""
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        bot_loop = self.bot.loop
+        if bot_loop is not None and current_loop is not bot_loop:
+            # Cross-loop: schedule on bot's loop, await result
+            coro = self.router.route_response(**kwargs)
+            future = asyncio.run_coroutine_threadsafe(coro, bot_loop)
+            return await asyncio.wrap_future(future)
+        # Same loop: direct await
+        return await self.router.route_response(**kwargs)
+
+    async def _run_on_bot_loop(self, coro_func):
+        """Run a coroutine function on the bot's loop, bridging cross-loop calls."""
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        bot_loop = self.bot.loop
+        if bot_loop is not None and current_loop is not bot_loop:
+            future = asyncio.run_coroutine_threadsafe(coro_func(), bot_loop)
+            return await asyncio.wrap_future(future)
+        return await coro_func()
+
     def _handle_admin_command(self, ctx: MessageContext) -> Optional[str]:
         """Parse !agent / !session / !whoami. Returns reply text, or None if not a command."""
         parts = ctx.content.strip().split()
@@ -1622,11 +1652,16 @@ class DiscordInterface:
             safe = _resolve_global_file(path)
             if safe is None:
                 return json.dumps({"error": f"file not found or outside global/: {path}"})
-            try:
+
+            async def _send_on_bot_loop():
                 ch = interface.bot.get_channel(int(channel_id)) \
-                    or await interface.bot.fetch_channel(int(channel_id))
+                     or await interface.bot.fetch_channel(int(channel_id))
                 msg = await ch.send(content=caption or None, file=discord.File(str(safe)))
-                return json.dumps({"success": True, "message_id": msg.id, "file": safe.name})
+                return {"success": True, "message_id": msg.id, "file": safe.name}
+
+            try:
+                result = await interface._run_on_bot_loop(_send_on_bot_loop)
+                return json.dumps(result)
             except Exception as e:
                 return json.dumps({"error": str(e)})
 
@@ -1648,7 +1683,7 @@ class DiscordInterface:
             Returns:
                 Result JSON with success status
             """
-            result = await interface.router.route_response(
+            result = await interface._safe_route_response(
                 content=content,
                 target_address=target_address,
                 reply_to=reply_to,
@@ -1698,25 +1733,33 @@ class DiscordInterface:
             Returns:
                 JSON list of recent messages
             """
+
+            async def _send_on_bot_loop():
+                try:
+                    channel = interface.bot.get_channel(channel_id)
+                    if not channel:
+                        channel = await interface.bot.fetch_channel(channel_id)
+
+                    if not channel:
+                        return json.dumps({"error": f"Channel {channel_id} not found"})
+
+                    messages = []
+                    async for msg in channel.history(limit=min(limit, 50)):
+                        messages.append({
+                            "id": msg.id,
+                            "author": msg.author.display_name,
+                            "author_id": msg.author.id,
+                            "content": msg.content[:500],  # Truncate
+                            "timestamp": msg.created_at.isoformat(),
+                        })
+
+                    return json.dumps(messages)
+                except Exception as e:
+                    return json.dumps({"error": str(e)})
+
             try:
-                channel = interface.bot.get_channel(channel_id)
-                if not channel:
-                    channel = await interface.bot.fetch_channel(channel_id)
-
-                if not channel:
-                    return json.dumps({"error": f"Channel {channel_id} not found"})
-
-                messages = []
-                async for msg in channel.history(limit=min(limit, 50)):
-                    messages.append({
-                        "id": msg.id,
-                        "author": msg.author.display_name,
-                        "author_id": msg.author.id,
-                        "content": msg.content[:500],  # Truncate
-                        "timestamp": msg.created_at.isoformat(),
-                    })
-
-                return json.dumps(messages)
+                result = await interface._run_on_bot_loop(_send_on_bot_loop)
+                return result
             except Exception as e:
                 return json.dumps({"error": str(e)})
 

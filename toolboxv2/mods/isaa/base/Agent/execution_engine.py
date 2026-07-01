@@ -2077,6 +2077,7 @@ BEISPIELE:
                 )
                 return chunk
 
+            await asyncio.sleep(0.02)
             task_type = getattr(ctx, "task_type", None)
             subtype = getattr(ctx, "subtype", None)
             if task_type:
@@ -2087,7 +2088,7 @@ BEISPIELE:
                     "subtype": subtype
                 })
 
-            yield {"type": "status", "status_msg": f"TYPE:{task_type}/{subtype}"}
+                yield {"type": "status", "status_msg": f"TYPE:{task_type}/{subtype}"}
 
             try:
                 while ctx.current_iteration < ctx.max_iterations:
@@ -2990,7 +2991,7 @@ BEISPIELE:
                         )
                 except Exception as _pre_err:
                     self.live.log(
-                        f"Pre-injection skipped: {_pre_err}", logging.DEBUG
+                        f"Pre-injection skipped: {_pre_err}", logging.WARNING
                     )
 
             history_depth = 2 if self.is_sub_agent else 6

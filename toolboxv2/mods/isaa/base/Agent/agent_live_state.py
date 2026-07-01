@@ -81,7 +81,7 @@ class AgentLiveState:
         return round(time.time() - self.t_start, 2) if self.t_start else 0.0
 
     # -- engine helpers (replaces every print) --------------------------------
-    def log(self, msg: str, level: int = logging.DEBUG):
+    def log(self, msg: str, level: int = logging.INFO):
         logger.log(level, "[%s|%s/%s] %s", self.agent_name, self.iteration, self.max_iterations, msg)
 
     def enter(self, phase: AgentPhase, msg: str = ""):
