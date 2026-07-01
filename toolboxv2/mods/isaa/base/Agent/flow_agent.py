@@ -657,7 +657,7 @@ class FlowAgent:
             else self.amd.complex_llm_model
         )
 
-        use_stream = True or stream if (stream is not None and stream) or stream_callback is not False else self.stream
+        use_stream  = stream if stream is not None else (bool(stream_callback) or self.stream)
 
         if kwargs.get("tool_choice") is None and (model.startswith("ollama") or model.startswith("cerebras")):
             _tool_choice = None
@@ -1210,6 +1210,7 @@ class FlowAgent:
                         task_id,
                         session_id,
                         do_tool_execution,
+                        stream_callback,
                         _media_retry=_media_retry + 1,
                         _removed_types=new_types,
                         **kwargs,
