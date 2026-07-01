@@ -1092,20 +1092,27 @@ class FlowAgent:
                 result_to_return = final_message if get_response_message else (final_text_content or "")
 
                 # Wenn Tool-Ausführung in FlowAgent verlangt war
-                if do_tool_execution and max_iterations >= 1 and original_tools and reconstructed_tool_calls :
+                if do_tool_execution and max_iterations >= 1 and original_tools and reconstructed_tool_calls:
                     tool_response = await self.run_tool_response(final_message, session_id)
-                    llm_kwargs["messages"] = original_messages + [
+                    followup_messages = original_messages + [
                         {
                             "role": "assistant",
                             "content": final_text_content,
                             "tool_calls": final_message.tool_calls
                         }
                     ] + tool_response
-                    llm_kwargs["tools"] = original_tools
 
-                    print(llm_kwargs["messages"])
+                    # In der letzten erlaubten Runde die Tools entfernen, damit das
+                    # Modell zwingend eine finale Textantwort liefert (statt erneut
+                    # ein Tool aufzurufen, das nicht mehr ausgeführt wird -> sonst
+                    # leere Antwort bzw. nur eine Leerzeile).
+                    followup_kwargs = dict(kwargs)
+                    if max_iterations - 1 <= 0:
+                        followup_kwargs.pop("tools", None)
+                        followup_kwargs.pop("tool_choice", None)
+
                     result_to_return_or_internal_stream = await self.a_run_llm_completion(
-                        messages=llm_kwargs["messages"],
+                        messages=followup_messages,
                         model_preference=model_preference,
                         with_context=with_context,
                         stream=stream,
@@ -1116,10 +1123,9 @@ class FlowAgent:
                         stream_callback=stream_callback,
                         _media_retry=_media_retry,
                         _removed_types=_removed_types,
-                        max_iterations=max_iterations-1,
-                        **kwargs,
+                        max_iterations=max_iterations - 1,
+                        **followup_kwargs,
                     )
-                    print(result_to_return_or_internal_stream, "result_to_return_or_internal_stream")
                     if use_stream:
                         _last = None
                         async for _chunk in result_to_return_or_internal_stream():
@@ -1130,17 +1136,24 @@ class FlowAgent:
                                 if asyncio.iscoroutine(_pos_coro):
                                     await _pos_coro
 
+                        follow_text = (getattr(_last, "content", _last) or "") if get_response_message else (_last or "")
                         if get_response_message:
-                            result_to_return.content += f"\n\n {_last}"
+                            base = result_to_return.content or ""
+                            result_to_return.content = f"{base}\n\n{follow_text}".strip() if base.strip() else follow_text
                         else:
-                            result_to_return += f"\n\n {_last}"
+                            result_to_return = f"{result_to_return}\n\n{follow_text}".strip() if result_to_return.strip() else follow_text
                     else:
-
+                        follow = result_to_return_or_internal_stream
                         if get_response_message:
-                            result_to_return.content += f"\n\n {result_to_return_or_internal_stream.content}"
-                            result_to_return.tool_calls += result_to_return_or_internal_stream.tool_calls
+                            follow_text = (getattr(follow, "content", follow) or "")
+                            base = result_to_return.content or ""
+                            result_to_return.content = f"{base}\n\n{follow_text}".strip() if base.strip() else follow_text
+                            follow_calls = getattr(follow, "tool_calls", None)
+                            if follow_calls:
+                                result_to_return.tool_calls = (result_to_return.tool_calls or []) + follow_calls
                         else:
-                            result_to_return += f"\n\n {result_to_return_or_internal_stream}"
+                            follow_text = follow or ""
+                            result_to_return = f"{result_to_return}\n\n{follow_text}".strip() if result_to_return.strip() else follow_text
 
                 # NEU: Audit-Log Success (mit echten Kosten aus der Response)
                 try:
