@@ -315,5 +315,75 @@ setInterval(()=>{ if(document.getElementById("auto").checked) loadLive(); }, 400
 
 boot();
 </script>
+
+<!-- Consent: only technically necessary storage is used, so this is an
+       informational notice (Kenntnisnahme), not a tracking opt-in. -->
+  <div class="consent" id="consent" hidden>
+    <span>Diese Seite nutzt nur <b>technisch notwendige</b> Speicherung (dein Name lokal im Browser, Login-Sitzung des Coaches). Keine Werbe- oder Tracking-Cookies.</span>
+    <a onclick="openModal()" style="text-decoration:underline;cursor:pointer">Details</a>
+    <button onclick="acceptConsent()">Verstanden</button>
+  </div>
+
+  <div class="modal" id="modal">
+    <div class="modal-box">
+      <button class="close" onclick="closeModal()">✕</button>
+      <h2>Datenschutz — Kurse</h2>
+
+      <p>Verantwortlicher und vollständige Kontaktangaben: siehe
+      <a href="https://simplecore.app/web/assets/terms.html" target="_blank" rel="noopener">Impressum von simplecore</a>.</p>
+
+      <h3>Welche Daten verarbeitet werden</h3>
+      <ul>
+        <li><b>Name/Pseudonym</b>, den du beim Öffnen eines Kurslinks eingibst.</li>
+        <li><b>Lernfortschritt</b>: bei welcher Aufgabe du bist, wie viele Tipps du geöffnet hast und wie lange du an einer Aufgabe arbeitest (Bearbeitungszeiten).</li>
+      </ul>
+
+      <h3>Zweck</h3>
+      <p>Die Daten dienen ausschließlich der <b>Kursbegleitung</b>. Konkret: Die
+      Kursleitung (Coach) kann während und nach einer Sitzung sehen, bei welcher
+      Aufgabe ein:e Teilnehmer:in gerade ist, wie viele Hilfestellungen (Tipps)
+      geöffnet wurden und wie lange an einer Aufgabe gearbeitet wird — um bei
+      Bedarf gezielt zu unterstützen.</p>
+
+      <h3>Speicherung</h3>
+      <p>Name und aktuelle Position werden lokal in deinem Browser gespeichert
+      (localStorage), damit du beim erneuten Öffnen desselben Links dort
+      weitermachst, wo du aufgehört hast. Der Lernfortschritt wird serverseitig
+      der jeweiligen Kohorte zugeordnet gespeichert.</p>
+
+      <h3>Rechtsgrundlage</h3>
+      <p>Durchführung des Kurses (Art. 6 Abs. 1 lit. b DSGVO) sowie das
+      berechtigte Interesse an einer sinnvollen Lernbegleitung
+      (Art. 6 Abs. 1 lit. f DSGVO).</p>
+
+      <h3>Keine Weitergabe · keine Werbung</h3>
+      <p>Es findet keine Weitergabe an Dritte statt, es gibt keine Werbung und
+      kein geräteübergreifendes Tracking. Es werden nur technisch notwendige
+      Speichermechanismen eingesetzt.</p>
+
+      <h3>Deine Rechte</h3>
+      <p>Du hast das Recht auf Auskunft, Berichtigung, Löschung und
+      Einschränkung der Verarbeitung. Löscht der Coach einen Kohorten-Link,
+      werden die zugehörigen Teilnehmerdaten entfernt. Kontakt für Anfragen:
+      über das <a href="https://simplecore.app/web/assets/terms.html" target="_blank" rel="noopener">Impressum</a>.</p>
+
+      <p class="small">Hinweis: Diese Angaben sind eine an die DSGVO angelehnte
+      Vorlage für die Kurse-Seite und sollten vom Betreiber vor dem Produktivbetrieb
+      geprüft und an die konkreten Verhältnisse angepasst werden.</p>
+    </div>
+  </div>
+
+  <script>
+    function openModal(){ document.getElementById("modal").classList.add("open"); }
+    function closeModal(){ document.getElementById("modal").classList.remove("open"); }
+    function acceptConsent(){
+      try { localStorage.setItem("kurse:consent","1"); } catch(e){}
+      document.getElementById("consent").hidden = true;
+    }
+    try {
+      if(localStorage.getItem("kurse:consent")!=="1")
+        document.getElementById("consent").hidden = false;
+    } catch(e){ document.getElementById("consent").hidden = false; }
+  </script>
 </body>
 </html>

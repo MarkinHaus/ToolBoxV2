@@ -367,8 +367,10 @@ def init(profile: str = "mini",
         return None
 
     # 4) boot the singleton with env already in place.
-    from toolboxv2 import get_app
-    app = get_app(f"init.{profile}")
+    from toolboxv2 import get_app, App as TbApp
+    if profile == "colab":
+        TbApp.print = lambda *a, **k: None
+    app = get_app(f"init.{profile}", app_con=TbApp)
 
     # 5) headless=False -> route the user into a UI (Tauri -> web -> CLI).
     #    Blocks until the chosen surface exits.

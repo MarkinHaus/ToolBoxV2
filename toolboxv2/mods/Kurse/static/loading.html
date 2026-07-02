@@ -5,22 +5,125 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kurse</title>
 <style>
-  :root { --ink:#111; --acc:#4AEDD9; }
-  html,body { margin:0; height:100%; display:flex; align-items:center; justify-content:center;
-    font-family:system-ui,sans-serif; color:var(--ink); background:#f6f5f2; }
-  .box { text-align:center; }
+  :root { --ink:#111; --acc:#4AEDD9; --gold:#FCDB05; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; min-height:100%; font-family:system-ui,sans-serif; color:var(--ink); background:#f6f5f2; }
+  body { display:flex; flex-direction:column; }
+  .center { flex:1; display:flex; align-items:center; justify-content:center; text-align:center; padding:24px; }
   .sq { width:46px; height:46px; margin:0 auto 18px; background:var(--acc);
     border:3px solid var(--ink); box-shadow:5px 5px 0 var(--ink); animation:spin 1.1s steps(4) infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
   h1 { font-size:18px; margin:0 0 4px; }
-  p { color:#555; margin:0; font-size:14px; }
+  .center p { color:#555; margin:0; font-size:14px; }
+
+  footer { padding:12px 16px; border-top:2px solid var(--ink); background:#fff;
+    font-size:13px; display:flex; gap:14px; flex-wrap:wrap; justify-content:center; }
+  footer a { color:var(--ink); cursor:pointer; text-decoration:underline; }
+
+  .consent { position:fixed; left:0; right:0; bottom:0; background:#fff;
+    border-top:3px solid var(--ink); padding:12px 16px; display:flex; gap:12px;
+    align-items:center; flex-wrap:wrap; justify-content:center; font-size:13px; }
+  .consent button { border:3px solid var(--ink); background:var(--acc); font-weight:700;
+    padding:6px 14px; cursor:pointer; box-shadow:3px 3px 0 var(--ink); }
+  .consent button:active { transform:translate(2px,2px); box-shadow:1px 1px 0 var(--ink); }
+  .consent[hidden] { display:none; }
+
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none;
+    align-items:center; justify-content:center; padding:16px; z-index:10; }
+  .modal.open { display:flex; }
+  .modal-box { background:#fff; border:3px solid var(--ink); box-shadow:8px 8px 0 var(--ink);
+    max-width:640px; width:100%; max-height:85vh; overflow:auto; padding:20px; font-size:14px; line-height:1.55; }
+  .modal-box h2 { margin:0 0 10px; font-size:16px; }
+  .modal-box h3 { font-size:14px; margin:16px 0 4px; }
+  .modal-box p, .modal-box li { color:#333; }
+  .modal-box .close { float:right; border:2px solid var(--ink); background:var(--gold);
+    padding:2px 10px; cursor:pointer; font-weight:700; }
+  .small { color:#777; font-size:12px; }
 </style>
 </head>
 <body>
-  <div class="box">
-    <div class="sq"></div>
-    <h1>Hast du einen Kohorten-Link?</h1>
-    <p>Öffne ihn, um zu starten.</p>
+  <div class="center">
+    <div>
+      <div class="sq"></div>
+      <h1>Hast du einen Kohorten-Link?</h1>
+      <p>Öffne ihn, um zu starten.</p>
+    </div>
   </div>
+
+  <footer>
+    <a href="https://simplecore.app/web/assets/terms.html" target="_blank" rel="noopener">Impressum</a>
+    <a onclick="openModal()">Datenschutz</a>
+    <span class="small">© simplecore</span>
+  </footer>
+
+  <!-- Consent: only technically necessary storage is used, so this is an
+       informational notice (Kenntnisnahme), not a tracking opt-in. -->
+  <div class="consent" id="consent" hidden>
+    <span>Diese Seite nutzt nur <b>technisch notwendige</b> Speicherung (dein Name lokal im Browser, Login-Sitzung des Coaches). Keine Werbe- oder Tracking-Cookies.</span>
+    <a onclick="openModal()" style="text-decoration:underline;cursor:pointer">Details</a>
+    <button onclick="acceptConsent()">Verstanden</button>
+  </div>
+
+  <div class="modal" id="modal">
+    <div class="modal-box">
+      <button class="close" onclick="closeModal()">✕</button>
+      <h2>Datenschutz — Kurse</h2>
+
+      <p>Verantwortlicher und vollständige Kontaktangaben: siehe
+      <a href="https://simplecore.app/web/assets/terms.html" target="_blank" rel="noopener">Impressum von simplecore</a>.</p>
+
+      <h3>Welche Daten verarbeitet werden</h3>
+      <ul>
+        <li><b>Name/Pseudonym</b>, den du beim Öffnen eines Kurslinks eingibst.</li>
+        <li><b>Lernfortschritt</b>: bei welcher Aufgabe du bist, wie viele Tipps du geöffnet hast und wie lange du an einer Aufgabe arbeitest (Bearbeitungszeiten).</li>
+      </ul>
+
+      <h3>Zweck</h3>
+      <p>Die Daten dienen ausschließlich der <b>Kursbegleitung</b>. Konkret: Die
+      Kursleitung (Coach) kann während und nach einer Sitzung sehen, bei welcher
+      Aufgabe ein:e Teilnehmer:in gerade ist, wie viele Hilfestellungen (Tipps)
+      geöffnet wurden und wie lange an einer Aufgabe gearbeitet wird — um bei
+      Bedarf gezielt zu unterstützen.</p>
+
+      <h3>Speicherung</h3>
+      <p>Name und aktuelle Position werden lokal in deinem Browser gespeichert
+      (localStorage), damit du beim erneuten Öffnen desselben Links dort
+      weitermachst, wo du aufgehört hast. Der Lernfortschritt wird serverseitig
+      der jeweiligen Kohorte zugeordnet gespeichert.</p>
+
+      <h3>Rechtsgrundlage</h3>
+      <p>Durchführung des Kurses (Art. 6 Abs. 1 lit. b DSGVO) sowie das
+      berechtigte Interesse an einer sinnvollen Lernbegleitung
+      (Art. 6 Abs. 1 lit. f DSGVO).</p>
+
+      <h3>Keine Weitergabe · keine Werbung</h3>
+      <p>Es findet keine Weitergabe an Dritte statt, es gibt keine Werbung und
+      kein geräteübergreifendes Tracking. Es werden nur technisch notwendige
+      Speichermechanismen eingesetzt.</p>
+
+      <h3>Deine Rechte</h3>
+      <p>Du hast das Recht auf Auskunft, Berichtigung, Löschung und
+      Einschränkung der Verarbeitung. Löscht der Coach einen Kohorten-Link,
+      werden die zugehörigen Teilnehmerdaten entfernt. Kontakt für Anfragen:
+      über das <a href="https://simplecore.app/web/assets/terms.html" target="_blank" rel="noopener">Impressum</a>.</p>
+
+      <p class="small">Hinweis: Diese Angaben sind eine an die DSGVO angelehnte
+      Vorlage für die Kurse-Seite und sollten vom Betreiber vor dem Produktivbetrieb
+      geprüft und an die konkreten Verhältnisse angepasst werden.</p>
+    </div>
+  </div>
+
+  <script>
+    function openModal(){ document.getElementById("modal").classList.add("open"); }
+    function closeModal(){ document.getElementById("modal").classList.remove("open"); }
+    function acceptConsent(){
+      try { localStorage.setItem("kurse:consent","1"); } catch(e){}
+      document.getElementById("consent").hidden = true;
+    }
+    try {
+      if(localStorage.getItem("kurse:consent")!=="1")
+        document.getElementById("consent").hidden = false;
+    } catch(e){ document.getElementById("consent").hidden = false; }
+  </script>
 </body>
 </html>
