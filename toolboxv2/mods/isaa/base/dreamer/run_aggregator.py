@@ -564,7 +564,7 @@ async def classify_for_injection(query: str, guide: str, narrator_call=None) -> 
         f"Known classes: {', '.join(known)}. "
         f"Fuzzy pre-selection (likely): {cand_str}. "
         f'If uncertain, answer task_type="{NEW_TYPE}", subtype="general". '
-        'Respond as JSON: {"task_type": "...", "subtype": "..."}'
+        # 'Respond as JSON: {"task_type": "...", "subtype": "..."}'
     )
     try:
         data = await narrator_call(system, query)

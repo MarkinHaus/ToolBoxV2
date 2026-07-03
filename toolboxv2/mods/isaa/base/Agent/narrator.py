@@ -712,7 +712,7 @@ class AgentLiveNarrator:
     def __init__(self, live: "AgentLiveState", agent: Any, do_narator=True,
              handler: "LiteLLMRateLimitHandler | None" = None,
              fallback_models: list[str] | None = None):
-        self._inspier = None
+        self._inspier = ""
         self.live = live
         self.agent = agent  # kept for future: model preference routing
         self._enabled: bool = bool(LIGHNIGMODEL) and NARRATOR_ENABLED and do_narator
@@ -784,8 +784,6 @@ class AgentLiveNarrator:
 
         if not moc:
             # Puffer pflegen (Maximalgröße beschränken, z.B. 2000 Zeichen, spart RAM/CPU)
-            if self._inspier is None:
-                self._inspier = ""
             self._inspier = (self._inspier + " " + text)[-2000:]
             self._thought_set_time = now
         elif moc:

@@ -30,7 +30,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Set, Tuple, Union
-
+from pydantic import BaseModel
 
 from toolboxv2.mods.isaa.base.Agent.ctx_cleaner import clean_messages
 from toolboxv2 import get_app, get_logger
@@ -2206,6 +2206,9 @@ BEISPIELE:
 
                             data = item["data"]
 
+                            if self._narrator._inspier is None:
+                                self._narrator._inspier = ""
+
                             if hasattr(data, 'choices') and data.choices:
                                 delta = data.choices[0].delta if data.choices else None
                                 if not delta:
@@ -2966,23 +2969,41 @@ BEISPIELE:
             if self.taskmap_preinject and not self.is_sub_agent:
                 try:
                     from toolboxv2.mods.isaa.base.dreamer.run_aggregator import (
-                        build_preinjection,
+                        classify_for_injection,
+                        CLASSIFY_GUIDE_PATH,
+                        build_preinjection
                     )
 
-                    async def _narrator_classify(_system: str, _query: str):
-                        res = await self._narrator.blitz(
-                            system=_system,
-                            messages=[{"role": "user", "content": _query[:1500]}],
-                            schema={"task_type": str, "subtype": str},
+                    r = session.vfs.read(CLASSIFY_GUIDE_PATH)
+                    guide = r.get("content", "") if r.get("success") else ""
+
+                    task_type, subtype = "new", "general"
+
+                    if guide:
+                        async def _narrator_classify(_system: str, _query: str):
+                            class TaskType(BaseModel):
+                                """The type of the user task"""
+                                task_type: str
+                                subtype: str
+
+                            res = await self.agent.a_format_class(
+                                pydantic_model=TaskType,
+                                prompt=_system,
+                                message_context=[{"role": "user", "content": _query}],
+                            )
+                            return res
+
+                        # Führe die Klassifizierung kontrolliert aus
+                        task_type, subtype = await classify_for_injection(
+                            query, guide, narrator_call=_narrator_classify
                         )
-                        # --- ANPASSUNG: Auf dem Context speichern ---
-                        if isinstance(res, dict) and "task_type" in res:
-                            ctx.task_type = res.get("task_type")
-                            ctx.subtype = res.get("subtype")
-                        return res
+
+                    # State-Zuweisung ist nun garantiert, unabhängig vom Pfad (Fuzzy oder LLM)
+                    ctx.task_type = task_type
+                    ctx.subtype = subtype
 
                     _pre = await build_preinjection(
-                        session.vfs, query, narrator_call=_narrator_classify
+                        session.vfs, query, narrator_call=None  # Kein doppelter Call nötig
                     )
                     if _pre:
                         system_prompt = system_prompt + "\n\n" + _pre

@@ -523,8 +523,6 @@ class ControllerManager:
             if os.path.exists(filename) and os.path.isfile(filename):
                 with open(filename) as f:
                     controllers = json.load(f)
-            else:
-                print("file not found")
 
         if json_data is not None:
             controllers = json.loads(json_data)

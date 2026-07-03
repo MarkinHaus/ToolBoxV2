@@ -71,7 +71,13 @@ class AISemanticMemory(metaclass=Singleton):
         if default_embedding_model is None:
             default_embedding_model = os.getenv("DEFAULTMODELEMBEDDING", "")
         from toolboxv2 import tb_root_dir
-        self.base_path: str = os.path.join(get_app().data_dir, base_path.lstrip('/'))
+        try:
+            _data_dir = get_app().data_dir
+        except Exception:
+            # Standalone (tb_atomic pack): no live framework -> env or home fallback
+            _data_dir = os.getenv("TB_DATA_DIR") or os.path.join(
+                os.path.expanduser("~"), ".tbv", "data")
+        self.base_path: str = os.path.join(_data_dir, base_path.lstrip('/'))
         os.makedirs(self.base_path, exist_ok=True)
 
         self.memories: dict[str, HybridMemoryStore] = {}

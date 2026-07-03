@@ -292,7 +292,6 @@ def find_highest_zip_version_entry(name, target_app_version=None, filepath='tbSt
     highest_entry = {}
 
     if not os.path.exists(filepath):
-        print("File not found")
         data = asdict(get_state_from_app(get_app('state.system')))
     else:
         with open(filepath) as file:
