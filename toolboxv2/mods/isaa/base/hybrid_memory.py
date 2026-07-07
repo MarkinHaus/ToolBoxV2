@@ -237,13 +237,31 @@ class HybridMemoryStore:
                     time.sleep(0.1 * (attempt + 1))  # ponytail: linear backoff, exp if contention high
                 elif "malformed" in msg or "corrupt" in msg:
                     self._heal_from_backup()  # Tier 3, no-op wenn MinIO aus
+                    continue
 
     def _heal_from_backup(self):
-        # ponytail: last-resort restore; kein MinIO/Backup → still broken, Exception fliegt upstream
+        """Recover from MinIO backup, or recreate fresh DB if no backup exists."""
+        # 1. Try MinIO restore
         try:
             self.load_from_minio()
-        except Exception as e:
-            print(e)
+            self._local = threading.local()
+            return
+        except Exception:
+            pass
+        # 2. No backup → quarantine corrupt file, start fresh
+        corrupt_backup = self.db_path.with_suffix('.db.corrupt')
+        if self.db_path.exists():
+            self.db_path.rename(corrupt_backup)
+        for suffix in ("-wal", "-shm"):
+            stale = Path(str(self.db_path) + suffix)
+            if stale.exists():
+                stale.unlink()
+        self._local = threading.local()
+        self._init_db()
+        import logging
+        logging.getLogger(__name__).warning(
+            f"SQLite DB was corrupt and recreated. Old file at {corrupt_backup}"
+        )
 
     def _init_db(self):
         """Initialize database schema from embedded SQL"""

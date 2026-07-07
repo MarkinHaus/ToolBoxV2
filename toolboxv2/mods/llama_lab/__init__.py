@@ -155,7 +155,7 @@ async def _flow_browse(app, cfg):
         return
     with Spinner("loading model card", symbols="d"):
         c = hub.card(repo_id)
-    print(Style.BOLD(f"  {c.repo_id}") +
+    print(Style.Bold(f"  {c.repo_id}") +
           Style.GREY(f"  ↓{c.downloads}  ♥{c.likes}  [{c.modality}]  {' '.join(c.tags[:6])}"))
     opts = []
     for fname, size in c.gguf_files:
