@@ -1682,6 +1682,10 @@ BEISPIELE:
             self.live.log(f"{success=}", logging.INFO)
             # 4. Learning task (already internally bg, schedule after commit)
             if success:
+                # Post-run state: loop done, background learning pending.
+                # Resume waits on this instead of forking a fresh context.
+                if ctx.status == "running":
+                    ctx.status = "learning"
                 try:
                     app = get_app()
                     _nm = getattr(self._narrator, "_mini", None)
@@ -1733,7 +1737,7 @@ BEISPIELE:
             self._active_executions.pop(ctx.run_id, None)
             if self._session_last_run.get(ctx.session_id) == ctx.run_id:
                 self._session_last_run.pop(ctx.session_id, None)
-        elif ctx.status == "running":
+        elif ctx.status in ("running", "learning"):
             # Normal completion (final_answer) — mark completed, eviction reclaims
             ctx.status = "completed"
         # paused / max_iterations / completed: stay in _active_executions
@@ -5670,6 +5674,14 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         # --- HOT PATH: in-memory resume ---
         ctx = self._active_executions.get(execution_id)
         if ctx is not None:
+            # If finalize/background-learning still runs, wait for it (no context fork).
+            _pending = self._pending_finalize_tasks.get(execution_id)
+            if _pending and not _pending.done():
+                self.live.status_msg = "Waiting for background finalization/learning"
+                try:
+                    await asyncio.wait_for(asyncio.shield(_pending), timeout=30.0)
+                except (asyncio.TimeoutError, Exception) as e:
+                    self.live.log(f"[Resume] finalize wait: {e}", logging.WARNING)
             if ctx.status not in ("paused", "max_iterations", "completed", "cancelled"):
                 return f"Error: Execution {execution_id} is not resumable (status: {ctx.status})"
 

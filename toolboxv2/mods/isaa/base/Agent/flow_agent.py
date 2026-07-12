@@ -1594,6 +1594,27 @@ class FlowAgent:
 
         engine = self._get_execution_engine(human_online=human_online)
 
+        # Sidecar: session actively running -> answer from live ctx, do NOT disturb the run
+        if not execution_id and not is_new_ctx:
+            _rid = engine._session_last_run.get(session_id)
+            _run_ctx = engine._active_executions.get(_rid) if _rid else None
+            if _run_ctx is not None and _run_ctx.status == "running":
+                # ponytail: snapshot copy; live loop keeps appending -> may miss last 1-2 msgs; ok for a ping
+                _msgs = list(_run_ctx.working_history) + [
+                    {"role": "system", "content": ("SIDECAR: the user pinged you WHILE your main task is still running in parallel. "
+                        "Answer the new user message using the full history above. Do NOT call tools, do NOT change task state, be concise. The main run continues.")},
+                    {"role": "user", "content": query},
+                ]
+                try:
+                    _reply = await self.a_run_llm_completion(
+                        messages=_msgs, model_preference="fast",
+                        with_context=False, stream=False, do_tool_execution=False,
+                        session_id=session_id,
+                    )
+                    return (_reply, _run_ctx) if get_ctx else _reply
+                except Exception as _e:
+                    logger.warning(f"Sidecar completion failed: {_e}; falling through")
+
         # Tolerantes Auto-Resume
         if not execution_id and not is_new_ctx:
             last_run_id = engine._session_last_run.get(session_id)
@@ -1872,6 +1893,29 @@ class FlowAgent:
 
         # Engine einmalig holen (war vorher doppelt)
         engine = self._get_execution_engine(human_online=human_online)
+
+        # Sidecar: session actively running -> stream answer from live ctx, run untouched
+        if not execution_id and not is_new_ctx:
+            _rid = engine._session_last_run.get(session_id)
+            _run_ctx = engine._active_executions.get(_rid) if _rid else None
+            if _run_ctx is not None and _run_ctx.status == "running":
+                yield {"type": "status", "status_msg": "Sidecar: answering while main run continues"}
+                _msgs = list(_run_ctx.working_history) + [
+                    {"role": "system", "content": ("SIDECAR: the user pinged you WHILE your main task is still running in parallel. "
+                        "Answer using the full history above. Do NOT call tools or change state. The main run continues.")},
+                    {"role": "user", "content": query},
+                ]
+                try:
+                    _reply = await self.a_run_llm_completion(
+                        messages=_msgs, model_preference="fast",
+                        with_context=False, stream=False, do_tool_execution=False,
+                        session_id=session_id,
+                    )
+                    yield {"type": "content", "chunk": _reply}
+                    yield {"type": "done", "success": True, "final_answer": _reply}
+                    return
+                except Exception as _e:
+                    yield {"type": "status", "status_msg": f"Sidecar failed: {_e}; starting fresh"}
 
         # Tolerantes Auto-Resume
         if not execution_id and not is_new_ctx:
