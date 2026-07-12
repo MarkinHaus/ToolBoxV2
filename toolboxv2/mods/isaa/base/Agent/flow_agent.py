@@ -79,25 +79,18 @@ except ImportError:
 try:
     gmail_toolkit = None
     calendar_toolkit = None
+    _google_auth_mgr = None
     if os.getenv("WITH_GOOGLE_TOOLS", "false") == "true":
-        from toolboxv2.mods.isaa.extras.toolkit.google_calendar_toolkit import (
-            CalendarToolkit,
-        )
+        from toolboxv2.mods.isaa.extras.toolkit.google_calendar_toolkit import CalendarToolkit
         from toolboxv2.mods.isaa.extras.toolkit.google_gmail_toolkit import GmailToolkit
-        google_token_dir = os.getenv("GOOGLE_TOKEN_DIR", "token")
-        if not os.path.exists(google_token_dir):
-            os.makedirs(google_token_dir, exist_ok=True)
-        gmail_toolkit = GmailToolkit(
-            credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
-            token_dir=google_token_dir,
-        )
-        calendar_toolkit = CalendarToolkit(
-            credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
-            token_dir=google_token_dir,
-        )
+        from toolboxv2.mods.isaa.extras.toolkit.google_auth_manager import GoogleAuthManager
+        _google_auth_mgr = GoogleAuthManager()
+        gmail_toolkit = GmailToolkit(_google_auth_mgr)
+        calendar_toolkit = CalendarToolkit(_google_auth_mgr)
 except ImportError as e:
     gmail_toolkit = None
     calendar_toolkit = None
+    _google_auth_mgr = None
     if os.getenv("WITH_GOOGLE_TOOLS", "false") == "true":
         print(f"⚠️ Google tools not available: {e}")
 

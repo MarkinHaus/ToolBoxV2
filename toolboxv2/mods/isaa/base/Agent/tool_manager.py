@@ -687,9 +687,10 @@ class ToolManager:
             parts = []
 
             for name, param in sig.parameters.items():
-                if name in ('self', 'cls', 'args', 'kwargs'):
+                if name in ('self', 'cls'):
                     continue
-
+                if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                    continue
                 # Get type annotation
                 ann = ""
                 if param.annotation != inspect.Parameter.empty:

@@ -25,6 +25,7 @@ Schleuse policy:
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+import json
 
 from toolboxv2.mods.isaa.base.patch.sandbox_backend import (
     AIOSandboxBackend,
@@ -126,15 +127,78 @@ def make_sandbox_code(session: "AgentSessionV2"):
 
 def make_sandbox_browser(session: "AgentSessionV2"):
     _AREAS = {
-        "page": "browser_page",        # click, fill, fill_form, evaluate(JS), get_html,
-                                       # get_markdown, get_text, get_console, get_elements,
-                                       # find_text, check, back, forward, export_console
+        "page": "browser_page",        # navigate, click, fill, fill_form, evaluate(JS),
+                                       # get_html, get_markdown, get_text, get_console,
+                                       # get_elements, find_text, check, back, forward,
+                                       # export_console, hot_key, hover, press_key, reload,
+                                       # scroll, scroll_to, scroll_to_element, select_option,
+                                       # type_text, uncheck, upload_file, wait
         "tabs": "browser_tabs",        # list, create, activate, close
-        "network": "browser_network",  # get_requests, export_har, add_route, set_headers
+        "network": "browser_network",  # get_requests, export_har, add_route, set_headers,
+                                       # set_scoped_headers, remove_route
         "cookies": "browser_cookies",  # get_cookies, set_cookies, clear_cookies
         "state": "browser_state",      # save, load
         "captcha": "browser_captcha",  # detect, wait
     }
+
+    # P1: LLM-friendly synonyms -> SDK uppercase enum values
+    _ACTION_TYPE_MAP = {
+        "move": "MOVE_TO", "move_to": "MOVE_TO", "moveto": "MOVE_TO",
+        "move_rel": "MOVE_REL", "moverel": "MOVE_REL",
+        "click": "CLICK", "tap": "CLICK",
+        "mouse_down": "MOUSE_DOWN", "mousedown": "MOUSE_DOWN",
+        "mouse_up": "MOUSE_UP", "mouseup": "MOUSE_UP",
+        "right_click": "RIGHT_CLICK", "rightclick": "RIGHT_CLICK",
+        "double_click": "DOUBLE_CLICK", "doubleclick": "DOUBLE_CLICK",
+        "drag_to": "DRAG_TO", "dragto": "DRAG_TO",
+        "drag_rel": "DRAG_REL", "dragrel": "DRAG_REL",
+        "scroll": "SCROLL",
+        "type": "TYPING", "typing": "TYPING", "input": "TYPING", "write": "TYPING",
+        "press": "PRESS", "keypress": "PRESS",
+        "key_down": "KEY_DOWN", "keydown": "KEY_DOWN",
+        "key_up": "KEY_UP", "keyup": "KEY_UP",
+        "hotkey": "HOTKEY", "hot_key": "HOTKEY",
+        "wait": "WAIT",
+    }
+
+    def _normalize_action(action: dict) -> dict:
+        """P1: normalize action_type; P2: disable clipboard for Linux container."""
+        at = action.get("action_type")
+        if isinstance(at, str):
+            key = at.lower().strip()
+            action["action_type"] = _ACTION_TYPE_MAP.get(key, at.upper().strip())
+        # P2: TYPING defaults use_clipboard=True which needs clip.exe (not in Linux)
+        if action.get("action_type") == "TYPING" and "use_clipboard" not in action:
+            action["use_clipboard"] = False
+        return action
+
+    def _serialize_response(r) -> dict:
+        """P3+P4+P8+P9: extract data, check success, serialize as JSON, include hint."""
+        # P4: propagate SDK success=False as error
+        if hasattr(r, "success") and r.success is False:
+            msg = getattr(r, "message", None) or "browser operation failed"
+            return {"success": False, "stdout": "", "stderr": msg, "returncode": 1}
+        # Extract .data with fallback
+        raw = getattr(r, "data", r)
+        # P8: convert Pydantic models to plain dict
+        if hasattr(raw, "model_dump"):
+            raw = raw.model_dump()
+        elif hasattr(raw, "dict") and callable(getattr(raw, "dict", None)):
+            try:
+                raw = raw.dict()
+            except Exception:
+                pass
+        # P3: serialize as JSON for structured data, str() for primitives
+        if isinstance(raw, (dict, list)):
+            stdout = json.dumps(raw, ensure_ascii=False, default=str)
+        else:
+            stdout = str(raw) if raw is not None else ""
+        result = {"success": True, "stdout": stdout, "stderr": "", "returncode": 0}
+        # P9: include SDK hint field if present
+        hint = getattr(r, "hint", None)
+        if hint:
+            result["hint"] = hint
+        return result
 
     def sandbox_browser(area: str = "info", method: str | None = None,
                         args: dict | None = None, **kwargs) -> dict:
@@ -142,7 +206,8 @@ def make_sandbox_browser(session: "AgentSessionV2"):
 
         area='screenshot' | 'info' | 'restart' | 'action' (raw input action via args)
         area='page'|'tabs'|'network'|'cookies'|'state'|'captcha' + method + args:
-          page.evaluate {"expression": "document.title"}   -> run JS (devtools console)
+          page.navigate {"url": "https://..."}                  -> navigate to URL (start here)
+          page.evaluate {"expression": "document.title"}        -> run JS (devtools console)
           page.get_console {}                              -> console logs
           page.get_html / get_markdown / get_text          -> page content
           page.click / fill / fill_form / find_text        -> interaction
@@ -159,10 +224,12 @@ def make_sandbox_browser(session: "AgentSessionV2"):
             if area == "info":
                 return be.browser_info()
             if area == "restart":
-                be.client.browser.restart()
+                r = be.client.browser.restart()
+                # P10: restart returns Response with data=None; return clean message
                 return {"success": True, "stdout": "browser restarted", "stderr": "", "returncode": 0}
             if area == "action":
-                return be.browser_action(args)
+                # P1+P2: normalize action_type and disable clipboard
+                return be.browser_action(_normalize_action(args))
             sub_name = _AREAS.get(area)
             if sub_name is None:
                 return _err(f"unknown area '{area}' — use {list(_AREAS) + ['screenshot', 'info', 'action', 'restart']}")
@@ -170,9 +237,11 @@ def make_sandbox_browser(session: "AgentSessionV2"):
             if not method or not hasattr(sub, method) or method.startswith("_"):
                 avail = [m for m in dir(sub) if not m.startswith("_") and m != "with_raw_response"]
                 return _err(f"method '{method}' not in area '{area}'. Available: {avail}")
-            r = getattr(sub, method)(**args, **kwargs)
-            data = getattr(r, "data", r)
-            return {"success": True, "stdout": str(data), "stderr": "", "returncode": 0}
+            # P6: merge args+kwargs to avoid TypeError on duplicate keys
+            merged = {**args, **kwargs}
+            r = getattr(sub, method)(**merged)
+            # P3+P4+P8+P9: unified response serialization
+            return _serialize_response(r)
         except Exception as e:
             return _err(e)
     return sandbox_browser
@@ -394,7 +463,7 @@ def build_sandbox_tools(session: "AgentSessionV2") -> list[dict]:
         {"tool_func": make_sandbox_browser(session), "name": "sandbox_browser",
          "category": ["sandbox", "web", "browser"], "description": (
              "FULL browser control incl. devtools. area+method+args: "
-             "page (click/fill/evaluate(JS)/get_html/get_markdown/get_console/find_text), "
+             "page (navigate/click/fill/evaluate(JS)/get_html/get_markdown/get_console/find_text), "
              "network (get_requests/export_har), tabs, cookies, state, captcha — "
              "plus 'screenshot'|'info'|'action'|'restart'. Wrong method returns the "
              "available method list.")},

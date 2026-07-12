@@ -180,12 +180,11 @@ class CalendarToolkit:
 
     def __init__(
         self,
-        credentials_path: str = "/root/Toolboxv2/credentials.json",
-        token_dir: str = "token",
+        auth_manager,
+        account_id: str = "default",
     ):
-        self.credentials_path = credentials_path
-        self.token_dir = token_dir
-        os.makedirs(self.token_dir, exist_ok=True)
+        self.auth_manager = auth_manager
+        self.account_id = account_id
         self._sessions: dict[str, dict[str, Any]] = {}
 
     # ── Session management ────────────────────────────────────
@@ -201,8 +200,8 @@ class CalendarToolkit:
             }
         return self._sessions[sid]
 
-    def _token_path(self, sid: str) -> str:
-        return os.path.join(self.token_dir, f"cal_{sid}.json")
+    def _token_path(self) -> str:
+        return str(self.auth_manager._token_path(self.account_id))
 
     def _save_credentials(self, sid: str):
         s = self._get_session(sid)
@@ -221,12 +220,12 @@ class CalendarToolkit:
             json.dump(data, f)
 
     def _load_credentials(self, sid: str) -> bool:
-        path = self._token_path(sid)
+        path = self._token_path()
+        sid = self.account_id  # Use account_id instead of session_id
         if not os.path.exists(path):
             return False
         try:
-            from google.oauth2.credentials import Credentials
-            creds = Credentials.from_authorized_user_file(path, self.SCOPES)
+            creds = self.auth_manager.get_credentials(self.account_id, self.SCOPES)
             if creds and creds.expired and creds.refresh_token:
                 from google.auth.transport.requests import Request
                 creds.refresh(Request())
@@ -254,8 +253,11 @@ class CalendarToolkit:
     def _ensure_auth(self, sid: str):
         s = self._get_session(sid)
         if s["calendar_service"] is None:
+            # AUTO-LOGIN: try AuthManager
             if not self._load_credentials(sid):
-                raise RuntimeError("Nicht angemeldet. Bitte `calendar_login` aufrufen.")
+                raise RuntimeError(
+                    f"Calendar account '{self.account_id}' not authenticated. "
+                    f"Run: python -m toolboxv2.mods.isaa.extras.toolkit.google_auth_manager login {self.account_id}")
 
     def _imap(self, sid: str) -> _IndexMap:
         return self._get_session(sid)["index_map"]

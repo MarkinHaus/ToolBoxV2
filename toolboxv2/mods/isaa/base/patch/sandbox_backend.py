@@ -627,24 +627,57 @@ class AIOSandboxBackend:
     def browser_screenshot(self) -> dict:
         try:
             data = b"".join(self.client.browser.screenshot())
+            import base64 as _b64
+            # P7: save to host for debugging AND return base64 for agent vision
             out = STATE_DIR / "screens" / f"{int(time.time())}.png"
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_bytes(data)
-            return _ok(stdout=str(out), path=str(out), bytes=len(data))
+            b64 = _b64.b64encode(data).decode()
+            return _ok(stdout=f"data:image/png;base64,{b64}",
+                       path=str(out), bytes=len(data))
         except Exception as e:
             return _err(e)
 
     def browser_action(self, action: dict) -> dict:
         try:
             r = self.client.browser.execute_action(request=action)
-            return _ok(stdout=str(getattr(r, "data", r)))
+            # P4: propagate SDK success=False
+            if hasattr(r, "success") and r.success is False:
+                return _err(getattr(r, "message", None) or "browser action failed")
+            raw = getattr(r, "data", r)
+            # P8: convert Pydantic models to dict
+            if hasattr(raw, "model_dump"):
+                raw = raw.model_dump()
+            # P3: serialize as JSON for structured data
+            if isinstance(raw, (dict, list)):
+                stdout = json.dumps(raw, ensure_ascii=False, default=str)
+            else:
+                stdout = str(raw) if raw is not None else ""
+            return _ok(stdout=stdout)
         except Exception as e:
             return _err(e)
 
     def browser_info(self) -> dict:
         try:
             r = self.client.browser.get_info()
-            return _ok(stdout=str(getattr(r, "data", r)))
+            # P4: propagate SDK success=False
+            if hasattr(r, "success") and r.success is False:
+                return _err(getattr(r, "message", None) or "browser info failed")
+            raw = getattr(r, "data", r)
+            # P8: convert Pydantic models to dict
+            if hasattr(raw, "model_dump"):
+                raw = raw.model_dump()
+            elif hasattr(raw, "dict") and callable(getattr(raw, "dict", None)):
+                try:
+                    raw = raw.dict()
+                except Exception:
+                    pass
+            # P3: serialize as JSON for structured data
+            if isinstance(raw, (dict, list)):
+                stdout = json.dumps(raw, ensure_ascii=False, default=str)
+            else:
+                stdout = str(raw) if raw is not None else ""
+            return _ok(stdout=stdout)
         except Exception as e:
             return _err(e)
 

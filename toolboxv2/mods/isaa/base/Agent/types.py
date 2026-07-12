@@ -806,6 +806,11 @@ class AgentModelData(BaseModel):
     context_config: ContextBudgetConfig = field(default_factory=ContextBudgetConfig)
     web_config: AgentWebConfig = field(default_factory=AgentWebConfig)
 
+    # Google Multi-Account: list of account_ids this agent may access
+    # e.g. ["privat"] or ["privat", "arbeit"]
+    # Tokens managed by GoogleAuthManager, login via: tb run google_auth_manager login <id>
+    google_accounts: list[str] | None = None
+
     def get_system_message(self) -> str:
         """Get system message with persona integration"""
         base_message = self.system_message + '\n\n'.join(self.context_adapters)

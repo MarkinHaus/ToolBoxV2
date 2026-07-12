@@ -75,11 +75,11 @@ class GmailToolkit:
 
     def __init__(
         self,
-        credentials_path: str = "/root/Toolboxv2/credentials.json",
-        token_dir: str = "token",
+        auth_manager,
+        account_id: str = "default",
     ):
-        self.credentials_path = credentials_path
-        self.token_dir = token_dir
+        self.auth_manager = auth_manager
+        self.account_id = account_id
         self._sessions: dict[str, _Session] = {}
 
     # ── internals ────────────────────────────────────────────────────
@@ -89,8 +89,8 @@ class GmailToolkit:
             self._sessions[sid] = _Session()
         return self._sessions[sid]
 
-    def _token_path(self, sid: str) -> str:
-        return os.path.join(self.token_dir, f"gmail_token_{sid}.json")
+    def _token_path(self) -> str:
+        return str(self.auth_manager._token_path(self.account_id))
 
     def _save_credentials(self, sid: str):
         s = self._s(sid)
@@ -101,11 +101,13 @@ class GmailToolkit:
             f.write(s.credentials.to_json())
 
     def _load_credentials(self, sid: str) -> bool:
-        path = self._token_path(sid)
+        # Delegate to AuthManager — auto-refresh handled there
+        path = self._token_path()
+        sid = self.account_id  # Use account_id instead of session_id
         if not os.path.exists(path):
             return False
         try:
-            creds = Credentials.from_authorized_user_file(path, SCOPES)
+            creds = self.auth_manager.get_credentials(self.account_id, SCOPES)
             if creds and creds.expired and creds.refresh_token:
                 from google.auth.transport.requests import Request
                 creds.refresh(Request())
@@ -128,7 +130,9 @@ class GmailToolkit:
     def _require_service(self, sid: str):
         s = self._s(sid)
         if s.service is None:
-            raise RuntimeError("Not authenticated. Use `gmail_login` first.")
+            # AUTO-LOGIN: try to load/refresh credentials via AuthManager
+            if not self._load_credentials(sid):
+                raise RuntimeError("Not authenticated. Use `gmail_login` first.")
         return s.service
 
     def _create_flow(self):
@@ -430,7 +434,7 @@ class GmailToolkit:
 
     # ── Tool Registration ────────────────────────────────────────────
 
-    def get_tools(self, session_id: str) -> list[dict]:
+    def get_tools(self, session_id: str | None = None) -> list[dict]:
         """
         Return agent-facing tools for this session.
         Auto-loads persistent credentials.
@@ -440,8 +444,8 @@ class GmailToolkit:
         sid = session_id
 
         def gmail_login() -> str:
-            """Login to Gmail via CLI. Opens browser, waits for auth code."""
-            return self._login_cli(sid)
+            """Login to Google (Gmail). Auto-detects Desktop/Server."""
+            return self.auth_manager.login(self.account_id, SCOPES)
 
         def gmail_list(query: str = "", max_results: int = 10) -> str:
             """List inbox emails. Returns indexed list.
