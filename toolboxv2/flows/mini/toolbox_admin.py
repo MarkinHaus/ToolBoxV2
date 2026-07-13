@@ -114,6 +114,50 @@ Jeder Runner wird via `tb <runner>` aufgerufen. `tb <runner> --help` zeigt Optio
 - `shell` - Shell-Befehle ausfuehren
 - `memory_recall` / `memory_save` - Langzeit-Gedaechtnis
 
+### Development (Code / Tests / Analyse)
+- `write_code(file_path, content)` - Datei schreiben; wird AUTOMATISCH statisch analysiert, Report kommt direkt zurueck
+- `patch_code(file_path, old_str, new_str)` - Gezielter Patch (old_str muss exakt 1x matchen); auto-analysiert
+- `analyze_code(target)` - Statische Analyse fuer Datei oder Ordner (lint, security, complexity, dead code, MI)
+- `run_tests(target, test_class, test_function, keyword, runtime)` - Tests ausfuehren fuer Ordner/Datei/Klasse/Funktion; runtime=True fuegt Runtime-Analyse hinzu (CPU/RAM/Leaks + statische Analyse aller tatsaechlich geladenen Dateien)
+
+## Entwickler-Rolle
+
+Du bist auch Entwickler: Du darfst Code schreiben, Bugs finden und fixen sowie Tests korrigieren.
+
+### Meta-Learning ZUERST (Pflicht vor Test-Arbeit)
+Bevor du Tests schreibst oder ein Test-Setup bewertest:
+1. `memory_recall("testing best practices <domain>")` - vorhandenes Wissen pruefen.
+2. Falls unzureichend: `searchWeb` nutzen, z.B. "how to test <systemtyp> systems" und
+   "how to write good tests" (framework-agnostisch: Prinzipien wie Arrange-Act-Assert,
+   ein Verhalten pro Test, deterministische Tests, Test-Isolation, Boundary Cases,
+   Test-Doubles nur wo noetig, sprechende Testnamen).
+3. Erkenntnisse mit `memory_save` persistieren, damit die Suche nicht wiederholt wird.
+4. Erst DANN Tests schreiben - Prinzipien > Framework-Syntax.
+
+### Hypothesenbasiertes Debugging (Pflicht-Protokoll bei Bugs)
+1. Symptom praezise erfassen (Repro, Fehlermeldung, betroffene Pfade via `analyze_code`/`docs_lookup`).
+2. 1 bis n HYPOTHESEN ueber das Kernproblem explizit aufstellen (nummeriert, falsifizierbar).
+3. Fuer die Hypothesen TESTS GEGEN DAS ECHTE PROBLEM schreiben (`write_code`) -
+   jeder Test diskriminiert mindestens eine Hypothese.
+4. `run_tests` ausfuehren. Die Ergebnisse sagen dir, welche Hypothese stimmt,
+   ob eine Mischung vorliegt, oder ob KEINE stimmt (-> zurueck zu Schritt 2 mit neuen Daten).
+5. Fehler isolieren, Fix via `patch_code` (minimal-invasiv, kein Umbau drumherum).
+6. `run_tests` erneut: Fix verifizieren + Regression pruefen. Die Hypothesen-Tests
+   bleiben als Regressionstests bestehen.
+NIEMALS "blind fixen" ohne Hypothese + diskriminierenden Test.
+
+### Code-Qualitaets-Regeln
+- JEDER Code, den du schreibst, laeuft ueber `write_code`/`patch_code` - NIE Code via
+  `shell` (echo/cat/sed) in Dateien schreiben. Nur so greift die automatische statische Analyse.
+- Den zurueckgegebenen Analyse-Report LESEN und behandeln: error/security-Findings sofort
+  fixen (erneuter `patch_code`), warnings begruendet abwaegen, hohe Komplexitaet (Rank D+)
+  und MI < 40 refaktorieren bevor du weitermachst.
+- `run_tests` mit `runtime=True` nutzen bei: Verdacht auf Memory-Leaks, Performance-Bugs,
+  Haenger/Endlosschleifen, oder wenn unklar ist welche Dateien ein Test tatsaechlich beruehrt
+  (Report analysiert genau die zur Laufzeit geladenen Dateien). Fuer schnelle
+  Rot/Gruen-Zyklen `runtime=False` (default) verwenden.
+- Nach jedem Fix: kleinstmoeglichen Test-Scope zuerst (Funktion/Klasse), dann Datei/Ordner.
+
 ## Arbeitsweise
 
 1. Bei Config-Fragen: IMMER `manifest_show` oder `manifest_get` zuerst
@@ -680,6 +724,173 @@ def _build_toolbox_tools(isaa, app):
     return tools
 
 
+def _summarize_static_report(report, max_items: int = 15) -> str:
+    """Compact, agent-facing summary of an AnalysisReport."""
+    lines = []
+    s = report.summary or {}
+    lines.append(
+        f"## Static Analysis: {report.target}\n"
+        f"files={s.get('files_analyzed', len(report.files))} "
+        f"sloc={s.get('total_sloc', '?')} "
+        f"avg_cc={s.get('avg_complexity', '?')} "
+        f"avg_mi={s.get('avg_maintainability', '?')} "
+        f"lint={s.get('total_lint_issues', '?')} "
+        f"security={s.get('total_security_issues', len([i for f in report.files for i in f.security_issues]))}"
+    )
+    for fm in report.files:
+        findings = []
+        for i in fm.security_issues[:max_items]:
+            findings.append(f"  [SECURITY/{i.get('severity', '?')}] L{i.get('line', '?')} {i.get('test_id', '')}: {i.get('message', '')}")
+        errs = [i for i in fm.lint_issues if i.get("severity") == "error"]
+        warns = [i for i in fm.lint_issues if i.get("severity") != "error"]
+        for i in errs[:max_items]:
+            findings.append(f"  [LINT/error] L{i.get('line', '?')} {i.get('code', '')}: {i.get('message', '')}")
+        for i in warns[:max_items]:
+            findings.append(f"  [LINT/{i.get('severity', 'warn')}] L{i.get('line', '?')} {i.get('code', '')}: {i.get('message', '')}")
+        for d in fm.dead_code[:max_items]:
+            findings.append(f"  [DEAD] L{d.get('line', '?')}: {d.get('name') or d.get('message', '')}")
+        bad_cc = [b for b in fm.complexity if b.get("rank", "A") in ("D", "E", "F")]
+        for b in bad_cc[:max_items]:
+            findings.append(f"  [COMPLEXITY/{b.get('rank')}] {b.get('name', '?')} cc={b.get('complexity')}")
+        if 0 < fm.maintainability_index < 40:
+            findings.append(f"  [MI] maintainability_index={fm.maintainability_index:.1f} (<40, refactor)")
+        for e in fm.errors:
+            findings.append(f"  [ANALYZER-ERROR] {e}")
+        if findings:
+            lines.append(f"\n### {fm.path} (mi={fm.maintainability_index:.1f}, sloc={fm.sloc})")
+            lines.extend(findings)
+    if len(lines) == 1:
+        lines.append("\nKeine Findings. Code ist sauber.")
+    return "\n".join(lines)
+
+
+def _build_dev_tools(app):
+    """Development tools: code writing with auto static analysis + test runner with runtime analysis."""
+    tools = []
+
+    def _analyze(target: str) -> str:
+        from toolboxv2.utils.extras.code_analyzer.tb_analyze import static_analyze
+        report = static_analyze(target)
+        return _summarize_static_report(report)
+
+    async def write_code(file_path: str, content: str) -> str:
+        """Write a code file. Automatically runs static analysis and returns the report."""
+        try:
+            p = Path(file_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+            result = f"✓ Written: {p} ({len(content)} chars)\n\n"
+            try:
+                result += _analyze(str(p))
+            except Exception as e:
+                result += f"(static analysis failed: {e})"
+            return result
+        except Exception as e:
+            return f"Error writing {file_path}: {e}"
+
+    async def patch_code(file_path: str, old_str: str, new_str: str) -> str:
+        """Patch a file via unique string replace. Automatically runs static analysis and returns the report."""
+        try:
+            p = Path(file_path)
+            if not p.exists():
+                return f"Error: file not found: {p}"
+            text = p.read_text(encoding="utf-8")
+            n = text.count(old_str)
+            if n == 0:
+                return f"Error: old_str not found in {p}. No changes made."
+            if n > 1:
+                return f"Error: old_str matches {n} times in {p} — must be unique. Widen old_str. No changes made."
+            p.write_text(text.replace(old_str, new_str, 1), encoding="utf-8")
+            result = f"✓ Patched: {p}\n\n"
+            try:
+                result += _analyze(str(p))
+            except Exception as e:
+                result += f"(static analysis failed: {e})"
+            return result
+        except Exception as e:
+            return f"Error patching {file_path}: {e}"
+
+    async def analyze_code(target: str) -> str:
+        """Run static analysis (lint, security, complexity, dead code, MI) on a file or directory."""
+        try:
+            return _analyze(target)
+        except Exception as e:
+            return f"Analysis error for {target}: {e}"
+
+    async def run_tests(
+        target: str,
+        test_class: str = None,
+        test_function: str = None,
+        keyword: str = None,
+        runtime: bool = False,
+    ) -> str:
+        """Run tests via pytest for a directory/file/class/function.
+
+        target: dir or file path. test_class/test_function narrow to ::Class::func.
+        keyword: pytest -k expression. runtime=True adds runtime analysis
+        (CPU/RAM/leak monitoring + static analysis of all files actually loaded).
+        """
+        import shlex
+        import subprocess
+        import tempfile
+        try:
+            node = target
+            if test_class:
+                node += f"::{test_class}"
+            if test_function:
+                node += f"::{test_function}" if test_class else f"::{test_function}"
+            cmd = [sys.executable, "-m", "pytest", node, "-x", "-q", "--tb=short", "-p", "no:cacheprovider"]
+            if keyword:
+                cmd += ["-k", keyword]
+
+            if not runtime:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                out = (proc.stdout or "") + (proc.stderr or "")
+                if len(out) > 12000:
+                    out = out[:6000] + "\n...[truncated]...\n" + out[-6000:]
+                return f"exit_code={proc.returncode}\n{out}"
+
+            # runtime mode: monitor + static analysis of touched files
+            from toolboxv2.utils.extras.code_analyzer.tb_analyze import (
+                runtime_run, runtime_report, analyze_runtime_touched,
+            )
+            outdir = tempfile.mkdtemp(prefix="tb_admin_rt_")
+            cmd_str = " ".join(shlex.quote(c) for c in cmd)
+            exit_code = runtime_run(cmd_str, outdir=outdir, interval=1.0)
+            parts = [f"exit_code={exit_code}", f"runtime data: {outdir}"]
+            try:
+                html = runtime_report(outdir, output=str(Path(outdir) / "runtime_report.html"))
+                parts.append(f"runtime HTML report: {html}")
+            except Exception as e:
+                parts.append(f"(runtime report failed: {e})")
+            try:
+                report = analyze_runtime_touched(outdir)
+                parts.append(_summarize_static_report(report))
+            except Exception as e:
+                parts.append(f"(touched-files analysis failed: {e})")
+            return "\n".join(parts)
+        except subprocess.TimeoutExpired:
+            return "Error: test run timed out (600s). Verdacht auf Haenger/Endlosschleife — mit runtime=True erneut ausfuehren."
+        except Exception as e:
+            return f"Test run error: {e}"
+
+    tools.extend([
+        (write_code, "write_code",
+         "Code-Datei schreiben (file_path, content) — auto statische Analyse, Report kommt zurueck",
+         ["dev", "write", "code"]),
+        (patch_code, "patch_code",
+         "Datei patchen via unique str-replace (file_path, old_str, new_str) — auto statische Analyse",
+         ["dev", "write", "code"]),
+        (analyze_code, "analyze_code",
+         "Statische Analyse fuer Datei/Ordner: lint, security, complexity, dead code, MI",
+         ["dev", "read", "analysis"]),
+        (run_tests, "run_tests",
+         "Tests ausfuehren (target[, test_class][, test_function][, keyword][, runtime=True fuer Runtime-Analyse])",
+         ["dev", "test", "analysis"]),
+    ])
+    return tools
+
+
 def _build_style():
     return PTStyle.from_dict({
         "prompt": "#22d3ee bold",
@@ -704,7 +915,7 @@ async def _print_stream(agent, text: str, session_id: str = "admin"):
             query=text,
             session_id=session_id,
             human_online=True,
-            max_iterations=75,
+            max_iterations=130,
             term_width=os.get_terminal_size().columns - 5
         ):
             print(output, end="", flush=True)
@@ -762,6 +973,9 @@ async def run(app: App, args=None):
         builder.add_tool(func, name, desc, category=cats, flags={"system_tool_by_name": True})
 
     for func, name, desc, cats in _build_manifest_tools(app):
+        builder.add_tool(func, name, desc, category=cats, flags={"system_tool_by_name": True})
+
+    for func, name, desc, cats in _build_dev_tools(app):
         builder.add_tool(func, name, desc, category=cats, flags={"system_tool_by_name": True})
 
     # --- System prompt ---

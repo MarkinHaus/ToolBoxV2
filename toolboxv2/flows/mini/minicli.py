@@ -2408,9 +2408,14 @@ async def run(app: App, args):
 
     # Create and run CLI
     cli = BeastCLI(app)
-    with BlobFile("cli/context.c", key=Code.DK()(), mode="r") as f:
-        if f.exists() and f.read():
-            cli.context.__dict__ = f.read_json()
+    try:
+        with BlobFile("cli/context.c", key=Code.DK()(), mode="r") as f:
+            if f.exists() and f.read():
+                cli.context.__dict__ = f.read_json()
+    except Exception as e:
+        if 'InvalidToken' in str(e):
+            with BlobFile("cli/context.c", mode="w") as f:
+                f.write_json({})
     await cli.run()
 
     # Cleanup

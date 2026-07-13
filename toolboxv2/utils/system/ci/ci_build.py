@@ -180,6 +180,8 @@ def create_manifest_in():
         "recursive-include toolboxv2/features_packed *.zip *.md\n"
         "recursive-include toolboxv2/features/core *\n"
         "recursive-include toolboxv2/features/mini *\n"
+        "include env-template\n"
+        "include toolboxv2/utils/manifest/*.yaml\n"
         "global-exclude __pycache__\n"
         "global-exclude *.py[cod]\n"
     )
