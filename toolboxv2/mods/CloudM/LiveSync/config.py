@@ -30,6 +30,7 @@ class SyncConfig:
     max_file_size: int = 50 * 1024 * 1024  # 50 MB
     debounce_seconds: float = 2.0
     max_concurrent_transfers: int = 5
+    share_token: str = ""  # raw share token, sent in AUTH (server validates it)
     reconnect_base_delay: float = 1.0
     reconnect_max_delay: float = 60.0
     healthcheck_interval: float = 30.0
@@ -130,8 +131,13 @@ class ShareToken:
         except Exception as exc:
             raise ValueError(f"Invalid share token: {exc}") from exc
 
-    def to_sync_config(self, vault_path: str) -> SyncConfig:
-        """Convert token data into a SyncConfig for the client."""
+    def to_sync_config(self, vault_path: str, raw_token: str = "") -> SyncConfig:
+        """Convert token data into a SyncConfig for the client.
+
+        raw_token: the original encoded token string. It is passed through to
+        the AUTH message unchanged — the client cannot re-encode it because the
+        secret part is encrypted with the *server's* device key.
+        """
         return SyncConfig(
             share_id=self.share_id,
             vault_path=vault_path,
@@ -140,6 +146,7 @@ class ShareToken:
             encryption_key=self.encryption_key,
             bucket=self.bucket,
             prefix=self.prefix,
+            share_token=raw_token,
         )
 
 

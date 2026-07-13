@@ -298,6 +298,7 @@ class TestComposeStructure(unittest.TestCase):
         compose_candidates = [
             test_dir / "compose.yaml",
             Path(__file__).parent.parent.parent / "compose.yaml",
+            Path(__file__).parent.parent.parent.parent / "compose.yaml",
         ]
         cls.compose_path = None
         for p in compose_candidates:
@@ -369,6 +370,7 @@ class TestDockerfileStructure(unittest.TestCase):
         candidates = [
             Path(__file__).parent.parent / "Dockerfile.toolbox",
             Path(__file__).parent.parent / "output" / "Dockerfile.toolbox",
+            Path(__file__).parent.parent.parent.parent / "Dockerfile.toolbox",
         ]
         cls.content = None
         for p in candidates:
@@ -434,6 +436,7 @@ class TestDockerfileSsh(unittest.TestCase):
         candidates = [
             Path(__file__).parent.parent / "Dockerfile.ssh",
             Path(__file__).parent.parent / "output" / "Dockerfile.ssh",
+            Path(__file__).parent.parent.parent.parent / "Dockerfile.ssh",
         ]
         cls.content = None
         for p in candidates:

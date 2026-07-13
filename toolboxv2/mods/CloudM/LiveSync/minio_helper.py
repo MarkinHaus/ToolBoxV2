@@ -316,22 +316,38 @@ def vend_credentials_for_share(share_id: str, env_config: dict) -> Dict[str, Any
     Returns:
         Credential dict: {endpoint, access_key, secret_key, secure, bucket, prefix, ...}
     """
-    from toolboxv2.mods.CloudM.auth.minio_policy import (
-        CredentialBroker,
-        MinIOPolicyConfig,
-    )
+    try:
+        from toolboxv2.mods.CloudM.auth.minio_policy import (
+            CredentialBroker,
+            MinIOPolicyConfig,
+        )
 
-    config = MinIOPolicyConfig(
-        endpoint=env_config["endpoint"],
-        access_key=env_config["access_key"],
-        secret_key=env_config["secret_key"],
-        secure=env_config.get("secure", False),
-    )
-    broker = CredentialBroker(config)
-    creds = broker.vend_share_credentials(share_id)
-    logger.info(
-        f"Minted scoped credentials for share {share_id}",
-        extra={"audit_action": "CREDENTIAL_VEND", "share_id": share_id, "scoped": True}
-    )
-    return creds
+        config = MinIOPolicyConfig(
+            endpoint=env_config["endpoint"],
+            access_key=env_config["access_key"],
+            secret_key=env_config["secret_key"],
+            secure=env_config.get("secure", False),
+        )
+        broker = CredentialBroker(config)
+        creds = broker.vend_share_credentials(share_id)
+        logger.info(
+            f"Minted scoped credentials for share {share_id}",
+            extra={"audit_action": "CREDENTIAL_VEND", "share_id": share_id, "scoped": True}
+        )
+        return creds
+    except Exception as exc:
+        # Fallback: return admin credentials when CredentialBroker is unavailable
+        logger.warning(
+            f"CredentialBroker unavailable ({exc}), falling back to admin creds for share {share_id}",
+            extra={"audit_action": "CREDENTIAL_VEND_FALLBACK", "share_id": share_id, "scoped": False}
+        )
+        return {
+            "endpoint": env_config["endpoint"],
+            "access_key": env_config["access_key"],
+            "secret_key": env_config["secret_key"],
+            "secure": env_config.get("secure", False),
+            "bucket": env_config.get("bucket", "tb-shared"),
+            "prefix": share_id,
+            "policy_applied": False,
+        }
 

@@ -123,6 +123,7 @@ class TestDashboardMagicLinkWiring(unittest.TestCase):
 class TestCustomServiceCommandBuild(unittest.TestCase):
     def test_named_custom_service_builds_tb_args(self):
         import sys
+        import os
         from toolboxv2.utils.clis import service_manager as sm
 
         captured = {}
@@ -153,7 +154,11 @@ class TestCustomServiceCommandBuild(unittest.TestCase):
             mgr.start_service("myflow", args=["run", "x"])
 
         cmd = popen.call_args[0][0]
-        self.assertEqual(cmd[:3], [sys.executable, "-m", "toolboxv2"])
+        # service_manager replaces python.exe ÔåÆ pythonw.exe on Windows to suppress console windows.
+        # Accept either python.exe or pythonw.exe as the executable.
+        exe_base = os.path.basename(cmd[0]).lower()
+        self.assertTrue(exe_base.startswith("python"), f"Expected python executable, got {cmd[0]}")
+        self.assertEqual(cmd[1:3], ["-m", "toolboxv2"])
         self.assertNotIn("myflow", cmd)         # custom → no service name in cmd
         self.assertEqual(cmd[3:], ["run", "x"])  # user args appended
 

@@ -210,13 +210,14 @@ class SyncMessage(BaseModel):
     # ── Factory helpers ──
 
     @classmethod
-    def auth(cls, client_id: str, device_type: str, share_id: str) -> SyncMessage:
+    def auth(cls, client_id: str, device_type: str, share_id: str, token: str = "") -> SyncMessage:
         return cls(
             type=MsgType.AUTH,
             payload=AuthPayload(
                 client_id=client_id,
                 device_type=device_type,
                 share_id=share_id,
+                token=token,
             ).model_dump(),
         )
 

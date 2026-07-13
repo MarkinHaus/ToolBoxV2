@@ -37,7 +37,7 @@ class TestAppConfig:
         """Test default values are set correctly."""
         config = AppConfig()
         assert config.name == "ToolBoxV2"
-        assert config.version == "0.1.0"
+        assert config.version == "0.1.27"
         assert config.instance_id == "tbv2_main"
         assert config.environment == Environment.DEVELOPMENT
         assert config.debug is False

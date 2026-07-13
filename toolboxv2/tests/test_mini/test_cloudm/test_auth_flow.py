@@ -107,9 +107,13 @@ class TestConfig(unittest.TestCase):
         # Clear all potentially relevant env vars
         for key in ["TB_JWT_SECRET", "TB_COOKIE_SECRET"]:
             os.environ.pop(key, None)
+        # In dev mode, get_jwt_secret auto-generates a fallback via ensure_secret().
+        # Only production mode raises ValueError when no secret is set.
+        os.environ["TB_ENV"] = "production"
         from toolboxv2.mods.CloudM.auth.config import get_jwt_secret
         with self.assertRaises(ValueError):
             get_jwt_secret()
+        os.environ.pop("TB_ENV", None)
 
     @patch.dict(os.environ, {"APP_BASE_URL": "http://localhost:9999"})
     def test_get_base_url_dev(self):

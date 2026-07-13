@@ -138,10 +138,11 @@ class TestGenerateShareToken(unittest.TestCase):
         self.assertEqual(rd["error"], "none")
         data = rd["result"]["data"]
         self.assertEqual(data["share_id"], "mycustom")
-        import base64, json
-        decoded = json.loads(base64.urlsafe_b64decode(data["token"]))
-        self.assertEqual(decoded["share_id"], "mycustom")
-        self.assertEqual(decoded["ws_endpoint"], "ws://example.com:9000")
+        # Token is now v3 (encrypted) - decode via ShareToken API
+        from toolboxv2.mods.CloudM.LiveSync.config import ShareToken
+        decoded = ShareToken.decode(data["token"])
+        self.assertEqual(decoded.share_id, "mycustom")
+        self.assertEqual(decoded.ws_endpoint, "ws://example.com:9000")
 
     def test_does_not_start_server(self):
         """Critical: generate_share_token must NOT call start_sync."""

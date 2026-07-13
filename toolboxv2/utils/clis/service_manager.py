@@ -350,8 +350,12 @@ class ServiceManager:
             )
             cmd = [executable, "-c", code]
         else:
-            runner = svc_def.runner_key if svc_def else name
-            cmd = [executable, "-m", "toolboxv2", runner] + (args or [])
+            if is_custom:
+                # Custom services run `tb <args>` directly, no runner name
+                cmd = [executable, "-m", "toolboxv2"] + (args or [])
+            else:
+                runner = svc_def.runner_key if svc_def else name
+                cmd = [executable, "-m", "toolboxv2", runner] + (args or [])
 
         if IS_WINDOWS:
             # Windows: CREATE_NO_WINDOW für headless

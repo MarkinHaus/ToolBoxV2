@@ -258,12 +258,12 @@ class SyncClient:
 
         async with websockets.connect(self.config.ws_endpoint) as ws:
             self._ws = ws
-            self._reconnect_attempt = 0
 
-            # Auth
+            # Auth (token required by server since FIX 3)
             client_id = f"{node_}-{os.getpid()}"
             await ws.send(SyncMessage.auth(
                 client_id, "desktop", self.config.share_id,
+                token=self.config.share_token,
             ).to_json())
 
             # Wait for auth_success
@@ -274,6 +274,11 @@ class SyncClient:
                 raise ConnectionError(f"Auth failed: {msg.payload.get('message')}")
             if msg.type != MsgType.AUTH_SUCCESS:
                 raise ConnectionError(f"Unexpected response: {msg.type}")
+
+            # Auth succeeded — only now reset the reconnect backoff.
+            # (Resetting right after TCP connect made auth failures retry
+            # every 1.0s forever: "attempt 1" loop.)
+            self._reconnect_attempt = 0
 
             # Extract MinIO credentials
             minio_creds = msg.payload.get("minio_credentials", {})
@@ -797,7 +802,7 @@ async def _run_standalone():
     )
 
     token = ShareToken.decode(args.token)
-    config = token.to_sync_config(args.vault)
+    config = token.to_sync_config(args.vault, raw_token=args.token)
 
     client = SyncClient(config)
     try:

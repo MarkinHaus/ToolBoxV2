@@ -310,3 +310,57 @@ def autowake_status() -> str:
     elif system == "Darwin":
         return _status_macos()
     return f"Unsupported platform: {system}"
+
+
+def _installed_windows() -> bool:
+    """True if all ISAA schtasks entries are registered (locale-independent)."""
+    try:
+        for suffix in ("_Periodic", "_Boot"):
+            r = subprocess.run(
+                ["schtasks", "/Query", "/TN", f"{_TASK_NAME}{suffix}"],
+                capture_output=True,
+            )
+            if r.returncode != 0:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def _installed_linux() -> bool:
+    """True if crontab contains active ISAA entries."""
+    try:
+        r = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+        if r.returncode != 0:
+            return False
+        return any(
+            _TASK_NAME in line and not line.lstrip().startswith("#")
+            for line in r.stdout.split("\n")
+        )
+    except Exception:
+        return False
+
+
+def _installed_macos() -> bool:
+    """True if the ISAA LaunchAgent plist exists."""
+    try:
+        return _get_plist_path().exists()
+    except Exception:
+        return False
+
+
+def is_autowake_installed() -> bool:
+    """True if OS-level auto-wake is fully registered.
+
+    Checks the OS directly (exit codes / crontab / plist) — never parses
+    the human-readable autowake_status() string, which is display-only
+    and locale-dependent on Windows.
+    """
+    system = platform.system()
+    if system == "Windows":
+        return _installed_windows()
+    elif system == "Linux":
+        return _installed_linux()
+    elif system == "Darwin":
+        return _installed_macos()
+    return False

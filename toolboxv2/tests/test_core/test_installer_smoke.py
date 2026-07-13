@@ -12,7 +12,8 @@ from pathlib import Path
 
 
 def _run(cmd: list[str], timeout=15) -> tuple[int, str, str]:
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                       encoding='utf-8', errors='replace')
     return r.returncode, r.stdout, r.stderr
 
 

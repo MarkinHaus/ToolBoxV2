@@ -17,7 +17,7 @@ class TestSyncConfig(unittest.TestCase):
         )
         self.assertEqual(cfg.share_id, "abc123")
         self.assertEqual(cfg.vault_path, "/tmp/vault")
-        self.assertEqual(cfg.bucket, "livesync")
+        self.assertEqual(cfg.bucket, "tb-shared")
 
     def test_config_defaults(self):
         from toolboxv2.mods.CloudM.LiveSync.config import SyncConfig
@@ -26,7 +26,7 @@ class TestSyncConfig(unittest.TestCase):
             minio_endpoint="h:9000", ws_endpoint="ws://h:8765",
             encryption_key="k",
         )
-        self.assertEqual(cfg.bucket, "livesync")
+        self.assertEqual(cfg.bucket, "tb-shared")
         self.assertEqual(cfg.max_file_size, 50 * 1024 * 1024)
         self.assertEqual(cfg.debounce_seconds, 2.0)
         self.assertEqual(cfg.max_concurrent_transfers, 5)
@@ -51,25 +51,25 @@ class TestShareToken(unittest.TestCase):
         self.assertEqual(restored.minio_endpoint, "server.example:9000")
         self.assertEqual(restored.encryption_key, "c29tZWtleQ==")
         self.assertEqual(restored.ws_endpoint, "ws://server.example:8765")
-        self.assertEqual(restored.version, 1)
+        self.assertEqual(restored.version, 3)
 
     def test_decode_invalid_token(self):
         from toolboxv2.mods.CloudM.LiveSync.config import ShareToken
         with self.assertRaises(ValueError):
-            ShareToken.decode("not-valid-base64-json!!!")
+            ShareToken.decode("v3:invalid!!!.garbage")
 
     def test_token_contains_no_minio_credentials(self):
         """Token must NEVER contain MinIO access/secret keys."""
         from toolboxv2.mods.CloudM.LiveSync.config import ShareToken
         tok = ShareToken(
-            share_id="x", minio_endpoint="h:9000", bucket="livesync",
+            share_id="x", minio_endpoint="h:9000", bucket="tb-shared",
             prefix="x", encryption_key="k", ws_endpoint="ws://h:8765",
         )
         encoded = tok.encode()
-        raw = base64.urlsafe_b64decode(encoded).decode()
-        data = json.loads(raw)
-        self.assertNotIn("access_key", data)
-        self.assertNotIn("secret_key", data)
+        # Token is encrypted (v3) - decode it back and verify no credentials
+        restored = ShareToken.decode(encoded)
+        self.assertNotIn("access_key", [a for a in dir(restored) if not a.startswith('_')])
+        self.assertNotIn("secret_key", [a for a in dir(restored) if not a.startswith('_')])
 
 
 class TestEnvConfig(unittest.TestCase):

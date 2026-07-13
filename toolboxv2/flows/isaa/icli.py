@@ -6932,10 +6932,9 @@ class ISAA_Host:
             aw_indicator = ""
             if self.job_scheduler.has_persistent_jobs():
                 try:
-                    from toolboxv2.mods.isaa.extras.jobs.os_scheduler import autowake_status
-                    _aw_s = autowake_status()
+                    from toolboxv2.mods.isaa.extras.jobs.os_scheduler import is_autowake_installed
                     aw_indicator = (
-                        "  [OS✓]" if "Installed" in _aw_s or "Registered" in _aw_s
+                        "  [OS✓]" if is_autowake_installed()
                         else "  [OS✗ — run /job autowake install]"
                     )
                 except Exception:
@@ -14179,10 +14178,9 @@ class ISAA_Host:
         if self.job_scheduler.has_persistent_jobs():
             try:
                 from toolboxv2.mods.isaa.extras.jobs.os_scheduler import (
-                    autowake_status, install_autowake,
+                    install_autowake, is_autowake_installed,
                 )
-                status_str = autowake_status()
-                if "Not installed" in status_str:
+                if not is_autowake_installed():
                     result = install_autowake(self.jobs_file)
                     #info("Auto-installed OS autowake on startup: %s", result)
             except Exception as _aw_err:
