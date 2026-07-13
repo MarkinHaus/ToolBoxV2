@@ -65,7 +65,13 @@ def get_toolboxv2_data_dir() -> Path:
 
     app = get_app()
     data_dir = Path(app.data_dir) / "Agents" / "VFS"
-
+    # Fail-safe: under pytest the data dir MUST be isolated. Refuse to operate on
+    # real user data if no TB_DATA_DIR override is active.
+    if os.getenv("PYTEST_CURRENT_TEST") and not os.getenv("TB_DATA_DIR"):
+        raise RuntimeError(
+            "get_toolboxv2_data_dir() called under pytest without TB_DATA_DIR — "
+            "refusing to touch real user data. Set TB_DATA_DIR to a temp dir in conftest."
+        )
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir
 

@@ -2013,6 +2013,7 @@ BEISPIELE:
             async def _dream_stream_wrapper(ctx):
                 async for chunk in self.agent.a_dream_stream():
                     yield chunk
+                ctx.status = "paused"
                 yield {
                     "type": "done",
                     "success": True,
@@ -2480,6 +2481,7 @@ BEISPIELE:
             finally:
                 # OBS: IMMER end_run, auch bei crash
                 _obs = getattr(self.agent, 'obs', None)
+                ctx.status = "paused"
                 if _obs and _obs.active_run():
                     _obs.end_run(success=success, final_answer=final_response or "CRASH")
             yield enrich(
@@ -3019,7 +3021,7 @@ BEISPIELE:
                         f"Pre-injection skipped: {_pre_err}", logging.WARNING
                     )
 
-            history_depth = 2 if self.is_sub_agent else 6
+            history_depth = 10 if self.is_sub_agent else 25
             permanent_history = session.get_history_for_llm(last_n=history_depth)
             ctx.working_history = [
                 {"role": "system", "content": system_prompt},
@@ -3712,10 +3714,11 @@ BEISPIELE:
                     task = f_args.get("task", "")
                     output_dir = f_args.get("output_dir", f"task_{uuid.uuid4().hex[:6]}")
                     wait = f_args.get("wait", True)
-                    budget = f_args.get("budget", 5000)
+                    budget = f_args.get("budget", 64000)
+                    max_iterations = f_args.get("max_iterations", 120)
 
                     spawn_result = await self._sub_agent_manager.spawn(
-                        task=task, output_dir=output_dir, wait=wait, budget=budget
+                        task=task, output_dir=output_dir, wait=wait, budget=budget, max_iterations=max_iterations
                     )
 
                     if wait:
@@ -3747,9 +3750,6 @@ BEISPIELE:
 
                 except Exception as e:
                     result = f"ERROR spawning sub-agent: {str(e)}"
-
-        elif f_name == "sub_agents_status":
-            pass
 
         elif f_name == "wait_for":
             if not self._sub_agent_manager:

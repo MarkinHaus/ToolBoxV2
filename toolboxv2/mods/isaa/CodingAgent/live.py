@@ -448,7 +448,10 @@ class MockIPython:
         self.output_history.clear()
         self._execution_count = 0
         if self.auto_remove:
-            shutil.rmtree(self.vfs.base_dir, ignore_errors=True)
+            _base = Path(self.vfs.base_dir).resolve()
+            # Only wipe the dedicated sandbox dir — never a real data root
+            if _base.name == "virtual_fs" and _base.exists():
+                shutil.rmtree(_base, ignore_errors=True)
 
     def get_namespace(self) -> dict[str, Any]:
         """Get current namespace"""
@@ -1431,9 +1434,11 @@ print(f"Successfully imported {package_name}")
 
             # Clear VFS if auto_remove is enabled
             if self.auto_remove:
-                shutil.rmtree(self.vfs.base_dir, ignore_errors=True)
-                self.vfs.base_dir.mkdir(parents=True, exist_ok=True)
-                self.vfs.virtual_files.clear()
+                _base = Path(self.vfs.base_dir).resolve()
+                if _base.name == "virtual_fs":
+                    shutil.rmtree(_base, ignore_errors=True)
+                    _base.mkdir(parents=True, exist_ok=True)
+                    self.vfs.virtual_files.clear()
 
             # Reset current file
             self._current_file = None

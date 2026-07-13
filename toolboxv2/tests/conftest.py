@@ -6,8 +6,17 @@ Provides:
 - Serial execution marker for xdist (tests that share state)
 """
 import contextlib
+import os
+import tempfile
 import pytest
 import sys
+
+
+# HARD ISOLATION: the test suite must NEVER touch real user data (.data / global VFS).
+# Set at conftest import time — before the first get_app() resolves data_dir.
+if not os.environ.get("TB_TEST_DATA_LOCK"):
+    os.environ["TB_DATA_DIR"] = tempfile.mkdtemp(prefix="tb_test_data_")
+    os.environ["TB_TEST_DATA_LOCK"] = "1"
 
 # Files that create one real App for ALL their tests in setUpClass.
 # The reset fixture must not interfere with them.

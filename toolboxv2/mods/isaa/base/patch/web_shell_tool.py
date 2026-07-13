@@ -82,11 +82,8 @@ def _domain(url: str) -> str:
 
 
 def _truncate(text: str, max_chars: int = 4000) -> str:
-    """Token-efficient truncation with indicator."""
-    if len(text) <= max_chars:
-        return text
-    half = max_chars // 2
-    return f"{text[:half]}\n\n[... {len(text) - max_chars} chars truncated ...]\n\n{text[-half:]}"
+    """Token-efficient truncation with indicator.""" # NO
+    return text
 
 
 # =============================================================================
@@ -201,8 +198,8 @@ class AuthProfile:
 
     def get_credentials(self) -> tuple[str, str]:
         return (
-            os.environ.get(self.env_username, ""),
-            os.environ.get(self.env_password, ""),
+            os.getenv(self.env_username, ""),
+            os.getenv(self.env_password, ""),
         )
 
     def to_dict(self) -> dict:
@@ -232,7 +229,7 @@ DEFAULT_AUTH_PROFILES = {
             'button[name="_eventId_proceed"]',
         ],
         "validity_url": "https://isis.tu-berlin.de/my/",
-        "success_indicator": ".usermenu, [data-userid], .user-picture",
+        "success_indicator": "body.userloggedin, .usermenu, [data-userid]",
         "consent_selectors": ['button[type="submit"]', 'input[type="submit"]'],
         "env_username": "ISIS_USERNAME",
         "env_password": "ISIS_PASSWORD",
@@ -609,16 +606,20 @@ def make_web_shell(
         if not profile.validity_url:
             return False
         try:
-            await agent.goto(profile.validity_url, wait_until="domcontentloaded")
+            await agent.goto(profile.validity_url, wait_until="networkidle")
         except Exception:
             return False
-        try:
-            r = await agent.evaluate(
-                f"(() => {{ return !!document.querySelector({json.dumps(profile.success_indicator)}); }})()"
-            )
-            return bool(r)
-        except Exception:
-            return False
+        # success_indicator is JS-hydrated → poll instead of one-shot querySelector
+        import asyncio
+        check_js = f"(() => {{ return !!document.querySelector({json.dumps(profile.success_indicator)}); }})()"
+        for _ in range(6):
+            try:
+                if bool(await agent.evaluate(check_js)):
+                    return True
+            except Exception:
+                return False
+            await asyncio.sleep(0.5)
+        return False
 
     async def _do_login(profile) -> bool:
         """Perform login using profile selectors + credentials."""
@@ -636,8 +637,12 @@ def make_web_shell(
         p_sel = await _find_first_visible(profile.password_selectors)
         s_sel = await _find_first_visible(profile.submit_selectors)
         if not all([u_sel, p_sel, s_sel]):
+            # No form: IdP likely redirected past it → already authenticated?
+            if await _check_validity(profile):
+                logger.info("Auth: already authenticated (no form) for %s", profile.domain)
+                return True
             logger.error("Auth: form not found for %s (u=%s p=%s s=%s)",
-                        profile.domain, u_sel, p_sel, s_sel)
+                         profile.domain, u_sel, p_sel, s_sel)
             return False
         await agent.type(u_sel, user)
         await agent.type(p_sel, pwd)
@@ -1071,9 +1076,17 @@ def make_web_shell(
         elif cmd == "eval":
             if not _started:
                 return _err("no browser session")
-            if not rest:
+            # Raw expression after 'eval' — bypass shlex so quotes/':' survive
+            parts = command.split(None, 1)
+            if len(parts) < 2 or not parts[1].strip():
                 return _err("eval: missing JavaScript code")
-            js = " ".join(rest)
+            js = parts[1].strip()
+            # Strip one optional wrapping quote pair (only if inner has no same quote)
+            if len(js) >= 2 and js[0] == js[-1] and js[0] in ("'", '"') and js[0] not in js[1:-1]:
+                js = js[1:-1].strip()
+            # Support top-level await by wrapping in an async IIFE
+            if "await" in js.replace("(", " ").replace(")", " ").replace(";", " ").split():
+                js = f"(async () => {{ return ({js}); }})()"
             try:
                 result = await agent.evaluate(js)
                 return _ok(str(result) if result is not None else "(undefined)")

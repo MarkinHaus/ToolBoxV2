@@ -1423,6 +1423,7 @@ class ToolManager:
                 result = subprocess.run(
                     base_cmd + [help_flag],
                     capture_output=True,
+                    encoding="utf-8",
                     text=True,
                     timeout=5
                 )
@@ -1450,8 +1451,6 @@ class ToolManager:
             if cli_arguments:
                 cmd_list.extend(shlex.split(cli_arguments))
 
-
-            print(cmd_list)
             def _run_sync():
                 return subprocess.run(
                     cmd_list,

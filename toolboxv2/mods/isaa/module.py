@@ -3050,7 +3050,7 @@ async def launch_cli(
 @export(mod_name="isaa", name="launchViewer", api=True, request_as_kwarg=True)
 async def launch_viewer(
     self,
-    mode: str = "web",                  # web | terminal | both
+    mode: str = "both",                  # web | terminal | both
     port: int = 7799,
     refresh: float = 1.0,
     request: RequestData | None = None,

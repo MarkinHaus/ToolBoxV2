@@ -2211,7 +2211,7 @@ class FlowAgent:
         Collects the stream internally and returns the final report dict.
 
         Usage:
-            report = await agent.a_dream(DreamConfig(max_budget=5000))
+            report = await agent.a_dream(DreamConfig(max_budget=50000))
             report = await agent.a_dream()  # defaults
         """
         final_answer = ""

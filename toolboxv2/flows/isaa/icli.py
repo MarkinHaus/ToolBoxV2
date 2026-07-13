@@ -5539,7 +5539,32 @@ class ISAA_Host:
                 createJob(name="daily-backup", trigger_type="on_cron",
                          agent_name="self", query="backup database",
                          trigger_config={"cron_expression": "0 3 * * *"})
+
+            class TriggerType(str, Enum):
+                ON_TIME = "on_time"
+                ON_INTERVAL = "on_interval"
+                ON_CRON = "on_cron"
+                ON_CLI_START = "on_cli_start"
+                ON_CLI_EXIT = "on_cli_exit"
+                ON_SYSTEM_BOOT = "on_system_boot"
+                ON_SYSTEM_IDLE = "on_system_idle"
+                ON_SYSTEM_SHUTDOWN = "on_system_shutdown"
+                ON_JOB_COMPLETED = "on_job_completed"
+                ON_JOB_FAILED = "on_job_failed"
+                ON_JOB_TIMEOUT = "on_job_timeout"
+                ON_NETWORK_AVAILABLE = "on_network_available"
+                ON_FILE_CHANGED = "on_file_changed"
+                ON_WEBHOOK_RECEIVED = "on_webhook_received"
+
+                ON_DREAM_START = "on_dream_start"         # fires when a dream cycle begins
+                ON_DREAM_END = "on_dream_end"             # fires when a dream cycle completes
+                ON_DREAM_BUDGET_HIT = "on_dream_budget_hit"  # fires when dreamer hits max_budget
+                ON_DREAM_SKILL_EVOLVED = "on_dream_skill_evolved"  # fires when a skill was evolved/created
+                ON_AGENT_IDLE = "on_agent_idle"           # fires when agent has no runs for N seconds
             """
+
+            if not trigger_type.startswith("on_"):
+                trigger_type = 'on_' + trigger_type
             if not host_ref.job_scheduler:
                 return "✗ Job scheduler not initialized"
 
@@ -6552,6 +6577,7 @@ class ISAA_Host:
                 "fire": {j.job_id: None for j in (self.job_scheduler.list_jobs() if self.job_scheduler else [])},
                 "detail": {j.job_id: None for j in (self.job_scheduler.list_jobs() if self.job_scheduler else [])},
                 "autowake": {"install": None, "remove": None, "status": None},
+                "view": {"both": None, "web": None, "terminal": None},
                 "dream": {"create": None,"status": None, "live": None},
             },
             "/chain": (lambda _chains: {
@@ -8501,8 +8527,22 @@ class ISAA_Host:
                     f"  ◎ dreamer gestartet → {task_id}</style>"
                 ))
 
+        elif action == "view":
+            sub = args[1] if len(args) > 1 else "terminal"
+            if sub not in ["terminal","web","both"]:
+                print_status(
+                    f"Unknown job view action: {action}. Use: terminal, web or both",
+                    "error")
+                return
+            if sub == "web":
+                from toolboxv2.mods.isaa.extras.jobs.job_viewer import job_server, shutdown_job_server
+                if job_server[0] is not None:
+                    shutdown_job_server()
+                    return
+            await self.app.a_run_any(("isaa", "launchViewer"), mode=sub)
+
         else:
-            print_status(f"Unknown job action: {action}. Use: list, add, remove, pause, resume, fire, detail, autowake", "error")
+            print_status(f"Unknown job action: {action}. Use: list, add, remove, pause, resume, fire, detail, autowake, view", "error")
 
     async def _job_add_interactive(self):
         """Interactive job creation."""

@@ -369,6 +369,7 @@ load();
 </body>
 </html>"""
 
+job_server = [None]
 
 def run_web_viewer(jobs_file: Path, live_file: Path, port: int):
     import http.server
@@ -406,8 +407,15 @@ def run_web_viewer(jobs_file: Path, live_file: Path, port: int):
 
     server = http.server.HTTPServer(("0.0.0.0", port), Handler)
     print(f"  Job Viewer → http://localhost:{port}")
+    job_server[0] = server
     server.serve_forever()
 
+def shutdown_job_server():
+    if job_server[0] is None:
+        return False
+    job_server[0].shutdown()
+    job_server[0] = None
+    return True
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Entry point

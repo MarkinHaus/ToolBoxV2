@@ -46,9 +46,9 @@ class SubAgentStatus(Enum):
 @dataclass
 class SubAgentConfig:
     """Configuration for sub-agent execution"""
-    max_tokens: int = os.getenv("SUB_AGENT_MAX_TOKENS", 512000)  # Token budget for this sub-agent
-    max_iterations: int = os.getenv("SUB_AGENT_MAX_ITERATIONS", 65)  # Max execution iterations
-    timeout_seconds: int = os.getenv("SUB_AGENT_MAX_TIMEOUT", 1200)  # Timeout in seconds
+    max_tokens: int = int(os.getenv("SUB_AGENT_MAX_TOKENS", "512000"))  # Token budget for this sub-agent
+    max_iterations: int = int(os.getenv("SUB_AGENT_MAX_ITERATIONS", "120"))  # Max execution iterations
+    timeout_seconds: int = int(os.getenv("SUB_AGENT_MAX_TIMEOUT", "1800"))  # Timeout in seconds
 
     # Inherited from parent (set at spawn time)
     model_preference: str = "fast"
@@ -160,8 +160,9 @@ class SubAgentManager:
         task: str,
         output_dir: str,
         wait: bool = True,
-        budget: int = 5000,
-        timeout: int = 900
+        budget: int = 64000,
+        max_iterations: int = 120,
+        timeout: int = 1800
     ) -> str | SubAgentResult:
         """
         Spawn a new sub-agent.
@@ -200,6 +201,7 @@ class SubAgentManager:
         config = SubAgentConfig(
             max_tokens=budget,
             timeout_seconds=timeout,
+            max_iterations=max_iterations,
             model_preference=getattr(self.parent_engine, 'model_preference', 'fast')
         )
 
@@ -695,8 +697,13 @@ PROVIDE CLEAR TASKS: Sub-agents cannot ask clarifying questions!""",
                     },
                     "budget": {
                         "type": "integer",
-                        "description": "Token budget for sub-agent (default: 5000)",
-                        "default": 5000
+                        "description": "Token budget for sub-agent (default: 64000)",
+                        "default": 64000
+                    },
+                    "max_iterations": {
+                        "type": "integer",
+                        "description": "Max execution iterations for sub-agent (default: 65)",
+                        "default": 120
                     }
                 },
                 "required": ["task", "output_dir"]
