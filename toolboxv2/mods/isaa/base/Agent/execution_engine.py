@@ -5674,14 +5674,9 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         # --- HOT PATH: in-memory resume ---
         ctx = self._active_executions.get(execution_id)
         if ctx is not None:
-            # If finalize/background-learning still runs, wait for it (no context fork).
-            _pending = self._pending_finalize_tasks.get(execution_id)
-            if _pending and not _pending.done():
-                self.live.status_msg = "Waiting for background finalization/learning"
-                try:
-                    await asyncio.wait_for(asyncio.shield(_pending), timeout=30.0)
-                except (asyncio.TimeoutError, Exception) as e:
-                    self.live.log(f"[Resume] finalize wait: {e}", logging.WARNING)
+            # "learning" = loop finished, only background learning pending -> run is over.
+            # No hard wait: fall through to a fresh run (it reads the persisted session
+            # history for continuity). Treat learning like any non-resumable status.
             if ctx.status not in ("paused", "max_iterations", "completed", "cancelled"):
                 return f"Error: Execution {execution_id} is not resumable (status: {ctx.status})"
 

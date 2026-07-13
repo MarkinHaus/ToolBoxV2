@@ -1388,6 +1388,13 @@ class DreamerToolHandler:
                 json.dumps(self._report, indent=2, default=str),
             )
 
+            # GAP 2: Sync VFS to disk to ensure persistence
+            try:
+                vfs.sync_to_disk() if hasattr(vfs, "sync_to_disk") else None
+                _log.info("[Dreamer] VFS sync after checkpoint")
+            except Exception as _sync_err:
+                _log.warning(f"[Dreamer] VFS sync failed: {_sync_err}")
+
             return f"OK: Checkpoint persisted ({len(self._skills)} skills, {len(self._rules)} rules)"
 
         except Exception as e:

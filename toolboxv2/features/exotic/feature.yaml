@@ -1,5 +1,5 @@
 name: exotic
-version: "0.1.27"
+version: "0.1.28"
 enabled: false
 immutable: false
 description: "Exotic utilities — daemon, proxy, scientific computing"

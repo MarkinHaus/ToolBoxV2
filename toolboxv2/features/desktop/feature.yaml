@@ -1,5 +1,5 @@
 name: desktop
-version: "0.1.27"
+version: "0.1.28"
 enabled: true
 immutable: false
 description: "Tauri desktop integration — native window, tray, UI widgets"

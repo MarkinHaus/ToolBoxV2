@@ -473,6 +473,13 @@ class FlowAgent:
         self.checkpoint_manager = CheckpointManager(
             agent=self, auto_load=auto_load_checkpoint
         )
+        # GAP 3: Load skills from VFS checkpoint fallback
+        try:
+            self._load_skills_from_vfs_checkpoint()
+        except Exception as _e:
+            pass
+
+
 
         self.bind_manager = BindManager(agent=self)
 
@@ -1549,6 +1556,57 @@ class FlowAgent:
     # MAIN ENTRY POINT (your existing a_run should work with this)
     # =========================================================================
 
+    async def _sidecar_ping(self, _run_ctx, query: str, session_id: str, session=None):
+        """Ping running session: answer from live ctx. Model has exactly ONE tool: steering.
+        steering injects an instruction as a user message into the running working_history.
+        The raw query is also persisted to the linear session history (source of truth),
+        so the interaction is never lost even if the live run commits without it."""
+        if session is not None:
+            try:
+                await session.add_message({"role": "user", "content": query})
+            except Exception as _pe:
+                logger.warning(f"Sidecar persist to session history failed: {_pe}")
+        steering_tool = {"type": "function", "function": {"name": "steering",
+            "description": ("Send an instruction to your OWN main task running in parallel. "
+                "It is injected into the running context as a user message so the main run can adapt. "
+                "Use ONLY when the ping requires changing/adjusting the ongoing run."),
+            "parameters": {"type": "object", "properties": {"instruction": {"type": "string",
+                "description": "Instruction for the running task, phrased as a user request."}},
+                "required": ["instruction"]}}}
+        _msgs = list(_run_ctx.working_history) + [
+            {"role": "system", "content": ("SIDECAR: the user pinged you WHILE your main task runs in parallel. "
+                "Answer using the full history above, concisely. If the ping requires adjusting the ongoing run, "
+                "call the steering tool ONCE with a clear instruction; otherwise just answer in text. Never call other tools.")},
+            {"role": "user", "content": query}]
+        try:
+            resp = await self.a_run_llm_completion(messages=_msgs, model_preference="fast",
+                with_context=False, stream=False, do_tool_execution=False, get_response_message=True,
+                session_id=session_id, tools=[steering_tool], tool_choice="auto")
+        except Exception as _e:
+            logger.warning(f"Sidecar ping failed: {_e}")
+            return ("", False)
+        def _g(o, k):
+            return getattr(o, k, None) if not isinstance(o, dict) else o.get(k)
+        tool_calls = _g(resp, "tool_calls")
+        reply_text = ""
+        steered = False
+        for tc in (tool_calls or []):
+            fn = _g(tc, "function")
+            if (_g(fn, "name") if fn is not None else None) != "steering":
+                continue
+            raw_args = _g(fn, "arguments") or ""
+            try:
+                instr = (json.loads(raw_args).get("instruction", "") if raw_args else "").strip()
+            except Exception:
+                instr = str(raw_args).strip()
+            if instr:
+                _run_ctx.working_history.append({"role": "user", "content": f"[STEERING] {instr}"})
+                steered = True
+                reply_text = f"Steering-Anweisung an den laufenden Run gesendet: {instr}"
+        if not reply_text:
+            reply_text = _g(resp, "content") or (resp if isinstance(resp, str) else "")
+        return (reply_text or "", steered)
+
     async def a_run(
         self,
         query: str,
@@ -1599,21 +1657,8 @@ class FlowAgent:
             _rid = engine._session_last_run.get(session_id)
             _run_ctx = engine._active_executions.get(_rid) if _rid else None
             if _run_ctx is not None and _run_ctx.status == "running":
-                # ponytail: snapshot copy; live loop keeps appending -> may miss last 1-2 msgs; ok for a ping
-                _msgs = list(_run_ctx.working_history) + [
-                    {"role": "system", "content": ("SIDECAR: the user pinged you WHILE your main task is still running in parallel. "
-                        "Answer the new user message using the full history above. Do NOT call tools, do NOT change task state, be concise. The main run continues.")},
-                    {"role": "user", "content": query},
-                ]
-                try:
-                    _reply = await self.a_run_llm_completion(
-                        messages=_msgs, model_preference="fast",
-                        with_context=False, stream=False, do_tool_execution=False,
-                        session_id=session_id,
-                    )
-                    return (_reply, _run_ctx) if get_ctx else _reply
-                except Exception as _e:
-                    logger.warning(f"Sidecar completion failed: {_e}; falling through")
+                _reply, _ = await self._sidecar_ping(_run_ctx, query, session_id, session=session)
+                return (_reply, _run_ctx) if get_ctx else _reply
 
         # Tolerantes Auto-Resume
         if not execution_id and not is_new_ctx:
@@ -1661,6 +1706,7 @@ class FlowAgent:
             return f"Error: {str(e)}"
         finally:
             self.is_running = False
+            await self.save()
 
     # =========================================================================
     # PAUSE / CANCEL / LIST (these should work as-is)
@@ -1900,22 +1946,12 @@ class FlowAgent:
             _run_ctx = engine._active_executions.get(_rid) if _rid else None
             if _run_ctx is not None and _run_ctx.status == "running":
                 yield {"type": "status", "status_msg": "Sidecar: answering while main run continues"}
-                _msgs = list(_run_ctx.working_history) + [
-                    {"role": "system", "content": ("SIDECAR: the user pinged you WHILE your main task is still running in parallel. "
-                        "Answer using the full history above. Do NOT call tools or change state. The main run continues.")},
-                    {"role": "user", "content": query},
-                ]
-                try:
-                    _reply = await self.a_run_llm_completion(
-                        messages=_msgs, model_preference="fast",
-                        with_context=False, stream=False, do_tool_execution=False,
-                        session_id=session_id,
-                    )
-                    yield {"type": "content", "chunk": _reply}
-                    yield {"type": "done", "success": True, "final_answer": _reply}
-                    return
-                except Exception as _e:
-                    yield {"type": "status", "status_msg": f"Sidecar failed: {_e}; starting fresh"}
+                _reply, _steered = await self._sidecar_ping(_run_ctx, query, session_id, session=session)
+                if _steered:
+                    yield {"type": "status", "status_msg": "Steering-Anweisung in laufenden Run injiziert"}
+                yield {"type": "content", "chunk": _reply}
+                yield {"type": "done", "success": True, "final_answer": _reply}
+                return
 
         # Tolerantes Auto-Resume
         if not execution_id and not is_new_ctx:
@@ -1965,6 +2001,7 @@ class FlowAgent:
             yield {"type": "error", "error": str(e)}
         finally:
             self.is_running = False
+            await self.save()
 
     async def a_stream_verbose(
         self,
@@ -2000,99 +2037,101 @@ class FlowAgent:
         yield renderer.render_agent_start()
 
         need_new_line = False
+        try:
+            async for chunk in self.a_stream(
+                query=query,
+                session_id=session_id,
+                execution_id=execution_id,
+                human_online=human_online,
+                max_iterations=max_iterations,
+                **kwargs,
+            ):
+                chunk_type = chunk.get("type", "")
 
-        async for chunk in self.a_stream(
-            query=query,
-            session_id=session_id,
-            execution_id=execution_id,
-            human_online=human_online,
-            max_iterations=max_iterations,
-            **kwargs,
-        ):
-            chunk_type = chunk.get("type", "")
+                # -- Content (LLM token stream) ------------------------------------
+                if chunk_type == "content":
+                    if need_new_line:
+                        yield "\n"
+                        need_new_line = False
+                    yield renderer.render_content(chunk.get("chunk", ""))
 
-            # -- Content (LLM token stream) ------------------------------------
-            if chunk_type == "content":
-                if need_new_line:
-                    yield "\n"
-                    need_new_line = False
-                yield renderer.render_content(chunk.get("chunk", ""))
+                # -- Reasoning / CoT -----------------------------------------------
+                elif chunk_type == "reasoning":
+                    need_new_line = True
+                    yield renderer.render_reasoning(chunk.get("chunk", ""))
 
-            # -- Reasoning / CoT -----------------------------------------------
-            elif chunk_type == "reasoning":
-                need_new_line = True
-                yield renderer.render_reasoning(chunk.get("chunk", ""))
+                # -- Tool start ----------------------------------------------------
+                elif chunk_type == "tool_start":
+                    yield renderer.render_tool_start(
+                        name=chunk.get("name", "unknown"),
+                        args=chunk.get("args")
+                    )
 
-            # -- Tool start ----------------------------------------------------
-            elif chunk_type == "tool_start":
-                yield renderer.render_tool_start(
-                    name=chunk.get("name", "unknown"),
-                    args=chunk.get("args")
-                )
+                # -- Tool result ---------------------------------------------------
+                elif chunk_type == "tool_result":
+                    result = chunk.get("result", "")
+                    duration = chunk.get("duration_ms")
+                    yield renderer.render_tool_result(result, duration)
 
-            # -- Tool result ---------------------------------------------------
-            elif chunk_type == "tool_result":
-                result = chunk.get("result", "")
-                duration = chunk.get("duration_ms")
-                yield renderer.render_tool_result(result, duration)
+                # -- Tool error ----------------------------------------------------
+                elif chunk_type == "tool_error":
+                    yield renderer.render_tool_error(chunk.get("error", "Unknown error"))
 
-            # -- Tool error ----------------------------------------------------
-            elif chunk_type == "tool_error":
-                yield renderer.render_tool_error(chunk.get("error", "Unknown error"))
+                # -- Final answer --------------------------------------------------
+                elif chunk_type == "final_answer":
+                    yield renderer.render_final_answer(chunk.get("answer", ""))
 
-            # -- Final answer --------------------------------------------------
-            elif chunk_type == "final_answer":
-                yield renderer.render_final_answer(chunk.get("answer", ""))
+                # -- Paused (human-in-the-loop) ------------------------------------
+                elif chunk_type == "paused":
+                    yield renderer.render_paused(chunk.get("run_id", "unknown"))
 
-            # -- Paused (human-in-the-loop) ------------------------------------
-            elif chunk_type == "paused":
-                yield renderer.render_paused(chunk.get("run_id", "unknown"))
+                # -- Max iterations ------------------------------------------------
+                elif chunk_type == "max_iterations":
+                    yield renderer.render_max_iterations(chunk.get("answer", ""))
 
-            # -- Max iterations ------------------------------------------------
-            elif chunk_type == "max_iterations":
-                yield renderer.render_max_iterations(chunk.get("answer", ""))
+                # -- Error ---------------------------------------------------------
+                elif chunk_type == "error":
+                    yield renderer.render_error(chunk.get("error", "Unknown error"))
 
-            # -- Error ---------------------------------------------------------
-            elif chunk_type == "error":
-                yield renderer.render_error(chunk.get("error", "Unknown error"))
+                # -- Status update -------------------------------------------------
+                elif chunk_type == "status":
+                    msg = chunk.get("status_msg", "")
+                    if msg:
+                        yield renderer.render_status(msg)
 
-            # -- Status update -------------------------------------------------
-            elif chunk_type == "status":
-                msg = chunk.get("status_msg", "")
-                if msg:
-                    yield renderer.render_status(msg)
+                # -- Post-processing -----------------------------------------------
+                elif chunk_type == "post_processing":
+                    msg = chunk.get("status_msg", "")
+                    if msg:
+                        yield renderer.render_post_processing(msg)
 
-            # -- Post-processing -----------------------------------------------
-            elif chunk_type == "post_processing":
-                msg = chunk.get("status_msg", "")
-                if msg:
-                    yield renderer.render_post_processing(msg)
+                # -- Narrator (inline thoughts) ------------------------------------
+                elif chunk_type == "narrator":
+                    nm = chunk.get("narrator_msg", "")
+                    if nm:
+                        yield renderer.render_narrator(nm)
 
-            # -- Narrator (inline thoughts) ------------------------------------
-            elif chunk_type == "narrator":
-                nm = chunk.get("narrator_msg", "")
-                if nm:
-                    yield renderer.render_narrator(nm)
+                # -- Iteration start -----------------------------------------------
+                elif chunk_type == "iteration_start":
+                    need_new_line = True
+                    yield renderer.render_iteration_start(
+                        iteration=chunk.get("iteration", 0),
+                        max_iter=chunk.get("max_iter", max_iterations)
+                    )
 
-            # -- Iteration start -----------------------------------------------
-            elif chunk_type == "iteration_start":
-                need_new_line = True
-                yield renderer.render_iteration_start(
-                    iteration=chunk.get("iteration", 0),
-                    max_iter=chunk.get("max_iter", max_iterations)
-                )
+                # -- Done / Complete -----------------------------------------------
+                elif chunk_type == "done":
+                    success = chunk.get("success", False)
+                    meta = chunk.get("meta")
+                    yield renderer.render_done(success, meta)
 
-            # -- Done / Complete -----------------------------------------------
-            elif chunk_type == "done":
-                success = chunk.get("success", False)
-                meta = chunk.get("meta")
-                yield renderer.render_done(success, meta)
-
-            # -- Unknown chunk type --------------------------------------------
-            else:
-                # Silently skip unknown types or log debug
-                raw = str(chunk)[:200]
-                yield f"\n  {Style.GREY('?')} {Style.GREYBG(f'unknown chunk: {raw}')}\n"
+                # -- Unknown chunk type --------------------------------------------
+                else:
+                    # Silently skip unknown types or log debug
+                    raw = str(chunk)[:200]
+                    yield f"\n  {Style.GREY('?')} {Style.GREYBG(f'unknown chunk: {raw}')}\n"
+        finally:
+            await self.save()
 
     # =========================================================================
     # CODING: write_patch / write_file (delegated to ExecutionEngine)
@@ -2365,6 +2404,136 @@ class FlowAgent:
                 "_dream_id": dreamer_session_id,
                 "_parent_agent": self.amd.name,
             }
+
+
+        # ── GAP 1: Post-dream auto-checkpoint ──
+        try:
+            await self._post_dream_checkpoint(dreamer_session_id)
+        except Exception as _post_err:
+            logger.warning(f"[Dreamer] Post-dream checkpoint hook failed: {_post_err}")
+
+    async def _post_dream_checkpoint(self, dreamer_session_id: str):
+        """
+        Propagate dreamer-evolved skills back to parent SkillsManager
+        and save an auto-checkpoint after the dream cycle.
+
+        GAP 1 fix: ensures evolved/created/deleted skills survive restarts.
+        Called automatically at the end of a_dream_stream().
+        """
+        import time as _t
+        _cp_start = _t.time()
+
+        # ── Step 1: Propagate Dreamer handler._skills → parent SkillsManager ──
+        _handler = getattr(self, "_dreamer_tool_handler", None)
+        if _handler and hasattr(self.session_manager, "skills_manager"):
+            sm = self.session_manager.skills_manager
+            evolved = 0
+            created = 0
+
+            # Dreamer handler._skills is a dict[str, Skill] (or duck-typed)
+            for skill_id, dream_skill in getattr(_handler, "_skills", {}).items():
+                existing = sm.skills.get(skill_id)
+
+                if existing is None:
+                    # New skill created by Dreamer → import into parent
+                    if hasattr(dream_skill, "to_dict"):
+                        from toolboxv2.mods.isaa.base.Agent.skills import Skill
+                        try:
+                            sm.skills[skill_id] = Skill.from_dict(dream_skill.to_dict())
+                            created += 1
+                        except Exception:
+                            pass
+                else:
+                    # Existing skill evolved → copy instruction + stats back
+                    if getattr(dream_skill, "instruction", None) != existing.instruction:
+                        existing.instruction = getattr(dream_skill, "instruction", existing.instruction)
+                        existing._version = getattr(dream_skill, "_version", getattr(existing, "_version", 1))
+                        evolved += 1
+
+                    # Sync stats
+                    for attr in ("confidence", "success_count", "failure_count", "total_uses"):
+                        val = getattr(dream_skill, attr, None)
+                        if val is not None:
+                            setattr(existing, attr, val)
+
+            if hasattr(sm, "_skill_embeddings_dirty"):
+                sm._skill_embeddings_dirty = True
+
+            logger.info(
+                f"[Dreamer] Post-dream skill propagation: {created} new, {evolved} evolved"
+            )
+
+        # ── Step 2: Auto-Checkpoint ──
+        if hasattr(self, "checkpoint_manager") and self.checkpoint_manager:
+            try:
+                cp_path = await self.checkpoint_manager.save_current()
+                logger.info(
+                    f"[Dreamer] Auto-checkpoint saved after dream "
+                    f"({round(_t.time() - _cp_start, 2)}s): {cp_path}"
+                )
+            except Exception as _cp_err:
+                logger.warning(f"[Dreamer] Auto-checkpoint failed: {_cp_err}")
+        else:
+            logger.warning("[Dreamer] No checkpoint_manager available — post-dream state NOT saved")
+
+
+    def _load_skills_from_vfs_checkpoint(self):
+        """
+        GAP 3: Load skills from /global/.memory/skills_checkpoint.json
+        if it exists and is newer than the last .pkl checkpoint.
+
+        This is a fallback mechanism for when the Dreamer wrote a VFS
+        checkpoint but the parent auto-checkpoint (GAP 1) failed or
+        was not reached (crash).
+        """
+        try:
+            session = self.session_manager.get(self.active_session or "default")
+            vfs = getattr(session, "vfs", None)
+            if not vfs:
+                return
+
+            import json as _json
+            from pathlib import Path as _Path
+            from datetime import datetime as _dt
+
+            # Check if VFS checkpoint exists
+            checkpoint_data = None
+            try:
+                raw = vfs.read("/global/.memory/skills_checkpoint.json")
+                if raw:
+                    checkpoint_data = _json.loads(raw)
+            except Exception:
+                return  # No VFS checkpoint file
+
+            if not checkpoint_data or "skills" not in checkpoint_data:
+                return
+
+            sm = self.session_manager.skills_manager if hasattr(self.session_manager, "skills_manager") else None
+            if not sm:
+                return
+
+            vfs_skills = checkpoint_data.get("skills", {})
+            imported = 0
+
+            from toolboxv2.mods.isaa.base.Agent.skills import Skill
+            for skill_id, skill_data in vfs_skills.items():
+                # Skip predefined skills (they are loaded from code)
+                if skill_data.get("source") == "predefined":
+                    continue
+                # Only import if not already in memory
+                if skill_id not in sm.skills:
+                    try:
+                        sm.skills[skill_id] = Skill.from_dict(skill_data)
+                        imported += 1
+                    except Exception:
+                        pass
+
+            if imported > 0:
+                if hasattr(sm, "_skill_embeddings_dirty"):
+                    sm._skill_embeddings_dirty = True
+                logger.info(f"[Dreamer] Loaded {imported} skills from VFS checkpoint fallback")
+        except Exception as _e:
+            logger.debug(f"[Dreamer] VFS skills checkpoint load skipped: {_e}")
 
     async def _get_or_create_dreamer_agent(self):
         """Get or create the DreamerAgent (a standalone FlowAgent)."""

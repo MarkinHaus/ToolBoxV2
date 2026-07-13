@@ -48,7 +48,8 @@ import json
 import os
 import shlex
 import time
-from datetime import datetime, UTC
+from datetime import datetime, timezone
+UTC = timezone.utc
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -170,6 +171,73 @@ class Flow:
 # =============================================================================
 # WEB MEMORY MANAGER — VFS-backed persistence for templates + flows
 # =============================================================================
+
+
+
+# =============================================================================
+# AUTH PROFILE — Config-driven login definition per domain (Layer 3)
+# =============================================================================
+
+class AuthProfile:
+    """Login configuration for a specific domain. Stored as JSON in VFS.
+    Inspired by IsisToolkit pattern: selector fallbacks + consent handling."""
+
+    __slots__ = ("domain", "login_url", "username_selectors", "password_selectors",
+                 "submit_selectors", "validity_url", "success_indicator",
+                 "consent_selectors", "env_username", "env_password", "updated_at")
+
+    def __init__(self, data: dict):
+        self.domain: str = data.get("domain", "")
+        self.login_url: str = data.get("login_url", "")
+        self.username_selectors: list[str] = data.get("username_selectors", [])
+        self.password_selectors: list[str] = data.get("password_selectors", [])
+        self.submit_selectors: list[str] = data.get("submit_selectors", [])
+        self.validity_url: str = data.get("validity_url", "")
+        self.success_indicator: str = data.get("success_indicator", "")
+        self.consent_selectors: list[str] = data.get("consent_selectors", [])
+        self.env_username: str = data.get("env_username", "")
+        self.env_password: str = data.get("env_password", "")
+        self.updated_at: str = data.get("updated_at", datetime.now(UTC).isoformat())
+
+    def get_credentials(self) -> tuple[str, str]:
+        return (
+            os.environ.get(self.env_username, ""),
+            os.environ.get(self.env_password, ""),
+        )
+
+    def to_dict(self) -> dict:
+        return {s: getattr(self, s) for s in self.__slots__}
+
+
+# Default profiles shipped with the system
+DEFAULT_AUTH_PROFILES = {
+    "isis.tu-berlin.de": {
+        "domain": "isis.tu-berlin.de",
+        "login_url": "https://isis.tu-berlin.de/auth/shibboleth/index.php",
+        "username_selectors": [
+            "input#username",
+            'input[name="j_username"]',
+            'input[name="username"]',
+            'input[type="text"]',
+        ],
+        "password_selectors": [
+            "input#password",
+            'input[name="j_password"]',
+            'input[name="password"]',
+            'input[type="password"]',
+        ],
+        "submit_selectors": [
+            'button[type="submit"]',
+            'input[type="submit"]',
+            'button[name="_eventId_proceed"]',
+        ],
+        "validity_url": "https://isis.tu-berlin.de/my/",
+        "success_indicator": ".usermenu, [data-userid], .user-picture",
+        "consent_selectors": ['button[type="submit"]', 'input[type="submit"]'],
+        "env_username": "ISIS_USERNAME",
+        "env_password": "ISIS_PASSWORD",
+    },
+}
 
 class WebMemoryManager:
     """Manages site templates and flows via VFS at /global/web/."""
@@ -337,6 +405,62 @@ class WebMemoryManager:
         else:
             self.vfs.create(path, content)
 
+
+    # ── Auth Profile (Layer 3) ────────────────────────────────────────
+
+    AUTH_PROFILES_BASE = "/global/web/auth_profiles"
+
+    def load_auth_profile(self, domain: str) -> AuthProfile | None:
+        """Load auth profile for a domain (VFS or built-in defaults)."""
+        # Check built-in defaults first
+        if domain in DEFAULT_AUTH_PROFILES:
+            return AuthProfile(DEFAULT_AUTH_PROFILES[domain])
+        # Then VFS
+        path = f"{self.AUTH_PROFILES_BASE}/{domain}.json"
+        r = self.vfs.read(path)
+        if r.get("success"):
+            try:
+                return AuthProfile(json.loads(r["content"]))
+            except (json.JSONDecodeError, KeyError):
+                pass
+        return None
+
+    def save_auth_profile(self, profile: AuthProfile):
+        """Save auth profile to VFS."""
+        dir_path = self.AUTH_PROFILES_BASE
+        if not self.vfs._is_directory(dir_path):
+            self.vfs.mkdir(dir_path, parents=True)
+        path = f"{dir_path}/{profile.domain}.json"
+        content_str = json.dumps(profile.to_dict(), indent=2, ensure_ascii=False)
+        if self.vfs._is_file(path):
+            self.vfs.write(path, content_str)
+        else:
+            self.vfs.create(path, content_str)
+
+    def list_auth_profiles(self) -> list[str]:
+        """List all auth profiles (VFS + defaults)."""
+        profiles = set(DEFAULT_AUTH_PROFILES.keys())
+        r = self.vfs.ls(self.AUTH_PROFILES_BASE)
+        if r.get("success"):
+            for item in r.get("contents", []):
+                if item["type"] == "file" and item["name"].endswith(".json"):
+                    profiles.add(item["name"].replace(".json", ""))
+        return sorted(profiles)
+
+    def remove_auth_profile(self, domain: str) -> bool:
+        """Remove a VFS-stored auth profile (cannot remove defaults)."""
+        if domain in DEFAULT_AUTH_PROFILES:
+            return False
+        path = f"{self.AUTH_PROFILES_BASE}/{domain}.json"
+        if self.vfs._is_file(path):
+            try:
+                self.vfs.rm(path)
+                return True
+            except Exception:
+                return False
+        return False
+
+
     # ── Guide Generator ───────────────────────────────────────────────
 
     def _update_guide(self):
@@ -469,6 +593,107 @@ def make_web_shell(
        _started = True
        return True
 
+
+    # ── AUTO-AUTH: session load + validity check + relogin ─────────
+    async def _find_first_visible(selectors: list[str]) -> str | None:
+        """Find first visible selector from a list via JS."""
+        js = f"(() => {{ const sels = {json.dumps(selectors)}; for (const s of sels) {{ const el = document.querySelector(s); if (!el) continue; const st = window.getComputedStyle(el); if (st.display !== 'none' && st.visibility !== 'hidden' && el.offsetParent !== null) return s; }} return null; }})()"
+        try:
+            r = await agent.evaluate(js)
+            return r if isinstance(r, str) else None
+        except Exception:
+            return None
+
+    async def _check_validity(profile) -> bool:
+        """Check if browser session is authenticated."""
+        if not profile.validity_url:
+            return False
+        try:
+            await agent.goto(profile.validity_url, wait_until="domcontentloaded")
+        except Exception:
+            return False
+        try:
+            r = await agent.evaluate(
+                f"(() => {{ return !!document.querySelector({json.dumps(profile.success_indicator)}); }})()"
+            )
+            return bool(r)
+        except Exception:
+            return False
+
+    async def _do_login(profile) -> bool:
+        """Perform login using profile selectors + credentials."""
+        user, pwd = profile.get_credentials()
+        if not user or not pwd:
+            logger.warning("Auth: Missing credentials for %s (env: %s/%s)",
+                          profile.domain, profile.env_username, profile.env_password)
+            return False
+        try:
+            await agent.goto(profile.login_url, wait_until="networkidle")
+        except Exception as e:
+            logger.error("Auth: navigate failed: %s", e)
+            return False
+        u_sel = await _find_first_visible(profile.username_selectors)
+        p_sel = await _find_first_visible(profile.password_selectors)
+        s_sel = await _find_first_visible(profile.submit_selectors)
+        if not all([u_sel, p_sel, s_sel]):
+            logger.error("Auth: form not found for %s (u=%s p=%s s=%s)",
+                        profile.domain, u_sel, p_sel, s_sel)
+            return False
+        await agent.type(u_sel, user)
+        await agent.type(p_sel, pwd)
+        await agent.click(s_sel)
+        import asyncio
+        await asyncio.sleep(3)
+        # Consent page handling
+        try:
+            cur = agent.current_url()
+            if profile.domain.split(".")[0] not in cur.lower() and profile.consent_selectors:
+                c_sel = await _find_first_visible(profile.consent_selectors)
+                if c_sel:
+                    await agent.click(c_sel)
+                    await asyncio.sleep(3)
+        except Exception:
+            pass
+        ok = await _check_validity(profile)
+        if ok:
+            logger.info("Auth: Login successful for %s", profile.domain)
+        else:
+            logger.error("Auth: Login verification failed for %s", profile.domain)
+        return ok
+
+    async def _ensure_auth(domain: str) -> dict:
+        """Auto-auth entry point. Called before goto() for domains with auth profile.
+        Returns: {'status': 'guest'|'cached'|'fresh'|'failed', 'domain': domain}
+        """
+        profile = memory.load_auth_profile(domain)
+        if not profile:
+            return {"status": "guest", "domain": domain}
+        # 1. Try cached session
+        saved_state = memory.load_session_state(domain)
+        if saved_state:
+            _state_path = os.path.join(agent.state_dir, f"{domain}.json")
+            try:
+                with open(_state_path, 'w') as f:
+                    json.dump(saved_state, f)
+                await agent.load_state(domain)
+            except Exception:
+                pass
+            if await _check_validity(profile):
+                return {"status": "cached", "domain": domain}
+        # 2. Fresh login
+        ok = await _do_login(profile)
+        if ok:
+            try:
+                state_path = await agent.save_state(domain)
+                with open(state_path) as f:
+                    state = json.load(f)
+                memory.save_session_state(domain, state)
+            except Exception as e:
+                logger.warning("Auth: Failed to save session: %s", e)
+            return {"status": "fresh", "domain": domain}
+        return {"status": "failed", "domain": domain, "error": "login_failed"}
+
+
     # Write initial guide to VFS
     memory._update_guide()
 
@@ -494,7 +719,7 @@ def make_web_shell(
                     ocr <path_or_url> [--tier T]
         EXECUTE     eval <js_code>
         SEARCH      search <query> [--site S] [--max N]
-        AUTH        login <domain_or_flow>
+        AUTH        login <domain_or_flow>  |  auth add <json>  |  auth login <domain>\n            auth list  |  auth remove <domain>  |  auth check <domain>
         MEMORY      save_template [domain]  |  list_templates
                     save_flow <name> <steps_json>  |  run_flow <name> [params]
                     list_flows [domain]
@@ -556,6 +781,12 @@ def make_web_shell(
 
             domain = _domain(url)
 
+            # AUTO-AUTH: check if domain has auth profile
+            auth_result = await _ensure_auth(domain)
+            if auth_result["status"] == "failed":
+                return _err(f"goto: Auto-auth failed for {domain}: {auth_result.get('error', 'unknown')}")
+            _auth_handled_session = auth_result["status"] in ("cached", "fresh")
+
             # Single-site restriction
             if single_site and domain != _domain(single_site):
                 return _err(f"goto: restricted to {single_site}, cannot navigate to {domain}")
@@ -563,8 +794,11 @@ def make_web_shell(
             if not await _ensure_agent():
                 return _err("Browser konnte nicht starten – goto nicht möglich")
 
-            # Load saved session state for this domain
-            saved_state = memory.load_session_state(domain)
+            # Load saved session state for this domain (skip if auth handled it)
+            if not _auth_handled_session:
+                saved_state = memory.load_session_state(domain)
+            else:
+                saved_state = None
             if saved_state:
                 # WebAgent.load_state expects a name, but we manage state via VFS.
                 # Write temp state file and load it through WebAgent's mechanism.
@@ -1113,6 +1347,66 @@ def make_web_shell(
             await agent.load_state(domain)
             return _ok(f"Session loaded for {domain}")
 
+
+        # ═══════════════════════════════════════════════════════════════
+        # auth add <json>
+        # ═══════════════════════════════════════════════════════════════
+        elif cmd == "auth":
+            if not rest:
+                return _err("auth: subcommands: add <json>, login <domain>, list, remove <domain>, check <domain>")
+            sub = rest[0]
+            if sub == "add":
+                raw = " ".join(rest[1:])
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    return _err("auth add: invalid JSON")
+                if "domain" not in data:
+                    return _err("auth add: missing 'domain' in JSON")
+                profile = AuthProfile(data)
+                memory.save_auth_profile(profile)
+                return _ok(f"Auth profile saved for {profile.domain}")
+            elif sub == "login":
+                if len(rest) < 2:
+                    return _err("auth login: missing domain")
+                domain = rest[1]
+                if not await _ensure_agent():
+                    return _err("Browser start failed")
+                result = await _ensure_auth(domain)
+                if result["status"] == "guest":
+                    return _ok(f"No auth profile for {domain} (guest mode)")
+                elif result["status"] in ("cached", "fresh"):
+                    return _ok(f"Auth: {result['status']} session for {domain}")
+                else:
+                    return _err(f"Auth failed for {domain}: {result.get('error', '')}")
+            elif sub == "list":
+                profiles = memory.list_auth_profiles()
+                if not profiles:
+                    return _ok("(no auth profiles)")
+                return _ok("\n".join(f"  {p}" for p in profiles))
+            elif sub == "remove":
+                if len(rest) < 2:
+                    return _err("auth remove: missing domain")
+                domain = rest[1]
+                ok = memory.remove_auth_profile(domain)
+                if ok:
+                    return _ok(f"Auth profile removed for {domain}")
+                return _err(f"Cannot remove {domain} (built-in or not found)")
+            elif sub == "check":
+                if len(rest) < 2:
+                    return _err("auth check: missing domain")
+                domain = rest[1]
+                profile = memory.load_auth_profile(domain)
+                if not profile:
+                    return _ok(f"No profile for {domain}")
+                user, pwd = profile.get_credentials()
+                has_creds = "yes" if (user and pwd) else "NO"
+                has_session = "yes" if memory.load_session_state(domain) else "no"
+                return _ok(f"Profile: {domain}\n  Credentials: {has_creds}\n  Session: {has_session}\n  Login URL: {profile.login_url}")
+            else:
+                return _err(f"auth: unknown subcommand: {sub}")
+
+
         # ═══════════════════════════════════════════════════════════════
         # close_browser
         # ═══════════════════════════════════════════════════════════════
@@ -1158,7 +1452,7 @@ def make_web_shell(
                 "Commands: goto back refresh wait click type fill select scroll "
                 "extract screenshot ocr eval search status "
                 "save_template list_templates save_flow run_flow list_flows "
-                "login save_session load_session close_browser learn_cookie"
+                "auth login save_session load_session close_browser learn_cookie\n            Use 'auth' for auth profile management"
             )
 
     # Store agent ref on closure for cleanup access

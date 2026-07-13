@@ -362,7 +362,7 @@ class SubAgentManager:
             await asyncio.wait_for(state._task, timeout=timeout)
         except asyncio.TimeoutError:
             state.status = SubAgentStatus.TIMEOUT
-            state.error = f"The chek sub agent status. the wait for call Timeout after {timeout} seconds. you can continue the sub agent ist still running!"
+            state.error = f"The wait command asyncio.TimeoutError sub agents still running."
             state.completed_at = datetime.now()
 
             # Cancel the task

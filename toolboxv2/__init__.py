@@ -15,7 +15,7 @@ __email__ = 'Markinhausmanns@gmail.com'
 __init_cwd__ = init_cwd = Path.cwd()
 __tb_root_dir__ = tb_root_dir = Path(__file__).parent
 os.makedirs(__tb_root_dir__ / 'dist', exist_ok=True)
-VERSION = "0.1.27"
+VERSION = '0.1.28'
 __version__ = get_version_from_pyproject(str(tb_root_dir.parent / "pyproject.toml")) if get_version_from_pyproject is not None else VERSION
 ToolBox_over: str = "root"
 from dotenv import load_dotenv

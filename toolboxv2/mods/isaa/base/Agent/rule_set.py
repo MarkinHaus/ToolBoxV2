@@ -204,7 +204,7 @@ _VFS_HEADER_TEMPLATE = """\
   - `ruleset.record_rule_success(id)` / `record_rule_failure(id)` → feedback loop
   - `ruleset.rule_on_action(action, context)` → check before destructive actions
 
-## SYSTEM CONSTRAINTS - STRICTLY ENFORCED
+## SYSTEM CONSTRAINTS - STRICTLY ENFORCED - (Regeln für den FlowAgent)
 {general_rules_block}
 
 ## Current Situation
