@@ -174,6 +174,6 @@ python -m unittest tests.test_live_handler    # 23 tests
 
 ## Related
 
-- [ISAA Agent Framework](../mods/isaa/README.md) — Uses LLM Gateway as a backend provider
-- [System Stack](../new/analysis/installation/stack.md) — How gateway fits into the overall architecture
+- ISAA Agent Framework — Uses LLM Gateway as a backend provider
+- System Stack — How gateway fits into the overall architecture
 

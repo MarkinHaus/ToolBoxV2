@@ -1,42 +1,28 @@
 name: docs
 on:
-    push:
-        branches:
-            - master
+    push: { branches: [master] }
+    pull_request: { paths: ["docs/**", "mkdocs.yml", ".github/workflows/docs.yml"] }
+permissions: { contents: write }
 jobs:
-    deploy:
+    build:
         runs-on: ubuntu-latest
         steps:
             -   uses: actions/checkout@v4
-            -   uses: actions/setup-python@v4
-                with:
-                    python-version: 3.11
-            -   run: python -m pip install --upgrade pip
-            -   run: pip install mkdocs-material mkdocstrings mkdocstrings-python-legacy mkdocs-git-revision-date-plugin mkdocs-jupyter ipykernel
-            -   name: Install dependencies
+                with: { fetch-depth: 0 }
+            -   uses: actions/setup-python@v5
+                with: { python-version: "3.11", cache: pip }
+            -   name: Install toolboxv2 + docs toolchain
                 run: |
                     python -m pip install --upgrade pip
-                    pip install --user --no-cache-dir Cython
-                    pip install --user uv
-                    python -m uv venv --python 3.11
-            -   name: Install toolboxv2 with ISAA
-                run: |
-                    python -m uv pip install -e toolboxv2/mods/isaa
-                    python -m uv pip install .[isaa]
-                working-directory: ${{ github.workspace }}
-            -   name: Debug mkdocstrings import
-                run: |
-                    python -c "import toolboxv2; print('toolboxv2 loaded successfully')"
-            -   name: Add project to PYTHONPATH
-                run: echo "PYTHONPATH=$GITHUB_WORKSPACE/toolboxv2" >> $GITHUB_ENV
-            -   name: fix docs live
-                run: |
-                    pip install mkdocs-material mkdocs mkdocstrings[python] mkdocstrings-python-legacy mkdocs-git-revision-date-plugin mkdocs-jupyter ipykernel
-            -   name: build --clean
-                run: |
-                    python -c "import pathlib; globals()['PosixPath'] = pathlib.PosixPath; import mkdocs.__main__" gh-deploy --force --verbose
-                    mkdocs build --clean
+                    pip install -e .
+                    pip install mkdocs mkdocs-material 'mkdocstrings[python]' mkdocs-redirects
+                    python -c "import toolboxv2"
+            -   name: Build
+                run: mkdocs build --clean
+            -   name: Check links
+                run: python scripts/check_docs_links.py
             -   name: Deploy
+                if: github.ref == 'refs/heads/master' && github.event_name == 'push'
                 uses: peaceiris/actions-gh-pages@v4
                 with:
                     github_token: ${{ secrets.GITHUB_TOKEN }}
