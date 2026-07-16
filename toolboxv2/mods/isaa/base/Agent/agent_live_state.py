@@ -63,6 +63,7 @@ class AgentLiveState:
     skills: list = field(default_factory=list)   # matched skill names
     tools_loaded: list = field(default_factory=list)  # currently loaded tool names
     persona: str = ""
+    task_type: str = ""
 
     # -- convenience ----------------------------------------------------------
     def reset(self):

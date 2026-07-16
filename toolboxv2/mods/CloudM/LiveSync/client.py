@@ -57,7 +57,8 @@ except ImportError:
     WATCHDOG_AVAILABLE = False
     FileSystemEventHandler = object  # type: ignore
 
-logger = logging.getLogger("LiveSync")
+from toolboxv2 import get_logger
+logger = get_logger()
 
 from platform import node
 node_ = node()
@@ -219,6 +220,8 @@ class SyncClient:
                 await self._connect_and_sync()
             except Exception as e:
                 logger.error(f"[LiveSync] Connection error: {e}")
+                if "Invalid" in str(e):
+                    self._running = False
 
             if not self._running:
                 break
@@ -231,6 +234,8 @@ class SyncClient:
             logger.info(f"[LiveSync] Reconnecting in {delay:.1f}s (attempt {self._reconnect_attempt + 1})")
             await asyncio.sleep(delay)
             self._reconnect_attempt += 1
+            if self._reconnect_attempt > 10:
+                self._running = False
 
         await self._cleanup()
 

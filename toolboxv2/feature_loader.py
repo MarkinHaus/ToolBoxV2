@@ -77,8 +77,6 @@ FEATURE_DETECTION: Dict[str, List[str]] = {
         "langchain-community",
         "spacy",
         "matplotlib",
-        "hnswlib",
-        "python-a2a",
     ],
     "isaa": [
         "networkx",

@@ -14,6 +14,7 @@ Optimized for:
 - Discrete relationship connections
 """
 
+import gc
 import hashlib
 import json
 import os
@@ -194,7 +195,7 @@ class HybridMemoryStore:
         conn = getattr(self._local, "conn", None)
         if conn is not None:
             try:
-                conn.execute("SELECT 1")  # ponytail: liveness probe, 1 round-trip; cheap vs. crashing the run
+                conn.execute("SELECT 1 FROM entries LIMIT 1")  # schema-aware liveness probe
                 return conn
             except sqlite3.Error:
                 try:
@@ -202,22 +203,48 @@ class HybridMemoryStore:
                 except sqlite3.Error:
                     pass
                 self._local.conn = None
-        conn = sqlite3.connect(str(self.db_path), timeout=30.0)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        try:
+            conn = sqlite3.connect(str(self.db_path), timeout=30.0, isolation_level=None)
+            conn.row_factory = sqlite3.Row
+            mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+            if mode.lower() != "wal":
+                conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            # Ensure schema exists (healing may have left empty DB)
+            try:
+                conn.execute("SELECT 1 FROM entries LIMIT 1")
+            except sqlite3.OperationalError:
+                conn.executescript(SCHEMA_SQL)
+        except sqlite3.DatabaseError as e:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+            del conn
+            self._local.conn = None
+            gc.collect()
+            if any(k in str(e).lower() for k in ("malformed", "corrupt", "not a database", "disk i/o error")):
+                self._heal_from_backup()
+                return self._get_conn()  # retry on fresh DB
+            raise
         self._local.conn = conn
         return conn
 
     @contextmanager
     def _tx(self):
-        """Transaction context manager with auto-commit/rollback"""
+        """Transaction context manager — BEGIN IMMEDIATE + self-healing on corruption."""
         conn = self._get_conn()
         try:
+            conn.execute("BEGIN IMMEDIATE")
             yield conn
             conn.commit()
-        except Exception:
-            conn.rollback()
+        except Exception as e:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+            if any(k in str(e).lower() for k in ("malformed", "corrupt", "not a database", "disk i/o error")):
+                self._heal_from_backup()
             raise
 
     def _exec(self, sql: str, params: tuple = (), _retries: int = 2):
@@ -235,29 +262,85 @@ class HybridMemoryStore:
                 self._local.conn = None  # force reconnect on next _get_conn
                 if "locked" in msg or "busy" in msg:
                     time.sleep(0.1 * (attempt + 1))  # ponytail: linear backoff, exp if contention high
-                elif "malformed" in msg or "corrupt" in msg:
+                elif any(k in msg for k in ("malformed", "corrupt", "not a database", "disk i/o error")):
                     self._heal_from_backup()  # Tier 3, no-op wenn MinIO aus
                     continue
 
     def _heal_from_backup(self):
         """Recover from MinIO backup, or recreate fresh DB if no backup exists."""
         # 1. Try MinIO restore
+        _dim = self.dim
         try:
             self.load_from_minio()
+            # Validate: MinIO backup may have a different dim
+            if self._faiss.index.d != _dim:
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"MinIO backup dim={self._faiss.index.d} != expected {_dim}, discarding"
+                )
+                raise ValueError("dim mismatch")
             self._local = threading.local()
+            # Verify schema exists after MinIO restore
+            try:
+                self._get_conn().execute("SELECT 1 FROM entries LIMIT 1")
+            except sqlite3.OperationalError:
+                self._get_conn().executescript(SCHEMA_SQL)
             return
         except Exception:
             pass
         # 2. No backup → quarantine corrupt file, start fresh
+        gc.collect()
         corrupt_backup = self.db_path.with_suffix('.db.corrupt')
         if self.db_path.exists():
-            self.db_path.rename(corrupt_backup)
+            _renamed = False
+            for _attempt in range(5):
+                try:
+                    self.db_path.rename(corrupt_backup)
+                    _renamed = True
+                    break
+                except PermissionError:
+                    gc.collect()
+                    time.sleep(0.2 * (_attempt + 1))
+            if not _renamed:
+                # Windows: file handle may linger. Truncate in-place → SQLite treats as fresh.
+                try:
+                    with open(self.db_path, 'wb') as f:
+                        f.truncate(0)
+                except OSError:
+                    pass  # _init_db will overwrite via executescript
         for suffix in ("-wal", "-shm"):
             stale = Path(str(self.db_path) + suffix)
             if stale.exists():
-                stale.unlink()
+                try:
+                    stale.unlink()
+                except OSError:
+                    try:
+                        with open(stale, 'wb') as f:
+                            f.truncate(0)
+                    except OSError:
+                        pass  # stale WAL/SHM will be recreated by SQLite
+        # 3. Reset FAISS + in-memory state to match fresh DB
+        _dim = self.dim  # preserve constructor dim before _init_db may override it
+        self._faiss = FaissVectorStore(_dim)
+        self._id_map.clear()
+        self._idx_map.clear()
+        self._next_idx = 0
         self._local = threading.local()
         self._init_db()
+        # Verify schema exists after healing
+        try:
+            self._get_conn().execute("SELECT 1 FROM entries LIMIT 1")
+        except sqlite3.OperationalError:
+            import logging
+            logging.getLogger(__name__).error("Schema missing after _init_db in _heal_from_backup — forcing re-create")
+            self._get_conn().executescript(SCHEMA_SQL)
+        # force everything back to the original constructor dimension
+        if self.dim != _dim or self._faiss.index.d != _dim:
+            self.dim = _dim
+            self._faiss = FaissVectorStore(_dim)
+            self._id_map.clear()
+            self._idx_map.clear()
+            self._next_idx = 0
         import logging
         logging.getLogger(__name__).warning(
             f"SQLite DB was corrupt and recreated. Old file at {corrupt_backup}"
@@ -265,8 +348,9 @@ class HybridMemoryStore:
 
     def _init_db(self):
         """Initialize database schema from embedded SQL"""
-        with self._tx() as conn:
-            conn.executescript(SCHEMA_SQL)
+        # executescript() implicitly commits; use raw conn, not _tx()
+        conn = self._get_conn()
+        conn.executescript(SCHEMA_SQL)
 
         # Load FAISS + ID-Maps if they exist (v3 native or legacy pickle)
         self._load_faiss_from_dir()
@@ -338,6 +422,14 @@ class HybridMemoryStore:
 
         with self._lock:
             with self._tx() as conn:
+                # Dedup check INSIDE lock + BEGIN IMMEDIATE transaction (TOCTOU fix)
+                existing = conn.execute(
+                    "SELECT id FROM entries WHERE content_hash=? AND is_active=1 AND space=?",
+                    (content_hash, self.space),
+                ).fetchone()
+                if existing:
+                    return existing[0]  # Return existing ID
+
                 # 1. Insert into SQLite entries table
                 conn.execute(
                     """
@@ -1069,8 +1161,9 @@ class HybridMemoryStore:
             filtered.append(line)
 
         if filtered:
-            with self._tx() as conn:
-                conn.executescript("\n".join(filtered))
+            # executescript() implicitly commits; use raw conn, not _tx()
+            conn = self._get_conn()
+            conn.executescript("\n".join(filtered))
 
     def _rebuild_fts5(self):
         """Rebuild FTS5 index from entries table"""

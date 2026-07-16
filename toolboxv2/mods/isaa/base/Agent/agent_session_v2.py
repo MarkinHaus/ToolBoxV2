@@ -823,6 +823,12 @@ class AgentSessionV2:
         except Exception:
             pass
 
+
+        try:
+            if hasattr(self, "_vfs_sync_mgr") and self._vfs_sync_mgr:
+                await self._vfs_sync_mgr.stop_all()
+        except Exception:
+            pass
         self._closed = True
 
     async def cleanup(self):

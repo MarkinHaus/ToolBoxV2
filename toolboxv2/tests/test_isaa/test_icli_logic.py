@@ -362,7 +362,7 @@ class TestIngestChunkTypeRouting(unittest.TestCase):
         self.assertEqual(tv.last_tool, "vfs_shell")
         self.assertEqual(tv.phase, "tool")
         iv = tv._iter_map.get(3)
-        self.assertEqual(iv.pending_tool, "vfs_shell")
+        self.assertIn("vfs_shell", iv.pending_tools)
 
     def test_tool_result_clears_pending(self):
         from toolboxv2.flows.isaa.icli import ingest_chunk
@@ -377,7 +377,7 @@ class TestIngestChunkTypeRouting(unittest.TestCase):
             "iter": 3
         })
         iv = tv._iter_map.get(3)
-        self.assertEqual(iv.pending_tool, "")
+        self.assertNotIn("vfs_shell", iv.pending_tools)
         self.assertEqual(len(iv.tools), 1)
 
     def test_tool_result_records_success(self):
@@ -540,7 +540,7 @@ class TestIterViewModel(unittest.TestCase):
         self.assertEqual(iv.n, 1)
         self.assertEqual(iv.thoughts, [])
         self.assertEqual(iv.tools, [])
-        self.assertEqual(iv.pending_tool, "")
+        self.assertEqual(iv.pending_tools, {})
 
     def test_tool_start_time_tracked(self):
         from toolboxv2.flows.isaa.icli import ingest_chunk

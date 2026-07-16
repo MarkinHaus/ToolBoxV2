@@ -1950,7 +1950,7 @@ class FlowAgent:
                 if _steered:
                     yield {"type": "status", "status_msg": "Steering-Anweisung in laufenden Run injiziert"}
                 yield {"type": "content", "chunk": _reply}
-                yield {"type": "done", "success": True, "final_answer": _reply}
+                yield {"type": "final_answer", "success": True, "answer": _reply}
                 return
 
         # Tolerantes Auto-Resume

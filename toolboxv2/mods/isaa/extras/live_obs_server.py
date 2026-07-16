@@ -150,7 +150,7 @@ class LiveObsHub:
 
     def snapshot(self) -> dict:
         agents: dict[str, Any] = {}
-        for name, obs in self._registered.items():
+        for name, obs in list(self._registered.items()):
             try:
                 runs = obs.list_runs()
                 interrupted = obs.get_interrupted_runs()

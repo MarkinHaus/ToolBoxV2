@@ -673,6 +673,11 @@ def make_web_shell(
         profile = memory.load_auth_profile(domain)
         if not profile:
             return {"status": "guest", "domain": domain}
+
+        # FIX 2: Browser sicherstellen vor jeglichen agent-Aufrufen
+        if not await _ensure_agent():
+            return {"status": "failed", "domain": domain, "error": "browser_start_failed"}
+
         # 1. Try cached session
         saved_state = memory.load_session_state(domain)
         if saved_state:
@@ -786,6 +791,10 @@ def make_web_shell(
 
             domain = _domain(url)
 
+            # FIX 1: Browser ZUERST starten, dann auth
+            if not await _ensure_agent():
+                return _err("goto: Browser konnte nicht starten")
+
             # AUTO-AUTH: check if domain has auth profile
             auth_result = await _ensure_auth(domain)
             if auth_result["status"] == "failed":
@@ -796,8 +805,7 @@ def make_web_shell(
             if single_site and domain != _domain(single_site):
                 return _err(f"goto: restricted to {single_site}, cannot navigate to {domain}")
 
-            if not await _ensure_agent():
-                return _err("Browser konnte nicht starten – goto nicht möglich")
+            # (Agent is already ensured above)
 
             # Load saved session state for this domain (skip if auth handled it)
             if not _auth_handled_session:
@@ -1296,6 +1304,9 @@ def make_web_shell(
             if not rest:
                 return _err("login: missing domain or flow name")
             target = rest[0]
+            # FIX 3b: URL-Präfix sicherstellen für _domain()
+            if not target.startswith(("http://", "https://")) and "." in target:
+                target = "https://" + target
             domain = _domain(target) if "." in target else target
 
             # Check trusted sites

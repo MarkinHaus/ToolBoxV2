@@ -52,7 +52,6 @@ mcp>=1.6.0
 google-cloud-aiplatform>=1.38.0
 pyyaml>=6.0
 docker>=7.0.0
-hnswlib>=0.8.0
 faiss-cpu>=1.12.0
 langchain-community>=0.3.29
 ```

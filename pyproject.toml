@@ -201,7 +201,6 @@ exotic = [
     "langchain-community>=0.3.29",
     "spacy>=3.8.11",
     "matplotlib>=3.10.0",
-    "hnswlib>=0.8.0",
     "python-a2a>=0.5.1",
     #"transformers>=4.35.0",
     #"scikit-learn>=1.3.0",

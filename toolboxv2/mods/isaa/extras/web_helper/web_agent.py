@@ -667,6 +667,10 @@ class WebAgent:
         self.logger.start_timer("goto")
         self.logger.action("Navigate", f"Going to: {url}")
 
+        if not self._page:
+            self.logger.error("Navigate", "Browser not started — call start() first")
+            return False
+
         try:
             await self._page.goto(url, wait_until=wait_until)
             self._history.append(url)

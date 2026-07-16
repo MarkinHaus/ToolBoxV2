@@ -41,6 +41,7 @@ from .minio_helper import (
 )
 from .conflict import detect_conflict
 
+
 try:
     import websockets
     from websockets.server import serve as ws_serve
@@ -56,7 +57,8 @@ except ImportError:
     WATCHDOG_AVAILABLE = False
     FileSystemEventHandler = object  # type: ignore
 
-logger = logging.getLogger("LiveSync")
+from toolboxv2 import get_logger
+logger = get_logger()
 
 
 # ── Thread-safe Watchdog → asyncio Queue (BUG FIX from spec) ──

@@ -692,6 +692,12 @@ class ExecutionContext:
 
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
+    # Task-map non-blocking injection state
+    pending_taskmap_task: Optional[asyncio.Task] = None
+    pending_taskmap_inject: Optional[str] = None
+    taskmap_injected: bool = False
+    taskmap_injected_type: Optional[str] = None
+
     def get_dynamic_tool_names(self) -> List[str]:
         """Get names of currently loaded dynamic tools"""
         return [slot.name for slot in self.dynamic_tools]
@@ -1814,7 +1820,7 @@ BEISPIELE:
                     final_response = "Execution cancelled."
                     success = False
                     break
-                warning, messages = self._loop_preamble(ctx)
+                warning, messages, _ = self._loop_preamble(ctx)
                 current_tools = self._get_tool_definitions(ctx)
                 log.info(f"messages AutoFocus {len(messages)} done")
 
@@ -2082,19 +2088,6 @@ BEISPIELE:
                 )
                 return chunk
 
-            await asyncio.sleep(0.02)
-            task_type = getattr(ctx, "task_type", None)
-            subtype = getattr(ctx, "subtype", None)
-            if task_type:
-                yield enrich({
-                    "type": "status",
-                    "status_msg": f"Task-Typ erkannt: {task_type}" + (f" ({subtype})" if subtype else ""),
-                    "task_type": task_type,
-                    "subtype": subtype
-                })
-
-                yield {"type": "status", "status_msg": f"TYPE:{task_type}/{subtype}"}
-
             try:
                 while ctx.current_iteration < ctx.max_iterations:
 
@@ -2115,7 +2108,17 @@ BEISPIELE:
                         yield enrich({"type": "cancelled", "run_id": ctx.run_id, "answer": final_response})
                         break
 
-                    warning, messages = self._loop_preamble(ctx)
+                    warning, messages, full_task_type = self._loop_preamble(ctx)
+                    if full_task_type is not None:
+                        task_type = getattr(ctx, "task_type", None)
+                        subtype = getattr(ctx, "subtype", None)
+                        if task_type:
+                            yield enrich({
+                                "type": "status",
+                                "status_msg": f"Task-Typ erkannt: {task_type}" + (f" ({subtype})" if subtype else ""),
+                                "task_type": task_type,
+                                "subtype": subtype
+                            })
                     # Sofortiges Iteration-Start-Signal (vor LLM-Latenz)
                     yield enrich(
                         {
@@ -2580,15 +2583,6 @@ BEISPIELE:
             )
             return chunk
 
-        task_type = getattr(ctx, "task_type", None)
-        subtype = getattr(ctx, "subtype", None)
-        if task_type:
-            yield enrich({
-                "type": "status",
-                "status_msg": f"Task-Typ erkannt: {task_type}" + (f" ({subtype})" if subtype else ""),
-                "task_type": task_type,
-                "subtype": subtype
-            })
 
         # --- Narrator callback (fire-and-forget via yield queue) ---
         narrator_pending = []
@@ -2629,8 +2623,17 @@ BEISPIELE:
                         yield enrich({"type": "cancelled", "run_id": ctx.run_id, "answer": final_response})
                         break
 
-                    warning, messages = self._loop_preamble(ctx)
-
+                    warning, messages, full_task_type = self._loop_preamble(ctx)
+                    if full_task_type is not None:
+                        task_type = getattr(ctx, "task_type", None)
+                        subtype = getattr(ctx, "subtype", None)
+                        if task_type:
+                            yield enrich({
+                                "type": "status",
+                                "status_msg": f"Task-Typ erkannt: {task_type}" + (f" ({subtype})" if subtype else ""),
+                                "task_type": task_type,
+                                "subtype": subtype
+                            })
                     yield enrich(
                         {"type": "iteration_start", "iteration": ctx.current_iteration}
                     )
@@ -2970,56 +2973,14 @@ BEISPIELE:
             )
             system_prompt = self._build_static_system_prompt(ctx, session)
 
-            # Task-map pre-injection (flag): fuzzy preselect + one narrator
-            # call classify; task_type=new injects NOTHING by design.
+            # Task-map pre-injection: non-blocking background task.
+            # Runs classify_for_injection + build_preinjection concurrently
+            # with skill matching. Result polled in _loop_preamble; injected
+            # as a system message before the next LLM call (safe point).
             if self.taskmap_preinject and not self.is_sub_agent:
-                try:
-                    from toolboxv2.mods.isaa.base.dreamer.run_aggregator import (
-                        classify_for_injection,
-                        CLASSIFY_GUIDE_PATH,
-                        build_preinjection
-                    )
-
-                    r = session.vfs.read(CLASSIFY_GUIDE_PATH)
-                    guide = r.get("content", "") if r.get("success") else ""
-
-                    task_type, subtype = "new", "general"
-
-                    if guide:
-                        async def _narrator_classify(_system: str, _query: str):
-                            class TaskType(BaseModel):
-                                """The type of the user task"""
-                                task_type: str
-                                subtype: str
-
-                            res = await self.agent.a_format_class(
-                                pydantic_model=TaskType,
-                                prompt=_system,
-                                message_context=[{"role": "user", "content": _query}],
-                            )
-                            return res
-
-                        # Führe die Klassifizierung kontrolliert aus
-                        task_type, subtype = await classify_for_injection(
-                            query, guide, narrator_call=_narrator_classify
-                        )
-
-                    # State-Zuweisung ist nun garantiert, unabhängig vom Pfad (Fuzzy oder LLM)
-                    ctx.task_type = task_type
-                    ctx.subtype = subtype
-
-                    _pre = await build_preinjection(
-                        session.vfs, query, narrator_call=None  # Kein doppelter Call nötig
-                    )
-                    if _pre:
-                        system_prompt = system_prompt + "\n\n" + _pre
-                        self.live.log(
-                            f"Task-map pre-context injected ({len(_pre)} chars)"
-                        )
-                except Exception as _pre_err:
-                    self.live.log(
-                        f"Pre-injection skipped: {_pre_err}", logging.WARNING
-                    )
+                ctx.pending_taskmap_task = asyncio.create_task(
+                    self._run_taskmap_bg(ctx, session, query)
+                )
 
             history_depth = 10 if self.is_sub_agent else 25
             permanent_history = session.get_history_for_llm(last_n=history_depth)
@@ -3095,6 +3056,99 @@ BEISPIELE:
                 "skills_matched": len(ctx.matched_skills) if ctx.matched_skills else 0,
             })
         return max_iterations, trigger_kw, trigger_skill
+
+    # -------------------------------------------------------------------------
+    # Task-map non-blocking classification + injection
+    # -------------------------------------------------------------------------
+
+    async def _run_taskmap_bg(
+        self,
+        ctx: "ExecutionContext",
+        session: "AgentSessionV2",
+        query: str,
+    ) -> None:
+        """Background task-map classification.
+
+        Runs concurrently with skill matching (non-blocking). Writes results
+        to ``ctx.pending_taskmap_inject``; the main loop polls via
+        :meth:`_poll_taskmap_bg` and injects at the next safe point
+        (start of ``_loop_preamble``, before any LLM call).
+        """
+        try:
+            from toolboxv2.mods.isaa.base.dreamer.run_aggregator import (
+                classify_for_injection,
+                CLASSIFY_GUIDE_PATH,
+                build_preinjection,
+            )
+            from pydantic import BaseModel
+
+            r = session.vfs.read(CLASSIFY_GUIDE_PATH)
+            guide = r.get("content", "") if r.get("success") else ""
+            if not guide:
+                return
+
+            async def _narrator_classify(_system: str, _query: str):
+                class TaskType(BaseModel):
+                    """The type of the user task"""
+                    task_type: str
+                    subtype: str
+
+                return await self.agent.a_format_class(
+                    pydantic_model=TaskType,
+                    prompt=_system,
+                    message_context=[{"role": "user", "content": _query}],
+                )
+
+            task_type, subtype = await classify_for_injection(
+                query, guide, narrator_call=_narrator_classify
+            )
+            ctx.task_type = task_type
+            ctx.subtype = subtype
+
+            _pre = await build_preinjection(session.vfs, query, narrator_call=None)
+            if _pre:
+                ctx.pending_taskmap_inject = _pre
+        except Exception as _err:
+            self.live.log(f"Task-map bg classify failed: {_err}", logging.WARNING)
+
+    def _poll_taskmap_bg(self, ctx: "ExecutionContext") -> None:
+        """Check if background task-map classification finished.
+
+        If ready and the topic differs from the previous injection
+        (or no injection happened yet), writes a ``system`` message
+        into ``ctx.working_history``. Must only be called from the main
+        loop thread (no race with the LLM call).
+        """
+        t = ctx.pending_taskmap_task
+        if t is None or not t.done():
+            return
+        ctx.pending_taskmap_task = None  # consume
+        try:
+            t.result()  # raise if background task errored
+        except Exception as e:
+            self.live.log(f"Task-map bg classification failed: {e}", logging.ERROR)
+            return
+
+        inject_text = ctx.pending_taskmap_inject
+        if not inject_text:
+            return
+        ctx.pending_taskmap_inject = None
+
+        new_type = getattr(ctx, "task_type", None) or "new"
+        new_type += '/'
+        new_type +=  getattr(ctx, "subtype", None) or "new"
+        # Topic unchanged and already injected → skip (no re-injection)
+        if ctx.taskmap_injected and new_type == ctx.taskmap_injected_type:
+            return
+
+        ctx.working_history.append({
+            "role": "system",
+            "content": f"## TASK MAP CONTEXT UPDATE ({new_type})\n{inject_text}",
+        })
+        ctx.taskmap_injected = True
+        ctx.taskmap_injected_type = new_type
+        self.live.log(f"Task-map injected ({new_type}, {len(inject_text)} chars)")
+        return new_type
 
     async def _parallel_init(
         self,
@@ -3205,8 +3259,10 @@ BEISPIELE:
             task = asyncio.create_task(finalize_coro)
             self._pending_finalize_tasks[ctx.run_id] = task
 
-    def _loop_preamble(self, ctx: ExecutionContext) -> tuple[str | None, list[dict]]:
+    def _loop_preamble(self, ctx: ExecutionContext) -> tuple[str | None, list[dict], str]:
         """Iteration bookkeeping + loop warning. Returns warning msg or None."""
+        # Poll non-blocking task-map classification (injects if ready)
+        task_type = self._poll_taskmap_bg(ctx)
         _obs = getattr(self.agent, 'obs', None)
         if _obs:
             snapshot = ctx.to_checkpoint() if (ctx.current_iteration % self.agent.obs.snapshot_interval == 0) else None
@@ -3250,7 +3306,7 @@ BEISPIELE:
             else:
                 messages.append(dynamic_msg)
 
-        return warning, messages
+        return warning, messages, task_type
 
     def _classify_tool_calls(
         self, tool_calls: list, dict_mode: bool = False,

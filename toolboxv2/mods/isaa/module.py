@@ -3226,7 +3226,7 @@ async def serve_app(self, app=None, host: str = DEFAULT_HOST, port: int = DEFAUL
     from toolboxv2.utils.workers.fast.tray_api import register_collective_commands
     register_collective_commands(isaa_app)
 
-    self.print(f"[ISAA UI] serving on http://{host}:{port} (prefix /isaa when joining)")
+    self.print(f"[ISAA UI] serving on http://{host}:{port}")
     from toolboxv2.mods.isaa.extras.live_obs_server import app, start_disk_scanner
     start_disk_scanner(str(Path(get_app().data_dir) / "Agents"))
 
