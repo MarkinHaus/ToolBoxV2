@@ -507,8 +507,8 @@ class PackageRepository:
             List of matching packages.
         """
         sql = """
-        SELECT p.* FROM packages p
-        JOIN packages_fts fts ON p.name = fts.name
+        SELECT p.* FROM packages_fts fts
+        JOIN packages p ON p.name = fts.name
         WHERE packages_fts MATCH ?
         """
         params: list = [query]

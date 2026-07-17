@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 
 from registry.api.deps import (
@@ -14,7 +14,8 @@ from registry.api.deps import (
 )
 from registry.db.repositories.package_repo import PackageRepository
 from registry.db.repositories.user_repo import UserRepository
-from registry.models.package import PackageCreate, PackageType, Visibility
+from registry.exceptions import DuplicateVersionError, PackageNotFoundError, PermissionDeniedError, VersionNotFoundError
+from registry.models.package import PackageCreate, PackageType
 from registry.models.user import User, VerificationStatus
 from registry.services.package_service import PackageService
 
@@ -146,6 +147,109 @@ async def get_package(
         "homepage": package.homepage,
         "repository": package.repository,
     }
+
+
+# ÄÄ Version & lifecycle endpoints ÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ
+
+@router.get("/{name}/versions")
+async def list_package_versions(
+    name: str,
+    repo: PackageRepository = Depends(get_package_repo),
+) -> dict:
+    """List all versions of a package."""
+    versions = await repo.get_versions(name)
+    return {
+        "package": name,
+        "versions": [
+            {
+                "version": v.version,
+                "released_at": v.released_at.isoformat() if v.released_at else None,
+                "changelog": v.changelog,
+                "downloads": v.downloads,
+                "yanked": v.yanked,
+                "toolbox_version": v.toolbox_version,
+                "python_version": v.python_version,
+            }
+            for v in versions
+        ],
+    }
+
+
+@router.post("/{name}/versions", status_code=status.HTTP_201_CREATED)
+async def upload_package_version(
+    name: str,
+    version: str = Form(...),
+    file: UploadFile = File(...),
+    changelog: str = Form(""),
+    toolbox_version: Optional[str] = Form(None),
+    python_version: Optional[str] = Form(None),
+    user: User = Depends(get_current_user),
+    service: PackageService = Depends(get_package_service),
+) -> dict:
+    """Upload a new version for a package."""
+    if not user.publisher_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Must be a registered publisher")
+    try:
+        created = await service.upload_version(
+            name=name,
+            version=version,
+            file=file,
+            changelog=changelog,
+            publisher_id=user.publisher_id,
+            toolbox_version=toolbox_version,
+            python_version=python_version,
+        )
+    except PackageNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Package not found")
+    except PermissionDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except DuplicateVersionError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Version {version} already exists")
+    return {"status": "uploaded", "package": name, "version": created.version}
+
+
+@router.get("/{name}/versions/{version}/download")
+async def download_package_version(
+    name: str,
+    version: str,
+    user: User = Depends(get_current_user),
+    service: PackageService = Depends(get_package_service),
+) -> dict:
+    """Get a presigned download URL for a package version."""
+    try:
+        url = await service.get_download_url(
+            name, version, viewer_id=user.cloudm_user_id
+        )
+    except PackageNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Package not found")
+    except VersionNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
+    except PermissionDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    if not url:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No download available")
+    await service.increment_downloads(name, version)
+    return {"url": url, "package": name, "version": version}
+
+
+@router.delete("/{name}")
+async def delete_package(
+    name: str,
+    user: User = Depends(get_current_user),
+    service: PackageService = Depends(get_package_service),
+) -> dict:
+    """Delete a package (owner or admin only)."""
+    try:
+        await service.delete_package(
+            name=name,
+            user_id=user.cloudm_user_id,
+            is_admin=getattr(user, "is_admin", False),
+        )
+    except PackageNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Package not found")
+    except PermissionDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    return {"status": "deleted", "package": name}
 
 
 # ── Admin endpoints ────────────────────────────────────────────────────────────

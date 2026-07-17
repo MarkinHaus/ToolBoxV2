@@ -254,9 +254,18 @@ class Style:
 
     @staticmethod
     @text_save
+    def BOLD(text: str):
+        return Style._Bold + text + Style._END
+
+    @staticmethod
+    @text_save
     def Bold(text: str):
         return Style._Bold + text + Style._END
 
+    @staticmethod
+    @text_save
+    def UNDERLINE(text: str):
+        return Style._Underline + text + Style._END
     @staticmethod
     @text_save
     def Underline(text: str):

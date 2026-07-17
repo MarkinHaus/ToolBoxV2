@@ -1212,7 +1212,7 @@ async def cli_db_runner():
     args = parser.parse_args()
 
     if not args.action:
-        parser.print_help()
+        await interactive_db_shell()
         return
 
     # Create manager
@@ -1286,6 +1286,382 @@ async def cli_db_runner():
 
     elif args.action == 'buckets':
         manager.cmd_list_buckets(args.name)
+
+
+# ── Interactive DB Shell ──────────────────────────────────────────────
+
+def _get_db(app):
+    """Get DB Tools instance via proper mod loading. Returns Tools or None."""
+    try:
+        return app.get_mod("DB")
+    except Exception:
+        return None
+
+
+def _db_get_all_keys(db) -> list:
+    """Fetch all DB keys via db.get('all-k')."""
+    try:
+        result = db.get('*')
+        if result is None:
+            return []
+        data = result.get() if hasattr(result, 'get') else result
+        if isinstance(data, str):
+            import json as _json
+            try:
+                data = _json.loads(data)
+            except Exception:
+                data = [data]
+        if isinstance(data, dict):
+            data = list(data.keys())
+        return sorted(data) if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _db_get_value(db, key: str):
+    """Fetch single value."""
+    try:
+        result = db.get(key)
+        if result is None:
+            return None
+        return result.get() if hasattr(result, 'get') else result
+    except Exception:
+        return None
+
+
+def _db_set_value(db, key: str, value) -> bool:
+    """Set a value."""
+    try:
+        result = db.set(key, value)
+        if result is None:
+            return False
+        return not (hasattr(result, 'is_error') and result.is_error())
+    except Exception:
+        return False
+
+
+def _db_delete_key(db, key: str) -> bool:
+    """Delete a key."""
+    try:
+        result = db.delete(key)
+        if result is None:
+            return False
+        return not (hasattr(result, 'is_error') and result.is_error())
+    except Exception:
+        return False
+
+
+def _format_value(val, max_len=80) -> str:
+    """Truncate/format a value for display."""
+    import json as _json
+    if val is None:
+        return Style.GREY('(null)')
+    try:
+        if isinstance(val, (dict, list)):
+            s = _json.dumps(val, ensure_ascii=False, default=str)
+        else:
+            s = str(val)
+    except Exception:
+        s = str(val)
+    if len(s) > max_len:
+        return s[:max_len] + Style.GREY('…')
+    return s
+
+
+def _group_keys_by_namespace(keys: list) -> dict:
+    """Group keys by first segment before '::'."""
+    from collections import OrderedDict
+    groups = OrderedDict()
+    for k in keys:
+        ns = k.split('::')[0] if '::' in k else '(root)'
+        groups.setdefault(ns, []).append(k)
+    return groups
+
+
+async def interactive_db_shell():
+    """Minimal interactive DB browser — `tb db` without args."""
+    import os as _os
+    import json as _json
+
+    # Lazy import to avoid circular deps
+    from toolboxv2 import get_app
+
+    try:
+        from toolboxv2.utils.extras.Style import Style
+    except Exception:
+        class Style:
+            @staticmethod
+            def GREEN(t): return t
+            @staticmethod
+            def RED(t): return t
+            @staticmethod
+            def YELLOW(t): return t
+            @staticmethod
+            def GREY(t): return t
+            @staticmethod
+            def CYAN(t): return t
+            @staticmethod
+            def BOLD(t): return t
+            @staticmethod
+            def BLUE(t): return t
+            @staticmethod
+            def UNDERLINE(t): return t
+
+    # ── Init ──
+    app = get_app("db-shell")
+    db = _get_db(app)  # app.get_mod("DB") — lazy loads the mod
+    if db is None:
+        print(Style.RED("✗ DB mod not available. Run 'tb -c DB edit_cli --mode LC' first."))
+        return
+
+    db_mode = getattr(db, 'mode', '?')
+    db_mode_val = db_mode.value if hasattr(db_mode, 'value') else str(db_mode)
+
+    def header():
+        _os.system('cls' if _os.name == 'nt' else 'clear')
+        n = len(_all_keys)
+        print(Style.BOLD(Style.UNDERLINE(f"🗄️  DB Explorer")))
+        print(Style.GREY(f"   mode={db_mode_val}  keys={n}"))
+        print()
+
+    def refresh_keys():
+        nonlocal _all_keys, _groups
+        _all_keys = _db_get_all_keys(db)
+        _groups = _group_keys_by_namespace(_all_keys)
+
+    _all_keys = []
+    _groups = {}
+    refresh_keys()
+
+    # ── Main loop ──
+    while True:
+        header()
+        if not _all_keys:
+            print(Style.YELLOW("  (empty — no keys in DB)"))
+            print()
+            print(f"  [s] Set key   [q] Quit")
+            choice = input(Style.CYAN("  > ")).strip().lower()
+            if choice == 'q':
+                break
+            if choice == 's':
+                _do_set(db, None)
+                refresh_keys()
+            continue
+
+        # Show namespace groups
+        idx = 1
+        ns_map = {}
+        print(Style.BOLD("  Namespaces:"))
+        print()
+        for ns, ks in _groups.items():
+            color = Style.GREEN if ns == 'user' else (Style.CYAN if ns == 'mod' else Style.BLUE)
+            print(f"    [{Style.BOLD(str(idx))}] {color(ns)}::{Style.GREY(' (' + str(len(ks)) + ' entries)')}")
+            ns_map[idx] = ns
+            idx += 1
+        print()
+        print(f"    [f] Search/filter  [s] Set key  [a] Show all ({len(_all_keys)})  [q] Quit")
+        choice = input(Style.CYAN("  > ")).strip().lower()
+
+        if choice == 'q':
+            break
+        elif choice == 'f':
+            _do_search(db, _all_keys)
+        elif choice == 's':
+            _do_set(db, None)
+            refresh_keys()
+        elif choice == 'a':
+            _browse_keys(db, _all_keys, "all")
+            refresh_keys()
+        elif choice.isdigit() and int(choice) in ns_map:
+            ns = ns_map[int(choice)]
+            _browse_keys(db, _groups[ns], ns)
+            refresh_keys()
+
+    print(Style.GREY("  Bye."))
+
+
+def _browse_keys(db, keys: list, label: str):
+    """Browse a list of keys — show values, edit, delete."""
+    import os as _os
+    import json as _json
+
+    try:
+        from toolboxv2.utils.extras.Style import Style
+    except Exception:
+        class Style:
+            @staticmethod
+            def GREEN(t): return t
+            @staticmethod
+            def RED(t): return t
+            @staticmethod
+            def YELLOW(t): return t
+            @staticmethod
+            def GREY(t): return t
+            @staticmethod
+            def CYAN(t): return t
+            @staticmethod
+            def BOLD(t): return t
+
+    page = 0
+    per_page = 15
+
+    while True:
+        _os.system('cls' if _os.name == 'nt' else 'clear')
+        total = len(keys)
+        start = page * per_page
+        end = min(start + per_page, total)
+        page_keys = keys[start:end]
+
+        print(Style.BOLD(Style.UNDERLINE(f"  📂 {label}::  ({total} entries, page {page+1}/{(total-1)//per_page+1})")))
+        print()
+
+        for i, k in enumerate(page_keys, start=start + 1):
+            val = _db_get_value(db, k)
+            val_str = _format_value(val, 60)
+            num = Style.BOLD(f"{i:3d}")
+            print(f"   {num}  {Style.CYAN(k)}  {Style.GREY('=')}  {val_str}")
+
+        print()
+        nav = []
+        if page > 0:
+            nav.append("[p] prev")
+        if end < total:
+            nav.append("[n] next")
+        nav_str = "  ".join(nav)
+        print(f"   {nav_str}  [e<N>] edit  [d<N>] del  [b] back  [q] quit")
+        choice = input(Style.CYAN("   > ")).strip().lower()
+
+        if choice == 'q':
+            import sys; sys.exit(0)
+        elif choice == 'b':
+            return
+        elif choice == 'p' and page > 0:
+            page -= 1
+        elif choice == 'n' and end < total:
+            page += 1
+        elif choice.startswith('e') and choice[1:].isdigit():
+            idx = int(choice[1:]) - 1
+            if 0 <= idx < total:
+                _do_edit(db, keys[idx])
+        elif choice.startswith('d') and choice[1:].isdigit():
+            idx = int(choice[1:]) - 1
+            if 0 <= idx < total:
+                _do_delete(db, keys[idx])
+                return  # keys changed, go back to refresh
+
+
+def _do_search(db, all_keys: list):
+    """Search/filter keys."""
+    import os as _os
+
+    try:
+        from toolboxv2.utils.extras.Style import Style
+    except Exception:
+        class Style:
+            @staticmethod
+            def GREEN(t): return t
+            @staticmethod
+            def RED(t): return t
+            @staticmethod
+            def YELLOW(t): return t
+            @staticmethod
+            def GREY(t): return t
+            @staticmethod
+            def CYAN(t): return t
+            @staticmethod
+            def BOLD(t): return t
+
+    _os.system('cls' if _os.name == 'nt' else 'clear')
+    print(Style.BOLD("  🔍 Search"))
+    term = input(Style.CYAN("   Filter (substring): ")).strip().lower()
+    if not term:
+        return
+
+    matches = [k for k in all_keys if term in k.lower()]
+    if not matches:
+        print(Style.YELLOW(f"   No keys matching '{term}'"))
+        input(Style.GREY("   [Enter] back"))
+        return
+    _browse_keys(db, matches, f"search:'{term}'")
+
+
+def _do_set(db, key=None):
+    """Set a new key-value pair."""
+    import json as _json
+
+    try:
+        from toolboxv2.utils.extras.Style import Style
+    except Exception:
+        class Style:
+            @staticmethod
+            def GREEN(t): return t
+            @staticmethod
+            def RED(t): return t
+            @staticmethod
+            def YELLOW(t): return t
+            @staticmethod
+            def GREY(t): return t
+            @staticmethod
+            def CYAN(t): return t
+            @staticmethod
+            def BOLD(t): return t
+
+    if key is None:
+        key = input(Style.CYAN("   Key: ")).strip()
+        if not key:
+            return
+    old = _db_get_value(db, key)
+    if old is not None:
+        print(Style.GREY(f"   Current: {_format_value(old, 100)}"))
+    raw = input(Style.CYAN("   Value (JSON or plain): ")).strip()
+    if not raw:
+        return
+    # Try JSON parse, fallback to plain string
+    try:
+        value = _json.loads(raw)
+    except Exception:
+        value = raw
+    ok = _db_set_value(db, key, value)
+    if ok:
+        print(Style.GREEN(f"   ✓ Set {key}"))
+    else:
+        print(Style.RED(f"   ✗ Failed to set {key}"))
+    input(Style.GREY("   [Enter] continue"))
+
+
+def _do_edit(db, key: str):
+    """Edit an existing key's value."""
+    _do_set(db, key)
+
+
+def _do_delete(db, key: str):
+    """Delete a key with confirmation."""
+    try:
+        from toolboxv2.utils.extras.Style import Style
+    except Exception:
+        class Style:
+            @staticmethod
+            def RED(t): return t
+            @staticmethod
+            def GREEN(t): return t
+            @staticmethod
+            def YELLOW(t): return t
+            @staticmethod
+            def GREY(t): return t
+            @staticmethod
+            def CYAN(t): return t
+
+    print(Style.YELLOW(f"   Delete '{key}'? [y/N] "), end='')
+    confirm = input().strip().lower()
+    if confirm == 'y':
+        ok = _db_delete_key(db, key)
+        if ok:
+            print(Style.GREEN(f"   ✓ Deleted {key}"))
+        else:
+            print(Style.RED(f"   ✗ Failed to delete {key}"))
+    else:
+        print(Style.GREY("   Cancelled."))
+    input(Style.GREY("   [Enter] continue"))
 
 
 if __name__ == "__main__":

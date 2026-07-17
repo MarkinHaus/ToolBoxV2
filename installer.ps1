@@ -16,7 +16,7 @@ param(
     [string]$Mode       = "",
     [string]$Path       = "",
     [string]$Config     = "",
-    [string]$Branch     = "main",
+    [string]$Branch     = "master",
     [switch]$Uninstall,
     [switch]$Update,
     [switch]$Help
@@ -43,7 +43,7 @@ $INSTALLER_VERSION    = "1.0.0"
 $TB_ARTIFACT_NAME     = "ToolBoxV2"
 $REGISTRY_API         = "https://registry.simplecore.app/api/v1"
 $GITHUB_REPO          = "MarkinHaus/ToolBoxV2"
-$GITHUB_RAW           = "https://raw.githubusercontent.com/$GITHUB_REPO/main"
+$GITHUB_RAW           = "https://raw.githubusercontent.com/$GITHUB_REPO/master"
 $MIN_DISK_MB          = 300
 $FEATURES_IMMUTABLE   = "mini core"
 $FEATURES_OPTIONAL    = @("cli","web","desktop","isaa","exotic")
@@ -85,7 +85,7 @@ Usage: .\installer.ps1 [options]
   -Mode <mode>      native | uv | docker | source
   -Path <dir>       Custom install directory
   -Config <file>    Load install config from YAML
-  -Branch <branch>  Git branch (source mode only, default: main)
+  -Branch <branch>  Git branch (source mode only, default: master)
   -Update           Update existing installation
   -Uninstall        Remove ToolBoxV2
 "@
@@ -226,7 +226,7 @@ function Phase-Config {
         if (-not $INSTALL_MODE)  { $script:INSTALL_MODE  = Get-YamlField $Config "install_mode" "" }
         if (-not $INSTALL_PATH)  { $script:INSTALL_PATH  = Get-YamlField $Config "install_path" "" }
         $script:SOURCE_FROM   = Get-YamlField $Config "source_from"   "git"
-        $script:SOURCE_BRANCH = Get-YamlField $Config "source_branch" "main"
+        $script:SOURCE_BRANCH = Get-YamlField $Config "source_branch" "master"
         $script:ENVIRONMENT   = Get-YamlField $Config "environment"   "development"
         $script:INSTANCE_ID   = Get-YamlField $Config "instance_id"   "tbv2_main"
         $script:OPT_NGINX     = (Get-YamlField $Config "optional.nginx"           "false") -eq "true"
@@ -641,7 +641,7 @@ function Action-Update {
         "docker"  { docker pull ghcr.io/markinhaus/toolboxv2:latest; Log "Updated Docker image" }
         "source"  {
             $script:SOURCE_FROM   = Get-YamlField $manifest "source_from" "git"
-            $script:SOURCE_BRANCH = Get-YamlField $manifest "source_branch" "main"
+            $script:SOURCE_BRANCH = Get-YamlField $manifest "source_branch" "master"
             $script:FEATURES      = Get-YamlField $manifest "features" "core cli"
             Install-Source
             Log "Updated from source"

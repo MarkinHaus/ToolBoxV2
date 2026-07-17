@@ -89,6 +89,22 @@ def run_fallback_tray(tb_app):
         icon.stop()
         # Explizite Bereinigung vor dem Exit
         cleanup_active_tray()
+        # Graceful shutdown: try async cleanup with 5s timeout, then force exit
+        try:
+            import asyncio
+            tb_app.alive = False
+            loop = getattr(tb_app, "loop", None)
+            if loop and not loop.is_closed():
+                try:
+                    loop.run_until_complete(asyncio.wait_for(tb_app.a_exit(), timeout=5.0))
+                except asyncio.TimeoutError:
+                    tb_app.sprint("Graceful shutdown timeout, forcing exit")
+                except RuntimeError as e:
+                    tb_app.sprint(f"Shutdown loop error: {e}")
+            else:
+                tb_app.exit(remove_all=False)
+        except Exception as e:
+            tb_app.sprint(f"Tray exit error: {e}")
         os._exit(0)
 
     def get_menu():

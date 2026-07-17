@@ -1,77 +1,84 @@
-"""Pytest configuration and fixtures."""
+"""Pytest configuration and fixtures for registry tests."""
 
-import tempfile
+collect_ignore_glob = ["global/*"]
+
+import asyncio
+import sys
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
+import pytest_asyncio
 
-from registry.app import create_app
-from registry.config import Settings
+# Ensure registry package is importable
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from registry.db.database import Database
+from registry.db.repositories.package_repo import PackageRepository
+from registry.db.repositories.artifact_repo import ArtifactRepository
+from registry.db.repositories.user_repo import UserRepository
+from registry.models.user import User
 
 
-@pytest.fixture
-def test_settings(tmp_path: Path) -> Settings:
-    """Create test settings with temporary database.
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create event loop for the test session."""
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
 
-    Args:
-        tmp_path: Pytest temporary path fixture.
 
-    Returns:
-        Test settings.
-    """
+@pytest_asyncio.fixture
+async def db(tmp_path):
+    """Provide a fresh in-memory or temp DB for each test."""
     db_path = tmp_path / "test_registry.db"
-    return Settings(
-        host="127.0.0.1",
-        port=8000,
-        debug=True,
-        database_url=f"sqlite:///{db_path}",
-        cors_origins=["http://localhost:3000"],
-        # CloudM.Auth configuration
-        cloudm_jwt_secret="test_jwt_secret_for_cloudm_auth0",
-        cloudm_auth_url="http://localhost:4025",
-        # Clerk (deprecated, for backward compatibility)
-        clerk_secret_key="test_secret",
-        clerk_publishable_key="test_publishable",
-        # MinIO
-        minio_primary_endpoint="localhost:9000",
-        minio_primary_access_key="minioadmin",
-        minio_primary_secret_key="minioadmin",
-        minio_primary_bucket="test-bucket",
-        minio_primary_secure=False,
+    database = Database(f"sqlite:///{db_path}")
+    await database.initialize()
+    yield database
+    await database.close()
+
+
+@pytest_asyncio.fixture
+async def package_repo(db):
+    """Package repository with fresh DB."""
+    return PackageRepository(db)
+
+
+@pytest_asyncio.fixture
+async def artifact_repo(db):
+    """Artifact repository with fresh DB."""
+    return ArtifactRepository(db)
+
+
+@pytest_asyncio.fixture
+async def user_repo(db):
+    """User repository with fresh DB."""
+    return UserRepository(db)
+
+
+@pytest_asyncio.fixture
+async def test_user(user_repo):
+    """Create a test user."""
+    user = User(
+        cloudm_user_id="test-user-001",
+        email="test@toolbox.dev",
+        username="testuser",
     )
+    return await user_repo.create(user)
 
 
-@pytest.fixture
-def app(test_settings: Settings, monkeypatch):
-    """Create test application.
-
-    Args:
-        test_settings: Test settings.
-        monkeypatch: Pytest monkeypatch fixture.
-
-    Returns:
-        FastAPI application.
-    """
-    # Monkeypatch get_settings to return test settings
-    monkeypatch.setattr("registry.app.get_settings", lambda: test_settings)
-    monkeypatch.setattr("registry.config.get_settings", lambda: test_settings)
-    monkeypatch.setattr("registry.db.database.get_settings", lambda: test_settings)
-    # Skip storage initialization for tests (no MinIO required)
-    return create_app(test_settings, skip_storage=True)
-
-
-@pytest.fixture
-def client(app) -> TestClient:
-    """Create test client with lifespan.
-
-    Args:
-        app: FastAPI application.
-
-    Returns:
-        Test client.
-    """
-    # Use context manager to trigger lifespan events
-    with TestClient(app) as client:
-        yield client
-
+@pytest_asyncio.fixture
+async def test_publisher(user_repo, test_user):
+    """Ensure test user has a publisher_id."""
+    from registry.models.user import Publisher  # noqa: F401
+    # Directly create publisher via DB
+    await user_repo.db.execute(
+        """INSERT OR IGNORE INTO publishers (id, cloudm_user_id, name, slug, email, status)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        ("pub-001", "test-user-001", "Test Publisher", "test-pub", "test@toolbox.dev", "verified"),
+    )
+    await user_repo.db.execute(
+        "UPDATE users SET publisher_id = ? WHERE cloudm_user_id = ?",
+        ("pub-001", "test-user-001"),
+    )
+    await user_repo.db.commit()
+    return "pub-001"

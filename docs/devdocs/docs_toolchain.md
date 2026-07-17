@@ -41,7 +41,7 @@ graph TB
 
 The system consists of several specialized components working together:
 
-#### DocsIndexer (`toolboxv2/mods/markdown_docs_system.py:DocsIndexer`)
+#### IndexManager (`toolboxv2/utils/extras/mkdocs.py:IndexManager`)
 
 Responsible for building and maintaining the comprehensive documentation index.
 
@@ -60,7 +60,7 @@ indexer = DocsIndexer(
 - `update_index()`: Incremental updates based on git changes
 - `_get_filtered_files()`: Applies include/exclude directory filters
 
-#### CodeElementExtractor (`toolboxv2/mods/markdown_docs_system.py:CodeElementExtractor`)
+#### CodeAnalyzer (`toolboxv2/utils/extras/mkdocs.py:CodeAnalyzer`)
 
 Extracts classes, functions, and other code elements from Python source files.
 
@@ -222,7 +222,7 @@ result = await app.rebuild_clean_docs(
 
 #### `docs_reader(query, section_id, file_path, tags, include_source_refs, format_type)`
 
-**Source:** `toolboxv2/mods/markdown_docs_system.py:MarkdownDocsSystem.docs_reader`
+**Source:** `toolboxv2/utils/extras/mkdocs.py:DocsSystem.docs_reader`
 
 Reads documentation using index-based lookups (no AI required).
 
@@ -469,11 +469,13 @@ async def _generate_section_content(self, title: str, source_file: str) -> str:
 ---
 
 **Source References:**
-- `toolboxv2/utils/extras/mkdocs.py:MarkdownDocsSystem`
-- `toolboxv2/utils/extras/mkdocs.py:DocsIndexer`
-- `toolboxv2/utils/extras/mkdocs.py:CodeElementExtractor`
-- `toolboxv2/utils/extras/mkdocs.py:MarkdownParser`
+- `toolboxv2/utils/extras/mkdocs.py:DocsSystem`
+- `toolboxv2/utils/extras/mkdocs.py:IndexManager`
+- `toolboxv2/utils/extras/mkdocs.py:CodeAnalyzer`
+- `toolboxv2/utils/extras/mkdocs.py:DocParser`
 
-**Last Updated:** 2024-01-15
+**Last Updated:** 2025-01-18
+
+**Last Updated:** 2025-01-18
 **Version:** 1.0.0
 **Maintainer:** ToolBoxV2

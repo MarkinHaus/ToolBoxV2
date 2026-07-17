@@ -11,7 +11,7 @@ Dieses Modul ist das zentrale HTTP-Frontend des ToolBoxV2-Frameworks. Ohne diese
 ```python
 from toolboxv2.utils.workers.server_worker import HTTPWorker, load_config
 
-config = load_config("config.toml")
+config = load_config("config.yaml")
 worker = HTTPWorker("http_1", config)
 worker.run(host="0.0.0.0", port=5000)
 ```

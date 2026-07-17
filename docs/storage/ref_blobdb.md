@@ -1,187 +1,112 @@
 # BlobDB Reference
 
-Server-Blob-Datenbank basierend auf MinIO für skalierbaren Storage.
+> **File:** `toolboxv2/utils/extras/db/mobile_db.py`
+> SQLite-based offline-first blob storage with dirty tracking, conflict resolution, and auto-size management.
 
----
+## How It Works
 
-## BlobDB Overview
+`MobileDB` is a thread-safe, SQLite-backed key-value blob store designed for mobile and offline scenarios. Every blob write is tracked with a `sync_status` (`dirty` → `synced` / `deleted` / `conflict`). The database uses WAL journaling, thread-local connections, and auto-vacuum for crash safety and performance.
 
-BlobDB ist eine Key-Value-Datenbank für Server-Daten mit MinIO-Backend.
-
-<!-- verified: blob_instance.py::BlobDB -->
-
-### Kern-Features
-
-| Feature | Beschreibung |
-|---------|-------------|
-| **MinIO Backend** | Lokaler MinIO + optionaler Cloud Sync |
-| **Offline-Fallback** | SQLite bei keiner MinIO-Verbindung |
-| **Cache mit TTL** | Konfigurierbares Caching |
-| **Manifest-Tracking** | Schnelle Key-Suche ohne Scan |
-
-<!-- verified: blob_instance.py::Config -->
-
----
-
-## Offline Fallback
-
-### Aktivierung
-
-```bash
-export IS_OFFLINE_DB=true
+```mermaid
+flowchart TD
+    APP[Application Code] --> PUT["put(path, data)"]
+    PUT --> CHECKSUM[SHA-256 Checksum]
+    CHECKSUM --> INSERT[INSERT OR REPLACE INTO blobs]
+    INSERT --> SYNC[sync_status = dirty]
+    SYNC --> NOTIFY[Notify Watchers]
+    NOTIFY --> SIZE_CHECK{Size Limit?}
+    SIZE_CHECK -->|Yes| CLEANUP[cleanup_old_synced]
+    SIZE_CHECK -->|No| DONE[Done]
 ```
 
-### Funktionsweise
+## Core API
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    BlobDB                           │
-├─────────────────────────────────────────────────────┤
-│  IS_OFFLINE_DB=true?                                │
-│  ├── JA → SQLite Fallback (lokal)                  │
-│  └── NEIN → MinIO (lokal) → Cloud MinIO → SQLite   │
-└─────────────────────────────────────────────────────┘
-```
+### CRUD Operations
 
-### SQLite Schema
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `put` | `put(path, data, content_type, encrypted, skip_sync) → BlobMetadata` | Store blob. Sets `sync_status=DIRTY` unless `skip_sync=True` |
+| `get` | `get(path) → Optional[bytes]` | Retrieve blob data (skips deleted) |
+| `delete` | `delete(path, hard_delete) → bool` | Soft delete (`sync_status=deleted`) or hard delete (row removed) |
+| `exists` | `exists(path) → bool` | Check if blob exists and not deleted |
+| `list` | `list(prefix, include_deleted, sync_status) → List[BlobMetadata]` | List blobs with optional prefix/status filtering |
+
+### Sync Operations
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `get_dirty_blobs` | `→ List[BlobMetadata]` | All blobs needing cloud sync |
+| `get_pending_deletes` | `→ List[BlobMetadata]` | All blobs marked for deletion |
+| `mark_synced` | `mark_synced(path, cloud_timestamp)` | Mark blob as synced |
+| `mark_conflict` | `mark_conflict(path)` | Flag sync conflict |
+| `resolve_conflict` | `resolve_conflict(path, use_local)` | Keep local (`dirty`) or accept cloud (`hard_delete`) |
+| `needs_sync` | `needs_sync(cloud_manifest) → Dict[path, action]` | Compare local vs cloud → `upload`/`download`/`conflict` |
+| `get_sync_stats` | `→ Dict` | Count by status + total size |
+
+### Watch System
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `watch` | `watch(path_pattern, callback) → callback_id` | Subscribe to blob changes (glob pattern) |
+| `unwatch` | `unwatch(callback_id)` | Remove subscription |
+| `start_watch_poller` | `start_watch_poller(interval)` | Background thread polling `sync_log` for changes |
+
+### Import/Export
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `export_for_sync` | `→ Iterator[(path, data, metadata)]` | Stream dirty blobs for upload |
+| `import_from_cloud` | `import_from_cloud(path, data, cloud_timestamp, checksum) → bool` | Verify checksum, detect conflicts, store |
+
+## Schema
 
 ```sql
 CREATE TABLE blobs (
     path TEXT PRIMARY KEY,
     data BLOB NOT NULL,
-    checksum TEXT,
-    updated_at REAL,
-    sync_status TEXT DEFAULT 'dirty'
+    size INTEGER NOT NULL,
+    checksum TEXT NOT NULL,
+    local_updated_at REAL NOT NULL,
+    cloud_updated_at REAL,
+    sync_status TEXT NOT NULL DEFAULT 'dirty',
+    version INTEGER NOT NULL DEFAULT 1,
+    content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+    encrypted INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL DEFAULT (julianday('now'))
 );
-
-CREATE TABLE manifest (
-    key TEXT PRIMARY KEY,
-    created_at REAL
-);
 ```
 
-<!-- verified: blob_instance.py::SQLiteCache -->
+## SyncStatus Enum
 
-### Sync-Status
+| Value | Meaning |
+|-------|---------|
+| `dirty` | Local change, needs cloud upload |
+| `synced` | In sync with cloud |
+| `deleted` | Soft-deleted, needs cloud delete |
+| `conflict` | Local and cloud both changed |
 
-| Status | Bedeutung |
-|--------|----------|
-| `dirty` | Geändert, nicht gesynct |
-| `synced` | Mit Cloud synchronisiert |
+## SQLite Pragmas
 
-<!-- verified: blob_instance.py::SQLiteCache.mark_synced -->
-
----
-
-## When to use BlobDB vs LC
-
-### Local Dictionary (LC) - Wann?
-
-| Kriterium | Empfehlung |
-|-----------|-----------|
-| Datenvolumen | < 10 MB |
-| Zugriffe | < 100/s |
-| Verteilung | Single-Instance |
-| Komplexität | Einfache Key-Value |
-
-**Typische Use-Cases:**
-- User Settings
-- Mod-Konfiguration
-- Lokale Caches
-
-<!-- verified: schema.py::LocalDBConfig -->
-
-### BlobDB (MinIO) - Wann?
-
-| Kriterium | Empfehlung |
-|-----------|-----------|
-| Datenvolumen | > 10 MB bis TBs |
-| Zugriffe | > 100/s |
-| Verteilung | Multi-Instance / Cluster |
-| Komplexität | Enterprise-Grade |
-
-**Typische Use-Cases:**
-- Server-Sessions
-- Binäre Assets
-- Audit Logs
-- Backup-Storage
-
-<!-- verified: blob_instance.py::BlobDB -->
-
----
-
-## Environment Variables
-
-### Lokaler MinIO
-
-| Variable | Default | Pflicht |
-|----------|---------|--------|
-| `MINIO_ENDPOINT` | `127.0.0.1:9000` | Nein |
-| `MINIO_ACCESS_KEY` | `admin` | Nein |
-| `MINIO_SECRET_KEY` | - | **Ja** |
-| `MINIO_SECURE` | `false` | Nein |
-
-### Cloud MinIO (optional)
-
-| Variable | Pflicht |
-|----------|---------|
-| `CLOUD_ENDPOINT` | Nein |
-| `CLOUD_ACCESS_KEY` | Nein |
-| `CLOUD_SECRET_KEY` | Nein |
-| `CLOUD_SECURE` | Nein |
-
-### Betrieb
-
-| Variable | Default | Beschreibung |
-|----------|---------|-------------|
-| `IS_OFFLINE_DB` | `false` | Nur SQLite, kein MinIO |
-| `SERVER_ID` | `hostname` | Server-Identifier |
-| `DB_CACHE_TTL` | `60` | Cache-Lebensdauer (Sekunden) |
-
-<!-- verified: blob_instance.py::Config -->
-
----
-
-## Usage Example
-
-```python
-from toolboxv2.mods.DB.blob_instance import create_db
-
-# Initialisierung
-db = create_db("my_server")
-
-# CRUD
-db.set("users/123", {"name": "Alice"})
-result = db.get("users/123")
-print(result.get())  # {"name": "Alice"}
-
-# Pattern Matching
-db.set("config/theme", "dark")
-results = db.get("config/*")
-
-# Cloud Sync
-db.sync_to_cloud()
-
-# Cleanup
-db.exit()
+```sql
+PRAGMA journal_mode=WAL;          -- Crash-safe concurrent reads
+PRAGMA synchronous=NORMAL;        -- Balance safety/performance
+PRAGMA busy_timeout=30000;        -- 30s wait on lock
+PRAGMA wal_autocheckpoint=1000;   -- Auto-checkpoint WAL
+PRAGMA mmap_size=134217728;       -- 128MB memory-mapped reads
+PRAGMA auto_vacuum=INCREMENTAL;   -- Reclaim space incrementally
 ```
 
-<!-- verified: blob_instance.py::create_db -->
+## Size Management
 
----
+Auto-cleanup triggers when DB exceeds `max_size_mb` (default 500MB):
+1. Advisory lock prevents concurrent cleanup (fcntl on Unix, direct on Windows)
+2. Removes old synced blobs (default: >30 days)
+3. Target: 80% of max size
+4. `PRAGMA incremental_vacuum` reclaims freed pages
 
-## Bucket & Path Structure
+## Related
 
-```
-Bucket: tb-servers
-│
-└── {SERVER_ID}/
-    ├── _manifest.json      # Key-Index
-    ├── users/
-    │   └── 123.json
-    ├── config/
-    │   └── theme.json
-    └── ...
-```
-
-<!-- verified: blob_instance.py::BlobDB._key_to_path -->
+- [Storage Overview](index.md) — DB modes, BlobStorage facade
+- [Blob Sharing API](blob_sharing_api.md) — user-to-user sharing
+- [CloudM FolderSync](../mods/CloudM/folder_sync.md) — encrypted folder sync (deprecated)
+- `LogSyncManager` in `toolboxv2/utils/system/tb_logger.py` — syncs MobileDB logs to MinIO

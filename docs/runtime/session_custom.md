@@ -1,5 +1,8 @@
 # Session Custom
 
+> **Scope:** Auth-provider session verification with in-memory caching (`CustomSessionVerifier`).  
+> For the **stateless cookie-based session infrastructure** (`SessionManager`, `SignedCookieSession`), see [Session](session.md).
+
 Provider-agnostic session verification and management for ToolBoxV2. Validates JWT tokens via the CloudM.Auth module, caches session data thread-safely, and supports Discord, Google, and Passkey authentication providers.
 
 ## Why This Matters

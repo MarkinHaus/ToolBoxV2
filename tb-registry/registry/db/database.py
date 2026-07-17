@@ -210,6 +210,7 @@ class Database:
             checksum_sha256 TEXT NOT NULL,
             size_bytes INTEGER NOT NULL,
             installer_type TEXT,
+            storage_locations TEXT DEFAULT '[]',
             downloads INTEGER DEFAULT 0
         );
 
@@ -235,14 +236,13 @@ class Database:
         CREATE INDEX IF NOT EXISTS idx_download_stats_package ON download_stats(package_name);
         CREATE INDEX IF NOT EXISTS idx_download_stats_artifact ON download_stats(artifact_id);
 
-        -- Full-text search for packages
+        -- Full-text search for packages (standard FTS5, not external-content,
+        -- so manual INSERT/DELETE via _update_fts() works correctly)
         CREATE VIRTUAL TABLE IF NOT EXISTS packages_fts USING fts5(
             name,
             display_name,
             description,
-            keywords,
-            content='packages',
-            content_rowid='rowid'
+            keywords
         );
         """
         await self.connection.executescript(schema)

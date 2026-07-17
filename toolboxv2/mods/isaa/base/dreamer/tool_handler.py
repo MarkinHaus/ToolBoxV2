@@ -1316,6 +1316,22 @@ class DreamerToolHandler:
         self._report["rules_created"].append(rule_id)
         return f"OK: Rule created (id={rule_id})"
 
+    def handle_extract_rules(self, rules_data: List[Dict] = None) -> str:
+        """Batch-create rules from extracted rule dicts."""
+        if not rules_data:
+            return json.dumps({"success": False, "error": "no rules_data"})
+        results = []
+        for rd in rules_data:
+            r = self.handle_create_rule(
+                situation=rd.get("situation", ""),
+                intent=rd.get("intent", ""),
+                instructions=rd.get("instructions", []),
+                required_tool_groups=rd.get("required_tool_groups"),
+                confidence=rd.get("confidence", 0.5),
+            )
+            results.append(r)
+        return f"OK: {len(results)} rules extracted"
+
     def handle_learn_pattern(
         self,
         pattern: str,

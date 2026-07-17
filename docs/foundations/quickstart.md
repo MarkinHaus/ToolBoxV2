@@ -21,7 +21,7 @@ irm "https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/in
 ### pip (all platforms)
 
 ```bash
-pip install ToolBoxV2
+pip install toolboxv2
 ```
 
 ### Source (developer mode)

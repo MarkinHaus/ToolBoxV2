@@ -64,7 +64,7 @@ from toolboxv2.utils.clis.config_wizard import (  # noqa: E402
     wizard_database_settings,
     wizard_workers_settings,
     wizard_services_settings,
-    wizard_isaa_settings,
+    wizard_llm_providers,
     wizard_env_variables,
     ENV_CATEGORIES,
 )
@@ -212,36 +212,34 @@ class TestWizardDatabaseSchemaIntegration(unittest.TestCase):
 
 class TestWizardIsaaSchemaIntegration(unittest.TestCase):
 
-    def _run_enabled(self, temperature="0.5", max_tokens="4096") -> TBManifest:
+    def _run_enabled(self) -> TBManifest:
         data = _fresh_manifest_dict()
         inputs = iter([
-            "openrouter/haiku", "openrouter/gpt-4o",
-            "self", temperature, max_tokens, "OPENROUTER_API_KEY",
+            "http://localhost:20128/v1", "", "", "sk-test-key",
         ])
-        # True=Configure ISAA, True=stream, False=checkpoints, True=MCP, False=A2A
-        bools = iter([True, True, False, True, False])
+        # Provider selection: 9router True → then validate: yes → continue
+        bools = iter([True, True])
         with (
             patch(f"{_MOD}.prompt_bool",
                   side_effect=lambda *a, **kw: next(bools, False)),
             patch(f"{_MOD}.prompt_input",
                   side_effect=lambda *a, **kw: next(inputs, "")),
+            patch(f"{_MOD}.prompt_choice", return_value="9rou/fast"),
             patch(f"{_MOD}.c_print", lambda *a, **kw: None),
         ):
-            data = wizard_isaa_settings(data)
+            data, _ = wizard_llm_providers(data, {})
         return TBManifest.model_validate(data)
 
     def test_isaa_config_is_isaaconfig_instance(self):
         self.assertIsInstance(self._run_enabled().isaa, IsaaConfig)
 
     def test_temperature_is_float_in_schema(self):
-        m = self._run_enabled(temperature="0.3")
+        m = self._run_enabled()
         self.assertIsInstance(m.isaa.self_agent.temperature, float)
-        self.assertAlmostEqual(m.isaa.self_agent.temperature, 0.3, places=5)
 
     def test_max_tokens_is_int_in_schema(self):
-        m = self._run_enabled(max_tokens="2048")
+        m = self._run_enabled()
         self.assertIsInstance(m.isaa.self_agent.max_tokens_output, int)
-        self.assertEqual(m.isaa.self_agent.max_tokens_output, 2048)
 
     def test_isaa_none_when_declined(self):
         data = _fresh_manifest_dict()
@@ -250,7 +248,7 @@ class TestWizardIsaaSchemaIntegration(unittest.TestCase):
             patch(f"{_MOD}.prompt_input", return_value=""),
             patch(f"{_MOD}.c_print", lambda *a, **kw: None),
         ):
-            data = wizard_isaa_settings(data)
+            data, _ = wizard_llm_providers(data, {})
         self.assertIsNone(TBManifest.model_validate(data).isaa)
 
     def test_mcp_enabled_is_bool_in_schema(self):
@@ -458,7 +456,7 @@ class TestFullWizardPipeline(unittest.TestCase):
             patch(f"{_MOD}.prompt_input", return_value=""),
             patch(f"{_MOD}.c_print", lambda *a, **kw: None),
         ):
-            data = wizard_isaa_settings(data)
+            data, _ = wizard_llm_providers(data, {})
 
         return TBManifest.model_validate(data)
 

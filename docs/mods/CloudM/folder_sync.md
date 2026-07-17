@@ -1,5 +1,8 @@
 # CloudM — Folder Sync
 
+> **⚠️ DEPRECATED** — This documents the legacy `FolderSync` class.  
+> For the current system, see [LiveSync User Guide](user_guide.md) and [LiveSync Developer Guide](developer_guide.md).
+
 > **File**: `FolderSync.py`
 > **Requires**: `pip install watchdog`
 

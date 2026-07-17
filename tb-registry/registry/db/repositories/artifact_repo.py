@@ -211,12 +211,18 @@ class ArtifactRepository:
             version_id: Version ID.
             build: Build to add.
         """
+        from dataclasses import asdict
+
+        locations_json = json.dumps(
+            [asdict(sl) for sl in build.storage_locations],
+            default=str,
+        )
         await self.db.execute(
             """
             INSERT INTO artifact_builds (
                 version_id, platform, architecture, filename,
-                checksum_sha256, size_bytes, installer_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                checksum_sha256, size_bytes, installer_type, storage_locations
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 version_id,
@@ -226,6 +232,7 @@ class ArtifactRepository:
                 build.checksum_sha256,
                 build.size_bytes,
                 build.installer_type,
+                locations_json,
             ),
         )
         await self.db.commit()
@@ -269,8 +276,15 @@ class ArtifactRepository:
             (row["id"],),
         )
 
-        builds = [
-            ArtifactBuild(
+        builds = []
+        for b in builds_rows:
+            raw_locs = json.loads(b["storage_locations"] if "storage_locations" in b.keys() else "[]")
+            storage_locations = []
+            for rl in raw_locs:
+                if "uploaded_at" in rl and isinstance(rl["uploaded_at"], str):
+                    rl["uploaded_at"] = datetime.fromisoformat(rl["uploaded_at"])
+                storage_locations.append(StorageLocation(**rl))
+            builds.append(ArtifactBuild(
                 platform=Platform(b["platform"]),
                 architecture=Architecture(b["architecture"]),
                 filename=b["filename"],
@@ -278,9 +292,8 @@ class ArtifactRepository:
                 size_bytes=b["size_bytes"],
                 installer_type=b["installer_type"],
                 downloads=b["downloads"],
-            )
-            for b in builds_rows
-        ]
+                storage_locations=storage_locations,
+            ))
 
         return ArtifactVersion(
             version=row["version"],

@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import queue
+import signal
 import threading
 from typing import Any
 
@@ -12,6 +13,56 @@ from ..system.getting_and_closing_app import get_app
 from ..system.tb_logger import get_logger
 from ..system.types import AppType, Result
 from ..toolbox import App
+
+
+def cleanup_stale_pid(info_folder: str, name: str) -> bool:
+    """Check and remove stale PID file. Returns True if cleaned (was stale).
+
+    ponytail: simple pid-alive check via os.kill(pid, 0). On Windows,
+    uses ctypes OpenProcess. No psutil dependency.
+    """
+    pid_file = os.path.join(info_folder, f"bg-{name}.pid")
+    if not os.path.exists(pid_file):
+        return False
+    try:
+        with open(pid_file, encoding="utf8") as f:
+            old_pid = int(f.readline().strip())
+    except (ValueError, OSError):
+        os.remove(pid_file)
+        return True
+
+    alive = _is_process_alive(old_pid)
+    if not alive:
+        os.remove(pid_file)
+        get_logger().info(f"Cleaned stale PID file for {name} (pid={old_pid} dead)")
+        return True
+    # Process still alive — don't touch the file
+    return False
+
+
+def _is_process_alive(pid: int) -> bool:
+    """Cross-platform check if a PID is still running."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        PROCESS_QUERY_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_INFORMATION, False, pid)
+        if not handle:
+            return False
+        try:
+            exit_code = ctypes.c_ulong()
+            ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+            return exit_code.value == STILL_ACTIVE
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except (OSError, ProcessLookupError):
+            return False
 
 
 class DaemonUtil:

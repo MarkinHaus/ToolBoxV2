@@ -1,5 +1,7 @@
 # FastTBHandler
 
+> **Also see:** [FastTB](fasttb.md) — user-facing API (decorators, path params, WebSocket handlers, integration modes).
+
 Dispatch engine for FastTB routes — resolves incoming HTTP requests to registered handlers, injects parameters via signature inspection, and converts return values into WSGI-compatible `(status, headers, body)` tuples. Also manages static file serving, SSE streaming, WebSocket infrastructure, and development-mode hot reload.
 
 ## Why This Matters

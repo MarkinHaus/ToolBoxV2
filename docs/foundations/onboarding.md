@@ -75,7 +75,7 @@ tb --guide         # interactive usage guide
 
 - **Consumer / Homelab** — `tb gui` starts the graphical interface; `tb mods` opens the interactive module manager. Install mods with `tb -i <name>`.
 - **Server** — [Worker System](../runtime/index.md): `tb workers start`, sessions, the ZMQ broker (`tb broker`), and the [ServiceManager](../runtime/service_manager.md) for auto-start/restart (`tb --init-sm`).
-- **Developer** — [Coding Guidelines](../devdocs/guidelines.md), then the [toolboxv2 Core API](../reference/toolboxv2.md). `tb -c <MOD> <FUNC>` executes any module function directly; `--debug` enables hot-reload.
+- **Developer** — [Coding Guidelines](../devdocs/guidelines.md), then [Core Types](../devdocs/types.md). See also [First Run Wizard](first_run.md). `tb -c <MOD> <FUNC>` executes any module function directly; `--debug` enables hot-reload.
 - **Agents** — [ISAA](../mods/isaa/index.md) is the agent framework. `tb mcp` starts an MCP server so external agents can drive this instance.
 
 ## Command map

@@ -7,11 +7,16 @@ A beautiful, minimal, and repeatable CLI wizard that:
 3. Can be run multiple times to update configuration
 """
 
+from __future__ import annotations
+
+import json
 import os
 import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from .cli_printing import (
     print_box_header,
@@ -23,6 +28,250 @@ from .cli_printing import (
     Colors,
 )
 from .cli_input import menu_select
+
+
+# =================== LLM Provider Registry ===================
+
+LLM_PROVIDERS: Dict[str, dict] = {
+    "9router": {
+        "name": "9Router (Local Proxy / Gateway)",
+        "default": True,
+        "key_vars": ["NINEROUTER_KEY"],
+        "url_var": "NINEROUTER_URL",
+        "default_url": "http://localhost:20128/v1",
+        "extra_vars": ["NINEROUTER_USER", "NINEROUTER_PASSWORD"],
+        "validate_path": "/models",
+        "models": {
+            "FAST": "9rou/fast",
+            "BLITZ": "cerebras/gpt-oss-120b",
+            "COMPLEX": "9rou/complex",
+            "SUMMARY": "openrouter/mistralai/ministral-8b",
+        },
+    },
+    "ollama": {
+        "name": "Ollama (Local AI)",
+        "default": False,
+        "key_vars": [],
+        "url_var": "OLLAMA_BASE_URL",
+        "default_url": "http://localhost:11434",
+        "extra_vars": [],
+        "validate_path": "/api/tags",
+        "models": {
+            "FAST": "ollama/llama3.1",
+            "BLITZ": "ollama/llama3.1",
+            "COMPLEX": "ollama/llama3.1",
+            "SUMMARY": "ollama/llama2",
+        },
+    },
+    "openrouter": {
+        "name": "OpenRouter (All models via one key)",
+        "default": False,
+        "key_vars": ["OPENROUTER_API_KEY"],
+        "url_var": None,
+        "default_url": "https://openrouter.ai/api/v1",
+        "extra_vars": [],
+        "validate_path": "/models",
+        "models": {
+            "FAST": "openrouter/google/gemini-2.5-flash-lite",
+            "BLITZ": "openrouter/google/gemini-2.5-flash-lite",
+            "COMPLEX": "openrouter/google/gemini-2.5-flash",
+            "SUMMARY": "openrouter/mistralai/ministral-8b",
+        },
+    },
+    "groq": {
+        "name": "Groq (Free, fast)",
+        "default": False,
+        "key_vars": ["GROQ_API_KEY"],
+        "url_var": None,
+        "default_url": "https://api.groq.com/openai/v1",
+        "extra_vars": [],
+        "validate_path": "/models",
+        "models": {
+            "FAST": "groq/llama-3.1-8b-instant",
+            "BLITZ": "groq/llama-3.1-8b-instant",
+            "COMPLEX": "groq/llama-3.1-70b-versatile",
+            "SUMMARY": "groq/llama-3.1-8b-instant",
+        },
+    },
+    "gemini": {
+        "name": "Google Gemini",
+        "default": False,
+        "key_vars": ["GEMINI_API_KEY"],
+        "url_var": None,
+        "default_url": "https://generativelanguage.googleapis.com/v1",
+        "extra_vars": [],
+        "validate_path": "/models",
+        "models": {
+            "FAST": "gemini/gemini-2.0-flash-lite",
+            "BLITZ": "gemini/gemini-2.0-flash-lite",
+            "COMPLEX": "gemini/gemini-2.5-flash",
+            "SUMMARY": "gemini/gemini-2.0-flash-lite",
+        },
+    },
+    "anthropic": {
+        "name": "Anthropic (Claude)",
+        "default": False,
+        "key_vars": ["ANTHROPIC_API_KEY"],
+        "url_var": None,
+        "default_url": "https://api.anthropic.com/v1",
+        "extra_vars": [],
+        "validate_path": "/models",
+        "models": {
+            "FAST": "anthropic/claude-3-5-haiku-20241022",
+            "BLITZ": "anthropic/claude-3-5-haiku-20241022",
+            "COMPLEX": "anthropic/claude-3-5-sonnet-20241022",
+            "SUMMARY": "anthropic/claude-3-5-haiku-20241022",
+        },
+    },
+    "openai": {
+        "name": "OpenAI",
+        "default": False,
+        "key_vars": ["OPENAI_API_KEY"],
+        "url_var": None,
+        "default_url": "https://api.openai.com/v1",
+        "extra_vars": [],
+        "validate_path": "/models",
+        "models": {
+            "FAST": "openai/gpt-4.1-mini",
+            "BLITZ": "openai/gpt-4.1-mini",
+            "COMPLEX": "openai/gpt-4.1",
+            "SUMMARY": "openai/gpt-4.1-mini",
+        },
+    },
+    "deepseek": {
+        "name": "DeepSeek",
+        "default": False,
+        "key_vars": ["DEEPSEEK_API_KEY"],
+        "url_var": None,
+        "default_url": "https://api.deepseek.com/v1",
+        "extra_vars": [],
+        "validate_path": "/models",
+        "models": {
+            "FAST": "deepseek/deepseek-chat",
+            "BLITZ": "deepseek/deepseek-chat",
+            "COMPLEX": "deepseek/deepseek-reasoner",
+            "SUMMARY": "deepseek/deepseek-chat",
+        },
+    },
+}
+
+
+def validate_llm_key(provider_key: str, api_key: str, base_url: str = "") -> Tuple[bool, str, list]:
+    """Validate an LLM API key by fetching the /models endpoint.
+
+    Returns (success, message, list_of_model_ids).
+    Uses urllib (stdlib) — no external dependency.
+    """
+    p = LLM_PROVIDERS.get(provider_key)
+    if not p:
+        return False, f"Unknown provider: {provider_key}", []
+
+    url = base_url or p["default_url"]
+    path = p.get("validate_path", "/models")
+    full_url = f"{url.rstrip('/')}{path}"
+
+    headers: Dict[str, str] = {}
+    if api_key:
+        if provider_key == "9router":
+            # 9Router uses basic auth via user:password
+            import base64 as b64mod
+            user = os.getenv("NINEROUTER_USER", "")
+            pw = os.getenv("NINEROUTER_PASSWORD", "")
+            if user and pw:
+                cred = b64mod.b64encode(f"{user}:{pw}".encode()).decode()
+                headers["Authorization"] = f"Basic {cred}"
+            elif api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+        elif provider_key == "gemini":
+            full_url = f"{url.rstrip('/')}/models?key={api_key}&pageSize=100"
+        else:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        req = Request(full_url, headers=headers)
+        with urlopen(req, timeout=8) as resp:
+            if resp.status != 200:
+                return False, f"HTTP {resp.status}", []
+            data = json.loads(resp.read().decode())
+    except HTTPError as e:
+        if e.code == 401:
+            return False, "Invalid API key (401 Unauthorized)", []
+        if e.code == 403:
+            return False, "Forbidden (403) — check key permissions", []
+        return False, f"HTTP error: {e.code}", []
+    except URLError as e:
+        return False, f"Connection failed: {e.reason}", []
+    except Exception as e:
+        return False, f"Error: {e}", []
+
+    # Parse models
+    models: list = []
+    if isinstance(data, dict):
+        model_list = data.get("data") or data.get("models") or []
+        for m in model_list:
+            if isinstance(m, dict):
+                mid = m.get("id") or m.get("name") or ""
+                if mid:
+                    models.append(mid)
+            elif isinstance(m, str):
+                models.append(m)
+
+    return True, f"OK — {len(models)} models available", models
+
+
+# =================== Profile-based Core Defaults ===================
+
+PROFILE_CORE_DEFAULTS: Dict[str, dict] = {
+    "local": {
+        "APP_BASE_URL": "http://localhost:8000",
+        "TOOLBOXV2_BASE": "localhost",
+        "TOOLBOXV2_REMOTE_BASE": "https://simplecore.app",
+        "IS_OFFLINE_DB": "true",
+        "DB_MODE_KEY": "LC",
+    },
+    "consumer": {
+        "APP_BASE_URL": "http://localhost:8000",
+        "TOOLBOXV2_BASE": "localhost",
+        "TOOLBOXV2_REMOTE_BASE": "https://simplecore.app",
+        "IS_OFFLINE_DB": "true",
+        "DB_MODE_KEY": "LC",
+    },
+    "homelab": {
+        "APP_BASE_URL": "http://localhost:8000",
+        "TOOLBOXV2_BASE": "localhost",
+        "TOOLBOXV2_REMOTE_BASE": "https://simplecore.app",
+        "IS_OFFLINE_DB": "false",
+        "DB_MODE_KEY": "LR",
+    },
+    "server": {
+        "APP_BASE_URL": "https://simplecore.app",
+        "TOOLBOXV2_BASE": "0.0.0.0",
+        "TOOLBOXV2_REMOTE_BASE": "https://simplecore.app",
+        "IS_OFFLINE_DB": "false",
+        "DB_MODE_KEY": "RR",
+    },
+    "business": {
+        "APP_BASE_URL": "https://simplecore.app",
+        "TOOLBOXV2_BASE": "0.0.0.0",
+        "TOOLBOXV2_REMOTE_BASE": "https://simplecore.app",
+        "IS_OFFLINE_DB": "false",
+        "DB_MODE_KEY": "CB",
+    },
+    "developer": {
+        "APP_BASE_URL": "http://localhost:8000",
+        "TOOLBOXV2_BASE": "localhost",
+        "TOOLBOXV2_REMOTE_BASE": "https://simplecore.app",
+        "IS_OFFLINE_DB": "false",
+        "DB_MODE_KEY": "LC",
+    },
+}
+
+
+def get_profile_defaults(profile: Optional[str]) -> dict:
+    """Return core env defaults for the given profile."""
+    if not profile:
+        return PROFILE_CORE_DEFAULTS["local"]
+    return PROFILE_CORE_DEFAULTS.get(profile, PROFILE_CORE_DEFAULTS["local"])
 
 
 # =================== Environment Template Parser ===================
@@ -151,35 +400,47 @@ ENV_CATEGORIES = {
         "APP_BASE_URL", "ADMIN_UI_PASSWORD", "TOOLBOX_LOGGING_LEVEL",
     ],
     "Database": [
-        "DB_CONNACTION_URI", "DB_MODE_KEY", "IS_OFFLINE_DB", "SERVER_ID", "DB_CACHE_TTL",
+        "DB_CONNECTION_URI", "DB_MODE_KEY", "IS_OFFLINE_DB", "SERVER_ID", "DB_CACHE_TTL",
     ],
     "Storage (MinIO/S3)": [
         "MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY",
         "CLOUD_ENDPOINT", "CLOUD_ACCESS_KEY", "CLOUD_SECRET_KEY",
     ],
     "AI/LLM APIs": [
-        "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY",
-        "GROQ_API_KEY", "OPENROUTER_API_KEY", "OLLAMA_API_KEY",
+        "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY",
+        "OLLAMA_API_KEY", "HUGGINGFACEHUB_API_TOKEN", "HF_TOKEN",
     ],
     "AI Extras": [
-        "HUGGINGFACEHUB_API_TOKEN", "ELEVENLABS_API_KEY", "REPLICATE_API_TOKEN",
-        "DEEPGRAM_API_KEY", "WOLFRAM_ALPHA_APPID",
+        "ELEVENLABS_API_KEY", "REPLICATE_API_TOKEN",
+        "DEEPGRAM_API_KEY", "WOLFRAM_ALPHA_APPID", "PINECONE_API_KEY",
+    ],
+    "LLM Gateway & Providers": [
+        "TB_LLM_GATEWAY_URL", "TB_LLM_GATEWAY_KEY", "OLLAMA_BASE_URL",
+        "MINIMAX_API_KEY", "ZAI_API_KEY", "INCEPTION_API_KEY",
+        "CEREBRAS_API_KEY", "NINEROUTER_KEY", "NINEROUTER_URL",
+    ],
+    "Agent Tuning": [
+        "DEFAULT_MAX_ITERATIONS", "DEFAULT_MAX_HISTORY_LENGTH",
+        "AGENT_VERBOSE", "DREAMER_FAST_MODEL", "DREAMER_COMPLEX_MODEL",
+        "NARRATOR_ENABLED", "NARRATOR_LANG",
+        "SUB_AGENT_MAX_TOKENS", "SUB_AGENT_MAX_ITERATIONS",
     ],
     "Search & Web": [
         "SERP_API_KEY", "GOOGLE_API_KEY", "GOOGLE_CSE_ID",
-        "BING_SUBSCRIPTION_KEY", "BING_SEARCH_URL",
+        "BING_API_KEY", "FIRECRAWL_API_KEY",
     ],
     "Messaging & Bots": [
-        "DISCORD_BOT_TOKEN", "TELEGRAM_BOT_TOKEN","DISCORD_AID",
+        "DISCORD_BOT_TOKEN", "TELEGRAM_BOT_TOKEN", "DISCORD_AID",
         "TELEGRAM_AID",
         "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_API_TOKEN",
     ],
     "Email": [
-        "GMAIL_EMAIL", "GMAIL_PASSWORD", "GOOGLE_CREDENTIALS_FILE",
+        "GMAIL_EMAIL", "GMAIL_PASSWORD", "GOOGLE_APPLICATION_CREDENTIALS",
     ],
     "Security & Auth": [
-        "TB_COOKIE_SECRET", "TOKEN_SECRET", "CLUSTER_SECRET", "CLOUDM_JWT_SECRET", "CLOUDM_AUTH_URL",
-        "TB_JWT_SECRET","TB_COOKIE_SECRET"
+        "TB_JWT_SECRET", "TB_COOKIE_SECRET", "TOKEN_SECRET",
+        "CLUSTER_SECRET", "TB_R_KEY",
     ],
     "Development": [
         "GITHUB_TOKEN", "GITHUB_TOKEN_GIST", "DEV_MODULES",
@@ -360,90 +621,199 @@ def wizard_services_settings(manifest_data: Dict[str, Any]) -> Dict[str, Any]:
     return manifest_data
 
 
-def wizard_isaa_settings(manifest_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Configure ISAA agent settings."""
-    # Check if ISAA should be configured
-    if not prompt_bool("Configure ISAA AI Agent?", default=True):
-        manifest_data["isaa"] = None
-        return manifest_data
+def wizard_llm_providers(manifest_data: Dict[str, Any],
+                         existing_env: Dict[str, str]) -> Tuple[Dict[str, Any], Dict[str, str]]:
+    """Interactive LLM provider selection with live API key validation.
 
+    Returns (updated manifest_data, updated env_dict).
+    """
+    updated_env = existing_env.copy()
+
+    # 1. Provider selection (multi-select via individual prompts)
+    c_print(f"  {Colors.CYAN}LLM Provider Setup{Colors.RESET}")
+    c_print(f"  {Colors.DIM}Select which providers you want to configure.{Colors.RESET}")
+    c_print(f"  {Colors.DIM}9Router is the default — it proxies to all other providers.{Colors.RESET}")
+    print()
+
+    provider_keys = list(LLM_PROVIDERS.keys())
+    selected_providers: list = []
+
+    for pk in provider_keys:
+        p = LLM_PROVIDERS[pk]
+        is_default = p.get("default", False)
+        already_set = any(os.getenv(v) or existing_env.get(v) for v in p["key_vars"])
+        if pk == "ollama":
+            already_set = bool(os.getenv("OLLAMA_BASE_URL") or existing_env.get("OLLAMA_BASE_URL"))
+
+        label = p["name"]
+        if already_set:
+            label += " (already configured)"
+        if is_default:
+            label += " [recommended]"
+
+        if prompt_bool(f"Configure {label}?", default=is_default):
+            selected_providers.append(pk)
+
+    if not selected_providers:
+        print_status("No providers selected — skipping LLM setup", "warning")
+        return manifest_data, updated_env
+
+    # 2. Per-provider: collect keys, validate, gather models
+    all_available_models: Dict[str, list] = {}  # provider_key -> [model_ids]
+    validated_keys: Dict[str, str] = {}          # env_var -> key_value
+
+    for pk in selected_providers:
+        p = LLM_PROVIDERS[pk]
+        print()
+        c_print(f"  {Colors.CYAN}--- {p['name']} ---{Colors.RESET}")
+
+        # URL if applicable
+        base_url = p["default_url"]
+        url_var = p.get("url_var")
+        if url_var:
+            current_url = os.getenv(url_var) or existing_env.get(url_var, "")
+            base_url = prompt_input(
+                f"{url_var} (base URL)",
+                current_url or p["default_url"],
+            )
+            if base_url:
+                updated_env[url_var] = base_url
+
+        # Extra vars (e.g. 9Router user/password) — leave empty by default
+        for ev in p.get("extra_vars", []):
+            current = os.getenv(ev) or existing_env.get(ev, "")
+            is_secret = "PASSWORD" in ev or "SECRET" in ev
+            val = prompt_input(ev, current, password=is_secret)
+            if val:
+                updated_env[ev] = val
+
+        # API Key(s)
+        api_key = ""
+        for kv in p["key_vars"]:
+            current = os.getenv(kv) or existing_env.get(kv, "")
+            api_key = prompt_input(kv, current, password=True)
+            if api_key:
+                updated_env[kv] = api_key
+
+        # Validate
+        if p["key_vars"] and not api_key:
+            print_status(f"No API key for {pk} — skipping validation", "info")
+            all_available_models[pk] = []
+            continue
+
+        # Live validate
+        if prompt_bool(f"Validate {pk} API key now?", default=True):
+            ok, msg, models = validate_llm_key(pk, api_key, base_url)
+            if ok:
+                print_status(f"✓ {pk}: {msg}", "success")
+                all_available_models[pk] = models
+            else:
+                print_status(f"✗ {pk}: {msg}", "error")
+                if not prompt_bool("Continue anyway?", default=True):
+                    selected_providers.remove(pk)
+                    continue
+        else:
+            all_available_models[pk] = []
+
+    # 3. Model selection — merge defaults from all selected providers
+    print()
+    c_print(f"  {Colors.CYAN}Model Configuration{Colors.RESET}")
+    c_print(f"  {Colors.DIM}Choose models for each task type.{Colors.RESET}")
+    print()
+
+    model_roles = ["FAST", "BLITZ", "COMPLEX", "SUMMARY"]
+
+    # Build combined model options per role
+    combined_defaults: Dict[str, str] = {}
+    for pk in selected_providers:
+        p = LLM_PROVIDERS[pk]
+        for role in model_roles:
+            if role in p["models"] and role not in combined_defaults:
+                combined_defaults[role] = p["models"][role]
+
+    # If we have live model lists, offer them as choices
     isaa = manifest_data.get("isaa") or {}
-    if not isaa:
-        isaa = {"enabled": True}
+    models_cfg = isaa.get("models", {})
 
+    env_model_map = {"FAST": "FASTMODEL", "BLITZ": "BLITZMODEL",
+                     "COMPLEX": "COMPLEXMODEL", "SUMMARY": "SUMMARYMODEL"}
+
+    for role in model_roles:
+        default_model = combined_defaults.get(role, "")
+
+        # Build choices: defaults from selected providers + any live models
+        choices: list = []
+        seen: set = set()
+
+        for pk in selected_providers:
+            p = LLM_PROVIDERS[pk]
+            m = p["models"].get(role, "")
+            if m and m not in seen:
+                choices.append(m)
+                seen.add(m)
+
+        # Add live models if available
+        for pk, live_models in all_available_models.items():
+            prefix = pk
+            for lm in live_models[:20]:
+                full = f"{prefix}/{lm}" if not lm.startswith(prefix) else lm
+                if full not in seen:
+                    choices.append(full)
+                    seen.add(full)
+
+        current_env = os.getenv(env_model_map[role]) or existing_env.get(env_model_map[role], "")
+
+        if len(choices) == 0:
+            chosen = prompt_input(f"{role} model", current_env or default_model)
+        elif len(choices) == 1:
+            chosen = choices[0]
+            c_print(f"  {Colors.DIM}{role}: {chosen}{Colors.RESET}")
+        else:
+            default_idx = 0
+            if current_env in choices:
+                default_idx = choices.index(current_env)
+            elif default_model in choices:
+                default_idx = choices.index(default_model)
+            chosen = prompt_choice(f"{role} model", choices, default_idx)
+
+        # Write to env
+        if chosen:
+            updated_env[env_model_map[role]] = chosen
+            # Also write to manifest isaa.models
+            role_key = role.lower()
+            models_cfg[role_key] = chosen
+
+    # Embedding model
+    emb_choices = []
+    for pk in selected_providers:
+        p = LLM_PROVIDERS[pk]
+        # providers don't have explicit embedding models, use default
+    emb_default = os.getenv("DEFAULTMODELEMBEDDING") or existing_env.get(
+        "DEFAULTMODELEMBEDDING", "gemini/text-embedding-004")
+    emb = prompt_input("Embedding model", emb_default)
+    if emb:
+        updated_env["DEFAULTMODELEMBEDDING"] = emb
+        models_cfg["embedding"] = emb
+
+    # Persist to manifest
+    isaa["models"] = models_cfg
     isaa["enabled"] = True
 
-    # Models configuration
-    models = isaa.get("models", {})
-    c_print(f"  {Colors.CYAN}LLM Models{Colors.RESET}")
-    c_print(f"  {Colors.DIM}Format: provider/model (e.g., openrouter/anthropic/claude-3-haiku){Colors.RESET}")
-    print()
+    # Set the primary API key env var for the agent
+    primary_pk = selected_providers[0]
+    primary_p = LLM_PROVIDERS[primary_pk]
+    if primary_p["key_vars"]:
+        primary_key_var = primary_p["key_vars"][0]
+    else:
+        primary_key_var = ""
 
-    models["fast"] = prompt_input(
-        "Fast model (quick responses)",
-        models.get("fast", "${FASTMODEL:-openrouter/anthropic/claude-3-haiku}")
-    )
-    models["complex"] = prompt_input(
-        "Complex model (reasoning)",
-        models.get("complex", "${COMPLEXMODEL:-openrouter/openai/gpt-4o}")
-    )
-    isaa["models"] = models
-
-    # Self-agent configuration
     self_agent = isaa.get("self_agent", {})
-    print()
-    c_print(f"  {Colors.CYAN}Agent Settings{Colors.RESET}")
-
-    self_agent["name"] = prompt_input(
-        "Agent name",
-        self_agent.get("name", "self")
-    )
-    self_agent["temperature"] = float(prompt_input(
-        "Temperature (0.0-1.0)",
-        str(self_agent.get("temperature", 0.7))
-    ))
-    self_agent["max_tokens_output"] = int(prompt_input(
-        "Max output tokens",
-        str(self_agent.get("max_tokens_output", 2048))
-    ))
-    self_agent["api_key_env_var"] = prompt_input(
-        "API key environment variable",
-        self_agent.get("api_key_env_var", "OPENROUTER_API_KEY")
-    )
-    self_agent["stream"] = prompt_bool(
-        "Enable streaming responses?",
-        self_agent.get("stream", True)
-    )
-
-    # Checkpoint configuration
-    checkpoint = self_agent.get("checkpoint", {})
-    if prompt_bool("Configure checkpoints (auto-save agent state)?", default=False):
-        checkpoint["enabled"] = prompt_bool("Enable checkpoints?", checkpoint.get("enabled", True))
-        if checkpoint["enabled"]:
-            checkpoint["interval_seconds"] = int(prompt_input(
-                "Checkpoint interval (seconds)",
-                str(checkpoint.get("interval_seconds", 300))
-            ))
-            checkpoint["max_checkpoints"] = int(prompt_input(
-                "Max checkpoints to keep",
-                str(checkpoint.get("max_checkpoints", 10))
-            ))
-    self_agent["checkpoint"] = checkpoint
-
+    self_agent["api_key_env_var"] = primary_key_var
     isaa["self_agent"] = self_agent
 
-    # MCP configuration
-    mcp = isaa.get("mcp", {})
-    mcp["enabled"] = prompt_bool("Enable MCP (Model Context Protocol)?", mcp.get("enabled", True))
-    isaa["mcp"] = mcp
-
-    # A2A configuration
-    a2a = isaa.get("a2a", {})
-    a2a["enabled"] = prompt_bool("Enable A2A (Agent-to-Agent)?", a2a.get("enabled", False))
-    isaa["a2a"] = a2a
-
     manifest_data["isaa"] = isaa
-    return manifest_data
+
+    return manifest_data, updated_env
 
 
 def wizard_env_variables(root_dir: Path, existing_env: Dict[str, str],
@@ -528,10 +898,193 @@ def save_env_file(env_path: Path, env_vars: Dict[str, str]):
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def wizard_advanced_agent(manifest_data: Dict[str, Any],
+                          existing_env: Dict[str, str]) -> Tuple[Dict[str, Any], Dict[str, str]]:
+    """Optional advanced agent tuning. User can skip entirely to keep schema defaults.
+
+    Covers: Temperature, Max Tokens, Checkpoints, MCP, A2A,
+            DEFAULT_MAX_ITERATIONS, DREAMER_*, NARRATOR_*.
+    Returns (updated manifest_data, updated env_dict).
+    """
+    updated_env = existing_env.copy()
+
+    isaa = manifest_data.get("isaa") or {}
+    self_agent = isaa.get("self_agent", {})
+
+    c_print(f"  {Colors.CYAN}Agent Behavior{Colors.RESET}")
+    print()
+
+    # Temperature
+    cur_temp = str(self_agent.get("temperature", 0.7))
+    val = prompt_input("Temperature (0.0-1.0)", cur_temp)
+    try:
+        self_agent["temperature"] = float(val)
+    except ValueError:
+        pass
+
+    # Max output tokens
+    cur_tok = str(self_agent.get("max_tokens_output", 2048))
+    val = prompt_input("Max output tokens", cur_tok)
+    try:
+        self_agent["max_tokens_output"] = int(val)
+    except ValueError:
+        pass
+
+    # Streaming
+    self_agent["stream"] = prompt_bool(
+        "Enable streaming responses?",
+        self_agent.get("stream", True))
+
+    self_agent["name"] = prompt_input(
+        "Agent name",
+        self_agent.get("name", "self"))
+
+    print()
+    c_print(f"  {Colors.CYAN}Iteration Limits{Colors.RESET}")
+    print()
+
+    # DEFAULT_MAX_ITERATIONS
+    cur_iter = os.getenv("DEFAULT_MAX_ITERATIONS") or updated_env.get("DEFAULT_MAX_ITERATIONS", "30")
+    val = prompt_input("Max iterations per task", cur_iter)
+    try:
+        updated_env["DEFAULT_MAX_ITERATIONS"] = str(int(val))
+    except ValueError:
+        pass
+
+    # DEFAULT_MAX_HISTORY_LENGTH
+    cur_hist = os.getenv("DEFAULT_MAX_HISTORY_LENGTH") or updated_env.get("DEFAULT_MAX_HISTORY_LENGTH", "100")
+    val = prompt_input("Max history turns", cur_hist)
+    try:
+        updated_env["DEFAULT_MAX_HISTORY_LENGTH"] = str(int(val))
+    except ValueError:
+        pass
+
+    print()
+    c_print(f"  {Colors.CYAN}Checkpoints{Colors.RESET}")
+    print()
+
+    checkpoint = self_agent.get("checkpoint", {})
+    checkpoint["enabled"] = prompt_bool(
+        "Enable checkpoints (auto-save agent state)?",
+        checkpoint.get("enabled", False))
+    if checkpoint["enabled"]:
+        cur_int = str(checkpoint.get("interval_seconds", 300))
+        val = prompt_input("Checkpoint interval (seconds)", cur_int)
+        try:
+            checkpoint["interval_seconds"] = int(val)
+        except ValueError:
+            pass
+        cur_max = str(checkpoint.get("max_checkpoints", 10))
+        val = prompt_input("Max checkpoints to keep", cur_max)
+        try:
+            checkpoint["max_checkpoints"] = int(val)
+        except ValueError:
+            pass
+    self_agent["checkpoint"] = checkpoint
+
+    print()
+    c_print(f"  {Colors.CYAN}Protocols{Colors.RESET}")
+    print()
+
+    # MCP
+    mcp = isaa.get("mcp", {})
+    mcp["enabled"] = prompt_bool(
+        "Enable MCP (Model Context Protocol)?",
+        mcp.get("enabled", True))
+    isaa["mcp"] = mcp
+
+    # A2A
+    a2a = isaa.get("a2a", {})
+    a2a["enabled"] = prompt_bool(
+        "Enable A2A (Agent-to-Agent)?",
+        a2a.get("enabled", False))
+    isaa["a2a"] = a2a
+
+    print()
+    c_print(f"  {Colors.CYAN}Dreamer{Colors.RESET}")
+    print()
+
+    cur_dream_fast = os.getenv("DREAMER_FAST_MODEL") or updated_env.get("DREAMER_FAST_MODEL", "")
+    val = prompt_input("Dreamer fast model (empty = inherit FASTMODEL)", cur_dream_fast)
+    if val:
+        updated_env["DREAMER_FAST_MODEL"] = val
+
+    cur_dream_complex = os.getenv("DREAMER_COMPLEX_MODEL") or updated_env.get("DREAMER_COMPLEX_MODEL", "")
+    val = prompt_input("Dreamer complex model (empty = inherit COMPLEXMODEL)", cur_dream_complex)
+    if val:
+        updated_env["DREAMER_COMPLEX_MODEL"] = val
+
+    cur_dream_budget = os.getenv("DREAMER_BUDGET") or updated_env.get("DREAMER_BUDGET", "160000")
+    val = prompt_input("Dreamer token budget", cur_dream_budget)
+    try:
+        updated_env["DREAMER_BUDGET"] = str(int(val))
+    except ValueError:
+        pass
+
+    print()
+    c_print(f"  {Colors.CYAN}Narrator{Colors.RESET}")
+    print()
+
+    cur_narr = os.getenv("NARRATOR_ENABLED") or updated_env.get("NARRATOR_ENABLED", "true")
+    updated_env["NARRATOR_ENABLED"] = "true" if prompt_bool(
+        "Enable Narrator?", cur_narr.lower() == "true") else "false"
+
+    cur_lang = os.getenv("NARRATOR_LANG") or updated_env.get("NARRATOR_LANG", "auto")
+    updated_env["NARRATOR_LANG"] = prompt_input("Narrator language (auto|de|en)", cur_lang)
+
+    isaa["self_agent"] = self_agent
+    manifest_data["isaa"] = isaa
+
+    return manifest_data, updated_env
+
+
 # =================== Main Wizard Function ===================
 
+def _wizard_addon_categories(categories: Dict[str, list],
+                             existing_env: Dict[str, str],
+                             template_vars: Dict[str, Tuple[str, str]]) -> Dict[str, str]:
+    """Configure add-on env categories — filtered category set."""
+    updated_env = existing_env.copy()
+
+    for category, var_names in categories.items():
+        vars_to_configure = []
+        for var in var_names:
+            if var in template_vars:
+                current = existing_env.get(var, "")
+                if not current:
+                    vars_to_configure.append(var)
+
+        if not vars_to_configure:
+            continue
+
+        print()
+        c_print(f"  {Colors.YELLOW}?? {category}{Colors.RESET}")
+        c_print(f"     {len(vars_to_configure)} unconfigured variable(s)")
+
+        if not prompt_bool(f"Configure {category}?", default=False):
+            continue
+
+        print()
+        for var in vars_to_configure:
+            default_val, comment = template_vars[var]
+            if comment:
+                c_print(f"     {Colors.DIM}# {comment}{Colors.RESET}")
+
+            is_secret = any(x in var.upper() for x in ["KEY", "SECRET", "PASSWORD", "TOKEN"])
+
+            value = prompt_input(var, default_val, password=is_secret)
+            if value:
+                updated_env[var] = value
+
+    return updated_env
+
+
 def run_config_wizard(root_dir: Optional[Path] = None) -> int:
-    """Run the interactive configuration wizard."""
+    """Run the interactive configuration wizard.
+
+    Profile is read from manifest (set during first-run onboarding).
+    Never re-asks "who are you" — uses manifest.app.profile.
+    """
     if root_dir is None:
         from toolboxv2 import tb_root_dir
         root_dir = tb_root_dir
@@ -559,9 +1112,23 @@ def run_config_wizard(root_dir: Optional[Path] = None) -> int:
             print_status("Creating new manifest configuration", "info")
 
         # Convert to dict for editing
+        # Read profile from manifest — NEVER ask the user
+        profile = None
+        app_data = manifest.app
+        if app_data and app_data.profile:
+            profile = app_data.profile.value if hasattr(app_data.profile, 'value') else str(app_data.profile)
+        if profile:
+            c_print(f"  {Colors.DIM}Profile: {profile}{Colors.RESET}")
+        else:
+            c_print(f"  {Colors.YELLOW}No profile set (first-run incomplete). Using local defaults.{Colors.RESET}")
+            profile = "local"
+
+        core_defaults = get_profile_defaults(profile)
+
         manifest_data = manifest.model_dump()
 
-        total_steps = 7
+        is_server = profile in ("server", "business")
+        total_steps = 6 if not is_server else 7
 
         # Step 1: App Settings
         section_header("Application Settings", 1, total_steps)
@@ -571,20 +1138,50 @@ def run_config_wizard(root_dir: Optional[Path] = None) -> int:
         section_header("Database Configuration", 2, total_steps)
         manifest_data = wizard_database_settings(manifest_data)
 
-        # Step 3: Workers
-        section_header("Worker Processes", 3, total_steps)
-        manifest_data = wizard_workers_settings(manifest_data)
+        # Step 3: LLM Providers (replaces old ISAA settings)
+        section_header("LLM Provider Setup", 3, total_steps)
 
-        # Step 4: Services
-        section_header("External Services", 4, total_steps)
-        manifest_data = wizard_services_settings(manifest_data)
+        template_path = root_dir / "env-template"
+        env_path = root_dir / ".env"
+        existing_env = load_existing_env(env_path)
 
-        # Step 5: ISAA Agent
-        section_header("ISAA AI Agent", 5, total_steps)
-        manifest_data = wizard_isaa_settings(manifest_data)
+        for k, v in core_defaults.items():
+            if k not in existing_env and not os.getenv(k):
+                existing_env[k] = v
 
-        # Step 6: Features
-        section_header("Features", 6, total_steps)
+        manifest_data, updated_env = wizard_llm_providers(manifest_data, existing_env)
+
+        # Step 4: Optional Add-Ons
+        section_header("Add-On Configuration", 4, total_steps)
+
+        template_vars = parse_env_template(template_path)
+        if template_vars:
+            addon_categories = {
+                k: v for k, v in ENV_CATEGORIES.items()
+                if k not in ("AI/LLM APIs", "LLM Gateway & Providers")
+            }
+            if prompt_bool("Configure any add-on categories? (Bots, Search, Storage, etc.)", default=False):
+                updated_env = _wizard_addon_categories(addon_categories, updated_env, template_vars)
+
+        # Step 5: Advanced Agent Settings (optional — skippable)
+        section_header("Advanced Agent Settings", 5, total_steps)
+        if prompt_bool("Configure advanced agent settings? (Temperature, Checkpoints, Dreamer, Narrator)\n  Skip = keep schema defaults.",
+                       default=False):
+            manifest_data, updated_env = wizard_advanced_agent(manifest_data, updated_env)
+        else:
+            c_print(f"  {Colors.DIM}Skipped — using schema defaults.{Colors.RESET}")
+
+        # Step 6 (server only): Workers & Services
+        if is_server:
+            section_header("Worker Processes", 5, total_steps)
+            manifest_data = wizard_workers_settings(manifest_data)
+
+            section_header("External Services", 6, total_steps)
+            manifest_data = wizard_services_settings(manifest_data)
+
+        # Features
+        step_num = 6 if not is_server else 7
+        section_header("Features", step_num, total_steps)
         from toolboxv2.feature_loader import (
             list_available_features, is_feature_installed, get_required_features
         )
@@ -633,7 +1230,7 @@ def run_config_wizard(root_dir: Optional[Path] = None) -> int:
             print_status("No env-template found, skipping", "warning")
 
         # Step 8: Save and Apply
-        section_header("Save Configuration", 7, total_steps)
+        section_header("Save Configuration", total_steps, total_steps)
 
         # Update manifest
         manifest = TBManifest(**manifest_data)

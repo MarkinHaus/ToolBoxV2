@@ -666,7 +666,7 @@ class MockIPython:
                                 # Execute wrapped code and await it
                                 exec(exec_code, self.user_ns)
                                 result = self.user_ns['__wrapper']()
-                                if asyncio.iscoroutine(result):
+                                if result is not None and asyncio.iscoroutine(result):
                                     result = await result
                             finally:
                                 self.user_ns.pop('__wrapper', None)
@@ -675,7 +675,7 @@ class MockIPython:
                             exec(exec_code, self.user_ns)
                             if eval_code:
                                 result = eval(eval_code, self.user_ns)
-                                if asyncio.iscoroutine(result):
+                                if result is not None and asyncio.iscoroutine(result):
                                     result = await result
                         else:
                             # Execute sync code

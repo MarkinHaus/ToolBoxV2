@@ -148,7 +148,8 @@ def build_dream_query(
     lines = [
         "Starte Meta-Learning Cycle.",
         "",
-        f"TaskMap: primäre Datenquelle in /global/.memory/taskmap/ (direkt im VFS lesen).",
+        f"TaskMap: prim\u00e4re Datenquelle in /global/.memory/taskmap/ (direkt im VFS lesen).",
+        f"Records seit letztem Cutoff: {record_count}.",
         f"Aktuell: {skill_count} Skills, {rule_count} Regeln.",
         f"Budget: {config.max_budget} tokens.",
         "",

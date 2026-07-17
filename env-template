@@ -9,6 +9,7 @@ HOSTNAME="localhost"
 TOOLBOX_LOGGING_LEVEL="INFO"                # "DEBUG", "INFO", "NOTSET"
 GUI_COMMAND="wt new-tab powershell -NoExit -Command"
 ICON_FILE="./favicon.ico"
+TB_DATA_DIR=                                # Override data directory (default: repo root)
 
 # --- Network & Base URLs ---
 TOOLBOXV2_BASE="localhost"
@@ -31,7 +32,7 @@ DEV_MODULES="welcome CloudM"
 
 # --- Database & Caching ---
 IS_OFFLINE_DB="false"                       # true = nur SQLite, false = full DB
-DB_CONNACTION_URI=
+DB_CONNECTION_URI=                           # Redis URL for RR/CB mode (redis://host:port/db)
 DB_MODE_KEY="RR"
 DB_MODE_KEY_TEST="LC"
 DB_CACHE_TTL="60"
@@ -65,12 +66,27 @@ DEEPSEEK_API_KEY=
 GROQ_API_KEY=
 OPENROUTER_API_KEY=
 HUGGINGFACEHUB_API_TOKEN=
+HF_TOKEN=                                    # Alternative HuggingFace token (code uses both)
 OLLAMA_API_KEY=
+OLLAMA_BASE_URL="http://localhost:11434"     # Local Ollama server URL
 ELEVENLABS_API_KEY=
 REPLICATE_API_TOKEN=
 DEEPGRAM_API_KEY=
 PINECONE_API_KEY=
 PINECONE_API_ENV=
+
+# --- LLM Gateway & Additional Providers ---
+TB_LLM_GATEWAY_URL=                          # LiteLLM gateway URL (e.g. http://localhost:4000/v1)
+TB_LLM_GATEWAY_KEY=                          # Gateway API key
+MINIMAX_API_KEY=
+MINIMAX_API_BASE="https://api.minimax.io/v1/chat/completions"
+ZAI_API_KEY=                                 # Z.AI (GLM) provider key
+INCEPTION_API_KEY=                           # Inception Labs provider key
+CEREBRAS_API_KEY=                            # Cerebras provider key
+NINEROUTER_KEY=                              # 9Router proxy key
+NINEROUTER_URL="http://localhost:20128/v1"
+NINEROUTER_USER=
+NINEROUTER_PASSWORD=
 
 # --- AI Model Configuration & Defaults ---
 MOD_PROVIDER="https://simplecore.app"
@@ -86,15 +102,45 @@ COMPLEXMODEL="9rou/complex"# "mm/MiniMax-M2.7"
 SUMMARYMODEL="openrouter/mistralai/ministral-8b"
 AUDIOMODEL="groq/whisper-large-v3-turbo"
 IMAGEMODEL="openrouter/google/gemini-2.5-flash-image-preview:free"
+VISIONMODEL="openrouter/openai/gpt-4.1-mini" # Vision/OCR model
+CODING_MODEL=                                # Explicit override for coding agent model
 
 DEFAULTMODELEMBEDDING="gemini/text-embedding-004"
 FALLBACKS_MODELS=
+FALLBACKS_MODELS_KEYS=                       # Comma-separated API key env var names for fallbacks
 
 NARRATOR_MAX_INPUT_TPM=10000   # input tokens per minute
 NARRATOR_MAX_OUTPUT_TPM=1000   # output tokens per minute
 
+# --- ISAA Agent Configuration ---
+DEFAULT_MAX_ITERATIONS=30                    # Max LLM iterations per task
+DEFAULT_MAX_HISTORY_LENGTH=100               # Max history turns
+AGENT_VERBOSE="false"                        # Debug output for agents
+A2A_AVAILABLE="false"                        # Agent-to-Agent protocol
+ISAA_MCP_AVAILABLE="true"                    # MCP protocol availability
+ISAA_WORKING_PATH=                           # ISAA working directory override
+WITH_GOOGLE_TOOLS="false"
+WITH_CODE_TOOLS="true"
+MAX_DYNAMIC_TOOLS=10                         # Max dynamic tools per agent
+
+# --- Sub-Agent Limits ---
+SUB_AGENT_MAX_TOKENS=512000                  # Token budget for sub-agents
+SUB_AGENT_MAX_ITERATIONS=120                 # Max iterations for sub-agents
+SUB_AGENT_MAX_TIMEOUT=1800                   # Sub-agent timeout (seconds)
+
+# --- Dreamer Configuration ---
+DREAMER_FAST_MODEL=                          # Override dreamer fast model
+DREAMER_COMPLEX_MODEL=                       # Override dreamer complex model
+DREAMER_BUDGET=160000                        # Dreamer token budget
+
+# --- Narrator Configuration ---
+NARRATOR_ENABLED="true"
+NARRATOR_LANG="auto"                         # auto | de | en
+NARRATOR_CONSOLE_PRINT="false"
+
 # --- sandbox ---
 TB_SANDBOX_LIVE="0"
+TB_SANDBOX_IMAGE="ghcr.io/agent-infra/sandbox:latest"
 # TB_SANDBOX_GLOBAL_DIR=
 TB_SANDBOX_IMPORT_DIRS=
 TB_SANDBOX_EXPORT_DIRS=
@@ -104,7 +150,7 @@ TB_SANDBOX_ALLOW_CODE="1"
 TB_SANDBOX_ALLOW_BROWSER="1"
 TB_SANDBOX_ALLOW_NETWORK="1"
 TB_SANDBOX_MAX_TRANSFER_MB="1"
-ISAA_TASKMAP_PREINJECT="ture"
+ISAA_TASKMAP_PREINJECT="true"
 
 # --- Python & Runtime Environment ---
 TB_RUNTIME_PATH=
@@ -143,13 +189,11 @@ PASSKEY_ORIGIN="http://localhost:8000"
 # --- Tools, Search & Integrations ---
 GOOGLE_API_KEY=
 GOOGLE_CSE_ID=
-GOOGLE_CREDENTIALS_FILE=
 WITH_GOOGLE_TOOLS=
 GOOGLE_APPLICATION_CREDENTIALS=
 GOOGLE_TOKEN_DIR=
 
-BING_SUBSCRIPTION_KEY=
-BING_SEARCH_URL=
+BING_API_KEY=
 SERP_API_KEY=
 WOLFRAM_ALPHA_APPID=
 IFTTTKey=
@@ -157,6 +201,21 @@ FIRECRAWL_API_KEY=
 NWV2=                                       # https://newsapi.org/v2
 GITHUB_TOKEN=
 GITHUB_TOKEN_GIST=
+
+# --- Additional API Keys ---
+FAL_KEY=                                     # Fal.ai API key
+MJ_APIKEY_PUBLIC=                            # Midjourney API public key
+MJ_APIKEY_PRIVATE=                           # Midjourney API private key
+YOUDOTCOM=                                   # You.com search API key
+STITCH_API_KEY=
+AUTUMN_SECRET_KEY=
+CF_ACCOUNT_ID=                               # Cloudflare account ID
+CLOUDFLARE_API_KEY=                          # Cloudflare API key
+
+# --- TTS / Audio Configuration ---
+PIPER_MODELS_FOLDER=                         # Piper TTS local models folder
+TTS_REF_AUDIO=                               # TTS reference audio path
+GEMINI_LIVE_MODEL=                           # Gemini Live audio model override
 
 # --- Messaging & Social Bots ---
 # Email
@@ -188,6 +247,12 @@ NGINX_CERT_PATH=
 SSL_KEY_PATH=
 SSL_CERT_PATH=
 
+# --- Worker & Server Ports ---
+TB_HTTP_PORT=5000
+TB_WS_PORT=5001
+TB_CPU_WORKERS=0                             # 0 = auto (cpu_count)
+TB_WS_ENABLED="true"
+
 # --- Desktop & Build Configuration (Tauri) ---
 TAURI_SIGNING_PUBLIC_KEY=
 TAURI_SIGNING_PRIVATE_KEY=
@@ -197,10 +262,16 @@ TAURI_SIGNING_PRIVATE_KEY_PASSWORD=
 VAULTS=
 OBSIDIAN_VAULT_PATH=
 LOCAL_DOCKER_IMAGE=
-EXTERNAL_PATH_RUNNABELS=
 EXTERNAL_PATH_RUNNABLE=
 LITELLM_LOG="NOTSET"
 ANONYMIZED_TELEMETRY="false"
+
+# --- Registry ---
+REGISTRY_BASE_URL="https://registry.simplecore.app"
+TB_REGISTRY_TOKEN=
+
+# --- Observability ---
+LIVE_DASHBOARD_KEY=
 
 # ============================================================
 # Docker Compose Stack Configuration
@@ -251,7 +322,7 @@ CLERK_PUBLISHABLE_KEY=
 #   OPENOBSERVE_DOCKER_IMAGE  = public.ecr.aws/zinclabs/openobserve:latest
 #   OPENOBSERVE_CONTAINER     = toolbox-openobserve
 #
-#   # Storage backend — default: disk. Set these for MinIO-backed:
+#   # Storage backend - default: disk. Set these for MinIO-backed:
 #   OPENOBSERVE_STORAGE       = disk | s3
 #   OPENOBSERVE_S3_ENDPOINT   = http://localhost:9000
 #   OPENOBSERVE_S3_ACCESS_KEY = <key>

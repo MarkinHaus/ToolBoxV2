@@ -358,7 +358,13 @@ class TestBuildDreamerSystemPrompt(unittest.TestCase):
         self.assertIn("20", prompt)
         self.assertIn("12", prompt)
         self.assertIn("5", prompt)
-        self.assertNotIn("{", prompt)  # No unfilled placeholders
+        # JSON examples (e.g. dream_act({...})) contain braces legitimately.
+        # Only flag UNFILLED Python-format placeholders like {key}.
+        # Known template vars the agent fills at runtime are OK.
+        _TEMPLATE_VARS = {"task_type", "subtype"}
+        unfilled = [m for m in re.findall(r"(?<!\{)\{([a-zA-Z_]\w*)\}(?!\})", prompt)
+                    if m not in _TEMPLATE_VARS]
+        self.assertEqual(unfilled, [], f"Unfilled placeholders: {unfilled}")
 
     def test_prompt_contains_cleanup_phase(self):
         """Cleanup phase must be present and marked as critical."""
@@ -471,19 +477,9 @@ class TestToolDefinitions(unittest.TestCase):
                          f"Duplicate tool names: {[n for n in names if names.count(n) > 1]}")
 
     def test_expected_tools_present(self):
-        """Critical tools must exist."""
+        """Critical tool (master dream_act) must exist."""
         names = set(get_dream_tool_names())
-        required = {
-            "dream_get_records", "dream_get_skills", "dream_get_rules",
-            "dream_get_personas", "dream_cluster_records",
-            "dream_evolve_skill", "dream_create_skill", "dream_merge_skills",
-            "dream_split_skill", "dream_compress_skill",
-            "dream_extract_rules", "dream_learn_pattern",
-            "dream_evolve_persona", "dream_prune_personas",
-            "dream_cleanup_skills", "dream_cleanup_rules",
-            "dream_delete_skill", "dream_delete_rule",
-            "dream_extract_memories", "dream_persist_checkpoint",
-        }
+        required = {"dream_act"}
         missing = required - names
         self.assertEqual(missing, set(), f"Missing tools: {missing}")
 
@@ -592,13 +588,14 @@ class TestCreateDreamerAgentConfig(unittest.TestCase):
         self.assertGreaterEqual(factor, 1.3)
 
     def test_persona_keywords_include_dream_tools(self):
-        """Keywords must cover dream_* tool names."""
+        """Keywords must cover dream_act master tool name."""
         config = create_dreamer_agent_config(parent_name="test")
         keywords = config.get("persona_keywords", [])
         kw_text = " ".join(keywords).lower()
-        for tool_prefix in ["dream_get", "dream_evolve", "dream_cleanup", "dream_persist"]:
-            self.assertIn(tool_prefix.replace("_", "_"), kw_text,
-                          f"Persona keywords should match {tool_prefix}")
+        # New architecture: single dream_act master tool
+        for term in ["dream", "dreamer", "taskmap"]:
+            self.assertIn(term, kw_text,
+                          f"Persona keywords should match {term}")
 
     def test_persona_prompt_mentions_cleanup(self):
         """Persona modifier must emphasize cleanup as core duty."""

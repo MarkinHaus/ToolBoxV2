@@ -56,7 +56,7 @@ AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
 try:
 
     A2A_AVAILABLE = False
-    if os.getenv("A2A_AVAILABLE", "fasle") == "true":
+    if os.getenv("A2A_AVAILABLE", "false") == "true":
         from python_a2a import A2AServer, AgentCard
 
         A2A_AVAILABLE = True
@@ -4241,7 +4241,7 @@ class FlowAgent:
     def setup_a2a_server(self, host: str = "0.0.0.0", port: int = 5000):
         try:
             A2A_AVAILABLE = False
-            if os.getenv("A2A_AVAILABLE", "fasle") == "true":
+            if os.getenv("A2A_AVAILABLE", "false") == "true":
                 from python_a2a import A2AServer, AgentCard
                 A2A_AVAILABLE = True
         except ImportError:

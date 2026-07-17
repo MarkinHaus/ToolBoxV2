@@ -605,11 +605,7 @@ def _build_toolbox_tools(isaa, app):
         """Execute any registered mod function."""
         kwargs = kwargs or {}
         try:
-            from toolboxv2.utils.system.all_functions_enums import get_function_enum
-            func_enum = get_function_enum(module_name, function_name)
-            if func_enum is None:
-                return f"Function not found: {module_name}.{function_name}"
-            result = app.run_any(func_enum, **kwargs)
+            result = app.run_any((module_name, function_name), **kwargs)
             if hasattr(result, "get") and callable(result.get):
                 return json.dumps(result, ensure_ascii=False, default=str, indent=2)
             return str(result) if result is not None else "Done (None)"

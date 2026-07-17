@@ -589,7 +589,7 @@ class FlowAgentBuilder:
         try:
 
             A2A_AVAILABLE = False
-            if os.getenv("A2A_AVAILABLE", "fasle") == "true":
+            if os.getenv("A2A_AVAILABLE", "false") == "true":
                 from python_a2a import A2AServer, AgentCard
 
                 A2A_AVAILABLE = True
@@ -924,7 +924,7 @@ class FlowAgentBuilder:
         try:
 
             A2A_AVAILABLE = False
-            if os.getenv("A2A_AVAILABLE", "fasle") == "true":
+            if os.getenv("A2A_AVAILABLE", "false") == "true":
                 from python_a2a import A2AServer, AgentCard
 
                 A2A_AVAILABLE = True

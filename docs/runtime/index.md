@@ -71,7 +71,7 @@ python cli_worker_manager.py worker-start -t ws     # Start single WS worker
 python cli_worker_manager.py worker-stop -w <id>    # Stop specific worker
 ```
 
-Web UI available at `http://localhost:9000` while workers are running.
+Web UI available at `http://localhost:9005` while workers are running.
 
 ## Components
 
@@ -126,7 +126,6 @@ result = tauri_start_workers()
 | `TB_COOKIE_SECRET` | — | **Required in production** (64+ chars) |
 | `TB_HTTP_PORT` | `8000` | HTTP worker base port |
 | `TB_WS_PORT` | `8010` | WebSocket worker port |
-| `CLERK_SECRET_KEY` | — | Legacy Clerk auth (if still used) |
 
 ### `tb-manifest.yaml`
 
@@ -239,3 +238,4 @@ toolboxv2/utils/workers/
 - Manifest Reference — Worker configuration schema
 - System Stack — Where workers fit in the full architecture
 - Tauri App Architecture — Desktop app using `tauri_integration.py`
+- [Logs & Observability](../reference/logs.md) — LogSyncManager, OpenObserve, MinIO log sync

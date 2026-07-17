@@ -7,7 +7,7 @@ Image commands:
     tb docker-image --features all                     # Build with ALL features
     tb docker-image --features production              # Build with production preset (cli+web)
     tb docker-image --variant ssh                      # Build SSH variant on top
-    tb docker-image --push                            # Build and push to Docker Hub
+    tb docker-image --push                            # Build and push (GHCR in CI, Docker Hub locally)
     tb docker-image --no-cache                        # Force rebuild
 
 Compose commands:
@@ -180,14 +180,24 @@ def build_docker_image(tag="latest", push=False, no_cache=False,
 
     # -- Push ----------------------------------------------------------------
     if push:
-        print(f"\nPushing to Docker Hub...")
-        hub_image = f"toolboxv2/toolboxv2:{tag}"
+        registry = os.environ.get("TB_DOCKER_REGISTRY", "ghcr.io")
+        repo_slug = os.environ.get("GITHUB_REPOSITORY", "markinhaus/toolboxv2").lower()
+
+        if registry == "ghcr.io":
+            hub_image = f"ghcr.io/{repo_slug}:{tag}"
+        else:
+            hub_image = f"toolboxv2/toolboxv2:{tag}"
+
+        print(f"\nPushing to {registry}...")
         subprocess.run(["docker", "tag", base_tag, hub_image], check=True)
         subprocess.run(["docker", "push", hub_image], check=True)
         print(f"✓ Pushed: {hub_image}")
 
         if variant == "ssh":
-            hub_ssh = f"toolboxv2/toolboxv2:{tag}-ssh"
+            if registry == "ghcr.io":
+                hub_ssh = f"ghcr.io/{repo_slug}:{tag}-ssh"
+            else:
+                hub_ssh = f"toolboxv2/toolboxv2:{tag}-ssh"
             subprocess.run(["docker", "tag", f"toolboxv2:{tag}-ssh", hub_ssh], check=True)
             subprocess.run(["docker", "push", hub_ssh], check=True)
             print(f"✓ Pushed: {hub_ssh}")
@@ -292,7 +302,7 @@ def main():
 
     # -- build (default, no subcommand) --------------------------------------
     parser.add_argument("--tag", default="latest", help="Image tag (default: latest)")
-    parser.add_argument("--push", action="store_true", help="Push to Docker Hub")
+    parser.add_argument("--push", action="store_true", help="Push to GHCR (CI) or Docker Hub (local)")
     parser.add_argument("--no-cache", action="store_true", help="Build without cache")
     parser.add_argument("--project-root", help="Project root (auto-detected)")
     parser.add_argument("--features", default=None,

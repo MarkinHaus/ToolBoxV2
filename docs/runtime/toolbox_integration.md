@@ -1,5 +1,3 @@
-Now I'll produce the final documentation:
-
 # Toolbox Integration
 
 Integration layer that connects worker processes to the ToolBoxV2 core application. Provides config-driven access control, API request routing to module functions, session verification, and event bridging between ZeroMQ and the ToolBoxV2 EventManager.

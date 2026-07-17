@@ -11,14 +11,14 @@ CloudM is the **user management, authentication, and data layer** of ToolBoxV2. 
 | [User Data API](user_data.md) | `UserDataAPI.py` | Scoped per-user data storage |
 | [Mod Manager](mod_manager.md) | `ModManager.py` | Package install, update, registry |
 | [Folder Sync](folder_sync.md) | `FolderSync.py` | Encrypted bidirectional MinIO sync |
-| Registry Server | `RegistryServer.py` | TB-Registry process management |
-| Admin Dashboard | `AdminDashboard.py` | Server admin UI |
-| User Dashboard | `UserDashboard.py` | Per-user dashboard API |
-| Dashboard API | `DashboardAPI.py` | Dashboard data endpoints |
-| User Account Manager | `UserAccountManager.py` | Account lifecycle |
-| User Instances | `UserInstances.py` | Multi-instance user sessions |
-| Email Services | `email_services.py` | Magic link + notification emails |
-| Extras | `extras.py` | Utility functions |
+| [Registry Server](registry_server.md) | `RegistryServer.py` | TB-Registry process management |
+| [Admin Dashboard](admin_dashboard.md) | `AdminDashboard.py` | Server admin UI |
+| [User Dashboard](user_dashboard.md) | `UserDashboard.py` | Per-user dashboard API |
+| [Dashboard API](dashboard_api.md) | `DashboardAPI.py` | Dashboard data endpoints |
+| [User Account Manager](user_account_manager.md) | `UserAccountManager.py` | Account lifecycle |
+| [User Instances](user_instances.md) | `UserInstances.py` | Multi-instance user sessions |
+| [Email Services](email_services.md) | `email_services.py` | Magic link + notification emails |
+| [Extras](extras.md) | `extras.py` | Utility functions |
 
 ## Architecture
 

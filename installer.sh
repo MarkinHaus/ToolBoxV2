@@ -54,7 +54,7 @@ OS=""           # linux | macos | windows
 ARCH=""         # x86_64 | arm64
 INSTALL_MODE="" # native | uv | docker | source
 SOURCE_FROM=""  # git | registry
-SOURCE_BRANCH="main"
+SOURCE_BRANCH="master"
 INSTALL_PATH=""
 ENVIRONMENT="development"
 INSTANCE_ID="tbv2_main"
@@ -269,7 +269,7 @@ phase_config() {
     [ -z "$INSTALL_MODE" ]  && INSTALL_MODE=$(yaml_get "$CONFIG_FILE" "install_mode" "")
     [ -z "$INSTALL_PATH" ]  && INSTALL_PATH=$(yaml_get "$CONFIG_FILE" "install_path" "")
     SOURCE_FROM=$(yaml_get "$CONFIG_FILE" "source_from" "git")
-    SOURCE_BRANCH=$(yaml_get "$CONFIG_FILE" "source_branch" "main")
+    SOURCE_BRANCH=$(yaml_get "$CONFIG_FILE" "source_branch" "master")
     ENVIRONMENT=$(yaml_get "$CONFIG_FILE" "environment" "development")
     INSTANCE_ID=$(yaml_get "$CONFIG_FILE" "instance_id" "tbv2_main")
     OPT_NGINX=$(yaml_get "$CONFIG_FILE" "optional.nginx" "false")
@@ -331,7 +331,7 @@ phase_config() {
       sel_features=$(echo "$sel_features" | tr ' ' '\n' | grep -v "^${feat}$" | tr '\n' ' ')
     fi
   done
-  FEATURES="$sel_features"
+  FEATURES=$(echo "$sel_features" | xargs)  # trim whitespace
 
   # Environment
   if [ -z "$ENVIRONMENT" ] || [ "$ENVIRONMENT" = "development" ]; then
@@ -584,11 +584,13 @@ _install_uv() {
   local pkg="ToolBoxV2"
   # Build extras string from features
   local extras
-  extras=$(echo "$FEATURES" | tr ' ' '\n' | grep -v -E '^(core|mini)$' | paste -sd',' -)
+  extras=$(echo "$FEATURES" | tr ' ' '\n' | grep -v -E '^(core|mini)$' | sed '/^$/d' | paste -sd',' -)
   [ -n "$extras" ] && pkg="ToolBoxV2[${extras}]"
 
   "$UV_BIN" tool install "$pkg" --force
   log "Installed: ${pkg}"
+
+  # _install_uv extras already sanitized above
 
   # Ensure uv tool bin is in PATH
   local uv_bin_dir
@@ -610,7 +612,7 @@ _install_venv() {
 
   local pkg="ToolBoxV2"
   local extras
-  extras=$(echo "$FEATURES" | tr ' ' '\n' | grep -v -E '^(core|mini)$' | paste -sd',' -)
+  extras=$(echo "$FEATURES" | tr ' ' '\n' | grep -v -E '^(core|mini)$' | sed '/^$/d' | paste -sd',' -)
   [ -n "$extras" ] && pkg="ToolBoxV2[${extras}]"
 
   "$pip" install "$pkg" -q
@@ -686,7 +688,7 @@ _install_source() {
   cd "$src_dir"
   if [ "$RUNTIME" = "uv" ]; then
     local extras
-    extras=$(echo "$FEATURES" | tr ' ' '\n' | grep -v -E '^(core|mini)$' | paste -sd',' -)
+    extras=$(echo "$FEATURES" | tr ' ' '\n' | grep -v -E '^(core|mini)$' | sed '/^$/d' | paste -sd',' -)
     if [ -n "$extras" ]; then
       "$UV_BIN" sync --extra "$extras"
     else
@@ -727,6 +729,7 @@ installed_at: "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 install_mode: "${INSTALL_MODE}"
 source_from: "${SOURCE_FROM}"
 source_branch: "${SOURCE_BRANCH}"
+    # ^ master is the active branch
 tb_version: "${tb_version}"
 toolbox_home: "${INSTALL_PATH}"
 bin_path: "${INSTALL_PATH}/bin/tb"
@@ -846,7 +849,7 @@ action_update() {
       ;;
     source)
       SOURCE_FROM=$(yaml_get "$manifest" "source_from" "git")
-      SOURCE_BRANCH=$(yaml_get "$manifest" "source_branch" "main")
+      SOURCE_BRANCH=$(yaml_get "$manifest" "source_branch" "master")
       FEATURES=$(yaml_get "$manifest" "features" "core cli")
       _install_source
       log "Updated from source"

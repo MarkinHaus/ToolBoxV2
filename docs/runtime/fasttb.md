@@ -1,5 +1,7 @@
 # FastTB — API Reference & Integration Guide
 
+> **Also see:** [FastTBHandler](fast_tb_handler.md) — internal dispatch engine (DI, routing, WSGI bridge, SSE streaming).
+
 > FastAPI-like routing for the ToolBoxV2 Worker System.
 > Zero migration, dual-mode: WSGI (Waitress) or ASGI (Uvicorn).
 

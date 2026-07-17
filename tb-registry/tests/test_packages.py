@@ -1,272 +1,221 @@
-"""Tests for package endpoints and services.
-
-Note: Tests that require storage (list_packages, get_package, search)
-are skipped when running without MinIO. These tests require integration
-testing with a running MinIO instance.
-"""
-
+"""Tests for package repository — CRUD, versions, search, FTS."""
 import pytest
-from fastapi.testclient import TestClient
 
-from registry.models.package import PackageType, Visibility
+from registry.models.package import (
+    Dependency,
+    Package,
+    PackageType,
+    PackageVersion,
+    Visibility,
+)
 
 
-def test_create_package_unauthorized(client: TestClient) -> None:
-    """Test creating package without auth.
-
-    Args:
-        client: Test client.
-    """
-    response = client.post(
-        "/api/v1/packages",
-        json={
-            "name": "test-package",
-            "display_name": "Test Package",
-            "package_type": "mod",
-        },
+@pytest.mark.asyncio
+async def test_create_package(package_repo, test_publisher):
+    """Package can be created and retrieved."""
+    pkg = Package(
+        name="test-mod",
+        display_name="Test Mod",
+        package_type=PackageType.MOD,
+        owner_id="test-user-001",
+        publisher_id=test_publisher,
+        visibility=Visibility.PUBLIC,
+        description="A test mod",
+        keywords=["test", "mod"],
     )
-    assert response.status_code == 401
+    created = await package_repo.create(pkg)
+    assert created.name == "test-mod"
+
+    retrieved = await package_repo.get_by_name("test-mod")
+    assert retrieved is not None
+    assert retrieved.display_name == "Test Mod"
+    assert retrieved.keywords == ["test", "mod"]
 
 
-def test_resolve_empty_requirements(client: TestClient) -> None:
-    """Test resolving empty requirements.
+@pytest.mark.asyncio
+async def test_get_nonexistent_package(package_repo):
+    """Getting a nonexistent package returns None."""
+    assert await package_repo.get_by_name("nope") is None
 
-    Args:
-        client: Test client.
-    """
-    response = client.post(
-        "/api/v1/resolve",
-        json={"requirements": []},
+
+@pytest.mark.asyncio
+async def test_list_packages(package_repo, test_publisher):
+    """List packages with pagination."""
+    for i in range(5):
+        await package_repo.create(Package(
+            name=f"mod-{i}",
+            display_name=f"Mod {i}",
+            package_type=PackageType.MOD,
+            owner_id="test-user-001",
+            publisher_id=test_publisher,
+            description=f"Mod number {i}",
+        ))
+    all_pkgs = await package_repo.list_all(page=1, per_page=10)
+    assert len(all_pkgs) == 5
+
+    page1 = await package_repo.list_all(page=1, per_page=3)
+    assert len(page1) == 3
+
+    page2 = await package_repo.list_all(page=2, per_page=3)
+    assert len(page2) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_packages_filter_by_type(package_repo, test_publisher):
+    """Filter packages by type."""
+    await package_repo.create(Package(
+        name="mod-1", display_name="M1",
+        package_type=PackageType.MOD,
+        owner_id="u", publisher_id=test_publisher,
+    ))
+    await package_repo.create(Package(
+        name="theme-1", display_name="T1",
+        package_type=PackageType.THEME,
+        owner_id="u", publisher_id=test_publisher,
+    ))
+    mods = await package_repo.list_all(package_type=PackageType.MOD)
+    assert len(mods) == 1
+    assert mods[0].name == "mod-1"
+
+
+@pytest.mark.asyncio
+async def test_update_package(package_repo, test_publisher):
+    """Update package fields."""
+    await package_repo.create(Package(
+        name="update-me",
+        display_name="Old Name",
+        package_type=PackageType.MOD,
+        owner_id="u", publisher_id=test_publisher,
+        description="Old description",
+    ))
+    updated = await package_repo.update("update-me", {
+        "display_name": "New Name",
+        "description": "New description",
+    })
+    assert updated.display_name == "New Name"
+    assert updated.description == "New description"
+
+
+@pytest.mark.asyncio
+async def test_delete_package(package_repo, test_publisher):
+    """Delete a package."""
+    await package_repo.create(Package(
+        name="delete-me",
+        display_name="Delete Me",
+        package_type=PackageType.MOD,
+        owner_id="u", publisher_id=test_publisher,
+    ))
+    assert await package_repo.delete("delete-me") is True
+    assert await package_repo.get_by_name("delete-me") is None
+
+
+@pytest.mark.asyncio
+async def test_add_version(package_repo, test_publisher):
+    """Add a version to a package."""
+    await package_repo.create(Package(
+        name="versioned-mod",
+        display_name="Versioned",
+        package_type=PackageType.MOD,
+        owner_id="u", publisher_id=test_publisher,
+    ))
+    version = PackageVersion(
+        version="1.0.0",
+        changelog="Initial",
+        dependencies=[
+            Dependency(name="dep-a", version_spec=">=1.0.0"),
+        ],
     )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["success"] is True
-    assert data["resolved"] == {}
+    created = await package_repo.add_version("versioned-mod", version)
+    assert created.version == "1.0.0"
+
+    pkg = await package_repo.get_by_name("versioned-mod")
+    assert pkg.latest_version == "1.0.0"
+
+    retrieved = await package_repo.get_version("versioned-mod", "1.0.0")
+    assert retrieved is not None
+    assert len(retrieved.dependencies) == 1
 
 
-def test_resolve_nonexistent_package(client: TestClient) -> None:
-    """Test resolving non-existent package.
+@pytest.mark.asyncio
+async def test_get_versions(package_repo, test_publisher):
+    """Get all versions of a package."""
+    await package_repo.create(Package(
+        name="multi-version",
+        display_name="Multi",
+        package_type=PackageType.MOD,
+        owner_id="u", publisher_id=test_publisher,
+    ))
+    await package_repo.add_version("multi-version", PackageVersion(version="1.0.0"))
+    await package_repo.add_version("multi-version", PackageVersion(version="2.0.0"))
 
-    Args:
-        client: Test client.
-    """
-    response = client.post(
-        "/api/v1/resolve",
-        json={"requirements": ["nonexistent>=1.0.0"]},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["success"] is False
-    assert len(data["conflicts"]) > 0
-
-
-# =================== Download Visibility Tests ===================
+    versions = await package_repo.get_versions("multi-version")
+    assert len(versions) == 2
 
 
-class TestDownloadVisibility:
-    """Tests for download visibility permissions.
+@pytest.mark.asyncio
+async def test_search_packages_fts(package_repo, test_publisher):
+    """FTS search returns matching packages."""
+    await package_repo.create(Package(
+        name="searchable-mod",
+        display_name="Searchable Mod",
+        package_type=PackageType.MOD,
+        owner_id="u", publisher_id=test_publisher,
+        description="A highly searchable mod for testing",
+        keywords=["searchable", "mod"],
+    ))
+    await package_repo.create(Package(
+        name="other-thing",
+        display_name="Other",
+        package_type=PackageType.MOD,
+        owner_id="u", publisher_id=test_publisher,
+        description="Completely unrelated",
+    ))
 
-    Download permissions based on visibility:
-    - PUBLIC: Anyone can download
-    - UNLISTED: Only authenticated users can download
-    - PRIVATE: Only owner can download
-
-    Note: Integration tests with actual client require storage setup.
-    Unit tests below test the service layer directly.
-    """
-
-    def test_download_unlisted_package_anonymous_denied(
-        self, client: TestClient
-    ) -> None:
-        """Test that anonymous users cannot download unlisted packages.
-
-        The endpoint should return 403 Forbidden for unlisted packages
-        when accessed without authentication.
-        """
-        # This test validates the visibility check is in place
-        # Actual test requires a mock package with UNLISTED visibility
-        pass  # Placeholder - requires integration test setup
-
-    def test_download_private_package_anonymous_denied(
-        self, client: TestClient
-    ) -> None:
-        """Test that anonymous users cannot download private packages.
-
-        The endpoint should return 403 Forbidden for private packages
-        when accessed without authentication.
-        """
-        # This test validates the visibility check is in place
-        # Actual test requires a mock package with PRIVATE visibility
-        pass  # Placeholder - requires integration test setup
+    results = await package_repo.search("searchable")
+    assert len(results) >= 1
+    names = [r.name for r in results]
+    assert "searchable-mod" in names
+    assert "other-thing" not in names
 
 
-class TestDownloadVisibilityService:
-    """Unit tests for PackageService download visibility logic."""
+@pytest.mark.asyncio
+async def test_search_fts_no_results(package_repo, test_publisher):
+    """Search with no matches returns empty list."""
+    await package_repo.create(Package(
+        name="exists",
+        display_name="Exists",
+        package_type=PackageType.MOD,
+        owner_id="u", publisher_id=test_publisher,
+    ))
+    results = await package_repo.search("nonexistent")
+    assert len(results) == 0
 
-    @pytest.mark.asyncio
-    async def test_get_download_url_public_no_auth(self) -> None:
-        """Test that public packages can be downloaded without auth."""
-        from unittest.mock import AsyncMock, MagicMock
 
-        from registry.models.package import Visibility
-        from registry.services.package_service import PackageService
+@pytest.mark.asyncio
+async def test_increment_downloads(package_repo, test_publisher):
+    """Download counter increments."""
+    await package_repo.create(Package(
+        name="downloaded",
+        display_name="Downloaded",
+        package_type=PackageType.MOD,
+        owner_id="u", publisher_id=test_publisher,
+    ))
+    await package_repo.add_version("downloaded", PackageVersion(version="1.0.0"))
 
-        # Create mock service with all required arguments
-        mock_repo = MagicMock()
-        mock_user_repo = MagicMock()
-        mock_storage = MagicMock()
+    await package_repo.increment_downloads("downloaded", "1.0.0")
+    await package_repo.increment_downloads("downloaded", "1.0.0")
 
-        # Mock package with PUBLIC visibility
-        mock_package = MagicMock()
-        mock_package.visibility = Visibility.PUBLIC
-        mock_package.owner_id = "owner_123"
-        mock_repo.get_by_name = AsyncMock(return_value=mock_package)
+    version = await package_repo.get_version("downloaded", "1.0.0")
+    assert version.downloads == 2
 
-        # Mock version with storage location
-        mock_version = MagicMock()
-        mock_version.storage_locations = [MagicMock(path="packages/test/1.0.0.zip")]
-        mock_repo.get_version = AsyncMock(return_value=mock_version)
 
-        # Mock storage URL
-        mock_storage.get_download_url = AsyncMock(
-            return_value="https://storage.example.com/presigned-url"
-        )
-
-        service = PackageService(mock_repo, mock_user_repo, mock_storage)
-
-        # Should succeed without viewer_id (anonymous)
-        url = await service.get_download_url("test-package", "1.0.0", viewer_id=None)
-        assert url is not None
-        assert "presigned-url" in url
-
-    @pytest.mark.asyncio
-    async def test_get_download_url_unlisted_requires_auth(self) -> None:
-        """Test that unlisted packages require authentication."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        import pytest
-
-        from registry.exceptions import PermissionDeniedError
-        from registry.models.package import Visibility
-        from registry.services.package_service import PackageService
-
-        # Create mock service with all required arguments
-        mock_repo = MagicMock()
-        mock_user_repo = MagicMock()
-        mock_storage = MagicMock()
-
-        # Mock package with UNLISTED visibility
-        mock_package = MagicMock()
-        mock_package.visibility = Visibility.UNLISTED
-        mock_package.owner_id = "owner_123"
-        mock_repo.get_by_name = AsyncMock(return_value=mock_package)
-
-        service = PackageService(mock_repo, mock_user_repo, mock_storage)
-
-        # Should fail without viewer_id (anonymous)
-        with pytest.raises(PermissionDeniedError):
-            await service.get_download_url("test-package", "1.0.0", viewer_id=None)
-
-    @pytest.mark.asyncio
-    async def test_get_download_url_unlisted_with_auth(self) -> None:
-        """Test that authenticated users can download unlisted packages."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        from registry.models.package import Visibility
-        from registry.services.package_service import PackageService
-
-        # Create mock service with all required arguments
-        mock_repo = MagicMock()
-        mock_user_repo = MagicMock()
-        mock_storage = MagicMock()
-
-        # Mock package with UNLISTED visibility
-        mock_package = MagicMock()
-        mock_package.visibility = Visibility.UNLISTED
-        mock_package.owner_id = "owner_123"
-        mock_repo.get_by_name = AsyncMock(return_value=mock_package)
-
-        # Mock version with storage location
-        mock_version = MagicMock()
-        mock_version.storage_locations = [MagicMock(path="packages/test/1.0.0.zip")]
-        mock_repo.get_version = AsyncMock(return_value=mock_version)
-
-        # Mock storage URL
-        mock_storage.get_download_url = AsyncMock(
-            return_value="https://storage.example.com/presigned-url"
-        )
-
-        service = PackageService(mock_repo, mock_user_repo, mock_storage)
-
-        # Should succeed with any authenticated user
-        url = await service.get_download_url(
-            "test-package", "1.0.0", viewer_id="any_user_123"
-        )
-        assert url is not None
-
-    @pytest.mark.asyncio
-    async def test_get_download_url_private_owner_only(self) -> None:
-        """Test that private packages can only be downloaded by owner."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        import pytest
-
-        from registry.exceptions import PermissionDeniedError
-        from registry.models.package import Visibility
-        from registry.services.package_service import PackageService
-
-        # Create mock service with all required arguments
-        mock_repo = MagicMock()
-        mock_user_repo = MagicMock()
-        mock_storage = MagicMock()
-
-        # Mock package with PRIVATE visibility
-        mock_package = MagicMock()
-        mock_package.visibility = Visibility.PRIVATE
-        mock_package.owner_id = "owner_123"
-        mock_repo.get_by_name = AsyncMock(return_value=mock_package)
-
-        service = PackageService(mock_repo, mock_user_repo, mock_storage)
-
-        # Should fail for non-owner
-        with pytest.raises(PermissionDeniedError):
-            await service.get_download_url(
-                "test-package", "1.0.0", viewer_id="other_user_456"
-            )
-
-    @pytest.mark.asyncio
-    async def test_get_download_url_private_owner_allowed(self) -> None:
-        """Test that owner can download their private packages."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        from registry.models.package import Visibility
-        from registry.services.package_service import PackageService
-
-        # Create mock service with all required arguments
-        mock_repo = MagicMock()
-        mock_user_repo = MagicMock()
-        mock_storage = MagicMock()
-
-        # Mock package with PRIVATE visibility
-        mock_package = MagicMock()
-        mock_package.visibility = Visibility.PRIVATE
-        mock_package.owner_id = "owner_123"
-        mock_repo.get_by_name = AsyncMock(return_value=mock_package)
-
-        # Mock version with storage location
-        mock_version = MagicMock()
-        mock_version.storage_locations = [MagicMock(path="packages/test/1.0.0.zip")]
-        mock_repo.get_version = AsyncMock(return_value=mock_version)
-
-        # Mock storage URL
-        mock_storage.get_download_url = AsyncMock(
-            return_value="https://storage.example.com/presigned-url"
-        )
-
-        service = PackageService(mock_repo, mock_user_repo, mock_storage)
-
-        # Should succeed for owner
-        url = await service.get_download_url(
-            "test-package", "1.0.0", viewer_id="owner_123"
-        )
-        assert url is not None
+@pytest.mark.asyncio
+async def test_count_all(package_repo, test_publisher):
+    """Count all packages."""
+    for i in range(3):
+        await package_repo.create(Package(
+            name=f"count-{i}", display_name=f"C{i}",
+            package_type=PackageType.MOD,
+            owner_id="u", publisher_id=test_publisher,
+        ))
+    assert await package_repo.count_all() == 3

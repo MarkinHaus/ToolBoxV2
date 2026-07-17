@@ -71,7 +71,7 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 ignore = ["tests/test_e2e.py"]
-addopts = "-v --cov=registry --cov-report=term-missing --cov-report=html"
+addopts = "-v"
 
 [tool.coverage.run]
 source = ["registry"]

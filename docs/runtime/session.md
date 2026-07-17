@@ -1,5 +1,8 @@
 # Session
 
+> **Scope:** Stateless, cookie-based session infrastructure (`SessionManager`, `SignedCookieSession`, `SessionMiddleware`).  
+> For the **auth-provider session with caching** (`CustomSessionVerifier`), see [Session Custom](session_custom.md).
+
 Stateless session management for ToolBoxV2 using signed cookies, Bearer token verification via CloudM.Auth, and API key authentication. Designed for multi-worker deployments with no server-side storage.
 
 ## Why This Matters

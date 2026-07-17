@@ -32,12 +32,16 @@ from toolboxv2 import tb_root_dir
 # would ripple through the runner map). Add a profile here, not in the runner.
 _PROFILE_PRESETS: dict[str, dict] = {
     # headless, SQLite-only, no services -> Colab / CI / notebooks
-    "mini":    {"profile": "local",    "db": "LC", "offline": True,  "services": []},
-    "colab":   {"profile": "local",    "db": "LC", "offline": True,  "services": []},
+    "mini":    {"profile": "local",    "db": "LC", "offline": True,  "services": [],
+                "env_overrides": {"TOOLBOX_LOGGING_LEVEL": "WARNING"}},
+    "colab":   {"profile": "local",    "db": "LC", "offline": True,  "services": [],
+                "env_overrides": {"TOOLBOX_LOGGING_LEVEL": "WARNING"}},
     # desktop: gui+cli+tray, local dict DB, workers available
-    "desktop": {"profile": "consumer", "db": "LC", "offline": True,  "services": ["workers"]},
+    "desktop": {"profile": "consumer", "db": "LC", "offline": True,  "services": ["workers"],
+                "env_overrides": {"TOOLBOX_LOGGING_LEVEL": "INFO"}},
     # server: full stack, services + autostart expected
-    "server":  {"profile": "server",   "db": "RR", "offline": False, "services": ["workers", "db"]},
+    "server":  {"profile": "server",   "db": "RR", "offline": False, "services": ["workers", "db"],
+                "env_overrides": {"TOOLBOX_LOGGING_LEVEL": "INFO"}},
 }
 
 # --- env keys we guarantee a usable value for (minimal "good defaults") --------
@@ -344,6 +348,7 @@ def init(profile: str = "mini",
     layered.update(_REQUIRED_DEFAULTS)
     layered["IS_OFFLINE_DB"] = "true" if preset["offline"] else "false"
     layered["DB_MODE_KEY"] = preset["db"]
+    layered.update(preset.get("env_overrides", {}))
     if env:
         layered.update({k: str(v) for k, v in env.items()})
     for k, v in layered.items():

@@ -130,12 +130,14 @@ nav:
           - Adaptive Prompt System: flows/adaptive_prompt_system.md
       - Module Development:
           - Coding Guidelines: devdocs/guidelines.md
+          - Mod Architecture: devdocs/mod_architecture.md
           - Docs Toolchain: devdocs/docs_toolchain.md
   - ISAA:
       - Overview: mods/isaa/index.md
       - Quickstart: mods/isaa/quickstart.md
       - Agents (FlowAgent): mods/isaa/agents.md
       - Chains: mods/isaa/chains.md
+      - Job System: mods/isaa/jobs.md
       - Full Reference (legacy): mods/isaa/reference.md
   - CloudM:
       - Overview: mods/CloudM/index.md
