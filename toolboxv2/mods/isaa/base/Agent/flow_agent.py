@@ -2646,6 +2646,7 @@ class FlowAgent:
             personas={},
             records=[],
             vfs_provider=_taskmap_vfs,
+            session_manager_provider=lambda: self.session_manager,
         )
 
         # Map tool names to handler methods
@@ -2728,6 +2729,7 @@ class FlowAgent:
             personas = {},
             records = [],
             vfs_provider = _taskmap_vfs,
+            session_manager_provider = lambda: self.session_manager,
         )
          # Handler für dream() Dashboard zugänglich machen
         self._dreamer_tool_handler = handler

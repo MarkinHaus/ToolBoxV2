@@ -3,7 +3,7 @@ import asyncio
 import json
 import unittest
 
-from run_aggregator import (
+from toolboxv2.mods.isaa.base.dreamer.run_aggregator import (
     RunAggregator, RunMetrics, extract_metrics,
     fuzzy_preselect, parse_classify_guide, update_classify_guide,
     default_classify_guide, TASKMAP_ROOT, CLASSIFY_GUIDE_PATH, NEW_TYPE,
@@ -226,7 +226,7 @@ class TestPreInjection(unittest.TestCase):
     """Flag-aktivierbarer Run-Start-Hook: fuzzy + 1 Narrator-Call."""
 
     def setUp(self):
-        from run_aggregator import build_preinjection, classify_for_injection
+        from toolboxv2.mods.isaa.base.dreamer.run_aggregator import build_preinjection, classify_for_injection
         self.build = build_preinjection
         self.classify = classify_for_injection
         self.vfs = MockVFS()
@@ -282,7 +282,7 @@ class TestPreInjection(unittest.TestCase):
 
 class TestDreamReport(unittest.TestCase):
     def setUp(self):
-        import report
+        from toolboxv2.mods.isaa.base.dreamer import report
         self.report = report
         self.vfs = MockVFS()
 

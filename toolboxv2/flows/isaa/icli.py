@@ -8476,12 +8476,9 @@ class ISAA_Host:
         elif action == "dream":
             sub = args[1] if len(args) > 1 else "status"
             if sub == "create":
-                agent_name = args[2] if len(args) > 2 else "self"
-                if not hasattr(self, '_current_agent') or not self._current_agent:
-                    print_status("No active agent", "error")
-                    return
+                agent_name = args[2] if len(args) > 2 else self.active_agent_name
                 from toolboxv2.mods.isaa.base.Agent.dreamer import a_dream
-                agent = self._current_agent
+                agent = await self.isaa_tools.get_agent(agent_name)
                 if not hasattr(agent, 'a_dream'):
                     agent.a_dream = a_dream.__get__(agent, type(agent))
                 self.job_scheduler.add_dream_job(agent_name)

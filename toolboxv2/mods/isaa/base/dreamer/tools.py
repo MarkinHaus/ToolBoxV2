@@ -119,3 +119,56 @@ def get_all_dream_tool_definitions() -> list[dict]:
 def get_dream_tool_names() -> list[str]:
     """Get all dream tool names."""
     return [t["function"]["name"] for t in get_all_dream_tool_definitions()]
+
+
+# ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ
+# COMPAT SHIM — legacy multi-tool constants for test imports.
+# Production uses the single dream_act master tool. These exist
+# so test_dreamer_phase_a.py (written pre-migration) can import them.
+# ÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ
+
+def _legacy_tool(name: str, required: list[str] | None = None) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": f"Legacy shim for {name} — use dream_act master tool instead.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": required or [],
+            },
+        },
+    }
+
+
+DREAM_DATA_TOOLS    = [_legacy_tool("dream_get_records")]
+DREAM_CLUSTER_TOOLS = [_legacy_tool("dream_cluster_records")]
+DREAM_SKILL_TOOLS   = [
+    _legacy_tool("dream_get_skills"),
+    _legacy_tool("dream_create_skill"),
+    _legacy_tool("dream_evolve_skill", ["skill_id", "cluster_size", "success_ratio"]),
+    _legacy_tool("dream_merge_skills"),
+    _legacy_tool("dream_split_skill"),
+    _legacy_tool("dream_compress_skill"),
+]
+DREAM_RULE_TOOLS    = [
+    _legacy_tool("dream_get_rules"),
+    _legacy_tool("dream_create_rule"),
+    _legacy_tool("dream_extract_rules"),
+    _legacy_tool("dream_learn_pattern"),
+]
+DREAM_PERSONA_TOOLS = [
+    _legacy_tool("dream_get_personas"),
+    _legacy_tool("dream_create_persona"),
+    _legacy_tool("dream_evolve_persona"),
+    _legacy_tool("dream_prune_personas"),
+]
+DREAM_CLEANUP_TOOLS = [
+    _legacy_tool("dream_cleanup_skills"),
+    _legacy_tool("dream_cleanup_rules"),
+    _legacy_tool("dream_prune_personas"),
+    _legacy_tool("dream_delete_skill"),
+    _legacy_tool("dream_delete_rule"),
+]
+DREAM_PERSIST_TOOLS = [_legacy_tool("dream_persist_checkpoint")]

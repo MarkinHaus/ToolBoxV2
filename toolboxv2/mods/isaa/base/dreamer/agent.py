@@ -178,7 +178,8 @@ def build_dream_query(
 
     lines.extend(features)
     lines.append("")
-    lines.append("Beginne mit Phase 1: lies /global/.memory/taskmap/_index.json direkt im VFS. Nutze dream_act({\"action\":\"get_all_state\"}) für Skills+Rules+Personas.")
+    lines.append("Beginne mit Phase 0: dream_act({\"action\":\"get_session_histories\",\"payload\":{\"max_per_session\":100}}) - lies die vollen User-Chatverlaeufe aller Sessions, halte deren Aussagen fuer die Cross-Referenz bereit.")
+    lines.append("Dann Phase 1: lies /global/.memory/taskmap/_index.json direkt im VFS. Nutze dream_act({\"action\":\"get_all_state\"}) für Skills+Rules+Personas.")
 
     return "\n".join(lines)
 

@@ -50,6 +50,7 @@ class DreamerToolHandler:
         records: List[Any] = None,
         dream_cycle_count: int = 1,
         vfs_provider=None,
+        session_manager_provider=None,
     ):
         self._skills = skills          # {id: Skill}
         self._rules = rules            # {id: SituationRule}
@@ -59,6 +60,8 @@ class DreamerToolHandler:
         self._dream_cycle_count = dream_cycle_count
         # callable -> VFS (taskmap lives in /global, any session vfs works)
         self._vfs_provider = vfs_provider
+        # callable -> parent SessionManager (full chat history lives there)
+        self._session_manager_provider = session_manager_provider
 
         self._report = {
             "skills_evolved": [], "skills_created": [], "skills_merged": [],
@@ -79,7 +82,7 @@ class DreamerToolHandler:
     # ═══════════════════════════════════════════════════════════════
 
     _VALID_ACTIONS = frozenset({
-        "get_taskmap", "get_all_state", "migrate_logs",
+        "get_taskmap", "get_all_state", "get_session_histories", "migrate_logs",
         "create_skill", "create_rule", "create_persona", "create_memories",
         "evolve_skill", "merge_skills", "split_skill", "compress_skill",
         "cleanup", "delete_skill", "delete_rule",
@@ -117,6 +120,8 @@ class DreamerToolHandler:
                 )
             if action == "get_all_state":
                 return self._handle_get_all_state()
+            if action == "get_session_histories":
+                return self._handle_get_session_histories(payload)
             if action == "migrate_logs":
                 return self._handle_migrate_logs(payload)
             if action == "create_skill":
@@ -227,6 +232,34 @@ class DreamerToolHandler:
             "skills": json.loads(self.handle_get_skills()),
             "rules": json.loads(self.handle_get_rules()),
             "personas": json.loads(self.handle_get_personas()),
+        }, indent=2, default=str)
+
+    def _handle_get_session_histories(self, payload: dict) -> str:
+        """Return the FULL chat history of every parent session.
+
+        The history is already pruned/compressed by the agent, so the Dreamer
+        gets the complete context (all roles, no truncation) to cross-reference
+        against the TaskMap. This is the user's own voice - explanations and
+        corrections that never made it into the metric-only TaskMap.
+        """
+        if self._session_manager_provider is None:
+            return json.dumps({'success': False, "error": "no session_manager provider"})
+        try:
+            sm = self._session_manager_provider()
+        except Exception as exc:
+            return json.dumps({'success': False, "error": f"session_manager unavailable: {exc}"})
+        if sm is None:
+            return json.dumps({'success': False, "error": "session_manager is None"})
+
+        from toolboxv2.mods.isaa.base.dreamer.history_utils import extract_session_histories
+        max_per_session = int(payload.get("max_per_session", 100))
+        histories = extract_session_histories(sm, max_per_session=max_per_session)
+        total_msgs = sum(len(v) for v in histories.values())
+        return json.dumps({
+            'success': True,
+            "session_count": len(histories),
+            "total_messages": total_msgs,
+            "histories": histories,
         }, indent=2, default=str)
 
     def _handle_cleanup(self, payload: dict) -> str:

@@ -94,13 +94,13 @@ class RunMetrics:
             "resume": {
                 "count": self.resume_count,
                 "type": self.resume_type,
-                "user_content": self.user_provided_content[:400],
+                "user_content": self.user_provided_content,
             },
             "drift": self.topic_drift,
             "repeat": self.repeat,
             "effort": self.effort_ratio,
-            "plan": self.plan_summary[:200],
-            "query": self.query[:300],
+            "plan": self.plan_summary,
+            "query": self.query,
             "sub_runs": self.sub_agent_run_ids,
             "new_flag": self.is_new_task_type or self.is_new_subtype,
         }
@@ -371,7 +371,10 @@ class RunAggregator:
             t_type = data.get("task_type", NEW_TYPE)
             s_type = data.get("subtype", "general")
 
-            # CODE-ÄNDERUNG: Harte Validierung gegen die 'known' Liste
+            # sanitize FIRST so LLM "coding/toolbox" splits before validation
+            t_type, s_type = _sanitize_class(t_type, s_type)
+
+            # Harte Validierung gegen die 'known' Liste
             proposed_class = f"{t_type}/{s_type}"
             if proposed_class not in known:
                 _log.debug(f"LLM tried to invent class '{proposed_class}', overriding to {NEW_TYPE}/general")
