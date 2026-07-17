@@ -7,16 +7,16 @@ Willkommen zur offiziellen Dokumentation der ToolBoxV2 Registry.
 ## Schnellnavigation
 
 ### Für Nutzer
-- **[User Guide](user_guide.md)** - Mods finden, installieren und verwenden
+- **[User Guide](USER_GUIDE.md)** - Mods finden, installieren und verwenden
 
 ### Für Contributors (Mod-Entwickler)
-- **[Contributors Guide](contributors_guide.md)** - Mods veröffentlichen und verwalten
+- **[Contributors Guide](CONTRIBUTORS_GUIDE.md)** - Mods veröffentlichen und verwalten
 
 ### Für Entwickler (Registry-Entwicklung)
-- **[Developers Guide](developers_guide.md)** - Registry setup, Architektur, Contributing
+- **[Developers Guide](DEVELOPERS_GUIDE.md)** - Registry setup, Architektur, Contributing
 
 ### API-Referenz
-- **[API Reference](api_reference.md)** - HTTP-API Endpunkte und Beispiele
+- **[API Reference](API_REFERENCE.md)** - HTTP-API Endpunkte und Beispiele
 
 ---
 
@@ -31,9 +31,9 @@ Die ToolBoxV2 Registry ist die zentrale Plattform für:
 
 | Rolle | Kann... | Siehe... |
 |-------|---------|----------|
-| **Nutzer** | Mods downloaden, installieren, updaten | [User Guide](user_guide.md) |
-| **Contributor** | Mods veröffentlichen, verwalten | [Contributors Guide](contributors_guide.md) |
-| **Entwickler** | Registry mitentwickeln, API nutzen | [Developers Guide](developers_guide.md) |
+| **Nutzer** | Mods downloaden, installieren, updaten | [User Guide](USER_GUIDE.md) |
+| **Contributor** | Mods veröffentlichen, verwalten | [Contributors Guide](CONTRIBUTORS_GUIDE.md) |
+| **Entwickler** | Registry mitentwickeln, API nutzen | [Developers Guide](DEVELOPERS_GUIDE.md) |
 
 ---
 
@@ -115,7 +115,7 @@ Danach kann der Admin über die API Publisher verifizieren:
 tb registry admin publisher verify --target <publisher-id>
 ```
 
-Siehe [Developers Guide](developers_guide.md#admin-management) für Details.
+Siehe [Developers Guide](DEVELOPERS_GUIDE.md#admin-management) für Details.
 
 ---
 
@@ -123,7 +123,7 @@ Siehe [Developers Guide](developers_guide.md#admin-management) für Details.
 
 ### Wie veröffentliche ich einen Mod?
 
-Siehe [Contributors Guide](contributors_guide.md):
+Siehe [Contributors Guide](CONTRIBUTORS_GUIDE.md):
 
 1. Einloggen: `tb registry login`
 2. Publisher registrieren (über API oder CloudM)
@@ -158,10 +158,10 @@ tb registry publish my-mod --visibility private
 
 | Dokument | Status | Letztes Update |
 |----------|--------|----------------|
-| [User Guide](user_guide.md) | ✅ Aktuell | 2026-04-28 |
-| [Contributors Guide](contributors_guide.md) | ✅ Aktuell | 2026-04-28 |
-| [Developers Guide](developers_guide.md) | ✅ Aktuell | 2026-04-28 |
-| [API Reference](api_reference.md) | ✅ Aktuell | 2026-04-28 |
+| [User Guide](USER_GUIDE.md) | ✅ Aktuell | 2026-04-28 |
+| [Contributors Guide](CONTRIBUTORS_GUIDE.md) | ✅ Aktuell | 2026-04-28 |
+| [Developers Guide](DEVELOPERS_GUIDE.md) | ✅ Aktuell | 2026-04-28 |
+| [API Reference](API_REFERENCE.md) | ✅ Aktuell | 2026-04-28 |
 
 ---
 

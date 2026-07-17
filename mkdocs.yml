@@ -76,11 +76,6 @@ plugins:
         core/toolbox_guidelines.md: devdocs/guidelines.md
         core/toolboxv2.md: reference/toolboxv2.md
         core/workers.md: runtime/workers_core.md
-        registry/API_REFERENCE.md: registry/api_reference.md
-        registry/CONTRIBUTORS_GUIDE.md: registry/contributors_guide.md
-        registry/DEVELOPERS_GUIDE.md: registry/developers_guide.md
-        registry/README.md: registry/index.md
-        registry/USER_GUIDE.md: registry/user_guide.md
         tb_browser/index.md: frontend/tb_browser.md
         toolboxv2/flows/adaptive_prompt_system.md: flows/adaptive_prompt_system.md
         toolboxv2/flows/bg.md: flows/bg.md
@@ -179,10 +174,10 @@ nav:
       - tb_browser Extension: frontend/tb_browser.md
   - Infrastructure:
       - TB Registry: registry/index.md
-      - Registry — User Guide: registry/user_guide.md
-      - Registry — Developers: registry/developers_guide.md
-      - Registry — Contributors: registry/contributors_guide.md
-      - Registry — API Reference: registry/api_reference.md
+      - Registry — User Guide: registry/USER_GUIDE.md
+      - Registry — Developers: registry/DEVELOPERS_GUIDE.md
+      - Registry — Contributors: registry/CONTRIBUTORS_GUIDE.md
+      - Registry — API Reference: registry/API_REFERENCE.md
       - LLM Gateway: llm_gateway/index.md
   - Reference:
       - toolboxv2 Core API: reference/toolboxv2.md

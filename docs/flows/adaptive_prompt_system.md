@@ -73,11 +73,12 @@
 The agent has completed its analysis in `think()` and identified all classes, methods, and functions. It has everything needed — the full code index with signatures, docstring...
 
 🔄 Iter 2/4
-💭 Analyse des Codes abgeschlossen, Dokumentation erforderlich
+💭 Analyse des Codes abgeschlossen, Dokumentation erforderlich
+
 🔧 Nutze Tool: final_answer
 
 
-📝 
+📝
 # Adaptive Prompt System
 
 Generates system-optimized prompts by discovering LLM capabilities, building profiles, and injecting prompt-engineering techniques (Chain of Thought, Tree of Thoughts, Adversarial Validation). Provides both an interactive CLI and a web UI.
