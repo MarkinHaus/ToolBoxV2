@@ -1,10 +1,12 @@
 
 <!doctype html>
-<html lang="en" class="no-js">
+<html lang="de" class="no-js">
   <head>
     
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Modulares Python-Framework für Tools, Funktionen und komplette Anwendungen.">
       
       
       
@@ -12,7 +14,7 @@
       
       
       
-        <link rel="next" href="workers/">
+        <link rel="next" href="foundations/onboarding/">
       
       
         
@@ -23,7 +25,7 @@
     
     
       
-        <title>start - ToolBoxV2 Docs</title>
+        <title>ToolBoxV2 Docs</title>
       
     
     
@@ -44,8 +46,8 @@
         
         
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
-        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=IBM+Plex+Sans:300,300i,400,400i,700,700i%7CIBM+Plex+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"IBM Plex Sans";--md-code-font:"IBM Plex Mono"}</style>
       
     
     
@@ -67,7 +69,7 @@
     
     
     
-    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo">
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="blue">
   
     
     <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
@@ -77,7 +79,7 @@
       
         
         <a href="#toolboxv2" class="md-skip">
-          Skip to content
+          Zum Inhalt
         </a>
       
     </div>
@@ -89,7 +91,7 @@
       
 
 <header class="md-header" data-md-component="header">
-  <nav class="md-header__inner md-grid" aria-label="Header">
+  <nav class="md-header__inner md-grid" aria-label="Kopfzeile">
     <a href="." title="ToolBoxV2 Docs" class="md-header__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
       
   
@@ -110,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              start
+              Home
             
           </span>
         </div>
@@ -132,27 +134,29 @@
   <label class="md-search__overlay" for="__search"></label>
   <div class="md-search__inner" role="search">
     <form class="md-search__form" name="search">
-      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <input type="text" class="md-search__input" name="query" aria-label="Suche" placeholder="Suche" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
       <label class="md-search__icon md-icon" for="__search">
         
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
         
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
       </label>
-      <nav class="md-search__options" aria-label="Search">
+      <nav class="md-search__options" aria-label="Suche">
         
-        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+        <button type="reset" class="md-search__icon md-icon" title="Zurücksetzen" aria-label="Zurücksetzen" tabindex="-1">
           
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
         </button>
       </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
       
     </form>
     <div class="md-search__output">
       <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
         <div class="md-search-result" data-md-component="search-result">
           <div class="md-search-result__meta">
-            Initializing search
+            Suche wird initialisiert
           </div>
           <ol class="md-search-result__list" role="presentation"></ol>
         </div>
@@ -164,13 +168,13 @@
     
     
       <div class="md-header__source">
-        <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Go to repository" class="md-source" data-md-component="source">
+        <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Zum Repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
   </div>
   <div class="md-source__repository">
-    ToolBoxV2
+    MarkinHaus/ToolBoxV2
   </div>
 </a>
       </div>
@@ -185,7 +189,7 @@
         
           
             
-<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+<nav class="md-tabs" aria-label="Hauptnavigation" data-md-component="tabs">
   <div class="md-grid">
     <ul class="md-tabs__list">
       
@@ -196,18 +200,17 @@
     
   
   
-    
-    
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="." class="md-tabs__link">
-          
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="." class="md-tabs__link">
+        
   
+  
+    
   
   Home
 
-        </a>
-      </li>
-    
+      </a>
+    </li>
   
 
       
@@ -219,9 +222,11 @@
     
     
       <li class="md-tabs__item">
-        <a href="new/analysis/installation/installation.md" class="md-tabs__link">
+        <a href="foundations/onboarding/" class="md-tabs__link">
           
   
+  
+    
   
   Getting Started
 
@@ -238,12 +243,46 @@
   
     
     
+      
+  
+  
+  
+  
+    
+    
       <li class="md-tabs__item">
-        <a href="guides/howto_consumer.md" class="md-tabs__link">
+        <a href="services/cli/" class="md-tabs__link">
           
   
   
-  How-To Guides
+    
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="mods/isaa/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  ISAA
 
         </a>
       </li>
@@ -259,9 +298,11 @@
     
     
       <li class="md-tabs__item">
-        <a href="mods/CloudM/index.md" class="md-tabs__link">
+        <a href="mods/CloudM/" class="md-tabs__link">
           
   
+  
+    
   
   CloudM
 
@@ -279,11 +320,13 @@
     
     
       <li class="md-tabs__item">
-        <a href="mods/isaa/README.md" class="md-tabs__link">
+        <a href="runtime/" class="md-tabs__link">
           
   
   
-  ISAA Agent Framework
+    
+  
+  Runtime
 
         </a>
       </li>
@@ -299,11 +342,13 @@
     
     
       <li class="md-tabs__item">
-        <a href="devdocs/dev_architecture.md" class="md-tabs__link">
+        <a href="storage/ref_database/" class="md-tabs__link">
           
   
   
-  Module Development
+    
+  
+  Storage
 
         </a>
       </li>
@@ -319,11 +364,13 @@
     
     
       <li class="md-tabs__item">
-        <a href="workers/" class="md-tabs__link">
+        <a href="frontend/tbjs/" class="md-tabs__link">
           
   
   
-  Technical Reference
+    
+  
+  Frontend
 
         </a>
       </li>
@@ -339,49 +386,11 @@
     
     
       <li class="md-tabs__item">
-        <a href="core/toolboxv2/" class="md-tabs__link">
+        <a href="registry/" class="md-tabs__link">
           
   
   
-  API Reference
-
-        </a>
-      </li>
     
-  
-
-      
-        
-  
-  
-  
-  
-    
-    
-      <li class="md-tabs__item">
-        <a href="core/tbjs/" class="md-tabs__link">
-          
-  
-  
-  Frontend & Interfaces
-
-        </a>
-      </li>
-    
-  
-
-      
-        
-  
-  
-  
-  
-    
-    
-      <li class="md-tabs__item">
-        <a href="registry/index.md" class="md-tabs__link">
-          
-  
   
   Infrastructure
 
@@ -399,11 +408,13 @@
     
     
       <li class="md-tabs__item">
-        <a href="core/changelog/" class="md-tabs__link">
+        <a href="reference/toolboxv2/" class="md-tabs__link">
           
   
   
-  Misc
+    
+  
+  Reference
 
         </a>
       </li>
@@ -422,7 +433,9 @@
           
             
               
-              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" hidden>
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -443,13 +456,13 @@
   </label>
   
     <div class="md-nav__source">
-      <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Go to repository" class="md-source" data-md-component="source">
+      <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Zum Repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
   </div>
   <div class="md-source__repository">
-    ToolBoxV2
+    MarkinHaus/ToolBoxV2
   </div>
 </a>
     </div>
@@ -464,63 +477,6 @@
   
   
   
-    
-    
-    
-    
-      
-        
-        
-      
-      
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_1" id="__nav_1_label" tabindex="">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Home
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_1_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_1">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    Home
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-    
-  
-  
-  
     <li class="md-nav__item md-nav__item--active">
       
       <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
@@ -529,24 +485,6 @@
         
       
       
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    start
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
       <a href="." class="md-nav__link md-nav__link--active">
         
   
@@ -554,7 +492,7 @@
   <span class="md-ellipsis">
     
   
-    start
+    Home
   
 
     
@@ -564,357 +502,25 @@
 
       </a>
       
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
         
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
-        <li class="md-nav__item">
-  <a href="#architecture" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Architecture
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#key-components" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Key Components
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#quick-navigation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Quick Navigation
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="new/analysis/installation/installation.md" class="md-nav__link">
         
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Getting Started
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="guides/howto_consumer.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    How-To Guides
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/CloudM/index.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    CloudM
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/README.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    ISAA
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="devdocs/dev_architecture.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Module Development
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="workers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Technical Reference
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="core/toolboxv2/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    API Reference
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="core/tbjs/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Frontend & Interfaces
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="registry/index.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Infrastructure
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="new/old_docs/obsidian_setup.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Misc
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
       
-    </li>
-  
-
-    
+        
       
-      
-  
-  
-  
-  
-    
     
     
     
@@ -928,9 +534,7 @@
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
         
           
           <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
@@ -969,14 +573,14 @@
   
   
     <li class="md-nav__item">
-      <a href="new/analysis/installation/installation.md" class="md-nav__link">
+      <a href="foundations/onboarding/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Installation
+    Onboarding
   
 
     
@@ -997,7 +601,7 @@
   
   
     <li class="md-nav__item">
-      <a href="foundations/quickstart.md" class="md-nav__link">
+      <a href="foundations/quickstart/" class="md-nav__link">
         
   
   
@@ -1025,7 +629,7 @@
   
   
     <li class="md-nav__item">
-      <a href="foundations/first_run.md" class="md-nav__link">
+      <a href="foundations/first_run/" class="md-nav__link">
         
   
   
@@ -1033,118 +637,6 @@
     
   
     First Run & Profile
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="new/analysis/installation/stack.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    System Stack
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="new/analysis/installation/usage.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Usage Overview
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="manifest/manifest_intro.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Manifest Intro
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="core/onboarding/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Onboarding
   
 
     
@@ -1173,6 +665,12 @@
   
     
     
+      
+        
+      
+        
+      
+    
     
     
       
@@ -1185,9 +683,7 @@
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
           <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
@@ -1197,7 +693,7 @@
   <span class="md-ellipsis">
     
   
-    How-To Guides
+    Guides
   
 
     
@@ -1213,7 +709,73 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    How-To Guides
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLIs & Flows
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CLIs & Flows
   
 
           </label>
@@ -1226,14 +788,14 @@
   
   
     <li class="md-nav__item">
-      <a href="guides/howto_consumer.md" class="md-nav__link">
+      <a href="services/cli/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    For Consumers
+    CLI Reference
   
 
     
@@ -1254,14 +816,14 @@
   
   
     <li class="md-nav__item">
-      <a href="guides/howto_server.md" class="md-nav__link">
+      <a href="flows/icli/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    For Server Admins
+    icli
   
 
     
@@ -1282,63 +844,7 @@
   
   
     <li class="md-nav__item">
-      <a href="guides/howto_developer.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    For Developers
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="guides/howto_features.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Feature Packs
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="flows/minicli/howto_minicli_macros.md" class="md-nav__link">
+      <a href="flows/minicli/" class="md-nav__link">
         
   
   
@@ -1366,14 +872,14 @@
   
   
     <li class="md-nav__item">
-      <a href="flows/icli/howto.md" class="md-nav__link">
+      <a href="flows/chain/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    ISAA Host CLI (icli)
+    Chains (Flows)
   
 
     
@@ -1382,6 +888,192 @@
   
 
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="flows/bg/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Background Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="flows/adaptive_prompt_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adaptive Prompt System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Module Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="devdocs/guidelines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coding Guidelines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="devdocs/docs_toolchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docs Toolchain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -1402,6 +1094,20 @@
   
     
     
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
@@ -1414,19 +1120,18 @@
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
         
           
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="mods/isaa/" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
     
   
-    CloudM
+    ISAA
   
 
     
@@ -1434,47 +1139,27 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
   
-    CloudM
+    ISAA
   
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
               
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/CloudM/index.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Overview
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -1483,346 +1168,7 @@
   
   
     <li class="md-nav__item">
-      <a href="mods/CloudM/auth.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Auth System (OAuth2 / Passkeys / JWT)
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/CloudM/login_system.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Login System (CLI + Web Sessions)
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/CloudM/user_data.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    User Data API (Scoped Storage)
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/CloudM/mod_manager.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Mod Manager (Packages)
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/CloudM/folder_sync.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Folder Sync (Encrypted MinIO)
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/CloudM/dashboards.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Dashboards (Admin + User)
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-      
-      
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
-        
-          
-          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    ISAA Agent Framework
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_5">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    ISAA Agent Framework
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/README.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Overview
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="core/isaa/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Full Reference
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    
-    
-    
-    
-      
-      
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Getting Started
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_5_3">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    Getting Started
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/01_GETTING_STARTED/QUICKSTART.md" class="md-nav__link">
+      <a href="mods/isaa/quickstart/" class="md-nav__link">
         
   
   
@@ -1850,14 +1196,14 @@
   
   
     <li class="md-nav__item">
-      <a href="mods/isaa/ISAAMODUL_INIT.md" class="md-nav__link">
+      <a href="mods/isaa/agents/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Module Init
+    Agents (FlowAgent)
   
 
     
@@ -1878,14 +1224,14 @@
   
   
     <li class="md-nav__item">
-      <a href="mods/isaa/AGENT_MANAGEMENT.md" class="md-nav__link">
+      <a href="mods/isaa/chains/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Agent Management
+    Chains
   
 
     
@@ -1906,14 +1252,14 @@
   
   
     <li class="md-nav__item">
-      <a href="mods/isaa/IMPORT_EXPORT.md" class="md-nav__link">
+      <a href="mods/isaa/reference/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Import / Export
+    Full Reference (legacy)
   
 
     
@@ -1933,15 +1279,36 @@
     </li>
   
 
-              
-            
-              
-                
+    
+      
+      
   
   
   
   
     
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
     
     
     
@@ -1955,19 +1322,18 @@
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
-          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="mods/CloudM/" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
     
   
-    Architecture
+    CloudM
   
 
     
@@ -1975,35 +1341,43 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_5_4">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
-    Architecture
+    CloudM
   
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
               
+            
+              
                 
   
   
   
   
     <li class="md-nav__item">
-      <a href="mods/isaa/02_ARCHITECTURE/OVERVIEW.md" class="md-nav__link">
+      <a href="mods/CloudM/user_guide/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Overview
+    User Guide
   
 
     
@@ -2024,14 +1398,14 @@
   
   
     <li class="md-nav__item">
-      <a href="core/agent.md" class="md-nav__link">
+      <a href="mods/CloudM/developer_guide/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    FlowAgent V3
+    Developer Guide
   
 
     
@@ -2052,14 +1426,14 @@
   
   
     <li class="md-nav__item">
-      <a href="mods/isaa/02_ARCHITECTURE/DETAILED/AGENT_ARCHITECTURE.md" class="md-nav__link">
+      <a href="mods/CloudM/auth/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Agent Architecture
+    Auth System
   
 
     
@@ -2080,14 +1454,14 @@
   
   
     <li class="md-nav__item">
-      <a href="mods/isaa/02_ARCHITECTURE/DETAILED/CHAIN_ARCHITECTURE.md" class="md-nav__link">
+      <a href="mods/CloudM/login_system/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Chain Architecture
+    Login System
   
 
     
@@ -2108,14 +1482,14 @@
   
   
     <li class="md-nav__item">
-      <a href="mods/isaa/02_ARCHITECTURE/DETAILED/MEMORY_ARCHITECTURE.md" class="md-nav__link">
+      <a href="mods/CloudM/user_data/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Memory Architecture
+    User Data API
   
 
     
@@ -2136,14 +1510,70 @@
   
   
     <li class="md-nav__item">
-      <a href="mods/isaa/CHAIN_SYSTEM.md" class="md-nav__link">
+      <a href="mods/CloudM/mod_manager/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Chain System
+    Mod Manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="mods/CloudM/folder_sync/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Folder Sync
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="mods/CloudM/dashboards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dashboards
   
 
     
@@ -2163,15 +1593,46 @@
     </li>
   
 
-              
-            
-              
-                
+    
+      
+      
   
   
   
   
     
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
     
     
     
@@ -2185,19 +1646,18 @@
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
         
           
-          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="runtime/" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
     
   
-    Subsystems
+    Runtime
   
 
     
@@ -2205,676 +1665,43 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_5_5">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    Subsystems
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
+            </a>
             
               
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/07_JOBS/JOBS_SYSTEM.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Job Scheduling
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/06_EXTRAS/ZEN_SYSTEM.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Zen Meta-Learning
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/09_DEEP_ANALYSIS/RL_SYSTEM.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Reinforcement Learning
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/04_CODING_AGENT/DETAILED/CODING_AGENT.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Coding Agent
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/06_EXTRAS/WEB_HELPER.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Web Helper
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/06_EXTRAS/DISCORD_INTERFACE.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Discord Interface
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    
-    
-    
-    
-      
-      
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_6" >
-        
-          
-          <label class="md-nav__link" for="__nav_5_6" id="__nav_5_6_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    API Reference
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_5_6">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    API Reference
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/03_API_REFERENCE/MODULE_API.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Module API
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/MINITASK_FORMATCLASS.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    MiniTask FormatClass
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    
-    
-    
-    
-      
-      
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_7" >
-        
-          
-          <label class="md-nav__link" for="__nav_5_7" id="__nav_5_7_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Examples
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_7_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_5_7">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    Examples
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/08_EXAMPLES/INDEX.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Index
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/08_EXAMPLES/EXAMPLES.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Examples Overview
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/08_EXAMPLES/01_BASIC_AGENT.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Basic Agent
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/08_EXAMPLES/02_CHAIN_PIPELINE.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Chain Pipeline
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/08_EXAMPLES/03_TOOL_INTEGRATION.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Tool Integration
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/08_EXAMPLES/04_MEMORY_USAGE.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Memory Usage
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/08_EXAMPLES/05_ERROR_HANDLING.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Error Handling
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mods/isaa/08_EXAMPLES/06_PRODUCTION_SETUP.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Production Setup
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-      
-      
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
-        
-          
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Module Development
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
   
-    Module Development
+    Runtime
   
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
               
+            
+              
                 
   
   
   
   
     <li class="md-nav__item">
-      <a href="devdocs/dev_architecture.md" class="md-nav__link">
+      <a href="runtime/workers_core/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    4-Layer Architecture
+    Workers (Core)
   
 
     
@@ -2895,14 +1722,14 @@
   
   
     <li class="md-nav__item">
-      <a href="devdocs/dev_mod_creation.md" class="md-nav__link">
+      <a href="runtime/service_manager/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Creating a Mod
+    ServiceManager
   
 
     
@@ -2923,14 +1750,14 @@
   
   
     <li class="md-nav__item">
-      <a href="core/module_creation_guide.md" class="md-nav__link">
+      <a href="runtime/config/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Module Creation Guide
+    Config
   
 
     
@@ -2951,14 +1778,14 @@
   
   
     <li class="md-nav__item">
-      <a href="devdocs/dev_features.md" class="md-nav__link">
+      <a href="runtime/server_worker/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Feature Packs & ZIPs
+    Server Worker
   
 
     
@@ -2979,14 +1806,14 @@
   
   
     <li class="md-nav__item">
-      <a href="devdocs/dev_registry.md" class="md-nav__link">
+      <a href="runtime/fast_tb_handler/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Registry & Publishing
+    FastTB Handler
   
 
     
@@ -3007,14 +1834,14 @@
   
   
     <li class="md-nav__item">
-      <a href="new/analysis/features/feature_system.md" class="md-nav__link">
+      <a href="runtime/fasttb/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Feature System (Analysis)
+    FastTB
   
 
     
@@ -3035,14 +1862,14 @@
   
   
     <li class="md-nav__item">
-      <a href="new/analysis/features/feature_system_next_todos.md" class="md-nav__link">
+      <a href="runtime/session/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Feature System TODOs
+    Sessions
   
 
     
@@ -3063,14 +1890,154 @@
   
   
     <li class="md-nav__item">
-      <a href="core/toolbox_guidelines/" class="md-nav__link">
+      <a href="runtime/session_custom/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Coding Guidelines
+    Custom Sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runtime/event_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Event Manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runtime/ws_bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WS Bridge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runtime/toolbox_integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Toolbox Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runtime/tauri_integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tauri Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runtime/debug_runner/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debug Runner
   
 
     
@@ -3099,6 +2066,16 @@
   
     
     
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
@@ -3111,9 +2088,7 @@
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
         
           
           <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
@@ -3123,7 +2098,7 @@
   <span class="md-ellipsis">
     
   
-    Technical Reference
+    Storage
   
 
     
@@ -3139,67 +2114,11 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Technical Reference
+    Storage
   
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="workers/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Technical Reference
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="manifest/ref_manifest.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Manifest Schema
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -3216,62 +2135,6 @@
     
   
     Database Modes (LC/LR/RR/CB)
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="core/db_usage_guide.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    DB Usage Guide
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="storage/ref_filehandler/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    FileHandler V2
   
 
     
@@ -3320,7 +2183,7 @@
   
   
     <li class="md-nav__item">
-      <a href="new/analysis/storage/blob_sharing_api.md" class="md-nav__link">
+      <a href="storage/blob_sharing_api/" class="md-nav__link">
         
   
   
@@ -3369,90 +2232,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="services/ref_cli.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    CLI Reference
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="services/ref_mcp.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    MCP HTTP API
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="core/logs/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Logging & Observability
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -3468,6 +2247,16 @@
   
     
     
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
@@ -3480,9 +2269,7 @@
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
         
           
           <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
@@ -3492,7 +2279,7 @@
   <span class="md-ellipsis">
     
   
-    API Reference
+    Frontend
   
 
     
@@ -3508,7 +2295,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    API Reference
+    Frontend
   
 
           </label>
@@ -3521,103 +2308,14 @@
   
   
     <li class="md-nav__item">
-      <a href="core/toolboxv2/" class="md-nav__link">
+      <a href="frontend/tbjs/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    API Reference
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    
-    
-    
-    
-      
-      
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
-        
-          
-          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Frontend & Interfaces
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_9">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    Frontend & Interfaces
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="core/tbjs/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Frontend & Interfaces
+    tbjs Framework
   
 
     
@@ -3638,7 +2336,7 @@
   
   
     <li class="md-nav__item">
-      <a href="core/TauriApp_Architecture/" class="md-nav__link">
+      <a href="frontend/tauri/" class="md-nav__link">
         
   
   
@@ -3666,7 +2364,7 @@
   
   
     <li class="md-nav__item">
-      <a href="core/p2p_rpc_protocol/" class="md-nav__link">
+      <a href="frontend/p2p_rpc/" class="md-nav__link">
         
   
   
@@ -3694,35 +2392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="core/clis/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    CLIs Overview
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="tb_browser/" class="md-nav__link">
+      <a href="frontend/tb_browser/" class="md-nav__link">
         
   
   
@@ -3758,6 +2428,22 @@
   
     
     
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
@@ -3770,13 +2456,12 @@
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_10" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
         
           
-          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="registry/" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -3790,11 +2475,17 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_10">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -3805,20 +2496,106 @@
           <ul class="md-nav__list" data-md-scrollfix>
             
               
+            
+              
                 
   
   
   
   
     <li class="md-nav__item">
-      <a href="registry/index.md" class="md-nav__link">
+      <a href="registry/USER_GUIDE/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    TB Registry
+    Registry — User Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="registry/DEVELOPERS_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — Developers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="registry/CONTRIBUTORS_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — Contributors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="registry/API_REFERENCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — API Reference
   
 
     
@@ -3875,6 +2652,14 @@
   
     
     
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
@@ -3887,19 +2672,17 @@
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_11" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" >
         
           
-          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
             
   
   
   <span class="md-ellipsis">
     
   
-    Misc
+    Reference
   
 
     
@@ -3910,12 +2693,12 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_11">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
             <span class="md-nav__icon md-icon"></span>
             
   
-    Misc
+    Reference
   
 
           </label>
@@ -3928,7 +2711,63 @@
   
   
     <li class="md-nav__item">
-      <a href="core/changelog/" class="md-nav__link">
+      <a href="reference/toolboxv2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    toolboxv2 Core API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reference/logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging & Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reference/changelog/" class="md-nav__link">
         
   
   
@@ -3936,230 +2775,6 @@
     
   
     Changelog
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="new/analysis/installation/contributing.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Contributing
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="new/old_docs/simplecore_analysis_report.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Simplecore Analysis
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="new/old_docs/db_cli_sharing_guide.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    DB CLI Sharing Guide
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="new/old_docs/obsidian_setup.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Obsidian Setup
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="new/old_docs/desktop_interface_plan.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Desktop Interface Plan
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="new/old_docs/refactor_plan.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Refactor Plan
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="new/old_docs/build_pipeline.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Build Pipeline
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="https://github.com/MarkinHaus/ToolBoxV2/issues" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Report Issues
   
 
     
@@ -4188,58 +2803,19 @@
             
             
               
-              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" hidden>
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
 
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+<nav class="md-nav md-nav--secondary" aria-label="Inhaltsverzeichnis">
   
   
   
     
   
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#architecture" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Architecture
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#key-components" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Key Components
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#quick-navigation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Quick Navigation
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
   
 </nav>
                   </div>
@@ -4252,72 +2828,158 @@
               
               <article class="md-content__inner md-typeset">
                 
-
-
-
                   
+  
 
 
+
+  
+    <a href="https://github.com/MarkinHaus/ToolBoxV2/edit/master/docs/index.md" title="Seite editieren" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
   
   
 
 
 <h1 id="toolboxv2">ToolBoxV2<a class="headerlink" href="#toolboxv2" title="Permanent link">&para;</a></h1>
-<p>A flexible modular framework for tools, functions, and complete applications, deployable locally, on the web, or as a desktop/mobile app.</p>
-<p><a href="https://pypi.python.org/pypi/ToolBoxV2"><img alt="PyPI Version" src="https://img.shields.io/pypi/v/ToolBoxV2.svg" /></a></p>
-<p><a href="https://github.com/MarkinHaus/ToolBoxV2"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-ToolBoxV2-181717?logo=github" /></a></p>
-<hr />
-<h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>flowchart TD
+<p class="tb-tagline">
+Ein modulares Python-Framework für Tools, Funktionen und komplette Anwendungen —
+lokal, im Web, als Desktop- oder Mobile-App.
+</p>
 
-    Nginx[&quot;Nginx\n(Load Bal., Rate Limit)&quot;]
+<p class="tb-badges">
+<a href="https://pypi.python.org/pypi/ToolBoxV2"><img alt="PyPI" src="https://img.shields.io/pypi/v/ToolBoxV2.svg?style=flat-square&color=1a4fd0"></a>
+<a href="https://github.com/MarkinHaus/ToolBoxV2"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-ToolBoxV2-181717?style=flat-square&logo=github"></a>
+<img alt="Python" src="https://img.shields.io/badge/python-%E2%89%A53.10-1a4fd0?style=flat-square">
+</p>
 
-
-
-    Nginx --&gt; W1[&quot;HTTP Worker\n(WSGI)&quot;]
-
-    Nginx --&gt; W2[&quot;HTTP Worker\n(WSGI)&quot;]
-
-    Nginx --&gt; W3[&quot;WS Worker\n(asyncio)&quot;]
-
-
-
-    W1 &amp; W2 &amp; W3 --&gt; ZMQ[&quot;ZeroMQ\nEvent Broker&quot;]
-
-
-
-    ZMQ --&gt; TB[&quot;ToolBoxV2\nApp Instance&quot;]
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>toolboxv2<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>tb<span class="w"> </span>--guide
 </code></pre></div>
-<h2 id="key-components">Key Components<a class="headerlink" href="#key-components" title="Permanent link">&para;</a></h2>
-<p>| Component | Description |</p>
-<p>|-----------|-------------|</p>
-<p>| <strong>Python Backend</strong> | Core library with modular 4-layer architecture |</p>
-<p>| <strong>Worker System</strong> | WSGI/async workers via ZeroMQ IPC |</p>
-<p>| <strong>CloudM</strong> | Auth, user data, mod management, folder sync |</p>
-<p>| <strong>ISAA</strong> | Multi-agent AI framework (FlowAgent, ExecutionEngine) |</p>
-<p>| <strong>tbjs + Tauri</strong> | Cross-platform web/desktop UI |</p>
-<p>| <strong>TB Registry</strong> | Package registry for mods and artifacts |</p>
-<p>| <strong>LLM Gateway</strong> | OpenAI-compatible self-hosted gateway (Ollama) |</p>
-<h2 id="quick-navigation">Quick Navigation<a class="headerlink" href="#quick-navigation" title="Permanent link">&para;</a></h2>
+<hr />
+<h6 id="navigate">NAVIGATE<a class="headerlink" href="#navigate" title="Permanent link">&para;</a></h6>
+<div class="grid cards">
 <ul>
 <li>
-<p><strong>New here?</strong> → <a href="core/quickstart/">Getting Started</a></p>
+<p><strong>Loslegen</strong></p>
+<hr />
+<p>Installation, Profilwahl, Config-Wizard — von <code>pip install</code> bis zur
+laufenden Instanz.</p>
+<p><a href="foundations/onboarding/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Onboarding</a></p>
 </li>
 <li>
-<p><strong>Developer?</strong> → <a href="devdocs/dev_architecture.md">4-Layer Architecture</a> · <a href="devdocs/dev_mod_creation.md">Creating a Mod</a></p>
+<p><strong>ISAA · Agents</strong></p>
+<hr />
+<p>FlowAgent, ExecutionEngine V3, Chains, Skills, Dreamer. Das größte
+Subsystem im Repo.</p>
+<p><a href="mods/isaa/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> ISAA Overview</a></p>
 </li>
 <li>
-<p><strong>Auth &amp; Users?</strong> → <a href="mods/CloudM/index.md">CloudM Overview</a></p>
+<p><strong>CloudM</strong></p>
+<hr />
+<p>Auth (OAuth2, Passkeys, JWT), User-Daten, Mod-Manager, verschlüsselter
+Folder-Sync.</p>
+<p><a href="mods/CloudM/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> CloudM</a></p>
 </li>
 <li>
-<p><strong>AI Agents?</strong> → <a href="mods/isaa/README.md">ISAA Framework</a></p>
+<p><strong>CLIs &amp; Flows</strong></p>
+<hr />
+<p><code>tb</code>, MiniCLI + Macros, icli, Chains, Background-Flows.</p>
+<p><a href="flows/icli/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> icli</a></p>
 </li>
 <li>
-<p><strong>Self-hosting?</strong> → <a href="guides/howto_server.md">Server Guide</a></p>
+<p><strong>Runtime</strong></p>
+<hr />
+<p>WSGI/ASGI-Worker, ZeroMQ-Broker, FastTB, Sessions, ServiceManager.</p>
+<p><a href="runtime/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Worker System</a></p>
+</li>
+<li>
+<p><strong>Storage</strong></p>
+<hr />
+<p>DB-Modi (LC/LR/RR/CB), BlobDB mit Offline-Fallback, Blob-Sharing &amp; Watch-API.</p>
+<p><a href="storage/ref_database/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Database Modes</a></p>
+</li>
+<li>
+<p><strong>Frontend</strong></p>
+<hr />
+<p>tbjs-Framework, Tauri-App-Architektur, P2P-RPC, Browser-Extension.</p>
+<p><a href="frontend/tbjs/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> tbjs</a></p>
+</li>
+<li>
+<p><strong>Infrastruktur</strong></p>
+<hr />
+<p>TB Registry für Mods &amp; Artefakte, self-hosted OpenAI-kompatibler LLM Gateway.</p>
+<p><a href="registry/"><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13.22 19.03a.75.75 0 0 1 0-1.06L18.19 13H3.75a.75.75 0 0 1 0-1.5h14.44l-4.97-4.97a.749.749 0 0 1 .326-1.275.75.75 0 0 1 .734.215l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0"/></svg></span> Registry</a></p>
 </li>
 </ul>
+</div>
 <hr />
-<p>© 2022–2025 Markin Hausmanns — <a href="https://github.com/MarkinHaus/ToolBoxV2">GitHub</a> · <a href="https://github.com/MarkinHaus/ToolBoxV2/issues">Issues</a> · <a href="https://pypi.org/project/ToolBoxV2">PyPI</a></p>
+<h6 id="architecture">ARCHITECTURE<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h6>
+<pre class="mermaid"><code>flowchart TD
+    Nginx["Nginx&lt;br/&gt;Load Balancing · Rate Limit"]
+    Nginx --&gt; W1["HTTP Worker&lt;br/&gt;WSGI"]
+    Nginx --&gt; W2["HTTP Worker&lt;br/&gt;WSGI"]
+    Nginx --&gt; W3["WS Worker&lt;br/&gt;asyncio"]
+    W1 &amp; W2 &amp; W3 --&gt; ZMQ["ZeroMQ Event Broker"]
+    ZMQ --&gt; TB["ToolBoxV2 App"]
+    TB --&gt; MODS["Mods&lt;br/&gt;CloudM · ISAA · DB · …"]
+    TB --&gt; FLOWS["Flows&lt;br/&gt;cli · mini · isaa · desktop"]</code></pre>
+<h6 id="building-blocks">BUILDING BLOCKS<a class="headerlink" href="#building-blocks" title="Permanent link">&para;</a></h6>
+<table>
+<thead>
+<tr>
+<th>Baustein</th>
+<th>Beschreibung</th>
+<th>Docs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Python Core</strong></td>
+<td>4-Layer-Architektur: <code>App</code>, <code>MainTool</code>, <code>Result</code></td>
+<td><a href="reference/toolboxv2/">Core API</a></td>
+</tr>
+<tr>
+<td><strong>Worker System</strong></td>
+<td>WSGI/async Worker über ZeroMQ IPC</td>
+<td><a href="runtime/">Runtime</a></td>
+</tr>
+<tr>
+<td><strong>CloudM</strong></td>
+<td>Auth, User-Daten, Mod-Management, Folder-Sync</td>
+<td><a href="mods/CloudM/">CloudM</a></td>
+</tr>
+<tr>
+<td><strong>ISAA</strong></td>
+<td>Multi-Agent-Framework (FlowAgent, Chains, Skills)</td>
+<td><a href="mods/isaa/">ISAA</a></td>
+</tr>
+<tr>
+<td><strong>tbjs + Tauri</strong></td>
+<td>Cross-Platform Web-/Desktop-UI</td>
+<td><a href="frontend/tbjs/">tbjs</a></td>
+</tr>
+<tr>
+<td><strong>TB Registry</strong></td>
+<td>Package-Registry für Mods und Artefakte</td>
+<td><a href="registry/">Registry</a></td>
+</tr>
+<tr>
+<td><strong>LLM Gateway</strong></td>
+<td>OpenAI-kompatibler self-hosted Gateway</td>
+<td><a href="llm_gateway/">Gateway</a></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title">Doku-Sanierung läuft</p>
+<p>Der Stand ist ungleichmäßig: Seiten mit <code>&lt;!-- verified: … --&gt;</code>-Markern sind
+gegen den Code geprüft, andere sind älter als der Code, den sie beschreiben.
+Fehler bitte als <a href="https://github.com/MarkinHaus/ToolBoxV2/issues">Issue</a> melden.</p>
+</div>
+<p class="tb-footer">
+© 2022–2026 Markin Hausmanns · <a href="https://github.com/MarkinHaus/ToolBoxV2">GitHub</a> · <a href="https://pypi.org/project/ToolBoxV2">PyPI</a>
+</p>
 
 
 
@@ -4325,19 +2987,29 @@
 
 
 
+  
+  
 
 
+
+
+  
 
 
 
                 
-
               </article>
             </div>
           
           
 <script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
         </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Zurück zum Seitenanfang
+</button>
         
       </main>
       
@@ -4346,6 +3018,10 @@
   <div class="md-footer-meta md-typeset">
     <div class="md-footer-meta__inner md-grid">
       <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      © 2022–2026 Markin Hausmanns
+    </div>
   
   
     Made with
@@ -4368,7 +3044,7 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["navigation.instant", "navigation.tabs", "navigation.sections", "navigation.expand", "search.highlight", "content.code.copy"], "search": "assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["navigation.instant", "navigation.tracking", "navigation.tabs", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "In Zwischenablage kopiert", "clipboard.copy": "In Zwischenablage kopieren", "search.result.more.one": "1 weiteres Suchergebnis auf dieser Seite", "search.result.more.other": "# weitere Suchergebnisse auf dieser Seite", "search.result.none": "Keine Suchergebnisse", "search.result.one": "1 Suchergebnis", "search.result.other": "# Suchergebnisse", "search.result.placeholder": "Suchbegriff eingeben", "search.result.term.missing": "Es fehlt", "select.version": "Version ausw\u00e4hlen"}, "version": null}</script>
     
     
       <script src="assets/javascripts/bundle.79ae519e.min.js"></script>

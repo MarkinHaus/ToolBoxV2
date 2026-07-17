@@ -1,27 +1,202 @@
-/* Hintergrund sehr schlicht */
-:root {
-  --md-default-bg-color: #111;   /* tief dunkel */
-  --md-code-bg-color:    #1b1b1b;
-  --md-text-color:       #ddd;
+/* ═══════════════════════════════════════════════════════════════════════
+   ToolBoxV2 Docs — TBJS Glass / Deep Tech Unified Style (main_style.md v3.0)
+   Dark mode only. Quiet UI: precise, discrete, minimally invasive.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root,
+[data-md-color-scheme="slate"] {
+  /* ── Raw OKLCH primitives ── */
+  --raw-primary: 55% 0.18 230;
+  --raw-success: 65% 0.2 145;
+  --raw-warning: 75% 0.18 85;
+  --raw-error:   55% 0.22 25;
+
+  --primary: oklch(var(--raw-primary));
+  --success: oklch(var(--raw-success));
+  --warning: oklch(var(--raw-warning));
+  --error:   oklch(var(--raw-error));
+
+  /* ── Dark surfaces ── */
+  --bg-base:       #08080d;
+  --bg-surface:    rgba(10, 10, 18, 0.8);
+  --bg-elevated:   rgba(15, 15, 25, 0.9);
+  --bg-sunken:     rgba(0, 0, 0, 0.3);
+  --glass-bg:      rgba(255, 255, 255, 0.02);
+  --glass-border:  rgba(255, 255, 255, 0.05);
+  --glass-blur:    12px;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+
+  --text-main:  rgba(255, 255, 255, 0.85);
+  --text-body:  rgba(255, 255, 255, 0.7);
+  --text-label: rgba(255, 255, 255, 0.4);
+  --text-muted: rgba(255, 255, 255, 0.25);
+
+  /* ── Dynamic surfaces ── */
+  --surface-badge:  color-mix(in oklch, var(--primary) 15%, transparent);
+  --surface-hover:  color-mix(in oklch, var(--primary)  5%, transparent);
+  --surface-active: color-mix(in oklch, var(--primary) 10%, transparent);
+  --border-active:  color-mix(in oklch, var(--primary) 30%, transparent);
+
+  --highlight-inset: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --shadow-micro: 0 1px 3px rgba(0, 0, 0, 0.5);
+
+  --radius-sm: 4px; --radius-md: 8px; --radius-lg: 12px;
+  --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px;
+  --duration-fast: 120ms; --duration-normal: 200ms;
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --font-sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+
+  /* ── Map onto Material ── */
+  --md-default-bg-color:      var(--bg-base);
+  --md-default-fg-color:      var(--text-main);
+  --md-default-fg-color--light: var(--text-body);
+  --md-default-fg-color--lighter: var(--text-label);
+  --md-default-fg-color--lightest: var(--text-muted);
+  --md-primary-fg-color:      var(--bg-base);
+  --md-accent-fg-color:       var(--primary);
+  --md-typeset-a-color:       var(--primary);
+  --md-code-bg-color:         var(--bg-sunken);
+  --md-code-fg-color:         var(--text-main);
+  --md-typeset-table-color:   var(--border-subtle);
+  --md-footer-bg-color:       transparent;
+  --md-footer-bg-color--dark: transparent;
+  --md-admonition-bg-color:   var(--glass-bg);
 }
 
-/* Links dezenter */
-.md-typeset a {
-  color: #66b2ff;
-  text-decoration: none;
-}
-.md-typeset a:hover {
-  text-decoration: underline;
+body { font-family: var(--font-sans); }
+
+/* ── Density: instrument panel, not marketing ── */
+.md-typeset { font-size: 13px; line-height: 1.6; }
+.md-typeset h1 { font-size: clamp(18px, 2vw, 22px); font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; color: var(--text-main); text-wrap: balance; }
+.md-typeset h2 { font-size: clamp(16px, 1.8vw, 19px); font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; color: var(--text-main); }
+.md-typeset h3 { font-size: clamp(14px, 1.5vw, 16px); font-weight: 600; letter-spacing: -0.02em; color: var(--text-main); }
+.md-typeset h4, .md-typeset h5 { font-weight: 600; color: var(--text-main); }
+.md-typeset p { color: var(--text-body); max-inline-size: 72ch; }
+
+/* h6 = micro-label — the signature mark */
+.md-typeset h6 {
+  font-family: var(--font-mono); font-size: 9px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 2.5px;
+  color: var(--text-label); user-select: none; margin: 1.6em 0 0.4em;
 }
 
-/* Navigation zurückhaltender */
-.md-sidebar, .md-header {
-  box-shadow: none !important;
-  background-color: #111 !important;
+/* ── Chrome: transparent glass HUD ── */
+.md-header {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-bottom: 1px solid var(--glass-border);
+  box-shadow: var(--highlight-inset), var(--shadow-micro);
+  color: var(--text-main);
 }
+.md-header__title, .md-header__topic { font-family: var(--font-sans); font-weight: 600; font-size: 13px; color: var(--text-main); }
+.md-tabs { background: transparent; border-bottom: 1px solid var(--border-subtle); }
+.md-tabs__link { font-size: 11px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 1px; color: var(--text-label); opacity: 1; }
+.md-tabs__link--active, .md-tabs__link:hover { color: var(--primary); }
+.md-search__form { background: var(--bg-sunken); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
+.md-search__form:hover { background: var(--bg-sunken); border-color: var(--border-active); }
+.md-search__input { font-size: 13px; color: var(--text-main); }
 
-/* Code minimalistisch */
-.highlight pre, code {
-  border-radius: 4px;
-  padding: 0.5em;
+/* Sidebars */
+.md-nav { font-size: 12px; }
+.md-nav__title { font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: 2.5px; color: var(--text-label); background: transparent !important; box-shadow: none !important; }
+.md-nav__link { color: var(--text-body); }
+.md-nav__link:hover { color: var(--primary); }
+.md-nav__link--active, .md-nav__item .md-nav__link--active { color: var(--primary); }
+[dir=ltr] .md-nav--primary .md-nav__item { border: none; }
+
+/* ── Code: inline uses accent, pre inherits ── */
+.md-typeset code {
+  font-family: var(--font-mono); font-size: 11px;
+  background: var(--bg-sunken); border-radius: var(--radius-sm);
+  padding: 0.2em 0.4em; color: var(--primary);
 }
+.md-typeset pre { border-radius: var(--radius-md); border: 1px solid var(--border-subtle); }
+.md-typeset pre > code { color: var(--text-main); font-size: 11.5px; background: transparent; }
+.md-typeset .highlight { background: var(--bg-sunken); border-radius: var(--radius-md); }
+.md-clipboard { color: var(--text-muted); }
+.md-clipboard:hover { color: var(--primary); }
+
+/* ── Tables → grid look (glass rows, mono headers) ── */
+.md-typeset table:not([class]) {
+  font-size: 12px; border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md); background: var(--glass-bg);
+  box-shadow: var(--highlight-inset), var(--shadow-micro);
+}
+.md-typeset table:not([class]) th {
+  font-family: var(--font-mono); font-size: 9px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 1px; color: var(--text-label);
+  background: transparent; border-bottom: 1px solid var(--border-subtle);
+}
+.md-typeset table:not([class]) td { border-top: 1px solid var(--border-subtle); color: var(--text-body); }
+.md-typeset table:not([class]) tbody tr:hover { background: var(--surface-hover); box-shadow: none; }
+
+/* ── Grid cards: glass cards, quiet hover ── */
+.md-typeset .grid.cards > ol > li,
+.md-typeset .grid.cards > ul > li {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--highlight-inset), var(--shadow-micro);
+  transition: transform var(--duration-normal) var(--ease-default),
+              box-shadow var(--duration-normal) var(--ease-default),
+              border-color var(--duration-normal) var(--ease-default);
+}
+.md-typeset .grid.cards > ol > li:hover,
+.md-typeset .grid.cards > ul > li:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-active);
+  box-shadow: var(--highlight-inset), 0 4px 8px rgba(0, 0, 0, 0.6);
+}
+.md-typeset .grid.cards hr { border-color: var(--border-subtle); }
+
+/* ── Admonitions: glass, 2px accent spine, no candy colors ── */
+.md-typeset .admonition, .md-typeset details {
+  background: var(--glass-bg); border: 1px solid var(--glass-border);
+  border-left: 2px solid var(--primary); border-radius: var(--radius-md);
+  box-shadow: var(--highlight-inset), var(--shadow-micro); font-size: 12px;
+}
+.md-typeset .admonition-title, .md-typeset summary {
+  background: transparent !important;
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-label);
+}
+.md-typeset .admonition-title::before, .md-typeset summary::before { background-color: var(--primary) !important; }
+.md-typeset .admonition.warning, .md-typeset details.warning { border-left-color: var(--warning); }
+.md-typeset .warning > .admonition-title::before, .md-typeset .warning > summary::before { background-color: var(--warning) !important; }
+.md-typeset .admonition.danger, .md-typeset .admonition.failure { border-left-color: var(--error); }
+.md-typeset .danger > .admonition-title::before, .md-typeset .failure > .admonition-title::before { background-color: var(--error) !important; }
+.md-typeset .admonition.success, .md-typeset .admonition.tip { border-left-color: var(--success); }
+.md-typeset .success > .admonition-title::before, .md-typeset .tip > .admonition-title::before { background-color: var(--success) !important; }
+
+/* ── Buttons ── */
+.md-typeset .md-button {
+  font-size: 13px; font-weight: 500; border-radius: var(--radius-md);
+  color: var(--text-main); background: var(--glass-bg);
+  border: 1px solid var(--border-subtle); box-shadow: var(--highlight-inset);
+  transition: transform var(--duration-fast) var(--ease-default);
+}
+.md-typeset .md-button:hover { transform: translateY(-1px); border-color: var(--border-active); color: var(--text-main); background: var(--surface-hover); }
+.md-typeset .md-button--primary { color: #000; background: var(--primary); border: none; }
+.md-typeset .md-button--primary:hover { background: color-mix(in oklch, var(--primary) 90%, white); color: #000; }
+
+/* ── Footer / misc chrome ── */
+.md-footer { border-top: 1px solid var(--border-subtle); color: var(--text-muted); }
+.md-footer-meta { background: transparent; }
+.md-top { background: var(--bg-elevated); border: 1px solid var(--border-subtle); color: var(--text-body); }
+.md-typeset hr { border-bottom: 1px solid var(--border-subtle); }
+.md-typeset a { color: var(--primary); }
+.md-typeset a:hover { color: color-mix(in oklch, var(--primary) 80%, white); }
+::selection { background: var(--surface-badge); }
+
+/* Mermaid quiet theming */
+.md-typeset .mermaid { margin: 1.2em 0; text-align: center; }
+
+/* Landing helpers */
+.tb-tagline { font-size: 14px; line-height: 1.6; max-width: 60ch; color: var(--text-body); }
+.tb-badges img { margin-right: 0.35em; vertical-align: middle; opacity: 0.9; }
+.tb-footer { text-align: center; font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted); }
