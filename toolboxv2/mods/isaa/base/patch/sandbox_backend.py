@@ -371,6 +371,9 @@ class AIOSandboxBackend:
 
     # -- helpers ---------------------------------------------------------------
     def _abs(self, path: str) -> str:
+        # Agent-facing namespace prefix: sbox:/x == /x, sbox:x == relative x.
+        if path.startswith("sbox:"):
+            path = path[5:]
         if path.startswith("/"):
             return path
         return f"{self.workdir.rstrip('/')}/{path}"
@@ -448,6 +451,182 @@ class AIOSandboxBackend:
         except Exception as e:
             res = _err(e)
         self._emit("sandbox.exec", {"command": command[:300], "returncode": res["returncode"],
+                                    "ms": round((time.time() - t0) * 1000, 1)})
+        return res
+
+    # -- labelled background shell sessions (A/B/C) -----------------------------
+    #
+    # Design: the agent-facing shell no longer blocks on the SDK's synchronous
+    # exec_command timeout. Commands run DETACHED inside the sandbox, output is
+    # appended to a per-session log file, and the host polls cheap size probes.
+    # This gives:
+    #   - early stop when output goes idle (instead of waiting out the timeout)
+    #   - late output is captured in the log; the next call on the same session
+    #     label returns everything new since the last read (cursor-based)
+    #   - real multiline commands/heredocs: the command is written to a script
+    #     file first, so no escaping ever passes through the exec channel
+    SESSION_LABELS = ("A", "B", "C")
+
+    def _job_paths(self, label: str) -> dict:
+        base = f"{self.workdir.rstrip('/')}/.shell"
+        return {"dir": base, "log": f"{base}/{label}.log", "pid": f"{base}/{label}.pid",
+                "exit": f"{base}/{label}.exit", "script": f"{base}/{label}.cmd.sh"}
+
+    def _job_state(self, label: str) -> tuple[bool, int, int | None]:
+        """(running, log_size_bytes, exit_code|None) via one cheap probe."""
+        p = self._job_paths(label)
+        out = self._exec_raw(
+            f"mkdir -p '{p['dir']}'; "
+            f"if [ -f '{p['pid']}' ] && kill -0 $(cat '{p['pid']}') 2>/dev/null; "
+            f"then echo RUN; else echo IDLE; fi; "
+            f"([ -f '{p['log']}' ] && wc -c < '{p['log']}') || echo 0; "
+            f"([ -f '{p['exit']}' ] && cat '{p['exit']}') || echo NA",
+            timeout=20,
+        )
+        lines = [l.strip() for l in out.strip().splitlines() if l.strip()]
+        running = bool(lines) and lines[0] == "RUN"
+        size = 0
+        if len(lines) > 1:
+            try:
+                size = int(lines[1])
+            except ValueError:
+                pass
+        exit_code = None
+        if len(lines) > 2 and lines[2] != "NA":
+            try:
+                exit_code = int(lines[2])
+            except ValueError:
+                pass
+        return running, size, exit_code
+
+    def _job_read_delta(self, label: str, offset: int, limit: int = 30000) -> str:
+        p = self._job_paths(label)
+        return self._exec_raw(
+            f"tail -c +{offset + 1} '{p['log']}' 2>/dev/null | head -c {limit}",
+            timeout=30,
+        )
+
+    def _cursors(self) -> dict:
+        cur = getattr(self, "_shell_cursors", None)
+        if cur is None:
+            cur = {}
+            self._shell_cursors = cur
+        return cur
+
+    def exec_session(self, command: str = "", label: str = "A",
+                     timeout: float | None = None, idle_timeout: float = 8.0,
+                     reset: bool = False, poll_interval: float = 0.5) -> dict:
+        """Run a command in labelled session A/B/C. Empty command = fetch new
+        output of that session. reset=True kills the session's job and clears
+        its log. Returns early once output has been idle for idle_timeout s."""
+        label = (label or "A").strip().upper()
+        if label not in self.SESSION_LABELS:
+            return _err(f"unknown shell session '{label}' — max {len(self.SESSION_LABELS)} "
+                        f"sessions, labels {list(self.SESSION_LABELS)}")
+        p = self._job_paths(label)
+        cursors = self._cursors()
+        t0 = time.time()
+
+        if reset:
+            self._exec_raw(
+                f"[ -f '{p['pid']}' ] && kill -9 $(cat '{p['pid']}') 2>/dev/null; "
+                f"rm -f '{p['log']}' '{p['pid']}' '{p['exit']}' '{p['script']}'; echo reset",
+                timeout=20,
+            )
+            cursors[label] = 0
+            self._emit("sandbox.exec", {"command": f"<session {label} reset>", "returncode": 0,
+                                        "ms": round((time.time() - t0) * 1000, 1)})
+            return _ok(stdout=f"session {label} reset")
+
+        running, size, exit_code = self._job_state(label)
+        cursor = cursors.get(label, 0)
+        if cursor > size:  # log was truncated/rotated externally
+            cursor = 0
+
+        # Poll mode: no command → return whatever is new since the last read.
+        if not command.strip():
+            delta = self._job_read_delta(label, cursor) if size > cursor else ""
+            cursors[label] = size
+            status = "running" if running else "idle"
+            note = "" if running else (
+                f"\n[exit code: {exit_code}]" if exit_code is not None else "")
+            return _ok(stdout=(delta or f"(no new output, session {label} {status})") + note,
+                       returncode=0 if (running or not exit_code) else exit_code)
+
+        # Busy session: never queue silently — surface fresh output + options.
+        if running:
+            delta = self._job_read_delta(label, cursor) if size > cursor else ""
+            cursors[label] = size
+            return _err(
+                f"session {label} is still running a command. New output since last read:\n"
+                f"{delta or '(none)'}\n"
+                f"→ poll with sandbox_shell(shell_session='{label}', command=''), use another "
+                f"session label, or reset with reset=True.", returncode=2)
+
+        # Start: leftover late output of the previous command is picked up first.
+        late = self._job_read_delta(label, cursor) if size > cursor else ""
+
+        # Multiline-safe: the command body goes into a script file (no escaping
+        # through the exec channel), then runs detached with exit-code capture.
+        w = self.write(p["script"], command if command.endswith("\n") else command + "\n")
+        if not w.get("success"):
+            return w
+        # The braces-group form fully detaches the job even when the exec
+        # channel captures stdout/stderr via pipes (child must not inherit them).
+        start = self._exec_raw(
+            f"rm -f '{p['exit']}'; cd '{self.workdir}' && "
+            f"{{ nohup bash -c 'bash \"{p['script']}\"; echo $? > \"{p['exit']}\"' "
+            f">> '{p['log']}' 2>&1 < /dev/null & }} 2>/dev/null; echo $!",
+            timeout=20,
+        )
+        pid = start.strip().splitlines()[-1].strip() if start.strip() else ""
+        self._exec_raw(f"echo '{pid}' > '{p['pid']}'", timeout=10)
+        start_size = size
+
+        # Host-side wait: early stop on process end OR idle output OR hard cap.
+        hard_cap = min(float(timeout) if timeout else 120.0, 600.0)
+        last_growth = time.time()
+        last_size = start_size
+        running_now, exit_code = True, None
+        while True:
+            time.sleep(poll_interval)
+            running_now, cur_size, exit_code = self._job_state(label)
+            if cur_size > last_size:
+                last_size = cur_size
+                last_growth = time.time()
+            if not running_now:
+                break
+            now = time.time()
+            if now - t0 >= hard_cap:
+                break
+            if now - last_growth >= max(idle_timeout, poll_interval):
+                break
+
+        _, final_size, exit_code2 = self._job_state(label)
+        exit_code = exit_code2 if exit_code2 is not None else exit_code
+        delta = self._job_read_delta(label, start_size) if final_size > start_size else ""
+        cursors[label] = final_size
+
+        out_parts = []
+        if late:
+            out_parts.append(f"[late output of previous command in session {label}]\n{late}\n---")
+        out_parts.append(delta or "(no output)")
+        if running_now:
+            reason = "hard timeout" if (time.time() - t0 >= hard_cap) else \
+                f"no new output for {idle_timeout:.0f}s"
+            out_parts.append(
+                f"\n⏳ command in session {label} is STILL RUNNING ({reason}). It keeps "
+                f"running in the background; its output is captured. Fetch new output "
+                f"later with sandbox_shell(shell_session='{label}', command='').")
+            rc = 0
+        else:
+            rc = exit_code if exit_code is not None else 0
+        res = _ok(stdout="\n".join(out_parts), returncode=rc) if rc == 0 else \
+            {"success": False, "stdout": "\n".join(out_parts), "stderr": "", "returncode": rc}
+        res["session"] = label
+        res["running"] = running_now
+        self._emit("sandbox.exec", {"command": command[:300], "session": label,
+                                    "returncode": rc, "running": running_now,
                                     "ms": round((time.time() - t0) * 1000, 1)})
         return res
 

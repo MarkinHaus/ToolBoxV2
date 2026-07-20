@@ -225,7 +225,8 @@ class Session(metaclass=Singleton):
 
             url = f"{self.base}/api/CloudM.Auth/validate_session"
 
-            async with self.session.request("POST", url=url, json={"token": token}) as response:
+            async with self.session.request("POST", url=url, json={"token": token},
+                                            headers={"Authorization": f"Bearer {token}"}) as response:
                 if response.status == 200:
                     result = await response.json()
                     if result.get("result", {}).get("authenticated"):
@@ -269,7 +270,8 @@ class Session(metaclass=Singleton):
             async with self.session.request(
                 "POST",
                 url=f"{self.base}/api/CloudM.Auth/refresh_token",
-                json={"refresh_token": refresh_token}
+                json={"refresh_token": refresh_token},
+                headers={"Authorization": f"Bearer {refresh_token}"}
             ) as response:
                 if response.status == 200:
                     result = await response.json()

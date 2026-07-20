@@ -2995,10 +2995,11 @@ BEISPIELE:
 
             history_depth = 10 if self.is_sub_agent else 25
             permanent_history = session.get_history_for_llm(last_n=history_depth)
+            _ts = datetime.now().strftime("%d.%m.%Y: %H.%M")
             ctx.working_history = [
                 {"role": "system", "content": system_prompt},
                 *permanent_history,
-                {"role": "user", "content": query},
+                {"role": "user", "content": f"[system time {_ts}] {query}"},
             ]
             # augment — linearer last - N Seed(C1) bleibt = "was hast du gerade gemacht";
             # hier zusätzlich same-topic Recall aus früheren Runs
@@ -3824,9 +3825,17 @@ BEISPIELE:
                             )
                         )
                         result += focus_text
+                        result += (
+                            f"\nℹ️ Details jederzeit via sub_agents_status('{sub_result.id}')."
+                        )
                     else:
                         # spawn_result is sub_agent_id string
-                        result = f"🚀 Sub-Agent gestartet: {spawn_result}\nOutput dir: /sub/{output_dir}\nNutze wait_for('{spawn_result}') um auf das Ergebnis zu warten."
+                        result = (
+                            f"🚀 Sub-Agent gestartet: {spawn_result}\n"
+                            f"Output dir: /sub/{output_dir}\n"
+                            f"Nutze sub_agents_status('{spawn_result}') um den Live-Status einzusehen, "
+                            f"und wait_for('{spawn_result}') um auf das Ergebnis zu warten."
+                        )
 
                 except Exception as e:
                     result = f"ERROR spawning sub-agent: {str(e)}"
@@ -3866,6 +3875,18 @@ BEISPIELE:
 
                 except Exception as e:
                     result = f"ERROR waiting for sub-agents: {str(e)}"
+
+        elif f_name == "resume_sub_agent":
+            # Bugfix: this branch was missing — resume_sub_agent fell through to
+            # the dynamic-tool catch-all (arun_function) and returned
+            # "Tool war noch nicht geladen" although the handler exists.
+            result = await self._tool_resume_sub_agent(
+                sub_agent_id=f_args.get("sub_agent_id", ""),
+                additional_iterations=f_args.get("additional_iterations", 10),
+                additional_budget=f_args.get("additional_budget", 3000),
+                wait=f_args.get("wait", True),
+                context=f_args.get("context"),
+            )
 
         elif f_name == "sub_agents_status":
             if not self._sub_agent_manager:
@@ -5152,6 +5173,20 @@ BEISPIELE:
                 "- Sub-Agent Management: spawn_sub_agent, wait_for, resume_sub_agent",
                 "  → If a sub-agent hits max_iterations but made progress, resume it with more iterations",
             ]))
+
+        static_parts.append("\n".join([
+            "",
+            "FILESYSTEM NAMESPACES — the path prefix tells you WHICH filesystem a path belongs to:",
+            "- vfs:  → session virtual file system (vfs_* tools), e.g. vfs:/notes/plan.md",
+            "- sbox: → isolated sandbox container filesystem (sandbox_* tools), e.g. sbox:/work/main.py",
+            "- A path starting with a bare / is AMBIGUOUS: either a PARTIAL path (ask the user which "
+            "filesystem is meant) or a unix host path.",
+            "- Any other path start (C:\\..., D:\\..., backslash-relative) is a WINDOWS host path.",
+            "Always write vfs:/sbox: prefixes yourself when calling vfs_*/sandbox_* tools.",
+            "",
+            "TIME: Every user request starts with [system time DD.MM.YYYY: HH.MM] — the current date "
+            "and time at request arrival. Use it as your temporal anchor for 'today', dates and deadlines.",
+        ]))
 
         static_parts.append(
             "\nIf the task has exceeded 10 iterations and prior summaries exist in the history, "

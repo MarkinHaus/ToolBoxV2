@@ -1359,6 +1359,11 @@ Nutzen für: ToolBox-Verwaltung, System-Config, Git-Operationen auf dem Host.
         if not path:
             return "/"
 
+        # Agent-facing namespace prefix: vfs:/foo == /foo. All agent-visible
+        # VFS paths use the vfs: prefix so the agent can tell filesystems apart.
+        if path.startswith("vfs:"):
+            path = path[4:] or "/"
+
         # Ensure path starts with /
         if not path.startswith("/"):
             path = "/" + path

@@ -26,6 +26,62 @@
   }
 
   // ============================================================================
+  // RENDER SCHEDULING + SCROLL MANAGEMENT
+  // ============================================================================
+
+  // Coalesce frame bursts: many WS frames per tick → at most one DOM render
+  // per animation frame. Keeps streaming smooth and the page interactive.
+  let _renderQueued = false;
+  function scheduleRender() {
+    if (_renderQueued) return;
+    _renderQueued = true;
+    requestAnimationFrame(() => {
+      _renderQueued = false;
+      renderChat();
+    });
+  }
+
+  // Guard so programmatic scrolls don't get misread as user intent.
+  let _progScroll = false;
+  function isViewAtBottom(view) {
+    return view.scrollHeight - view.scrollTop - view.clientHeight < 40;
+  }
+  function scrollProgrammatic(view, fn) {
+    _progScroll = true;
+    fn();
+    // scroll events dispatch after the frame → release the guard two frames later
+    requestAnimationFrame(() => requestAnimationFrame(() => { _progScroll = false; }));
+  }
+
+  function updateScrollBadge() {
+    const view = document.getElementById('view');
+    let badge = document.getElementById('scroll-bottom-badge');
+    if (!badge) {
+      badge = document.createElement('button');
+      badge.id = 'scroll-bottom-badge';
+      badge.className = 'scroll-bottom-badge';
+      badge.title = 'Nach unten';
+      badge.setAttribute('aria-label', 'Nach unten scrollen');
+      badge.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7 7 7-7"/></svg>';
+      badge.addEventListener('click', () => {
+        Store.autoFollow = true;
+        _progScroll = true;
+        view.scrollTo({ top: view.scrollHeight, behavior: 'smooth' });
+        // smooth scrolling emits events for a while → hold the guard, then re-check
+        setTimeout(() => {
+          _progScroll = false;
+          Store.autoFollow = true;
+          updateScrollBadge();
+        }, 500);
+        badge.hidden = true;
+      });
+      document.getElementById('main').appendChild(badge);
+    }
+    const inChat = document.querySelector('.isaa-body').dataset.view === 'chat';
+    badge.hidden = !inChat || isViewAtBottom(view);
+  }
+
+  // ============================================================================
   // VIEW: WELCOME
   // ============================================================================
 
@@ -62,12 +118,14 @@
       view.innerHTML = '<div class="chat-container"></div>';
       container = view.querySelector('.chat-container');
       Chat.bindEvents(container);
-      // Persist scroll on user scroll
+      // Track user intent: at bottom → follow the stream; scrolled up → hands off.
       view.addEventListener('scroll', () => {
+        if (_progScroll) return;
+        Store.autoFollow = isViewAtBottom(view);
         Store.setScroll(view.scrollTop);
+        updateScrollBadge();
       }, { passive: true });
     }
-    const wasAtBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 50;
     if (!Store.frames.length) {
       // Empty active chat — show a placeholder so user sees the chat is alive
       container.innerHTML = `
@@ -81,14 +139,20 @@
       `;
     } else {
       Chat.render(container);
-      // Auto-scroll to bottom if we WERE at bottom or it's first render; else preserve.
-      const view2 = document.getElementById('view');
-      const savedScroll = Store.getScroll();
-      if (wasAtBottom || !savedScroll) {
-        Chat.scrollToBottom(container);
-      } else {
-        view2.scrollTop = savedScroll;
+      if (Store.pendingScrollRestore) {
+        // One-time restore when a chat is (re)opened: saved position, else bottom.
+        Store.pendingScrollRestore = false;
+        const saved = Store.getScroll();
+        scrollProgrammatic(view, () => {
+          view.scrollTop = saved > 0 ? saved : view.scrollHeight;
+        });
+        Store.autoFollow = isViewAtBottom(view);
+      } else if (Store.autoFollow) {
+        // Pinned to bottom → keep following the stream.
+        scrollProgrammatic(view, () => { view.scrollTop = view.scrollHeight; });
       }
+      // else: the user scrolled up — never touch their position mid-stream.
+      updateScrollBadge();
     }
     const cancelBtn = document.getElementById('btn-cancel');
     const sendBtn = document.getElementById('btn-send');
@@ -181,7 +245,7 @@
         }
         Store.pushFrame(f);
         // Don't rebuild the chat view while in widget mode — it would wipe the grid.
-        if (document.querySelector('.isaa-body').dataset.view !== 'widgets') renderChat();
+        if (document.querySelector('.isaa-body').dataset.view !== 'widgets') scheduleRender();
       },
     });
     WS.connect(chatId);
@@ -216,6 +280,7 @@
       // Immediate feedback: optimistic user bubble + thinking state (Fix 3),
       // and switch to chat view → plays the welcome→chat animation (Fix 1).
       Store.isRunning = true;
+      Store.autoFollow = true;  // sending is explicit intent to see the answer
       Store.pushFrame({ type: 'user_msg', text, attachments: attMapped, _optimistic: true });
       renderChat();
       // Reliable delivery even if the socket is still connecting (first message).

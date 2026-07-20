@@ -47,6 +47,13 @@
     l2Steps: new Set(),
     ioOpen: new Set(),   // `${stepId}::${toolId}` — expanded tool i/o
     rawOpen: new Set(),  // stepId — expanded raw frames
+    pillOpen: new Set(), // `${stepId}::${toolId}` — tool pill L1 open (survives re-render)
+
+    // scroll follow: true → keep the view pinned to the bottom while streaming;
+    // flips to false as soon as the user scrolls away from the bottom.
+    autoFollow: true,
+    // one-shot: restore the persisted scroll position on the next chat render
+    pendingScrollRestore: false,
 
     // ----- emit/on -----
     on(ev, fn) {
@@ -69,6 +76,8 @@
       this.runId = null;
       this.isRunning = false;
       this.attachments = [];
+      this.autoFollow = true;
+      this.pendingScrollRestore = true;
       this._loadExpanded();
       this.emit('chat:changed', id);
     },
@@ -79,12 +88,14 @@
         this.l2Steps = new Set();
         this.ioOpen = new Set();
         this.rawOpen = new Set();
+        this.pillOpen = new Set();
         return;
       }
       this.expandedSteps = new Set(lsGet(`expanded.${id}`, []));
       this.l2Steps = new Set(lsGet(`l2.${id}`, []));
       this.ioOpen = new Set();
       this.rawOpen = new Set();
+      this.pillOpen = new Set();
     },
     toggleExpanded(stepId) {
       if (this.expandedSteps.has(stepId)) this.expandedSteps.delete(stepId);
@@ -105,6 +116,10 @@
     toggleRaw(stepId) {
       if (this.rawOpen.has(stepId)) this.rawOpen.delete(stepId);
       else this.rawOpen.add(stepId);
+    },
+    togglePill(key) {
+      if (this.pillOpen.has(key)) this.pillOpen.delete(key);
+      else this.pillOpen.add(key);
     },
     // ----- sidebar -----
     setPanel(p) {

@@ -56,7 +56,9 @@ def register(app, ctx):
     @app.put("/api/chats/{chat_id}")
     async def update_chat(chat_id: str, request):
         body = request.json_data or {}
-        allowed = {"title", "ui"}
+        # "agent" is hot-switchable: the bridge resolves meta.agent per send,
+        # so a change takes effect from the next message on.
+        allowed = {"title", "ui", "agent"}
         fields = {k: v for k, v in body.items() if k in allowed}
         meta = store.update_meta(chat_id, **fields)
         if not meta:

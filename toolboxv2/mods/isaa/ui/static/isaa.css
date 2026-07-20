@@ -1258,3 +1258,43 @@ body.is-running .isa-logo,
   font-size: var(--text-xs, 9px);
   color: var(--text-muted, rgba(255,255,255,0.4));
 }
+
+/* ---- Scroll-to-bottom badge (visible when the view is not at the bottom) ---- */
+.scroll-bottom-badge {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 118px;
+  z-index: 11;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle, rgba(255,255,255,0.12));
+  background: var(--surface-raised, rgba(30,30,34,0.92));
+  color: var(--text-muted, rgba(255,255,255,0.75));
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+  transition: color var(--duration-normal, 200ms), border-color var(--duration-normal, 200ms);
+}
+.scroll-bottom-badge:hover {
+  color: var(--primary, #4a9eff);
+  border-color: var(--border-active, rgba(74,158,255,0.3));
+}
+.scroll-bottom-badge[hidden] { display: none; }
+@media (max-width: 767px) {
+  .scroll-bottom-badge { bottom: calc(150px + env(safe-area-inset-bottom)); }
+}
+
+/* ---- Settings panel: session section ---- */
+.session-current {
+  font-size: var(--text-sm, 11px);
+  padding: 6px 8px;
+  border-radius: var(--radius-md, 6px);
+  background: var(--surface-active, rgba(255,255,255,0.05));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

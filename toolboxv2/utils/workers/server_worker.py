@@ -150,7 +150,7 @@ class ParsedRequest:
         """Get session token from body or Authorization header."""
         # From body (JSON)
         if self.json_data and isinstance(self.json_data, dict):
-            token = self.json_data.get("session_token") or self.json_data.get("Jwt_claim")
+            token = self.json_data.get("session_token") or self.json_data.get("token") or self.json_data.get("Jwt_claim")
             if token:
                 return token
         # From Authorization header
@@ -421,6 +421,7 @@ class AccessController:
             "passkey_login_start", "passkey_login_finish",
             "verify_session_token", "get_discord_auth_url",
             "get_google_auth_url", "login_discord", "login_google",
+            "validate_session", "refresh_token",
         ]
         if function_name in save_fuctions:
             return True

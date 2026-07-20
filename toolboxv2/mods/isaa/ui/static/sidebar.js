@@ -293,11 +293,69 @@ const src = modal.querySelector('#m-text').value;
   }
 
 
+  /**
+   * Session section inside the settings panel: shows the active session,
+   * switches to another session, and re-binds the session's agent live.
+   * Agent change is a PUT on the chat meta — the bridge resolves meta.agent
+   * per send, so it takes effect from the next message on.
+   */
+  async function renderSessionSection(host, agents) {
+    let chats = [];
+    try { chats = await get('/api/chats'); } catch (_) { chats = []; }
+    Store.chats = chats;
+    const active = chats.find(c => c.chat_id === Store.activeChatId) || null;
+    const title = active ? (active.title || 'Untitled') : '— keine aktive Session —';
+    const curAgent = (Store.chatMeta && Store.chatMeta.agent) || (active && active.agent) || '';
+    host.innerHTML = `
+      <div class="cfg-form">
+        <div>
+          <label>Aktuelle Session</label>
+          <div class="session-current" title="${escape(Store.activeChatId || '')}">${escape(title)}</div>
+        </div>
+        <div>
+          <label>Session wechseln</label>
+          <select id="sess-switch">
+            ${active ? '' : '<option value="" selected>— wählen —</option>'}
+            ${chats.map(c => `<option value="${escape(c.chat_id)}" ${c.chat_id === Store.activeChatId ? 'selected' : ''}>${escape(c.title || 'Untitled')} · ${escape(c.agent || '')}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label>Agent dieser Session</label>
+          <select id="sess-agent" ${active ? '' : 'disabled'}>
+            ${(agents || []).map(a => `<option value="${escape(a.name)}" ${a.name === curAgent ? 'selected' : ''}>${escape(a.name)}${a.is_running ? ' ●' : ''}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+    `;
+    host.querySelector('#sess-switch').addEventListener('change', async (e) => {
+      const id = e.target.value;
+      if (!id || id === Store.activeChatId) return;
+      await window.ISAA.App.openChat(id);
+      renderSessionSection(host, Store.agents);  // reflect new active session
+    });
+    const agentSel = host.querySelector('#sess-agent');
+    if (agentSel && active) {
+      agentSel.addEventListener('change', async (e) => {
+        const name = e.target.value;
+        try {
+          await put(`/api/chats/${encodeURIComponent(Store.activeChatId)}`, { agent: name });
+          if (Store.chatMeta) Store.chatMeta.agent = name;
+          window.ISAA.UI.toast(`Agent gewechselt: ${name} (gilt ab der nächsten Nachricht)`, 'info');
+        } catch (err) {
+          window.ISAA.UI.toast('Agent-Wechsel fehlgeschlagen: ' + err.message, 'error');
+        }
+      });
+    }
+  }
+
   async function renderAgent(panel) {
-    panel.innerHTML = '<h3 class="sb-panel-title">Agent Config</h3><div id="agent-form"><em>laden…</em></div>';
+    panel.innerHTML = '<h3 class="sb-panel-title">Session</h3><div id="session-form"><em>laden…</em></div>'
+      + '<h3 class="sb-panel-title" style="margin-top:16px">Agent Config</h3><div id="agent-form"><em>laden…</em></div>';
+    const sessWrap = panel.querySelector('#session-form');
     const wrap = panel.querySelector('#agent-form');
     const agents = await get('/api/agents');
     Store.agents = agents;
+    renderSessionSection(sessWrap, agents);
     if (!agents.length) { wrap.innerHTML = '<em>Keine Agents</em>'; return; }
     const activeName = Store.chatMeta ? Store.chatMeta.agent : (agents[0]?.name);
     wrap.innerHTML = `

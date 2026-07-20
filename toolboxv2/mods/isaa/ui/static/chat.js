@@ -256,7 +256,8 @@
     return `<div class="msg msg-user">${escape(f.text || '')}${attHtml}</div>`;
   }
 
-  function renderToolPill(t, stepId, l1Open) {
+  function renderToolPill(t, stepId, stepExpanded) {
+    const l1Open = stepExpanded || window.ISAA.Store.pillOpen.has(stepId + '::' + t.id);
     const argsInline = renderArgsInline(t.args);
     const statusIcon = t.status === 'running' ? '⟳' : (t.status === 'ok' ? '✓' : '✕');
     const resultPreview = t.result == null
@@ -265,7 +266,7 @@
          ? (t.result.length > TRUNC_STRING ? t.result.slice(0, TRUNC_STRING) + '…' : t.result)
          : JSON.stringify(t.result).slice(0, TRUNC_STRING));
     return `
-      <div class="tool-pill" data-status="${t.status}" data-tool-id="${escape(t.id)}" data-step-id="${escape(stepId)}" data-l1="${l1Open ? 'true' : 'false'}">
+      <div class="tool-pill" data-status="${t.status}" data-tool-id="${escape(t.id)}" data-step-id="${escape(stepId)}" data-l1="${l1Open ? 'true' : 'false'}" data-pill-key="${escape(stepId + '::' + t.id)}">
         <span class="tp-icon">⚙</span>
         <span class="tp-name">${escape(humanToolName(t.name))}</span>
         <span class="tp-args">${argsInline}</span>
@@ -435,17 +436,24 @@ function extractStepMeta(step) {
     `;
   }
 
-  function render(container) {
-    const store = window.ISAA.Store;
-    const groups = groupFrames(store.frames);
-    if (groups.length === 0) {
-      container.innerHTML = '';
-      return;
-    }
-    let html = '<div class="chat-stream">';
+  /**
+   * Keyed, incremental render.
+   *
+   * Instead of rebuilding the whole chat DOM per frame (which destroys
+   * in-flight clicks, resets inner scroll positions and thrashes layout
+   * during streaming), each user message / step card is a keyed block.
+   * Only blocks whose HTML actually changed are replaced — during a stream
+   * that is exactly one card (the active step); everything before it stays
+   * byte-identical DOM.
+   */
+  function buildBlocks(groups, store) {
+    const blocks = [];
     for (let gi = 0; gi < groups.length; gi++) {
       const g = groups[gi];
-      if (g.user) html += renderUserMsg(g.user);
+      if (g.user) {
+        const k = g.user.seq != null ? `msg:${g.user.seq}` : `msg:opt${gi}`;
+        blocks.push({ key: k, html: renderUserMsg(g.user) });
+      }
       for (let si = 0; si < g.steps.length; si++) {
         const step = g.steps[si];
         const isLastOverall = (gi === groups.length - 1) && (si === g.steps.length - 1);
@@ -454,22 +462,97 @@ function extractStepMeta(step) {
         if (!hasContent && !(isLastOverall && store.isRunning)) continue;
         const expanded = store.expandedSteps.has(step.step_id);
         const l2 = store.l2Steps.has(step.step_id);
-        html += renderStep(step, isLastOverall, expanded, l2);
+        blocks.push({ key: `g${gi}:${step.step_id}`, html: renderStep(step, isLastOverall, expanded, l2) });
       }
     }
-    html += '</div>';
-    container.innerHTML = html;
-    // §8: ISA logo spinner pinned at the current streaming position (moves down
-    // with the content as new frames arrive + auto-scroll).
-    if (store.isRunning) {
-      const tpl = document.getElementById('tpl-logo');
-      const stream = container.querySelector('.chat-stream');
-      if (tpl && stream) {
-        const sp = document.createElement('div');
-        sp.className = 'stream-spinner';
-        sp.appendChild(tpl.content.cloneNode(true));
-        stream.appendChild(sp);
+    return blocks;
+  }
+
+  function htmlToElement(html) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html.trim();
+    return tpl.content.firstElementChild;
+  }
+
+  /** Preserve scrollTop/Left of inner scrollable elements across a block swap
+   *  (e.g. an open `.step-l2 pre` with overflow-y while its card re-renders). */
+  function captureScrollState(el) {
+    const out = [];
+    el.querySelectorAll('*').forEach((n, i) => {
+      if (n.scrollTop || n.scrollLeft) out.push([i, n.scrollTop, n.scrollLeft]);
+    });
+    return out;
+  }
+  function restoreScrollState(el, saved) {
+    if (!saved.length) return;
+    const all = el.querySelectorAll('*');
+    for (const [i, st, sl] of saved) {
+      const n = all[i];
+      if (n) { n.scrollTop = st; n.scrollLeft = sl; }
+    }
+  }
+
+  function render(container) {
+    const store = window.ISAA.Store;
+    const groups = groupFrames(store.frames);
+    if (groups.length === 0) {
+      container.innerHTML = '';
+      return;
+    }
+    let stream = container.querySelector(':scope > .chat-stream');
+    if (!stream) {
+      container.innerHTML = '<div class="chat-stream"></div>';
+      stream = container.firstElementChild;
+    }
+    const blocks = buildBlocks(groups, store);
+
+    const existing = new Map();
+    stream.querySelectorAll(':scope > [data-block-key]').forEach(el => existing.set(el.dataset.blockKey, el));
+    const seen = new Set();
+    let prev = null;
+    for (const b of blocks) {
+      seen.add(b.key);
+      let el = existing.get(b.key);
+      if (el) {
+        if (el.__isaaHtml !== b.html) {
+          const saved = captureScrollState(el);
+          const fresh = htmlToElement(b.html);
+          fresh.dataset.blockKey = b.key;
+          fresh.__isaaHtml = b.html;
+          el.replaceWith(fresh);
+          el = fresh;
+          restoreScrollState(el, saved);
+        }
+      } else {
+        el = htmlToElement(b.html);
+        el.dataset.blockKey = b.key;
+        el.__isaaHtml = b.html;
+        stream.appendChild(el);
       }
+      // keep document order in sync with block order
+      const want = prev ? prev.nextElementSibling : stream.firstElementChild;
+      if (want !== el) stream.insertBefore(el, want);
+      prev = el;
+    }
+    for (const [k, el] of existing) {
+      if (!seen.has(k)) el.remove();
+    }
+
+    // §8: ISA logo spinner pinned after the last block. The node is persistent
+    // (moved, not recreated) so its CSS animation doesn't restart per frame.
+    let spinner = stream.querySelector(':scope > .stream-spinner');
+    if (store.isRunning) {
+      if (!spinner) {
+        const tpl = document.getElementById('tpl-logo');
+        if (tpl) {
+          spinner = document.createElement('div');
+          spinner.className = 'stream-spinner';
+          spinner.appendChild(tpl.content.cloneNode(true));
+        }
+      }
+      if (spinner) stream.appendChild(spinner);
+    } else if (spinner) {
+      spinner.remove();
     }
   }
 
@@ -507,11 +590,12 @@ function extractStepMeta(step) {
           window.ISAA.WS.send({ op: 'rollback', step_id: stepId });
         }
       }
-      // Tool pill click: toggle L1 highlight (its parent step gets expanded too)
+      // Tool pill click: toggle L1 highlight. State lives in the Store so it
+      // survives incremental re-renders of the streaming card.
       const pill = t.closest('.tool-pill');
-      if (pill && !action) {
-        const cur = pill.dataset.l1 === 'true';
-        pill.dataset.l1 = cur ? 'false' : 'true';
+      if (pill && !action && pill.dataset.pillKey) {
+        window.ISAA.Store.togglePill(pill.dataset.pillKey);
+        render(container);
       }
     });
   }

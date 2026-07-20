@@ -400,9 +400,13 @@ class SubAgentManager:
             execution_context=state.execution_context if state.resumable else None  # NEW
         )
 
-        # Move to completed
+        # Move to completed. Resumable states stay in _sub_agents as well:
+        # resume_sub_agent needs the live SubAgentState (engine + preserved
+        # ExecutionContext) — deleting it here made every resume after a
+        # wait_for fail with "nicht gefunden".
         self._completed[sub_id] = result
-        del self._sub_agents[sub_id]
+        if not state.resumable:
+            del self._sub_agents[sub_id]
 
         return result
 

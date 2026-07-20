@@ -104,14 +104,27 @@ def make_sandbox_connect(session: "AgentSessionV2"):
 
 
 def make_sandbox_shell(session: "AgentSessionV2"):
-    def sandbox_shell(reason: str, command: str, timeout: float | None = None) -> dict:
-        """Execute a REAL bash command in the isolated sandbox (persistent shell
-        session, cwd = your workdir). Pipes, redirects, rg/grep/sed/git all work
-        exactly like a normal Linux shell."""
+    def sandbox_shell(reason: str, command: str = "", shell_session: str = "A",
+                      timeout: float | None = None, idle_timeout: float = 8.0,
+                      reset: bool = False) -> dict:
+        """REAL bash in the isolated sandbox — up to 3 labelled sessions A/B/C.
+
+        Multiline commands and heredocs are fully supported (the command runs
+        from a script file, nothing is escaped through the exec channel).
+
+        Early-stop semantics: the call returns as soon as the command finishes
+        OR its output has been idle for idle_timeout seconds — the command then
+        KEEPS RUNNING in the background and all further output is captured.
+        Fetch it later with command='' on the same shell_session. Raising
+        timeout is pointless: you never wait longer than the output is active.
+
+        command=''  -> collect new output of that session since your last read
+        reset=True  -> kill the session's running job and clear its log"""
         be = _backend(session)
         if isinstance(be, dict):
             return be
-        return be.exec(command, timeout=timeout)
+        return be.exec_session(command, label=shell_session, timeout=timeout,
+                               idle_timeout=idle_timeout, reset=reset)
     return sandbox_shell
 
 
@@ -454,9 +467,13 @@ def build_sandbox_tools(session: "AgentSessionV2") -> list[dict]:
              "key='<conn>.<folder>' = remote sandbox with your folder namespace.")},
         {"tool_func": make_sandbox_shell(session), "name": "sandbox_shell",
          "category": ["sandbox", "shell"], "description": (
-             "REAL bash in an isolated sandbox (persistent session, cwd=workdir). "
-             "Use it exactly like a normal Linux shell: ls, cat, rg, sed -i, git, "
-             "pip install, python script.py. Returns {success, stdout, stderr, returncode}.")},
+             "REAL bash in an isolated sandbox. Up to 3 labelled sessions "
+             "shell_session='A'|'B'|'C' (background jobs per session). Multiline "
+             "commands + heredocs fully supported. Returns EARLY once output is "
+             "idle for idle_timeout s — the command keeps running and output is "
+             "captured: fetch it with command='' on the same session. reset=True "
+             "kills+clears a session. Raising timeout is unnecessary. "
+             "Returns {success, stdout, stderr, returncode, session, running}.")},
         {"tool_func": make_sandbox_code(session), "name": "sandbox_code",
          "category": ["sandbox", "code"], "description": (
              "Run Python in the sandbox Jupyter kernel. State persists between calls.")},

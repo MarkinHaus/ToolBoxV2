@@ -1884,7 +1884,13 @@ class Tools(MainTool):
                 builder.add_tool(
                     self.shell_tool_function,
                     "shell",
-                    f"Run shell command in {detect_shell()}",
+                    (f"Run shell commands in {detect_shell()} — up to 3 persistent "
+                     f"labelled sessions session_id='A'|'B'|'C'. Multiline commands/"
+                     f"heredocs fully supported (script-file execution). Returns "
+                     f"EARLY once output is idle for idle_timeout s; the process "
+                     f"keeps running and further output is captured — fetch it by "
+                     f"calling with session_id only (no command). new_session=True "
+                     f"resets a session. Raising timeout is unnecessary."),
                     category=["local", "shell", "commands"],
                     flags={"shell": True, "detect_shell": True, "dangerous":True}
                 )
@@ -2476,15 +2482,52 @@ class ShellSession:
         except (IOError, BrokenPipeError):
             self.active = False
 
-    def read_output(self, timeout: float = 2.0) -> Dict[str, Any]:
+    def exec_script(self, command: str):
         """
-        Liest Output mit intelligenterem Timeout-Handling
+        Multiline-safe execution: the command body is written to a per-session
+        script file and invoked with ONE line — nothing multiline ever passes
+        through the shell's stdin, so heredocs / PowerShell blocks / indented
+        scripts work identically on every platform.
+        """
+        import tempfile
+        shell_exe, _ = detect_shell()
+        low = shell_exe.lower()
+        # Dot-sourcing / call: the script runs in the CURRENT shell process,
+        # so exports, cd and session state persist (a `bash script` subshell
+        # would silently drop them).
+        if "powershell" in low or "pwsh" in low:
+            suffix, invoke = ".ps1", lambda p: f". '{p}'"
+        elif low.endswith("cmd.exe") or low.endswith("cmd"):
+            suffix, invoke = ".bat", lambda p: f'call "{p}"'
+        else:
+            suffix, invoke = ".sh", lambda p: f". '{p}'"
+        path = getattr(self, "_script_path", None)
+        if not path or not path.endswith(suffix):
+            fd, path = tempfile.mkstemp(prefix=f"tb_shell_{self.id[:8]}_", suffix=suffix)
+            os.close(fd)
+            self._script_path = path
+        body = command if command.endswith("\n") else command + "\n"
+        with open(path, "w", encoding="utf-8", newline="\r\n" if self.is_windows else "\n") as f:
+            f.write(body)
+        self.write(invoke(path))
+
+    def read_output(self, timeout: float = 2.0, hard_timeout: float | None = None) -> Dict[str, Any]:
+        """
+        Liest Output mit Idle-Erkennung.
+
+        timeout       = IDLE-Fenster: return sobald so lange KEIN neuer Output kam
+        hard_timeout  = absolute Obergrenze (default: timeout * 3, alter Contract)
+
+        Läuft der Prozess danach weiter, sammeln die Reader-Threads weiteren
+        Output in den Queues — er wird beim NÄCHSTEN read_output derselben
+        Session geliefert (late output capture).
         """
         stdout_acc = bytearray()
         stderr_acc = bytearray()
 
         start_time = time.time()
         last_data_time = time.time()
+        hard_cap = hard_timeout if hard_timeout is not None else timeout * 3
 
         # Initial wait für Command-Processing
         time.sleep(0.15)
@@ -2505,12 +2548,13 @@ class ShellSession:
             except queue.Empty:
                 pass
 
-            # Timeout wenn keine neuen Daten mehr kommen
+            # Early stop: keine neuen Daten mehr → nicht den Timeout absitzen
             if (time.time() - last_data_time) > timeout:
                 break
 
-            # Absolutes Timeout
-            if (time.time() - start_time) > (timeout * 3):
+            # Absolutes Timeout — der Prozess läuft ggf. weiter, Output wird
+            # von den Readern weiter gecaptured
+            if (time.time() - start_time) > hard_cap:
                 break
 
             if self.process.poll() is not None:
@@ -2549,33 +2593,40 @@ class ShellSession:
 # =============================================================================
 
 
+SHELL_SESSION_LABELS = ("A", "B", "C")
+
+
 def shell_tool_function(
     command: Optional[str] = None,
-    session_id: Optional[str] = None,
+    session_id: Optional[str] = "A",
     user_input: Optional[str] = None,
     new_session: bool = False,
-    timeout: float = 6.0,
+    timeout: float = 60.0,
+    idle_timeout: float = 2.0,
 ) -> str:
     r"""
-    Shell-Tool mit Session-Support und verbessertem Error-Handling.
+    Host shell — up to 3 persistent labelled sessions 'A' | 'B' | 'C'.
 
     Features:
-    - Persistente Shell-Sessions
-    - Pipes & Operators (|, ;, &&, ||)
-    - Backslashes in Pfaden (C:\Users\...)
-    - Variable Evaluation ($env:VAR, $PSVersionTable)
-    - Interactive Input Support
-    - Multi-line Commands
-    - Cross-Platform (Windows/Linux/Mac)
-
-    - special command: list-sessions, cleanup-sessions
+    - Multiline commands & heredocs fully supported (the command runs from a
+      script file — nothing multiline passes through the shell's stdin)
+    - Early stop: returns as soon as output was idle for idle_timeout s;
+      raising `timeout` is pointless — you never wait longer than output flows
+    - Late output capture: if a command keeps running, its further output is
+      collected and returned on your NEXT call to the SAME session (poll by
+      calling with session_id only, no command)
+    - new_session=True on a label RESETS that session (kill + fresh shell)
+    - Pipes, operators, backslash paths, $env vars, interactive input
+    - special commands: list-sessions, cleanup-sessions
 
     Args:
-        command: Shell command to execute
-        session_id: Continue existing session
-        user_input: Send input to running process
-        new_session: Force new session creation
-        timeout: Output read timeout (default: 2.0s)
+        command: Shell command (may be multiline). None = poll the session
+                 for new output.
+        session_id: 'A' | 'B' | 'C' (max 3 sessions, default 'A')
+        user_input: Send raw input to a running/interactive process
+        new_session: Reset this label's session before executing
+        timeout: absolute cap in seconds (default 60, max 600)
+        idle_timeout: return after this many seconds without new output
 
     Returns:
         JSON string with execution result
@@ -2586,27 +2637,41 @@ def shell_tool_function(
     if command == "cleanup-sessions":
         return cleanup_sessions()
 
-    session = None
-    msg_info = ""
+    label = (session_id or "A").strip().upper()
+    if label not in SHELL_SESSION_LABELS:
+        return json.dumps({
+            "success": False,
+            "stderr": f"unknown shell session '{session_id}' — max "
+                      f"{len(SHELL_SESSION_LABELS)} sessions, labels "
+                      f"{list(SHELL_SESSION_LABELS)}",
+        }, ensure_ascii=False)
 
-    # Session Management
-    if session_id and session_id in _session_store and not new_session:
-        session = _session_store[session_id]
-        msg_info = "Resumed session"
-    else:
+    # Session Management (persistent per label; new_session=True = reset)
+    session = _session_store.get(label)
+    if session is not None and (new_session or not session.active):
+        session.terminate()
+        _session_store.pop(label, None)
+        session = None
+        msg_info = "Session reset"
+    if session is None:
         session = ShellSession()
-        _session_store[session.id] = session
-        msg_info = "New session started"
+        _session_store[label] = session
+        msg_info = locals().get("msg_info") or "New session started"
+    else:
+        msg_info = "Resumed session"
 
     # Command/Input Execution
-    input_to_send = user_input if user_input else command
+    if user_input:
+        session.write(user_input)          # raw line for interactive prompts
+    elif command:
+        session.exec_script(command)       # multiline-safe via script file
 
-    if input_to_send:
-        session.write(input_to_send)
-
-    # Output Collection
-    wait_time = timeout if command else (timeout / 2)
-    output = session.read_output(timeout=wait_time)
+    # Output Collection — idle-based early stop; poll mode drains fast.
+    hard_cap = min(max(float(timeout), 1.0), 600.0)
+    if command or user_input:
+        output = session.read_output(timeout=max(idle_timeout, 0.2), hard_timeout=hard_cap)
+    else:
+        output = session.read_output(timeout=0.3, hard_timeout=1.5)
 
     # Status Detection
     status = "running" if output["is_alive"] else "finished"
@@ -2618,18 +2683,20 @@ def shell_tool_function(
     # Result Assembly
     result = {
         "success": True,
-        "session_id": session.id,
+        "session_id": label,
         "stdout": stdout_str.strip(),
         "stderr": output["stderr"].strip(),
         "status": status,
         "info": msg_info,
         "system": session.system,
     }
-
-    # Auto-Cleanup für One-Shot Commands
-    if not session_id and not new_session and status != "waiting_for_input":
-        session.terminate()
-        del _session_store[session.id]
+    if status in ("running", "waiting_for_input"):
+        result["note"] = (
+            f"Process keeps running — further output is being captured. Fetch it "
+            f"with shell(session_id='{label}') (no command). Raising timeout is "
+            f"unnecessary: the call already returns once output is idle for "
+            f"{idle_timeout:.1f}s."
+        )
 
     return json.dumps(result, ensure_ascii=False, indent=2)
 

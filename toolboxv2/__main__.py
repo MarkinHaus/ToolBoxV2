@@ -1104,6 +1104,7 @@ def parse_args():
     core.add_argument(
         "-v",
         "--get-version",
+        "--version",
         action="store_true",
         help="Display ToolBox version and modules (use with -l for all)",
     )
