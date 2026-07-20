@@ -3,6 +3,59 @@ import os
 import sys
 from pathlib import Path
 
+# ── Nuclear window suppression (Windows only) ──────────────────────────
+# Must run BEFORE any subprocess or multiprocessing usage.
+# 1. Patch subprocess.Popen.__init__ to always inject CREATE_NO_WINDOW
+# 2. Patch os.system to use subprocess with CREATE_NO_WINDOW
+# 3. Patch multiprocessing spawn to inject CREATE_NO_WINDOW into CreateProcess
+if sys.platform == "win32":
+    import subprocess as _sp
+    _CNW = 0x08000000  # CREATE_NO_WINDOW
+    _DP  = 0x00000008  # DETACHED_PROCESS — MUST be stripped, makes CNW ineffective
+    _STARTF_USESHOWWINDOW = 0x00000001
+    _SW_HIDE = 0
+
+    _orig_popen_init = _sp.Popen.__init__
+    def _no_window_popen(self, *a, **kw):
+        cf = kw.get("creationflags", 0)
+        cf &= ~_DP          # strip DETACHED_PROCESS (else CREATE_NO_WINDOW is ignored)
+        cf |= _CNW          # force CREATE_NO_WINDOW
+        kw["creationflags"] = cf
+        # Belt-and-suspenders: STARTUPINFO with SW_HIDE
+        si = kw.get("startupinfo")
+        if si is None:
+            si = _sp.STARTUPINFO()
+        si.dwFlags |= _STARTF_USESHOWWINDOW
+        si.wShowWindow = _SW_HIDE
+        kw["startupinfo"] = si
+        return _orig_popen_init(self, *a, **kw)
+    _sp.Popen.__init__ = _no_window_popen
+
+    _orig_system = os.system
+    def _quiet_system(cmd):
+        return _sp.run(cmd, shell=True, creationflags=_CNW,
+                       stdout=_sp.DEVNULL, stderr=_sp.DEVNULL).returncode
+    os.system = _quiet_system
+
+    try:
+        import _winapi
+        import multiprocessing.popen_spawn_win32 as _psw
+        _orig_launch = _psw.Popen._launch
+        def _no_window_launch(self, process_obj):
+            _orig_cp = _winapi.CreateProcess
+            def _patched_cp(app, cmd, pa, ta, inh, flags, env, cwd, si):
+                flags = (flags & ~_DP) | _CNW  # strip DETACHED, add CNW
+                return _orig_cp(app, cmd, pa, ta, inh, flags, env, cwd, si)
+            _winapi.CreateProcess = _patched_cp
+            try:
+                _orig_launch(self, process_obj)
+            finally:
+                _winapi.CreateProcess = _orig_cp
+        _psw.Popen._launch = _no_window_launch
+    except Exception:
+        pass
+# ── End window suppression ─────────────────────────────────────────────
+
 
 try:
     from .utils.system.main_tool import MainTool, get_version_from_pyproject

@@ -455,9 +455,18 @@
 
                 // If authenticated after init/callback, redirect immediately
                 if (TB.user.isAuthenticated && TB.user.isAuthenticated()) {
-                    toggleLoad(true, 'Login erfolgreich! Redirect...');
-                    setTimeout(doRedirect, 300);
-                    return; // Don't show login buttons
+                    const bridgeTarget = getBridgeTarget();
+                    if (bridgeTarget) {
+                        // CLI-Mode: Auto-redirect überspringen.
+                        // User soll Login-Buttons sehen zum expliziten Authentifizieren.
+                        // 'user:signedIn' Event bridged dann Tokens nach Erfolg.
+                        console.log('[Login] CLI-Mode erkannt. Auto-Redirect übersprungen.');
+                    } else {
+                        // Web-Mode: Normaler Auto-Redirect
+                        toggleLoad(true, 'Login erfolgreich! Redirect...');
+                        setTimeout(doRedirect, 300);
+                        return;
+                    }
                 }
 
                 // Not authenticated — show login UI

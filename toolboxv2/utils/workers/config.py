@@ -185,7 +185,7 @@ class ManagerConfig:
     rolling_update_delay: int = 5
     live_dashboard_key: str = ""  # /live dashboard auth key; empty disables route
     live_ui_host: str = "127.0.0.1"
-    live_ui_port: int = 8700  # dedicated port for the '/' live-UI owner
+    live_ui_port: int = 5000  # dedicated port for the '/' live-UI owner
     live_ui_replicas: int = 2  # 1 owner + (n-1) standby for failover
 
 

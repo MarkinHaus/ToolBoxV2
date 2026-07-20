@@ -6,7 +6,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Callable, Optional, Coroutine
 
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger
+logger = get_logger()
 
 # Lazy import — CoderAgent wird erst bei spawn gebraucht
 CoderAgent = None

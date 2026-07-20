@@ -487,7 +487,7 @@ const user = {
             if (!startResponse.ok) throw new Error(`HTTP ${startResponse.status}`);
 
             const startJson = await startResponse.json();
-            const options = startJson.result || startJson;
+            const options = startJson.result?.data || startJson.data || startJson.result || startJson;
 
             options.challenge = this._base64ToArrayBuffer(options.challenge);
             if (options.allowCredentials) {
@@ -512,7 +512,7 @@ const user = {
             if (!finishResponse.ok) throw new Error(`HTTP ${finishResponse.status}`);
 
             const finishJson = await finishResponse.json();
-            const data = finishJson.result || finishJson;
+            const data = finishJson.result?.data || finishJson.data || finishJson.result || finishJson;
 
             if (data.access_token || data.token) {
                 this.setAuthData({
@@ -558,7 +558,7 @@ const user = {
             if (!startResponse.ok) throw new Error(`HTTP ${startResponse.status}`);
 
             const startJson = await startResponse.json();
-            const options = startJson.result || startJson;
+            const options = startJson.result?.data || startJson.data || startJson.result || startJson;
 
             options.challenge = this._base64ToArrayBuffer(options.challenge);
             options.user.id = this._base64ToArrayBuffer(options.user.id);
@@ -586,7 +586,7 @@ const user = {
             if (!finishResponse.ok) throw new Error(`HTTP ${finishResponse.status}`);
 
             const finishJson = await finishResponse.json();
-            const data = finishJson.result || finishJson;
+            const data = finishJson.result?.data || finishJson.data || finishJson.result || finishJson;
 
             // If registration returns tokens, set auth state
             if (data.access_token || data.token) {

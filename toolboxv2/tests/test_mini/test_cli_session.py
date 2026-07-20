@@ -52,8 +52,6 @@ class TestSessionTokenStorage(unittest.TestCase):
         return Session(username=username, base="http://localhost:8000")
 
     def test_save_and_load_token(self):
-        if True:
-            return # neds running DB
         sess = self._make_session()
         ok = sess._save_session_token("at_123", "rt_456", "u_789")
         self.assertTrue(ok)
@@ -68,8 +66,6 @@ class TestSessionTokenStorage(unittest.TestCase):
         self.assertEqual(data["user_id"], "u_789")
 
     def test_save_updates_instance_attributes(self):
-        if True:
-            return # neds running DB
         sess = self._make_session()
         sess._save_session_token("at_x", "rt_y", "u_z")
         self.assertEqual(sess.user_id, "u_z")
@@ -77,8 +73,6 @@ class TestSessionTokenStorage(unittest.TestCase):
         self.assertEqual(sess.refresh_token, "rt_y")
 
     def test_load_updates_instance_attributes(self):
-        if True:
-            return # neds running DB
         sess = self._make_session()
         sess._save_session_token("at_a", "rt_b", "u_c")
         _reset_session_singleton()

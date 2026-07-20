@@ -130,14 +130,16 @@ The rastered WebGL background reads two variables to stay theme-consistent:
 
 Unusually capped at 22px max. This is intentional — the system is a dashboard, not marketing.
 
+Unusually capped at 28px max. This is intentional — the system is a dashboard, not marketing.
+
 | Token | Value | Role |
 |---|---|---|
-| `--text-h1` | `clamp(18px, 2vw, 22px)` | Page title — bold (700) |
-| `--text-h2` | `clamp(16px, 1.8vw, 19px)` | Section heading — bold (700) |
-| `--text-h3` | `clamp(14px, 1.5vw, 16px)` | Subsection — semibold (600) |
-| `--text-base` | `13px` | Body default |
-| `--text-sm` | `11px` | Secondary, captions, labels |
-| `--text-xs` | `9px` | Micro-labels — always mono, uppercase, tracked |
+| `--text-h1` | `clamp(22px, 2.5vw, 28px)` | Page title — bold (700) |
+| `--text-h2` | `clamp(20px, 2.2vw, 24px)` | Section heading — bold (700) |
+| `--text-h3` | `clamp(18px, 1.9vw, 20px)` | Subsection — semibold (600) |
+| `--text-base` | `16px` | Body default |
+| `--text-sm` | `14px` | Secondary, captions, labels |
+| `--text-xs` | `11px` | Micro-labels — always mono, uppercase, tracked |
 
 ### Heading treatment
 
@@ -625,7 +627,7 @@ The 1px inset top highlight simulates a light source from above hitting the edge
 - **Don't use `<table>` for data.** Use `.grid-table` with `display: grid` + `display: contents` rows.
 - **Don't hardcode status colors** (`#22c55e`, `#ef4444`, `#f59e0b`). Use `--success`, `--error`, `--warning`.
 - **Don't use `.dark` as selector.** Always `[data-theme="dark"]`.
-- **Don't grow typography past 22px.** Even hero titles stay at `--text-h1`. Density is the brand.
+- **Don't grow typography past 28px.** Even hero titles stay at `--text-h1`. Density is the brand.
 - **Don't stack gradients.** Solid colors only, except the LED `box-shadow: 0 0 4px var(--surface-badge)` on `.score-block.is-active`, which is the single permitted glow.
 - **Don't wrap `rgba()` in another `rgba()`.** Expressions like `rgba(var(--text-main), 0.1)` are broken — `--text-main` is already `rgba(...)`. Use `color-mix()` instead.
 - **Don't nest selectors like `:root[data-theme="dark"] { .tb-toast { ... } }`.** CSS nesting without a fallback build step is unsafe in this project.
@@ -706,7 +708,7 @@ Divider               → var(--border-subtle)
 > Read from tokens only. If the component needs a value not yet tokenized, add it to both `[data-theme="dark"]` and `[data-theme="light"]` in `tbjs-main.css` — don't hardcode a mode-specific value in the component file.
 
 **"Match the existing dashboard density"**
-> Body stays at 13px. Headings cap at 22px. Spacing uses the 8pt scale only (`--space-1` through `--space-12`, skipping 7/9/11). Never use arbitrary pixel spacing.
+> Body stays at 16px. Headings cap at 28px. Spacing uses the 8pt scale only (`--space-1` through `--space-12`, skipping 7/9/11). Never use arbitrary pixel spacing.
 
 ### Legacy → v3.0 migration map
 

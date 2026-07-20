@@ -35,7 +35,8 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger
+logger = get_logger()
 
 _lock = threading.Lock()
 _caches: dict[str, dict[str, Any]] = {

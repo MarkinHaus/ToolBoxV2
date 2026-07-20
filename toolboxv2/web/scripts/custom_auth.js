@@ -157,7 +157,7 @@ class CustomAuth {
 
             const json = await response.json();
             // API returns {error: 0, result: {...}, info: {...}}
-            const data = json.result || json;
+            const data = json.result?.data || json.data || json.result || json;
             this.user = data;
             this._saveUser();
         } catch (error) {
@@ -250,7 +250,7 @@ class CustomAuth {
             }
 
             const json = await response.json();
-            const options = json.result || json;
+            const options = json.result?.data || json.data || json.result || json;
 
             // Convert base64 to ArrayBuffer
             options.challenge = this._base64ToArrayBuffer(options.challenge);
@@ -279,7 +279,7 @@ class CustomAuth {
             }
 
             const finishJson = await finishResponse.json();
-            const data = finishJson.result || finishJson;
+            const data = finishJson.result?.data || finishJson.data || finishJson.result || finishJson;
             this.token = data.access_token || data.token;
             this.refreshToken = data.refresh_token;
             this.user = data.user || data;
@@ -319,7 +319,7 @@ class CustomAuth {
             }
 
             const json = await response.json();
-            const options = json.result || json;
+            const options = json.result?.data || json.data || json.result || json;
 
             options.challenge = this._base64ToArrayBuffer(options.challenge);
             options.user.id = this._base64ToArrayBuffer(options.user.id);
@@ -353,7 +353,7 @@ class CustomAuth {
             }
 
             const finishJson = await finishResponse.json();
-            return finishJson.result || finishJson;
+            return finishJson.result?.data || finishJson.data || finishJson.result || finishJson;
         } catch (error) {
             console.error('Passkey registration failed:', error);
             this._emit('user:authError', { error });
@@ -442,7 +442,7 @@ class CustomAuth {
             }
 
             const json = await response.json();
-            const data = json.result || json;
+            const data = json.result?.data || json.data || json.result || json;
             this.token = data.access_token || data.token;
             this.refreshToken = data.refresh_token || this.refreshToken;
             this.save();
@@ -485,7 +485,7 @@ class CustomAuth {
             this._saveUser();
             this._emit('user:stateChanged', { user: this.user });
 
-            return json.result || json;
+            return json.result?.data || json.data || json.result || json;
         } catch (error) {
             console.error('Failed to update user data:', error);
             throw error;

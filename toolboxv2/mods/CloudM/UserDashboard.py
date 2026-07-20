@@ -2610,7 +2610,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
             +         'style="flex:1;background:var(--bg-canvas,#0e0e0e);border:1px solid var(--border-default,#333);'
             +         'border-radius:6px;padding:6px 8px;color:var(--text-primary,#fff);font-family:monospace;font-size:0.85rem;" />'
             +       '<button class="tb-btn tb-btn-secondary tb-btn-sm" type="button" '
-            +         'onclick="var i=document.getElementById(\'livesync-secret-key\'); i.type=(i.type===\'password\'?\'text\':\'password\');">'
+            +         `onclick="var i=document.getElementById('livesync-secret-key'); i.type=(i.type==='password'?'text':'password');">`
             +         '<span class="material-symbols-outlined">visibility</span></button>'
             +     '</div>'
             +   '</div>'

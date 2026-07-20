@@ -186,7 +186,7 @@ async def _start_background(app: App, reg_path: Path, env: dict) -> Result:
             ["uv", "run", "python", "-m", "registry"],
             cwd=str(reg_path),
             env=env,
-            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            creationflags=subprocess.CREATE_NO_WINDOW,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )

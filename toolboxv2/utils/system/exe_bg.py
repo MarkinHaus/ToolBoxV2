@@ -20,7 +20,7 @@ def run_executable_in_background(executable_path, args=None, show_output=False):
         CREATE_NO_WINDOW = 0x08000000
         return subprocess.Popen(
             cmd,
-            creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
+            creationflags=CREATE_NO_WINDOW,
             stdout=stdout_behavior,
             stderr=stderr_behavior,
             stdin=stdin_behavior

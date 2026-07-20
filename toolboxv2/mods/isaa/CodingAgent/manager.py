@@ -16,7 +16,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Optional
 
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger
+logger = get_logger()
 
 # Lazy imports to avoid circular deps
 CoderAgent = None

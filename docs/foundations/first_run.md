@@ -34,7 +34,7 @@ if profile is None:
 | 4 | `business` | 💼 Business | Quick status — 3-line health summary, exit |
 | 5 | `developer` | 🛠️ Developer | Core/Mod dev — dashboard + hints |
 
-Default: `homelab` (index 2).
+Default: `homelab`.
 
 ```python
 PROFILES = {
@@ -90,42 +90,3 @@ The wizard (`run_config_wizard()`) configures:
 - **Workers**: HTTP/WebSocket port configuration
 - **Auth provider**: Custom, Local, or None
 - **Paths**: data/, config/, logs/ directories
-
-```python
-# Invoked from first_run.py
-if run_wiz != "n":
-    from toolboxv2.utils.clis.config_wizard import run_config_wizard
-    run_config_wizard(tb_root_dir)
-```
-
-<!-- verified: first_run.py::run_first_run -->
-<!-- verified: schema.py::DatabaseMode -->
-
----
-
-## Profile → Runner Mapping
-
-After first-run, `main_helper()` maps profile to runner:
-
-| Profile | Runner Called |
-|---------|--------------|
-| `consumer` | `gui` |
-| `server` | `_run_server_overview()` → exit |
-| `business` | `_run_business_overview()` → exit |
-| `homelab`, `developer` | `default` (interactive dashboard) |
-
-```python
-if profile == "consumer":
-    runner_name = "gui"
-elif profile == "server":
-    _run_server_overview()
-    return
-elif profile == "business":
-    _run_business_overview()
-    return
-else:
-    runner_name = "default"
-```
-
-<!-- verified: __main__.py::_run_server_overview -->
-<!-- verified: __main__.py::_run_business_overview -->

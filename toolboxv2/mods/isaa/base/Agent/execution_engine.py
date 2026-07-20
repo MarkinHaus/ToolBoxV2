@@ -662,6 +662,8 @@ class ExecutionContext:
     session_id: str = ""
     query: str = ""
     status: str = "running"  # "running", "paused", "completed", "cancelled"
+    last_response: str = ""      # letzte final_response (fuer chat-history bei resume)
+    resume_count: int = 0        # wie oft resumed wurde
 
     # Tool Management (dynamic tools, separate from static)
     dynamic_tools: List[ToolSlot] = field(default_factory=list)
@@ -784,6 +786,8 @@ class ExecutionContext:
             "loop_warning_given": self.loop_warning_given,
             "loop_detector_history": self.loop_detector.history,
             "max_iterations": self.max_iterations,
+            "last_response": self.last_response,
+            "resume_count": self.resume_count,
 
         "matched_skill_ids": [s.id for s in self.matched_skills] if self.matched_skills else [],
         "active_persona_name": self.active_persona.name if self.active_persona else "default",
@@ -815,6 +819,8 @@ class ExecutionContext:
         ctx.loop_warning_given = data.get("loop_warning_given", False)
         ctx.loop_detector.history = data.get("loop_detector_history", [])
         ctx.max_iterations = data.get("max_iterations", os.getenv("DEFAULT_MAX_ITERATIONS", 30))
+        ctx.last_response = data.get("last_response", "")
+        ctx.resume_count = data.get("resume_count", 0)
 
         ctx._cold_skill_ids = data.get("matched_skill_ids", [])
         ctx._cold_persona_name = data.get("active_persona_name", "default")
@@ -1981,6 +1987,7 @@ BEISPIELE:
                     final_response = self._handle_max_iterations(ctx, query)
                     success = False
                     ctx.status = "max_iterations"
+            ctx.last_response = final_response if isinstance(final_response, str) else str(final_response or "")
             await self._record_and_finalize(ctx, session, query, final_response, success, trigger_kw, trigger_skill, persist_blocking)
         except Exception as e:
             log.exception("[Engine] CRASH")
@@ -2473,6 +2480,8 @@ BEISPIELE:
                 # Finalize: commit + skills + persona + learning.
                 # Default: background (user sieht done SOFORT).
                 # persist_blocking=True: await für crash-safety.
+                ctx.last_response = final_response or ""
+
                 await self._record_and_finalize(ctx, session, query, final_response, success, trigger_kw, trigger_skill, persist_blocking)
             except Exception as e:
                 log.exception("[Engine] CRASH")
@@ -2880,6 +2889,8 @@ BEISPIELE:
                 # --- Post-processing ---
                 yield enrich({"type": "post_processing", "status_msg": "Saving context"})
 
+                ctx.last_response = final_response or ""
+
                 await self._record_and_finalize(ctx, session, query, final_response, success, trigger_kw, trigger_skill, persist_blocking)
             except Exception as e:
                 log.exception("[Engine] CRASH")
@@ -2977,7 +2988,7 @@ BEISPIELE:
             # Runs classify_for_injection + build_preinjection concurrently
             # with skill matching. Result polled in _loop_preamble; injected
             # as a system message before the next LLM call (safe point).
-            if self.taskmap_preinject and not self.is_sub_agent:
+            if self.taskmap_preinject:
                 ctx.pending_taskmap_task = asyncio.create_task(
                     self._run_taskmap_bg(ctx, session, query)
                 )
@@ -2994,7 +3005,7 @@ BEISPIELE:
             # via meta_filter (C4). Skip für sub-agents / new. Kostet 1 embed+vector
             # query pro Run — nur wenn ein Topic klassifiziert wurde.
             _tt = getattr(ctx, "task_type", None)
-            if _tt and _tt != "new" and not self.is_sub_agent:
+            if _tt and _tt != "new":
                 try:
                     _topic = f"{_tt}/{getattr(ctx, 'subtype', None) or 'general'}"
                     _recall = await session.get_reference(
@@ -3009,6 +3020,10 @@ BEISPIELE:
                     get_logger().error(e)
                     pass
             ctx.max_iterations = max_iterations
+        elif self.taskmap_preinject and not self.is_sub_agent:
+            ctx.pending_taskmap_task = asyncio.create_task(
+                self._run_taskmap_bg(ctx, session, query)
+            )
         # Live state
         agent_type = "SUB-AGENT" if self.is_sub_agent else "MAIN"
         action = "Resuming" if is_resume else "Start"
@@ -3111,7 +3126,7 @@ BEISPIELE:
         except Exception as _err:
             self.live.log(f"Task-map bg classify failed: {_err}", logging.WARNING)
 
-    def _poll_taskmap_bg(self, ctx: "ExecutionContext") -> None:
+    def _poll_taskmap_bg(self, ctx: "ExecutionContext") -> None|str:
         """Check if background task-map classification finished.
 
         If ready and the topic differs from the previous injection
@@ -3121,17 +3136,17 @@ BEISPIELE:
         """
         t = ctx.pending_taskmap_task
         if t is None or not t.done():
-            return
+            return None
         ctx.pending_taskmap_task = None  # consume
         try:
             t.result()  # raise if background task errored
         except Exception as e:
             self.live.log(f"Task-map bg classification failed: {e}", logging.ERROR)
-            return
+            return None
 
         inject_text = ctx.pending_taskmap_inject
         if not inject_text:
-            return
+            return None
         ctx.pending_taskmap_inject = None
 
         new_type = getattr(ctx, "task_type", None) or "new"
@@ -3139,7 +3154,7 @@ BEISPIELE:
         new_type +=  getattr(ctx, "subtype", None) or "new"
         # Topic unchanged and already injected → skip (no re-injection)
         if ctx.taskmap_injected and new_type == ctx.taskmap_injected_type:
-            return
+            return None
 
         ctx.working_history.append({
             "role": "system",
@@ -3491,6 +3506,15 @@ BEISPIELE:
             vfs_content = self._current_session.vfs.build_context_string()
         current_user_task = ctx.query
 
+        resume_marker = ""
+        if ctx.resume_count > 0:
+            resume_marker = (
+                f"\n\n## \u26a0\ufe0f RESUME STATUS: This is resume #{ctx.resume_count}. "
+                "The task above contains the full conversation history (user/agent turns). "
+                "Focus on the LATEST user message.\n"
+            )
+
+
         messages = [
             {
                 "role": "system",
@@ -3510,7 +3534,7 @@ BEISPIELE:
             {
                 "role": "user",
                 "content": (
-                    f"## Original User Task:\n{current_user_task}\n---\n\n"
+                    f"## Original User Task:\n{current_user_task}\n{resume_marker}\n---\n\n"
                     f"## Vfs Content:\n{vfs_content}\n---\n\n"
                     f"## Agent's Working History:\n{working_history}\n---\n\n"
                     f"## Agent's Current Thought:\n{thought}\n---\n\n"
@@ -3545,7 +3569,7 @@ BEISPIELE:
         try:
             stream_response = await self.agent.a_run_llm_completion(
                 messages=messages,
-                model= os.getenv("BLITZMODEL", os.getenv("LIGHNIGMODEL", self.agent.amd.fast_llm_model)) if effort == "fast" else os.getenv("LIGHNIGMODEL", self.agent.amd.fast_llm_model),
+                model= self.agent.amd.fast_llm_model if effort == "fast" else self.agent.amd.complex_llm_model,
                 max_tokens=2048,
                 stream=True,
                 true_stream=True,
@@ -4293,24 +4317,12 @@ BEISPIELE:
                 _pre = await build_preinjection(session.vfs, next_objective, narrator_call=_nc)
                 if _pre:
                     ctx.working_history.insert(1, {"role": "system", "content": _pre})
-            except Exception:
-                pass
+            except Exception as e:
+                get_logger().warning(f"Hot swap failed: {e}")
 
-            # 5. Trackers zurücksetzen für neue Phase
             ctx.loop_detector.reset()
             ctx.loop_warning_given = False
-            # 1. Begrenze, wie oft ein Agent den Fokus shiften darf (Sicherung gegen Loops)
-            if not hasattr(ctx, "focus_shifts_count"):
-                ctx.focus_shifts_count = 0
 
-            if ctx.focus_shifts_count >= 3:  # Maximal 3 Resets pro Run
-                return "Fehler: Maximale Anzahl an Fokus-Wechseln erreicht. Bitte schließe die Aufgabe jetzt ab."
-
-            ctx.focus_shifts_count += 1
-
-            # 2. Iterations-Bonus statt komplettem Reset
-            # Wir setzen nicht auf 1, sondern geben ihm z.B. 10 neue Versuche,
-            # aber überschreiten niemals das ursprüngliche Limit.
             ctx.max_iterations += 10
 
             # Optional: Tool-Relevanz für neues Ziel neu berechnen
@@ -5650,7 +5662,17 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
         ctx.max_iterations = ctx.current_iteration + max_iterations
 
         # 6. Inject new user content if provided
+        ctx.resume_count += 1
         if content:
+            # Build chat-history: ctx.query accumulates user/agent turns
+            if ctx.last_response:
+                ctx.query = f"{ctx.query}\nagent:{ctx.last_response}\nuser:{content}"
+            else:
+                ctx.query = f"{ctx.query}\nuser:{content}"
+            # Trim oldest turns if conversation exceeds 10 resumes
+            if ctx.resume_count > 10:
+                _qlines = ctx.query.split("\n")
+                ctx.query = "\n".join(_qlines[-20:])
             ctx.working_history.append({
                 "role": "system",
                 "content": "[COLD RESUME] Agent restarted from disk checkpoint. Continuing previous task.",
@@ -5738,7 +5760,17 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
 
             ctx.status = "running"
             ctx.max_iterations = ctx.current_iteration + max_iterations
+            ctx.resume_count += 1
             if content:
+                # Build chat-history: ctx.query accumulates user/agent turns
+                if ctx.last_response:
+                    ctx.query = f"{ctx.query}\nagent:{ctx.last_response}\nuser:{content}"
+                else:
+                    ctx.query = f"{ctx.query}\nuser:{content}"
+                # Trim oldest turns if conversation exceeds 10 resumes
+                if ctx.resume_count > 10:
+                    _qlines = ctx.query.split("\n")
+                    ctx.query = "\n".join(_qlines[-20:])
                 ctx.working_history.append({
                     "role": "system",
                     "content": "Continue with old task using new user information's",

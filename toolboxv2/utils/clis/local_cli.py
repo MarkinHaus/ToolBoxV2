@@ -264,6 +264,7 @@ async def login_screen(sess: CLISession) -> bool:
         # resulting account is a remote account validated via app.session.
         print_status(f"Opening browser for {choice} on simplecore\u2026 complete the login, then return here.", "info")
         payload = await cli_remote_login(choice)
+        print(payload) #TODO remove debuggig
         if payload:
             s = tb_app.session
             s.username = payload.get("username") or s.username
@@ -272,7 +273,7 @@ async def login_screen(sess: CLISession) -> bool:
                 payload.get("refresh_token", ""),
                 payload.get("user_id", ""),
             )
-            if not await s.login():
+            if not await s.login(verbose=True): #TODO ste verbose=False debuggig
                 print_status("Remote session validation failed", "error")
                 return False
             payload["username"] = s.username or payload.get("username", "")

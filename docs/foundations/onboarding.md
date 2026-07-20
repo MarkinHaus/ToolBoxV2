@@ -2,11 +2,11 @@
 
 ###### GETTING STARTED · VERIFIED AGAINST `31a117e`
 
-From `pip install` to a running, profile-configured instance. Every command on this page exists in the current CLI — nothing here is aspirational.
-
+From `pip install` to a running & configured instance.
 ## 1 · Install
 
-ToolBoxV2 requires **Python ≥ 3.10**. The package ships feature-gated extras — install only what your use case needs:
+ToolBoxV2 requires **Python ≥ 3.10**. The package ships feature-gated extras
+install only what your use case needs:
 
 ```bash
 pip install toolboxv2              # core only
@@ -16,10 +16,25 @@ pip install toolboxv2[isaa]        # + agent framework (ISAA)
 pip install toolboxv2[all]         # everything
 ```
 
-Available extras: `core`, `cli`, `web`, `desktop`, `isaa`, `exotic`, `all`, `production`.
+Available extras: `core`, `cli`, `web`, `desktop`, `isaa`, `exotic`, `all`.
 The install registers one entry point: `tb`.
 
 <!-- verified: pyproject.toml::project.scripts,optional-dependencies @ 31a117e -->
+
+## Also as an oneliner
+
+### Linux / macOS
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.sh | bash
+```
+
+### Windows
+
+```powershell
+irm "https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.ps1" | tee tbInstaller.ps1 | % { & ([scriptblock]::Create($_)) }
+```
+
 
 ## 2 · First run — choose a profile
 
@@ -66,6 +81,7 @@ tb -init config
 ```bash
 tb status          # DB, API, P2P, Workers at a glance
 tb -v              # version + loaded modules (-l for all)
+tb access          # make tb command global callable
 tb --guide         # interactive usage guide
 ```
 

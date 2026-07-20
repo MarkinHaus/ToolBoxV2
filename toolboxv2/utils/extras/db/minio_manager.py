@@ -435,7 +435,7 @@ class MinIOInstance:
 
                 # Start process
                 if platform.system() == "Windows":
-                    creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                    creationflags = subprocess.CREATE_NO_WINDOW
                     self._process = subprocess.Popen(
                         cmd,
                         env=env,

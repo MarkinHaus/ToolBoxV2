@@ -23,7 +23,8 @@ from typing import Any
 
 from google.oauth2.credentials import Credentials
 
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger
+logger = get_logger()
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 

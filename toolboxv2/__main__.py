@@ -79,7 +79,8 @@ else:
 
 # Set UTF-8 encoding for Windows console (place at top of your script)
 if sys.platform == "win32":
-    os.system("chcp 65001 >nul 2>&1")  # Change console to UTF-8
+    import ctypes
+    ctypes.windll.kernel32.SetConsoleOutputCP(65001)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
         sys.stderr.reconfigure(encoding="utf-8")
@@ -290,9 +291,11 @@ def stop(pidfile, pidname):
 
     if procID:
         if system() == "Windows":
-            subprocess.Popen(["taskkill", "/PID", procID, "/F"])
+            subprocess.Popen(["taskkill", "/PID", procID, "/F"],
+                             creationflags=0x08000000 if system() == "Windows" else 0)
         else:
-            subprocess.Popen(["kill", "-SIGTERM", procID])
+            subprocess.Popen(["kill", "-SIGTERM", procID],
+                             creationflags=0x08000000 if system() == "Windows" else 0)
 
         get_app().logger.info(f"Service {pidname} {procID} stopped")
         os.remove(pidfile)
@@ -1543,33 +1546,49 @@ async def setup_app(ov_name=None, App=TbApp):
             res.print()
 
     if args.background_application_runner:
-        from toolboxv2.utils.extras.notification import quick_info
-        import threading
-
-        threading.Thread(target=quick_info, args=(
-            "Background Application",
-            f"Starting background application tb # {' '.join(sys.argv[1:])}"),
-             kwargs={
-                 "timeout": 12000
-             } , daemon=True
-        ).start()
+        # Headless: no GUI notification. Log instead.
+        import logging as _bg_log
+        _bg_log.getLogger("bg_runner").info(
+            f"Starting background application tb # {' '.join(sys.argv[1:])}")
         daemon_app = await DaemonApp(
             tb_app, args.host, args.port if args.port != 5000 else 6587, t=False
         )
         tb_app.daemon_app = daemon_app
         args.live_application = False
 
+        # A2: Report daemon presence to tray API
+        _tray_client = None
+        try:
+            from toolboxv2.utils.workers.fast.tray_api import TrayClient
+            _tray_client = TrayClient("daemon", label="Daemon App")
+            _tray_client.report(running=True, pid=os.getpid(), url=f"http://{args.host}:{args.port if args.port != 5000 else 6587}")
+        except Exception:
+            pass
+
         async def check_and_start_fallback():
             await asyncio.sleep(2.0)  # Dem Tauri-Client Zeit zum Verbinden geben
             from toolboxv2.utils.workers.fast.tray_api import has_active_subscribers
-            if not has_active_subscribers():
+            _subs = has_active_subscribers()
+            import logging as _lg
+            _lg.basicConfig(level=_lg.DEBUG)
+            _lg.info(f"check_and_start_fallback: has_active_subscribers={_subs}")
+            if not _subs:
                 from toolboxv2.utils.extras.fallback_tray import run_fallback_tray
                 tb_app.sprint("No Tauri listener detected. Launching Fallback Tray...")
-                # Importiere die oben definierte Funktion
-                run_fallback_tray(tb_app)
+                # icon.run() is BLOCKING (Win32 GetMessage loop).
+                # Must run in a dedicated thread, NOT on the asyncio event loop.
+                import threading
+                tray_thread = threading.Thread(
+                    target=run_fallback_tray,
+                    args=(tb_app,),
+                    name="FallbackTray",
+                    daemon=False
+                )
+                tray_thread.start()
+                _lg.info(f"Tray thread started: {tray_thread.is_alive()}")
 
-        # await check_and_start_fallback()
-        # tb_app.run_bg_task_advanced(check_and_start_fallback())
+        # B: Tray Auto-Start — einkommentiert
+        tb_app.run_bg_task_advanced(check_and_start_fallback)
 
     elif args.background_application:
 
@@ -1583,8 +1602,7 @@ async def setup_app(ov_name=None, App=TbApp):
                 start(args.name, sys.argv, filename=f"{info_folder}bg-{args.name}.pid")
                 # NEU: Parent-Prozess sollte hier beenden
                 print(f"Background process spawned. Exiting parent.")
-                #sys.exit(0)
-                #os._exit(0)
+                os._exit(0)
                 return tb_app, args
         else:
             pid_file = f"{info_folder}bg-{args.name}.pid"

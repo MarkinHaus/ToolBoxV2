@@ -170,8 +170,9 @@ isaa:
 
 ## Related
 
-- [AgentBuilder Reference](builder.md) (detailed API)
-- [ToolManager Reference](tool_manager.md) (detailed API)
-- [Session Management](session.md)
-- [CloudM Auth](../CloudM/auth.md) — session validation for agents
-- [Flows](../../flows/index.md) — Chains, MiniCLI using ISAA agents
+- [Agent Reference](agent.md)
+- [chains.md](chains.md)
+- [jobs.md](jobs.md)
+- [quickstart.md](quickstart.md)
+- [reference.md](reference.md)
+- [icli.md](../../flows/icli.md)

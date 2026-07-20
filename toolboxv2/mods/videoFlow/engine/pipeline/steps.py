@@ -15,7 +15,8 @@ from toolboxv2.mods.videoFlow.engine.project_manager import ProjectManager
 from toolboxv2.mods.videoFlow.engine.config import CostTracker
 
 # This would be initialized properly in the main application
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger
+logger = get_logger()
 
 # A mock app for now
 class MockApp:
@@ -30,7 +31,7 @@ async def run_story_generation_step(project_id: str, prompt: str, cost_tracker: 
     if not project_path:
         logger.error(f"Project with id {project_id} not found.")
         return None
-        
+
     story_generator = StoryGenerator(app.get_mod("isaa"), logger)
     story = await story_generator.generate_story(prompt)
     if story:

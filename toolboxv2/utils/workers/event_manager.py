@@ -44,7 +44,8 @@ except ImportError:
     #raise ImportError("pyzmq required: pip install pyzmq")
     pass
 
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger
+logger = get_logger()
 
 
 # ============================================================================

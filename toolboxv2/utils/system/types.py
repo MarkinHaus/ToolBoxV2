@@ -200,6 +200,9 @@ class Headers:
 
         return cls(**processed_headers, extra_headers=extra_headers)
 
+    def get(self, key):
+        return getattr(self, key)
+
     def to_dict(self) -> dict[str, str]:
         """Convert the Headers object back to a dictionary."""
         result = {}

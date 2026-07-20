@@ -30,7 +30,8 @@ try:
 except ImportError:  # pragma: no cover
     _CTK_AVAILABLE = False
 
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger
+logger = get_logger()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # THEME

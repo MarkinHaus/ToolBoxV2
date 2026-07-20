@@ -71,12 +71,21 @@ class ServiceRegistry:
         """Registriere alle Built-in Services"""
         # Core Services
         self.register(ServiceDefinition(
+            name="daemon",
+            description="ToolBox Background Daemon (RPC, Tray, Auto-Services, Heartbeat)",
+            category="infrastructure",
+            module="toolboxv2.__main__",
+            entry_point="main",
+            runner_key="-bgr",
+        ))
+        self.register(ServiceDefinition(
             name="workers",
             description="Worker-Orchestrierung (HTTP, WS, Broker)",
-            category="core",
+            category="infrastructure",
             module="toolboxv2.utils.clis.cli_worker_manager",
             entry_point="main",
-            runner_key="workers"
+            runner_key="workers",
+            default_args=["start"],
         ))
         self.register(ServiceDefinition(
             name="db",
@@ -257,7 +266,8 @@ class ServiceManager:
                         capture_output=True,
                         text=True,
                         encoding="utf-8",
-                        errors="ignore"
+                        errors="ignore",
+                        creationflags=subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0,
                     )
                     running = result.stdout and str(pid) in result.stdout
                 except Exception:
@@ -329,7 +339,7 @@ class ServiceManager:
             exe_name = os.path.basename(sys.executable)
             if exe_name.lower().startswith("python") and not exe_name.lower().startswith("pythonw"):
                 category = svc_def.category if svc_def else "infrastructure"
-                new_exe = exe_name.lower().replace("python", "pythonw" if category == "infrastructure" else "python")
+                new_exe = exe_name.lower().replace("python", "pythonw")
                 executable = os.path.join(os.path.dirname(sys.executable), new_exe)
                 if not os.path.exists(executable):
                     executable = sys.executable
@@ -359,7 +369,7 @@ class ServiceManager:
 
         if IS_WINDOWS:
             # Windows: CREATE_NO_WINDOW für headless
-            creation_flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+            creation_flags = subprocess.CREATE_NO_WINDOW
             kwargs = {"creationflags": creation_flags}
         else:
             # Unix: nohup-style detach
@@ -407,9 +417,13 @@ class ServiceManager:
 
         try:
             if IS_WINDOWS:
-                # Windows: taskkill
-                flag = [] if graceful else ["/F"]
-                subprocess.run(["taskkill", "/PID", str(pid)] + flag, check=True)
+                # Windows: graceful taskkill sends WM_CLOSE, which detached
+                # console-less processes (pythonw, CREATE_NO_WINDOW) cannot
+                # receive. Try graceful first (best-effort), then wait, then
+                # force with /F if still alive.
+                subprocess.run(["taskkill", "/PID", str(pid)],
+                               check=False, capture_output=True,
+                               creationflags=subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0)
             else:
                 # Unix: SIGTERM (graceful) or SIGKILL
                 sig = signal.SIGTERM if graceful else signal.SIGKILL
@@ -422,11 +436,29 @@ class ServiceManager:
                 if not running:
                     break
 
+            # Force-kill if graceful shutdown did not terminate the process
+            if running:
+                if IS_WINDOWS:
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                                   check=False, capture_output=True,
+                                   creationflags=subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0)
+                else:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+                # Final wait after force-kill
+                for _ in range(6):
+                    time.sleep(0.5)
+                    running, _ = self.is_service_running(name)
+                    if not running:
+                        break
+
             # Cleanup PID file
             pid_file = self.pids_dir / f"{name}.pid"
             pid_file.unlink(missing_ok=True)
 
-            return True
+            return not running
 
         except Exception:
             return False
@@ -531,6 +563,21 @@ class ServiceManager:
         """Hole gespeicherte Argumente für einen Service"""
         config = self.load_config()
         return config.get("services", {}).get(name, {}).get("args", [])
+
+    def start_autostart(self) -> List["ServiceStartResult"]:
+        """Starte alle Services mit auto_start=True. Gibt Liste der Results zurück."""
+        results: List[ServiceStartResult] = []
+        for name in self.get_auto_start_services():
+            results.append(self.start_service(name))
+        return results
+
+    def stop_autostart(self, graceful: bool = True) -> List[str]:
+        """Stoppe alle Services mit auto_start=True."""
+        stopped: List[str] = []
+        for name in self.get_auto_start_services():
+            if self.stop_service(name, graceful=graceful):
+                stopped.append(name)
+        return stopped
 
 
 def run_service_manager_startup() -> int:

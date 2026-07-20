@@ -264,7 +264,7 @@ def cmd_start(port: int = 4000, host: str = "0.0.0.0", background: bool = True) 
 
     if background:
         if IS_WINDOWS:
-            creation_flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+            creation_flags = subprocess.CREATE_NO_WINDOW
             process = subprocess.Popen(
                 cmd, cwd=gateway_dir,
                 creationflags=creation_flags,

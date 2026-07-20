@@ -380,6 +380,8 @@ class App(AppType, metaclass=Singleton):
                 self._obs_sync_manager = LogSyncManager(
                     db=self.log_db,
                     minio_client=mc,
+                    endpoint=
+                    self.manifest.database.minio.endpoint if obs.sync.target == "minio" else obs.sync.remote_endpoint,
                     bucket=obs.sync.remote_bucket,
                     app_id=self.id,
                     node_id=node(),

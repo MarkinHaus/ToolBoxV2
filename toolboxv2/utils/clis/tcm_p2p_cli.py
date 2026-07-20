@@ -1126,7 +1126,7 @@ class EnhancedInstanceManager:
                     cwd=str(self.instance_dir),
                     stdout=log_handle,
                     stderr=log_handle,
-                    creationflags=subprocess.DETACHED_PROCESS if platform.system() == "Windows" else 0
+                    creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
                 )
                 time.sleep(1.5)
 

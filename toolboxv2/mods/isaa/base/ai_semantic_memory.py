@@ -26,7 +26,8 @@ from toolboxv2 import Singleton, get_app, get_logger
 
 from .hybrid_memory import HybridMemoryStore
 
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger
+logger = get_logger()
 
 # ---------------------------------------------------------------------------
 # Feature flag — set to False to revert to the old KnowledgeBase backend

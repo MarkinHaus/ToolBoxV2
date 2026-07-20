@@ -234,6 +234,8 @@ async def get_latest_for_platform(
         )
 
     version, build = result
+    from dataclasses import asdict
+
     return {
         "version": version.version,
         "released_at": version.released_at,
@@ -244,6 +246,7 @@ async def get_latest_for_platform(
             "filename": build.filename,
             "size_bytes": build.size_bytes,
             "checksum_sha256": build.checksum_sha256,
+            "storage_locations": [asdict(sl) for sl in build.storage_locations],
         },
     }
 

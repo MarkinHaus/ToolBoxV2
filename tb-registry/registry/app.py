@@ -174,8 +174,8 @@ def create_app(
 
     @app.get("/package/{name}", include_in_schema=False)
     async def package_page(name: str):
-        """Serve package detail page (reuses index for now)."""
-        return FileResponse(TEMPLATES_DIR / "index.html")
+        """Serve package detail page."""
+        return FileResponse(TEMPLATES_DIR / "package.html")
 
     return app
 

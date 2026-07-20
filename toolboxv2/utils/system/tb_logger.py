@@ -549,6 +549,7 @@ class LogSyncManager:
         minio_client,
         bucket: str = "system-audit-logs",
         app_id: str = "default",
+        endpoint: Optional[str] =None,
         node_id: str = "",
     ):
         """
@@ -561,6 +562,7 @@ class LogSyncManager:
         """
         self.db = db
         self.minio = minio_client
+        self.endpoint = endpoint
         self.bucket = bucket
         self.app_id = app_id
         self.node_id = node_id
@@ -879,10 +881,12 @@ class LogSyncManager:
             try:
                 import urllib3
                 # Check if we can reach the endpoint without waiting for retries
-                endpoint = self.minio._base_url
+                endpoint = self.endpoint or self.minio._base_url
 
                 http = urllib3.PoolManager(timeout=urllib3.Timeout(connect=1.0, read=1.0) if not ping else urllib3.Timeout(connect=ping*3, read=ping*1.2), retries=0)
                 try:
+                    if not endpoint.startswith("http"):
+                        endpoint = f"http://{endpoint}"
                     res=http.request("GET", f"{endpoint}/minio/health/live", preload_content=False)
                 except Exception as e:
                     # MinIO not ready yet - skip bucket creation

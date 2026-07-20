@@ -36,13 +36,13 @@
       <p>Package registry for the ToolBox Framework</p>
       <div class="stats" id="stats">
         <div class="stat"><span class="stat-value" id="pkg-count">-</span><span class="stat-label">Packages</span></div>
-        <div class="stat"><span class="stat-value" id="dl-count">-</span><span class="stat-label">Downloads</span></div>
+        <div class="stat"><span class="stat-value" id="art-count">-</span><span class="stat-label">Artifacts</span></div>
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" id="pkg-section">
       <h2 class="section-title">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
         </svg>
         Packages
@@ -52,36 +52,15 @@
       </div>
     </section>
 
-    <section class="section">
+    <section class="section" id="art-section">
       <h2 class="section-title">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
         </svg>
         Artifacts
       </h2>
       <div id="artifacts" class="pkg-grid">
-        <div class="pkg-card">
-          <div class="pkg-header">
-            <span class="pkg-name">SimpleCore Desktop</span>
-            <span class="badge badge-success">Official</span>
-          </div>
-          <p class="pkg-desc">The official ToolBox desktop application with graphical interface.</p>
-          <div class="pkg-meta">
-            <span>🪟 Windows</span>
-            <span>🍎 macOS</span>
-            <span>🐧 Linux</span>
-          </div>
-        </div>
-        <div class="pkg-card">
-          <div class="pkg-header">
-            <span class="pkg-name">TB CLI</span>
-            <span class="badge badge-success">Official</span>
-          </div>
-          <p class="pkg-desc">Command-line interface for ToolBox Framework.</p>
-          <div class="pkg-meta">
-            <span>📦 pip install toolboxv2</span>
-          </div>
-        </div>
+        <div class="loading"><div class="spinner"></div></div>
       </div>
     </section>
   </main>
@@ -97,54 +76,107 @@
   <script>
     const API = '/api/v1';
 
+    function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
     async function fetchStats() {
       try {
-        const res = await fetch(`${API}/packages`);
-        const data = await res.json();
-        document.getElementById('pkg-count').textContent = data.total || 0;
-        document.getElementById('dl-count').textContent = '-';
-      } catch { document.getElementById('pkg-count').textContent = '0'; }
+        const [pkgRes, artRes] = await Promise.all([
+          fetch(`${API}/packages?per_page=1`),
+          fetch(`${API}/artifacts?per_page=1`),
+        ]);
+        if (pkgRes.ok) { const d = await pkgRes.json(); document.getElementById('pkg-count').textContent = d.total ?? 0; }
+        if (artRes.ok) { const d = await artRes.json(); document.getElementById('art-count').textContent = d.total ?? 0; }
+      } catch {
+        document.getElementById('pkg-count').textContent = '0';
+        document.getElementById('art-count').textContent = '0';
+      }
     }
 
-    async function fetchPackages(query = '') {
+    function renderCard(name, version, desc, metaItems, typeLabel) {
+      const metaHtml = (metaItems || []).map(m => `<span>${m}</span>`).join('');
+      return `
+        <a href="/package/${encodeURIComponent(name)}" class="pkg-card">
+          <div class="pkg-header">
+            <span class="pkg-name">${esc(name)}</span>
+            ${typeLabel ? `<span class="type-badge">${typeLabel}</span>` : `<span class="pkg-version">v${esc(version || '0.0.0')}</span>`}
+          </div>
+          <p class="pkg-desc">${esc(desc || 'No description')}</p>
+          <div class="pkg-meta">${metaHtml}</div>
+        </a>
+      `;
+    }
+
+    async function fetchPackages(query) {
       const container = document.getElementById('packages');
       container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
       try {
-        const url = query ? `${API}/packages?q=${encodeURIComponent(query)}` : `${API}/packages`;
-        const res = await fetch(url);
-        const data = await res.json();
-        const pkgs = data.packages || [];
+        let pkgs = [];
+        if (query) {
+          const res = await fetch(`${API}/search?q=${encodeURIComponent(query)}`);
+          if (res.ok) { const data = await res.json(); pkgs = data.results || data.packages || []; }
+        } else {
+          const res = await fetch(`${API}/packages?per_page=24`);
+          if (res.ok) { const data = await res.json(); pkgs = data.packages || []; }
+        }
         if (!pkgs.length) {
           container.innerHTML = '<div class="empty"><div class="empty-icon">📦</div>No packages found</div>';
           return;
         }
-        container.innerHTML = pkgs.map(p => `
-          <a href="/package/${p.name}" class="pkg-card">
-            <div class="pkg-header">
-              <span class="pkg-name">${p.name}</span>
-              <span class="pkg-version">v${p.latest_version || '0.0.0'}</span>
-            </div>
-            <p class="pkg-desc">${p.description || 'No description'}</p>
-            <div class="pkg-meta">
-              <span>📥 ${p.downloads || 0}</span>
-              <span>📅 ${p.updated_at ? new Date(p.updated_at).toLocaleDateString() : '-'}</span>
-            </div>
-          </a>
-        `).join('');
-      } catch (e) {
+        container.innerHTML = pkgs.map(p => renderCard(
+          p.name, p.latest_version, p.description,
+          [`📥 ${p.total_downloads || p.downloads || 0}`, `🏷️ ${esc(p.package_type || 'mod')}`],
+          null
+        )).join('');
+      } catch {
         container.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div>Failed to load packages</div>';
+      }
+    }
+
+    async function fetchArtifacts() {
+      const container = document.getElementById('artifacts');
+      container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+      try {
+        const res = await fetch(`${API}/artifacts?per_page=12`);
+        const data = await res.json();
+        const arts = data.artifacts || [];
+        if (!arts.length) {
+          container.innerHTML = '<div class="empty"><div class="empty-icon">🖥️</div>No artifacts yet</div>';
+          return;
+        }
+        const typeMap = { 'tauri_app':'App', 'cli_executable':'CLI', 'browser_extension':'Extension', 'mobile_app':'Mobile', 'library':'Library' };
+        container.innerHTML = arts.map(a => renderCard(
+          a.name, a.latest_version, a.description,
+          [`🏷️ v${esc(a.latest_version || '-')}`],
+          typeMap[a.artifact_type] || a.artifact_type
+        )).join('');
+      } catch {
+        container.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div>Failed to load artifacts</div>';
       }
     }
 
     let debounce;
     document.getElementById('search').addEventListener('input', e => {
       clearTimeout(debounce);
-      debounce = setTimeout(() => fetchPackages(e.target.value), 300);
+      const q = e.target.value.trim();
+      debounce = setTimeout(() => {
+        const artSection = document.getElementById('art-section');
+        if (q) { artSection.style.display = 'none'; fetchPackages(q); }
+        else { artSection.style.display = ''; fetchPackages(); }
+      }, 300);
     });
 
+    const params = new URLSearchParams(window.location.search);
+    const initialQ = params.get('q');
+    if (initialQ) {
+      document.getElementById('search').value = initialQ;
+      document.getElementById('art-section').style.display = 'none';
+      fetchPackages(initialQ);
+    } else {
+      fetchPackages();
+    }
+
     fetchStats();
-    fetchPackages();
+    fetchArtifacts();
   </script>
 </body>
 </html>
-

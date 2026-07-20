@@ -32,6 +32,19 @@ from dataclasses import dataclass, field
 from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from multiprocessing import Process
+
+# Force pythonw.exe for multiprocessing children on Windows to prevent
+# console windows from flashing when spawning worker processes.
+if sys.platform == "win32":
+    import multiprocessing as _mp
+    _current_exe = sys.executable
+    if "python.exe" in _current_exe.lower() and "pythonw" not in _current_exe.lower():
+        _exe_dir = os.path.dirname(_current_exe)
+        _exe_name = os.path.basename(_current_exe)
+        _pythonw_name = _exe_name.lower().replace("python", "pythonw")
+        _pythonw_path = os.path.join(_exe_dir, _pythonw_name)
+        if os.path.exists(_pythonw_path):
+            _mp.set_executable(_pythonw_path)
 from pathlib import Path
 from threading import Lock, Thread, RLock
 from typing import Any, Dict, List, Optional, Tuple
@@ -1083,7 +1096,8 @@ class HealthChecker:
 class ClusterManager:
     def __init__(self, secret: str = None):
         self._nodes: Dict[str, ClusterNode] = {}
-        self._secret = secret or os.environ.get("CLUSTER_SECRET", uuid.uuid4().hex)
+        env_secret = os.environ.get("CLUSTER_SECRET")
+        self._secret = secret or env_secret or uuid.uuid4().hex
         self._lock = Lock()
         self._running = False
         self._thread: Thread | None = None
@@ -1309,7 +1323,7 @@ class WorkerManager:
             # One-Port-Collective: every live-ui replica MUST target the same port.
             # Force the canonical live_ui_port even if a caller (e.g. restart) hands
             # in a drifted port — otherwise a replica "moves" and the collective breaks.
-        canonical = getattr(self.config.manager, "live_ui_port", 8700)
+        canonical = getattr(self.config.manager, "live_ui_port", 5000)
         if port is not None and port != canonical:
             logger.warning(f"Live-UI: requested port {port} != collective {canonical} — forcing {canonical}")
         port = canonical
@@ -1822,6 +1836,28 @@ def _read_manager_state() -> dict | None:
 def _is_process_alive(pid: int) -> bool:
     if pid is None:
         return False
+    if IS_WINDOWS:
+        # os.kill(pid, 0) raises OSError WinError 87 on Windows — unusable.
+        try:
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            h = ctypes.windll.kernel32.OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+            )
+            if not h:
+                return False
+            try:
+                exit_code = ctypes.c_ulong()
+                if ctypes.windll.kernel32.GetExitCodeProcess(
+                    h, ctypes.byref(exit_code)
+                ):
+                    return exit_code.value == STILL_ACTIVE
+                return False
+            finally:
+                ctypes.windll.kernel32.CloseHandle(h)
+        except Exception:
+            return False
     try:
         os.kill(pid, 0)
         return True

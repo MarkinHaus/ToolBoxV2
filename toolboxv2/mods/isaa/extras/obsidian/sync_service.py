@@ -56,7 +56,8 @@ except ImportError:
     print("⚠️ PyJWT not installed. Install with: pip install PyJWT")
 
 
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger
+logger = get_logger()
 
 
 # ===== SYNC PROTOCOL =====

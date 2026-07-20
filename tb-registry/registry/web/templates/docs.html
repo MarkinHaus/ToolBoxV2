@@ -213,14 +213,13 @@
 
     <h3>Packages</h3>
     <ul>
-      <li><code>GET /api/v1/packages</code> — List all packages</li>
+      <li><code>GET /api/v1/packages</code> — List all packages (page, per_page, package_type)</li>
       <li><code>GET /api/v1/packages/{name}</code> — Get package details</li>
-      <li><code>POST /api/v1/packages</code> — Create package (auth)</li>
-      <li><code>PATCH /api/v1/packages/{name}</code> — Update package (auth)</li>
-      <li><code>DELETE /api/v1/packages/{name}</code> — Delete package (auth)</li>
-      <li><code>POST /api/v1/packages/{name}/upload</code> — Upload version (auth)</li>
-      <li><code>GET /api/v1/packages/{name}/versions/{v}/download</code> — Get download URL</li>
-      <li><code>POST /api/v1/packages/{name}/versions/{v}/yank</code> — Yank version (auth)</li>
+      <li><code>POST /api/v1/packages</code> — Create package (auth, publisher required)</li>
+      <li><code>DELETE /api/v1/packages/{name}</code> — Delete package (auth, owner/admin)</li>
+      <li><code>GET /api/v1/packages/{name}/versions</code> — List all versions of a package</li>
+      <li><code>POST /api/v1/packages/{name}/versions</code> — Upload new version (multipart, auth)</li>
+      <li><code>GET /api/v1/packages/{name}/versions/{v}/download</code> — Get presigned download URL (auth)</li>
     </ul>
 
     <h3>Artifacts</h3>

@@ -22,7 +22,8 @@ import logging
 from toolboxv2 import Code, Singleton
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger
+logger = get_logger()
 
 
 class AppManager(metaclass=Singleton):

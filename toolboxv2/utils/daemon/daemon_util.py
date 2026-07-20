@@ -119,6 +119,16 @@ class DaemonUtil:
             connection_type = SocketType.peer
 
         await self.start_server(connection_type)
+
+        # D1: Auto-start services (non-blocking subprocesses)
+        self._start_autostart_services()
+
+        # D3: Health heartbeat task
+        self._heartbeat_task = asyncio.create_task(self._health_loop())
+
+        # D4: Signal handlers for graceful shutdown
+        self._setup_signal_handlers()
+
         app = app if app is not None else get_app(from_=f"DaemonUtil.{self._name}")
         self.online = await asyncio.to_thread(self.connect, app)
         if t:
@@ -313,6 +323,13 @@ class DaemonUtil:
         return Result.ok()
 
     async def a_exit(self):
+        # Cancel heartbeat
+        if hasattr(self, '_heartbeat_task') and self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
         result = await self.server.aget()
         await result.get("close")()
         self.alive = False
@@ -320,3 +337,65 @@ class DaemonUtil:
             await self.online
         print("Connection result :", result.get("host"), result.get("port"),
               "total connections:", result.get("connections"))
+
+    # ─── D1: Service Auto-Start ───────────────────────────────────────
+    def _start_autostart_services(self):
+        """Start all auto_start services via ServiceManager (subprocesses).
+
+        Note: 'daemon' (this process) is skipped to avoid recursive re-spawn.
+        It is started externally (boot script, systemd, or `tb --sm`).
+        """
+        try:
+            from ..clis.service_manager import ServiceManager
+            sm = ServiceManager()
+            for name in sm.get_auto_start_services():
+                if name == "daemon":
+                    continue  # Don't start daemon from within daemon
+                result = sm.start_service(name)
+                if result.success:
+                    get_logger().info(f"Auto-start: {name} started (pid={result.pid})")
+                else:
+                    get_logger().warning(f"Auto-start: {name} failed: {result.error}")
+        except Exception as e:
+            get_logger().warning(f"Auto-start services failed: {e}")
+
+    # ─── D3: Health Heartbeat ────────────────────────────────────────
+    async def _health_loop(self):
+        """Periodic health check every 30s. Reports to tray API."""
+        await asyncio.sleep(5)  # initial delay
+        while self.alive:
+            try:
+                from ..clis.service_manager import ServiceManager
+                sm = ServiceManager()
+                status = sm.get_all_status(include_registry=False)
+                running = sum(1 for s in status.values() if s.get("running"))
+                total = len(status)
+
+                # Best-effort tray report
+                try:
+                    from ..workers.fast.tray_api import TrayClient
+                    tc = TrayClient("daemon-health", label="Health Monitor")
+                    tc.report(running=True, pid=os.getpid(), metric=f"{running}/{total} services")
+                except Exception:
+                    pass
+
+                get_logger().info(f"Health: {running}/{total} services running")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                get_logger().warning(f"Health check error: {e}")
+            await asyncio.sleep(30)
+
+    # ─── D4: Signal Handlers ─────────────────────────────────────────
+    def _setup_signal_handlers(self):
+        """Register SIGTERM/SIGINT for graceful shutdown. Cross-platform."""
+        def _handler(signum, frame):
+            get_logger().info(f"Signal {signum} received, initiating graceful shutdown")
+            self.alive = False
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                signal.signal(sig, _handler)
+            except (ValueError, OSError, AttributeError):
+                # Windows: SIGTERM may not exist, or not in main thread
+                pass

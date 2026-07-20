@@ -23,7 +23,8 @@ except ImportError:
 
 from dateutil import parser as dateutil_parser
 
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger
+logger = get_logger()
 
 # ──────────────────────────────────────────────────────────────
 # Internal index map: translates #1, #2, ... → Google IDs

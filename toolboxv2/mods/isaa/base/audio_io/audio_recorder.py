@@ -29,7 +29,8 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 import numpy as np
 
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger
+logger = get_logger()
 
 TARGET_SR = 16000
 TARGET_FRAME_MS = 80

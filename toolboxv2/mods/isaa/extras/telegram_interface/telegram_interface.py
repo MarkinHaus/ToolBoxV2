@@ -23,7 +23,8 @@ from typing import Any, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from toolboxv2.flows.isaa.icli import ISAA_Host
 
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger
+logger = get_logger()
 
 
 def _global_root():

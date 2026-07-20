@@ -12,6 +12,21 @@ PROFILES = {
     "developer": ("🛠️  Developer", "Ich entwickle Mods, Features oder den Core."),
 }
 
+# E: Profile-spezifische Manifest-Defaults (werden bei Profilwahl gesetzt)
+PROFILE_DEFAULTS = {
+    "consumer":  {"database.mode": "LC", "nginx.enabled": False,
+                  "autostart.enabled": True, "autostart.services": ["daemon"]},
+    "homelab":   {"database.mode": "LC", "nginx.enabled": False,
+                  "autostart.enabled": True, "autostart.services": ["daemon", "workers"]},
+    "server":    {"database.mode": "CB", "nginx.enabled": True,
+                  "autostart.enabled": True, "autostart.services": ["daemon", "workers", "db"]},
+    "business":  {"database.mode": "CB", "nginx.enabled": True,
+                  "autostart.enabled": True, "autostart.services": ["daemon", "workers", "db"]},
+    "developer": {"database.mode": "LC", "nginx.enabled": False,
+                  "app.debug": True, "app.log_level": "DEBUG",
+                  "autostart.enabled": True, "autostart.services": ["daemon", "workers"]},
+}
+
 
 def run_first_run() -> str:
     """
@@ -40,6 +55,20 @@ def run_first_run() -> str:
     chosen = keys[idx]
     label, _ = PROFILES[chosen]
     print_status(f"Profile set: {label}", "success")
+
+    # E: Profile-Defaults ins Manifest schreiben
+    from toolboxv2.utils.clis.manifest_cli import cmd_set
+    defaults = PROFILE_DEFAULTS.get(chosen, {})
+    for key, value in defaults.items():
+        try:
+            class _Cmd:
+                pass
+            _Cmd.key = key
+            _Cmd.value = str(value) if not isinstance(value, str) else value
+            cmd_set(_Cmd())
+        except Exception:
+            pass
+
     profile_hints = {
         "consumer": "Will open the local web UI on next 'tb' start.",
         "homelab": "Will open the local web UI on next 'tb' start.",

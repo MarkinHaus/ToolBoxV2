@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Package — TB Registry</title>
+  <link rel="stylesheet" href="/static/css/registry.css">
+</head>
+<body>
+  <header class="header">
+    <div class="container header-inner">
+      <a href="/" class="logo">
+        <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+          <line x1="12" y1="22.08" x2="12" y2="12"/>
+        </svg>
+        TB Registry
+      </a>
+      <div class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+        </svg>
+        <input type="text" id="search" placeholder="Search packages..." autocomplete="off">
+      </div>
+      <nav class="nav">
+        <a href="/">Browse</a>
+        <a href="/docs">Docs</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container" style="padding-top: var(--space-6);">
+    <div id="content">
+      <div class="loading"><div class="spinner"></div></div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      TB Registry &copy; 2025 &middot;
+      <a href="https://simplecore.app">SimpleCore.app</a> &middot;
+      <a href="https://github.com/MarkinHaus/ToolBoxV2">GitHub</a>
+    </div>
+  </footer>
+
+  <script>
+    const API = '/api/v1';
+    const pathParts = window.location.pathname.split('/');
+    const pkgName = pathParts[pathParts.length - 1] || pathParts[pathParts.length - 2];
+
+    function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+    function fmtDate(s) { try { return new Date(s).toLocaleDateString('en', {year:'numeric',month:'short',day:'numeric'}); } catch { return '-'; } }
+
+    async function copyCmd(text, btn) {
+      try { await navigator.clipboard.writeText(text); } catch {}
+      if (btn) {
+        btn.classList.add('copied');
+        btn.textContent = '✓';
+        setTimeout(() => { btn.classList.remove('copied'); btn.textContent = '📋'; }, 1500);
+      }
+    }
+
+    window.copyCmd = copyCmd;
+
+    async function loadPackage() {
+      const el = document.getElementById('content');
+      try {
+        const [pkgRes, verRes] = await Promise.all([
+          fetch(`${API}/packages/${encodeURIComponent(pkgName)}`),
+          fetch(`${API}/packages/${encodeURIComponent(pkgName)}/versions`),
+        ]);
+
+        if (!pkgRes.ok) {
+          el.innerHTML = `<div class="not-found">
+            <div class="empty-icon" style="font-size:3rem">📦</div>
+            <h2 style="color:var(--text-main);font-weight:700;font-size:var(--text-h2);margin-bottom:var(--space-2)">Package not found</h2>
+            <p style="color:var(--text-muted)">No package named <code style="color:var(--primary);font-family:var(--font-mono)">${esc(pkgName)}</code> exists in the registry.</p>
+            <br><a href="/" class="btn btn-secondary">← Back to Browse</a>
+          </div>`;
+          return;
+        }
+
+        const pkg = await pkgRes.json();
+        const verData = verRes.ok ? await verRes.json() : { versions: [] };
+        const versions = verData.versions || [];
+        const latestVersion = pkg.latest_version || (versions[0] ? versions[0].version : null);
+        const typeLabel = { 'mod':'Mod', 'artifact':'Artifact', 'library':'Library', 'theme':'Theme', 'plugin':'Plugin' }[pkg.package_type] || pkg.package_type;
+        const installTb = `tb --install ${pkg.name}`;
+        const installPip = `tb -c CloudM mods install ${pkg.name}`;
+        const downloadCmd = latestVersion ? `tb registry download ${pkg.name} --version ${latestVersion}` : null;
+
+        el.innerHTML = `
+          <div class="detail-header">
+            <h1>${esc(pkg.name)}</h1>
+            <p class="pkg-tagline">${esc(pkg.display_name)}</p>
+            <div class="detail-meta">
+              <span class="type-badge">${typeLabel}</span>
+              ${latestVersion ? `<span class="meta-pill">🏷️ v${esc(latestVersion)}</span>` : ''}
+              ${pkg.total_downloads != null ? `<span class="meta-pill">📥 ${pkg.total_downloads}</span>` : ''}
+            </div>
+          </div>
+
+          <div class="detail-body">
+            <div class="detail-main">
+              <div class="install-section">
+                <div class="install-header">
+                  <h3>Quick Install</h3>
+                  <span class="label">terminal</span>
+                </div>
+                <div class="install-tabs">
+                  <button class="install-tab active" data-tab="tb" onclick="switchTab('tb')">tb cli</button>
+                  <button class="install-tab" data-tab="cloudm" onclick="switchTab('cloudm')">cloudm</button>
+                  ${downloadCmd ? `<button class="install-tab" data-tab="download" onclick="switchTab('download')">download</button>` : ''}
+                </div>
+                <div class="install-body">
+                  <div class="install-cmd" id="cmd-tb">
+                    <span class="prompt">$</span>
+                    <span class="cmd-text">${esc(installTb)}</span>
+                    <button class="copy-btn" onclick="copyCmd('${esc(installTb)}', this)">📋</button>
+                  </div>
+                  <div class="install-cmd" id="cmd-cloudm" style="display:none">
+                    <span class="prompt">$</span>
+                    <span class="cmd-text">${esc(installPip)}</span>
+                    <button class="copy-btn" onclick="copyCmd('${esc(installPip)}', this)">📋</button>
+                  </div>
+                  ${downloadCmd ? `
+                  <div class="install-cmd" id="cmd-download" style="display:none">
+                    <span class="prompt">$</span>
+                    <span class="cmd-text">${esc(downloadCmd)}</span>
+                    <button class="copy-btn" onclick="copyCmd('${esc(downloadCmd)}', this)">📋</button>
+                  </div>` : ''}
+                </div>
+                ${latestVersion ? `
+                <div class="install-footer">
+                  <button id="dl-btn" class="btn btn-primary" style="flex:1">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Download v${esc(latestVersion)}
+                  </button>
+                </div>` : ''}
+              </div>
+
+              <h2 class="section-title" style="margin-top:var(--space-8)">Description</h2>
+              <p>${esc(pkg.description || 'No description provided.')}
+
+              <h2 class="section-title" style="margin-top:var(--space-6)">Versions <span style="color:var(--text-muted);font-weight:400;letter-spacing:0">(${versions.length})</span></h2>
+              ${versions.length === 0 ? '<p style="color:var(--text-muted)">No versions published yet.</p>' : `
+                <div class="version-list">
+                  ${versions.map(v => `
+                    <div class="version-row">
+                      <div>
+                        <div class="v-num">v${esc(v.version)}</div>
+                        <div class="v-meta">${fmtDate(v.released_at)} · ${v.downloads||0} downloads${v.changelog ? ' · ' + esc(v.changelog.substring(0,60)) : ''}</div>
+                      </div>
+                      ${v.version === latestVersion ? '<span class="badge badge-success" style="font-size:0.7rem">latest</span>' : ''}
+                    </div>
+                  `).join('')}
+                </div>
+              `}
+            </div>
+
+            <div class="detail-sidebar">
+              <div class="sidebar-card">
+                <h3>Package Info</h3>
+                <div style="display:flex;flex-direction:column;gap:var(--space-3)">
+                  <div>
+                    <div class="label" style="margin-bottom:2px">Type</div>
+                    <div class="value">${typeLabel}</div>
+                  </div>
+                  ${latestVersion ? `<div><div class="label" style="margin-bottom:2px">Latest</div><div class="value" style="font-family:var(--font-mono)">v${esc(latestVersion)}</div></div>` : ''}
+                  ${pkg.total_downloads != null ? `<div><div class="label" style="margin-bottom:2px">Downloads</div><div class="value" style="font-family:var(--font-mono)">${pkg.total_downloads}</div></div>` : ''}
+                </div>
+              </div>
+
+              ${pkg.homepage ? `<div class="sidebar-card"><h3>Homepage</h3><a href="${esc(pkg.homepage)}" target="_blank" rel="noopener">${esc(pkg.homepage)}</a></div>` : ''}
+              ${pkg.repository ? `<div class="sidebar-card"><h3>Repository</h3><a href="${esc(pkg.repository)}" target="_blank" rel="noopener">${esc(pkg.repository)}</a></div>` : ''}
+            </div>
+          </div>
+        `;
+
+        const dlBtn = document.getElementById('dl-btn');
+        if (dlBtn) {
+          dlBtn.addEventListener('click', async () => {
+            dlBtn.disabled = true;
+            dlBtn.textContent = 'Getting URL...';
+            try {
+              const res = await fetch(`${API}/packages/${encodeURIComponent(pkgName)}/versions/${latestVersion}/download`);
+              if (res.ok) {
+                const data = await res.json();
+                if (data.url) {
+                  window.open(data.url, '_blank');
+                  dlBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download v' + esc(latestVersion);
+                  dlBtn.disabled = false;
+                  return;
+                }
+              }
+              dlBtn.textContent = '⚠️ Auth required';
+              setTimeout(() => {
+                dlBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download v' + esc(latestVersion);
+                dlBtn.disabled = false;
+              }, 2000);
+            } catch {
+              dlBtn.textContent = '⚠️ Failed';
+              setTimeout(() => { dlBtn.disabled = false; dlBtn.textContent = 'Download v' + esc(latestVersion); }, 2000);
+            }
+          });
+        }
+      } catch (e) {
+        el.innerHTML = `<div class="not-found"><div class="empty-icon" style="font-size:3rem">⚠️</div><h2>Failed to load</h2><p>${esc(e.message)}</p></div>`;
+      }
+    }
+
+    window.switchTab = function(tab) {
+      document.querySelectorAll('.install-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+      document.querySelectorAll('[id^="cmd-"]').forEach(c => c.style.display = c.id === `cmd-${tab}` ? '' : 'none');
+    };
+
+    let debounce;
+    document.getElementById('search').addEventListener('input', e => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        if (e.target.value.trim()) window.location.href = `/?q=${encodeURIComponent(e.target.value)}`;
+      }, 500);
+    });
+
+    loadPackage();
+  </script>
+</body>
+</html>

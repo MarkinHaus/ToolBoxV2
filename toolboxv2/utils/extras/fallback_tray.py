@@ -49,8 +49,6 @@ def create_gear_icon():
 
 
 import atexit
-import sys
-import os
 
 # Globaler Tracker für das aktive Tray-Icon, um saubere Bereinigung zu garantieren
 _active_tray_icon = None
@@ -73,16 +71,35 @@ atexit.register(cleanup_active_tray)
 def run_fallback_tray(tb_app):
     """Startet den systemkompatiblen Fallback-Tray-Runner ohne Thread-Abstürze."""
     global _active_tray_icon
+    # Diagnostic log to file (pythonw has no stdout)
+    import logging
+    _tray_log = logging.getLogger("fallback_tray")
+    _tray_log.setLevel(logging.DEBUG)
+    _log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), ".info", "tray_debug.log")
+    try:
+        _fh = logging.FileHandler(_log_path)
+        _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        _tray_log.addHandler(_fh)
+    except Exception:
+        pass
+    _tray_log.info("run_fallback_tray ENTERED")
+
     try:
         import pystray
+        _tray_log.info("pystray imported successfully")
     except ImportError:
+        _tray_log.error("pystray or Pillow not installed - cannot start tray")
         tb_app.sprint("pystray oder Pillow sind nicht installiert. Fallback-Tray startet nicht.")
         return
 
     import webbrowser
 
     def on_open_dashboard(icon, item):
-        webbrowser.open("http://localhost:6587")
+        from toolboxv2 import get_app
+        webbrowser.open(f"http://{get_app().manifest.services.manager.live_ui_host}:{get_app().manifest.services.manager.live_ui_port}")
+
+    def on_open_wn(icon, item):
+        os.system(f"{sys.executable} -m toolboxv2 workers live")
 
     def on_stop_all(icon, item):
         tb_app.sprint("Stopping background application from Tray...")
@@ -92,7 +109,7 @@ def run_fallback_tray(tb_app):
         # Graceful shutdown: try async cleanup with 5s timeout, then force exit
         try:
             import asyncio
-            tb_app.alive = False
+            tb_app.alive = False  # noqa: F811
             loop = getattr(tb_app, "loop", None)
             if loop and not loop.is_closed():
                 try:
@@ -107,13 +124,45 @@ def run_fallback_tray(tb_app):
             tb_app.sprint(f"Tray exit error: {e}")
         os._exit(0)
 
+    def _fetch_tray_state():
+        """Best-effort fetch of tray API state. Returns dict or None."""
+        import urllib.request
+        import json as _json
+        url = os.getenv("TB_TRAY_URL", "http://localhost:6587").rstrip("/")
+        try:
+            with urllib.request.urlopen(f"{url}/tray/state", timeout=1.5) as r:
+                return _json.loads(r.read())
+        except Exception:
+            return None
+
     def get_menu():
         menu_items = [
             pystray.MenuItem("Open Dashboard", on_open_dashboard),
+            pystray.MenuItem("Workers Network", on_open_wn),
             pystray.Menu.SEPARATOR,
         ]
-        if hasattr(tb_app, "daemon_app") and tb_app.daemon_app:
-            menu_items.append(pystray.MenuItem("Runner: Active", lambda: None, enabled=False))
+        # Dynamic instances from tray API
+        state = _fetch_tray_state()
+        if state:
+            running = sum(1 for w in state.values() if isinstance(w, dict) and w.get("running"))
+            instance_items = []
+            for wid, info in state.items():
+                if not isinstance(info, dict):
+                    continue
+                label = info.get("label", wid)
+                pid = info.get("pid", "?")
+                is_running = info.get("running", False)
+                dot = "\u25cf" if is_running else "\u25cb"
+                instance_items.append(
+                    pystray.MenuItem(f"{dot} {label} (pid={pid})", None, enabled=False)
+                )
+            if instance_items:
+                menu_items.append(
+                    pystray.MenuItem(f"Instances ({running} running)", pystray.Menu(*instance_items))
+                )
+        elif hasattr(tb_app, "daemon_app") and tb_app.daemon_app:
+            menu_items.append(pystray.MenuItem("Runner: Active", None, enabled=False))
+        menu_items.append(pystray.Menu.SEPARATOR)
         menu_items.append(pystray.MenuItem("Quit Application", on_stop_all))
         return pystray.Menu(*menu_items)
 
@@ -127,19 +176,10 @@ def run_fallback_tray(tb_app):
         )
 
         _active_tray_icon = icon
-
-        # Auf macOS muss der Tray zwingend im Hauptthread laufen
-        if sys.platform == "darwin":
-            import threading
-            t = threading.Thread(target=tb_app.loop.run_forever, daemon=True)
-            t.start()
-            icon.run()
-        else:
-            # Unter Windows/Linux starten wir den Thread stabil.
-            # Durch den atexit-Handler wird icon.stop() vor dem Hauptthread-Exit aufgerufen.
-            import threading
-            t = threading.Thread(target=icon.run, daemon=False)  # daemon=False verhindert abruptes Killen
-            t.start()
+        _tray_log.info("Icon created, calling icon.run() now (blocks until stop)")
+        icon.run()
+        _tray_log.info("icon.run() returned — tray stopped")
 
     except Exception as e:
+        _tray_log.error(f"Tray error: {e}", exc_info=True)
         tb_app.sprint(f"Fehler beim Starten des Fallback-Trays: {e}")

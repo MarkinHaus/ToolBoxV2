@@ -117,7 +117,7 @@ class Session(metaclass=Singleton):
         safe_name = self.username or "default"
         # Sanitize filename
         safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in safe_name)[:32]
-        return f"{safe_name}_session.json"
+        return f"user/_session.json"
 
     def _get_encryption_key(self) -> str:
         """
@@ -158,17 +158,7 @@ class Session(metaclass=Singleton):
         try:
             blob_name = self._get_blob_name()
 
-            # Check existence via storage listing to avoid empty file errors
-            blobs = self._storage.list_blobs(prefix=blob_name.split('_')[0])
-            if not blobs:
-                return None
-
-            # Use the first matching blob
-            blob_name = blobs[0]['blob_id']
-
-            key = self._get_encryption_key()
-
-            with BlobFile(blob_name, mode="r", key=key, storage=self._storage) as blob:
+            with BlobFile(blob_name, mode="r", key=self._get_encryption_key(), storage=self._storage) as blob:
                 session_data = blob.read_json()
 
             if not session_data:
@@ -197,9 +187,8 @@ class Session(metaclass=Singleton):
         try:
             blob_name = self._get_blob_name()
             # Try to find and delete the blob
-            blobs = self._storage.list_blobs(prefix=blob_name.split('_')[0])
-            if blobs:
-                self._storage.delete_blob(blobs[0]['blob_id'])
+            with BlobFile(blob_name, mode="w", key=self._get_encryption_key(), storage=self._storage) as blob:
+                blob.write_json({})
 
             self.access_token = None
             self.refresh_token = None
@@ -246,13 +235,14 @@ class Session(metaclass=Singleton):
                         # Update username from server truth
                         self.username = result.get("result", {}).get("username", self.username)
                         return True
-
+                if verbose:
+                    print(f"res:{response}")
                 # 3. Try Refresh
                 refresh = session_data.get("refresh_token")
                 if refresh:
                     if verbose:
                         print("🔄 Access token expired, refreshing...")
-                    if await self._try_refresh(refresh):
+                    if await self._try_refresh(refresh, verbose=verbose):
                         if verbose:
                             print("✅ Session refreshed.")
                         return True
@@ -273,7 +263,7 @@ class Session(metaclass=Singleton):
                 print(f"❌ Connection error: {e}")
             return False
 
-    async def _try_refresh(self, refresh_token: str) -> bool:
+    async def _try_refresh(self, refresh_token: str, verbose:bool=False) -> bool:
         """Try to refresh the access token."""
         try:
             async with self.session.request(
@@ -290,6 +280,9 @@ class Session(metaclass=Singleton):
                         self._save_session_token(new_access, new_refresh, self.user_id)
                         self.valid = True
                         return True
+
+                if verbose:
+                    print(f"res:{response}")
         except Exception as e:
             get_logger().debug(f"Token refresh failed: {e}")
         return False
