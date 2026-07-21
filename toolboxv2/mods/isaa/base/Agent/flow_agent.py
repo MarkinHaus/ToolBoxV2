@@ -2638,6 +2638,13 @@ class FlowAgent:
                 return getattr(session, "vfs", None)
             except Exception:
                 return None
+        def _memory_instance():
+            try:
+                session = self.session_manager.get(self.active_session or "default")
+                return getattr(session, "_memory", None)
+            except Exception:
+                return None
+
         handler = DreamerToolHandler(
             skills = dict(sm.skills) if sm else {},
             rules = {},
@@ -2646,13 +2653,17 @@ class FlowAgent:
             records = [],
             vfs_provider = _taskmap_vfs,
             session_manager_provider = lambda: self.session_manager,
+            memory_provider = _memory_instance,
+            agent_name = self.amd.name,
         )
          # Handler für dream() Dashboard zugänglich machen
         self._dreamer_tool_handler = handler
          # EIN Wrapper → EIN Master-Tool
 
-        def dream_act_wrapper(action: str, payload: dict | None = None):
-            return handler.handle_act(action, payload)
+        async def dream_act_wrapper(action: str, payload: dict | None = None):
+            # async: memory actions (query_memory, crystallize_memory,
+            # create_memories) need await; all others route to sync handle_act.
+            return await handler.handle_act_async(action, payload)
 
 
         dreamer_agent.add_tool(
@@ -2940,7 +2951,82 @@ class FlowAgent:
         vfs_view_fn = make_vfs_view(session)
 
         from functools import partial
-        search_vfs_fn = partial(search_vfs, vfs=session.vfs)
+        _raw_search_vfs = partial(search_vfs, vfs=session.vfs)
+
+        async def search_vfs_fn(query: str = "", **kw):
+            """search_vfs upgrade:
+            1. exact substring/regex search (fast, unchanged)
+            2. semantic fallback via VFSIndex memory space when exact search
+               finds nothing (same machinery as agent recall)
+            3. never returns a bare [] — an empty result includes the VFS
+               top-level structure so the agent has a next step instead of
+               retrying query variants into a dead end.
+            """
+            from dataclasses import asdict, is_dataclass
+
+            results = _raw_search_vfs(query=query, **kw)
+            out = [asdict(r) if is_dataclass(r) else dict(r) for r in results]
+            if out:
+                return out
+
+            # semantic fallback over indexed session files
+            try:
+                from toolboxv2.mods.isaa.base.Agent.vfs_memory_bridge import (
+                    vfs_index_space,
+                )
+
+                space = vfs_index_space(session.agent_name, session.session_id)
+                sem = await session._memory.query(
+                    query, space, query_params={"k": 5, "min_similarity": 0.25}
+                )
+                seen = set()
+                for block in sem or []:
+                    for h in block.get("hits", []):
+                        meta = h.get("meta", {}) if isinstance(h.get("meta"), dict) else {}
+                        vpath = meta.get("vfs_path") or (meta.get("source") or "")[4:]
+                        if not vpath or vpath in seen:
+                            continue
+                        seen.add(vpath)
+                        snippet = (h.get("content") or "").strip()[:200]
+                        out.append({
+                            "path": vpath,
+                            "filename": vpath.rsplit("/", 1)[-1],
+                            "match_type": "semantic",
+                            "snippet": snippet,
+                            "score": round(float(h.get("score", 0) or 0), 3),
+                        })
+            except Exception:
+                pass
+            if out:
+                return out
+
+            # empty → return structure + guidance, not a dead end
+            try:
+                top = sorted({
+                    "/" + p.strip("/").split("/", 1)[0]
+                    for p in list(session.vfs.files.keys())
+                    + list(getattr(session.vfs, "directories", {}) or {})
+                    if p and p != "/"
+                })[:20]
+            except Exception:
+                top = []
+            return [{
+                "path": "/",
+                "match_type": "hint",
+                "hint": (
+                    f"No exact or semantic matches for '{query}'. "
+                    "Try a broader/shorter query, mode='filename', or "
+                    "find_files('*') to list files. Top-level structure below."
+                ),
+                "structure": top,
+            }]
+
+        async def index_global_memory_fn(only_new: bool = True):
+            from toolboxv2.mods.isaa.base.Agent.vfs_memory_bridge import (
+                index_global_memory,
+            )
+
+            return await index_global_memory(session._memory, only_new=only_new)
 
         # ── Web Shell (optional) ──────────────────────────────────────────
         web_shell_fn = None
@@ -3612,6 +3698,20 @@ class FlowAgent:
                     "Open / scroll a file in the context window. "
                     "Use scroll_to= to jump to a pattern, close_others=True to "
                     "reset context. Files opened here appear in EVERY following prompt."
+                ),
+            },
+            {
+                "tool_func": index_global_memory_fn,
+                "name": "index_global_memory",
+                "category": ["vfs", "memory"],
+                "description": (
+                    "Index the shared /global folder into semantic memory so its "
+                    "content becomes recallable and searchable. Scans /global "
+                    "recursively from disk, skips unchanged files (hash check), "
+                    "uses structure-aware chunking. Idempotent — safe to re-run. "
+                    "Use when /global content seems missing from recall, or after "
+                    "bulk changes to /global. Params: only_new (default True; "
+                    "False = force full re-index)."
                 ),
             },
             {

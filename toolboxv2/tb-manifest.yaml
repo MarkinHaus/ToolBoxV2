@@ -52,7 +52,7 @@ ws_worker:
   compression: true
   instance_prefix: ws
 database:
-  mode: LC
+  mode: CB
   local:
     path: .data/MiniDictDB.json
   redis:

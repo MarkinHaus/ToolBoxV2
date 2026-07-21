@@ -309,13 +309,18 @@ class AISemanticMemory(metaclass=Singleton):
         results: list[dict] = []
         for name, store in targets:
             try:
+                # VFSIndex spaces carry file metadata (source/vfs_path), not
+                # conversational meta like "topic" — a chat-level meta_filter
+                # would silently exclude every VFS hit. Apply it only to
+                # non-VFS spaces.
+                _mf = None if name.startswith(("VFSIndex", "AgentKnowledge")) else meta_filter
                 hits = store.query(
                     query_text=query,
                     query_embedding=query_emb,
                     k=k,
                     search_modes=search_modes,
                     min_similarity=min_sim,
-                    meta_filter=meta_filter,
+                    meta_filter=_mf,
                 )
                 if hits:
                     results.append({"memory": name, "type": "standard", "hits": hits})

@@ -11,6 +11,7 @@ Author: FlowAgent V2
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -36,13 +37,65 @@ logger = get_logger()
 # =============================================================================
 
 
+def _concept_jaccard(a: list, b: list) -> float:
+    sa, sb = set(a or []), set(b or [])
+    if not sa or not sb:
+        return 0.0
+    return len(sa & sb) / len(sa | sb)
+
+
 def retrieval_to_llm_context_compact(data, max_entries=5):
-    """Format retrieval results for LLM context"""
+    """Format retrieval results for LLM context.
+
+    Handles both the legacy overview shape ({"result": obj.overview}) and the
+    actual AISemanticMemory.query shape ({"memory": name, "hits": [entry,...]}).
+    The legacy branch previously KeyError'd on every non-empty result — recall
+    silently returned nothing whenever hits existed.
+    """
     lines = []
     for _data in data:
-        result = _data["result"]
-        lines.append("\nMemory: " + _data["memory"])
+        lines.append("\nMemory: " + _data.get("memory", "?"))
 
+        # ── actual shape: hits = HybridMemoryStore entry dicts ──
+        hits = _data.get("hits")
+        if hits is not None:
+            hits = hits[:max_entries]
+            for h in hits:
+                meta = h.get("meta", {}) if isinstance(h.get("meta"), dict) else {}
+                role = meta.get("role") or meta.get("category") or "note"
+                src = meta.get("source") or ""
+                text = (h.get("content") or "").strip()
+                if len(text) > 400:
+                    text = text[:400] + "…"
+                concepts = ",".join((h.get("concepts") or [])[:6])
+                score = float(h.get("score", h.get("rrf_score", 0)) or 0)
+                src_tag = f" | src={src}" if src.startswith("vfs:") else ""
+                lines.append(f"{role}: [{text}]| is: {concepts} | r={score:.2f}{src_tag}")
+
+            # near-duplicate / contradiction warning: entries whose concepts
+            # heavily overlap may be different versions of the same fact.
+            warned = set()
+            for i in range(len(hits)):
+                for j in range(i + 1, len(hits)):
+                    if (i, j) in warned:
+                        continue
+                    if _concept_jaccard(hits[i].get("concepts"), hits[j].get("concepts")) >= 0.5:
+                        t_i = hits[i].get("created_at") or hits[i].get("timestamp") or "?"
+                        t_j = hits[j].get("created_at") or hits[j].get("timestamp") or "?"
+                        newer = max(str(t_i), str(t_j))
+                        lines.append(
+                            f"⚠ Entries {i + 1} and {j + 1} are conceptually very close — "
+                            f"they may be conflicting or outdated versions of the same fact. "
+                            f"Prefer the newer one ({newer}) unless context says otherwise."
+                        )
+                        warned.add((i, j))
+            lines.append("\n")
+            continue
+
+        # ── legacy overview shape (kept for compatibility) ──
+        result = _data.get("result")
+        if result is None:
+            continue
         for item in result.overview[:max_entries]:
             relevance = float(item.get("relevance_score", 0))
 
@@ -257,6 +310,21 @@ class AgentSessionV2:
         self.tools_initialized = False
         self._initialized = True
 
+        # VFS → Memory bridge: index native session files into semantic memory.
+        # attach() is O(1) on the write path; backfill runs in the background
+        # so init latency is unchanged. Mounts, /global/, shares are skipped.
+        try:
+            from toolboxv2.mods.isaa.base.Agent.vfs_memory_bridge import (
+                VFSMemoryIndexer,
+            )
+
+            self.vfs_indexer = VFSMemoryIndexer(self)
+            self.vfs_indexer.attach()
+            asyncio.get_running_loop().create_task(self.vfs_indexer.backfill())
+        except Exception as e:
+            logger.warning(f"[{self.session_id}] VFS memory bridge init failed: {e}")
+            self.vfs_indexer = None
+
     def _ensure_initialized(self):
         """Ensure session is initialized"""
         if not self._initialized:
@@ -293,10 +361,23 @@ class AgentSessionV2:
         await self._chat_session.add_message(message, **kwargs)
 
     async def get_reference(self, text: str, concepts=False, **kwargs) -> str:
-        """Query RAG for relevant context"""
+        """Query RAG for relevant context (conversation memory + VFS index)"""
         self._ensure_initialized()
         self._update_activity()
         kwargs["row"] = True
+        # Include the VFS index space so recall covers stored files.
+        # Same single query embedding → near-zero added latency.
+        if "extra_spaces" not in kwargs:
+            from toolboxv2.mods.isaa.base.Agent.vfs_memory_bridge import (
+                GLOBAL_INDEX_SPACE,
+                vfs_index_space,
+            )
+
+            kwargs["extra_spaces"] = [
+                vfs_index_space(self.agent_name, self.session_id),
+                GLOBAL_INDEX_SPACE,
+                f"AgentKnowledge/{self.agent_name}",
+            ]
         res = await self._chat_session.get_reference(text, **kwargs)
         return (
             res
@@ -769,6 +850,14 @@ class AgentSessionV2:
         """Close session - persist VFS and save state"""
         if self._closed:
             return
+
+        # Stop VFS memory indexer (flush pending index work first)
+        if getattr(self, "vfs_indexer", None) is not None:
+            try:
+                await self.vfs_indexer.flush()
+            except Exception:
+                pass
+            self.vfs_indexer.stop()
 
         # Close all open VFS files
         for path, f in list(self.vfs.files.items()):

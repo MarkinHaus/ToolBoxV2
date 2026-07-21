@@ -43,12 +43,18 @@ class ChatSession:
         if self.max_length and len(self.history) > self.max_length:
             self.history.pop(0)
 
-    async def get_reference(self, text,row=False, **kwargs):
+    async def get_reference(self, text,row=False, extra_spaces=None, **kwargs):
         kwargs["to_str"] = not row
 
         if '__sub__' in self.space_name:
             return await self.mem.query(text, None, **kwargs) if not row else await self.mem.query(text, None, **kwargs)
-        return await self.mem.query(text, self.space_name, **kwargs) if not row else await self.mem.query(text, self.space_name, **kwargs)
+        # extra_spaces: additional memory spaces queried with the SAME query
+        # embedding (single get_embeddings call inside mem.query) — used for
+        # the VFS index so recall covers stored files at no extra latency.
+        spaces = self.space_name
+        if extra_spaces:
+            spaces = [self.space_name, *[s for s in extra_spaces if s]]
+        return await self.mem.query(text, spaces, **kwargs) if not row else await self.mem.query(text, spaces, **kwargs)
 
     def get_past_x(self, x, last_u=False):
         if last_u:

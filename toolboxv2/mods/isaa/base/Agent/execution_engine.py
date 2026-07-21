@@ -3003,19 +3003,30 @@ BEISPIELE:
             ]
             # augment — linearer last - N Seed(C1) bleibt = "was hast du gerade gemacht";
             # hier zusätzlich same-topic Recall aus früheren Runs
-            # via meta_filter (C4). Skip für sub-agents / new. Kostet 1 embed+vector
-            # query pro Run — nur wenn ein Topic klassifiziert wurde.
+            # via meta_filter (C4) PLUS VFS-Index-Recall (immer, jede Anfrage).
+            # Kostet 1 embed + lokale store queries pro Run. get_reference
+            # inkludiert den VFSIndex-Space automatisch; meta_filter greift
+            # nur auf Konversations-Spaces.
             _tt = getattr(ctx, "task_type", None)
-            if _tt and _tt != "new":
+            if not self.is_sub_agent:
                 try:
-                    _topic = f"{_tt}/{getattr(ctx, 'subtype', None) or 'general'}"
+                    _mf = None
+                    _label = "MEMORY/VFS RECALL"
+                    if _tt and _tt != "new":
+                        _topic = f"{_tt}/{getattr(ctx, 'subtype', None) or 'general'}"
+                        _mf = {"topic": _topic}
+                        _label = f"TOPIC RECALL ({_topic})"
                     _recall = await session.get_reference(
-                        query, meta_filter={"topic": _topic}, max_entries=3
+                        query, meta_filter=_mf, max_entries=3
                     )
                     if _recall and _recall.strip():
                         ctx.working_history.insert(1, {
                             "role": "system",
-                            "content": f"## TOPIC RECALL ({_topic})\n{_recall}",
+                            "content": (
+                                f"## {_label}\n{_recall}\n"
+                                "Hint: entries marked src=vfs:<path> are stored files — "
+                                "use vfs_view/read on that path if you need the full content."
+                            ),
                         })
                 except Exception as e:
                     get_logger().error(e)

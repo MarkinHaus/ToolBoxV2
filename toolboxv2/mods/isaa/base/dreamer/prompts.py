@@ -91,7 +91,32 @@ Ohne aktives Pruning bloated sich das gesamte System über Zeit.
          }
        ]
      }
+   - Die Memories landen im AgentKnowledge-Space und werden bei JEDEM Run recalled —
+     schreibe nur PRÄZISE, dauerhaft gültige Fakten (keine Vermutungen, kein Rauschen).
    - Wenn `create_memories` nicht funktioniert, dokumentiere das explizit im Report.
+
+6d. MEMORY-PFLEGE ⚠️ PFLICHT-PHASE — Widersprüche auflösen & kristallisieren
+   - Die Agent-Memory sammelt über Runs alte, redundante und WIDERSPRÜCHLICHE
+     Einträge an (z. B. "host ist alpha" vs. später "host ist beta"). Der Agent
+     bricht im Live-Betrieb an solchen Konflikten. DU räumst sie hier auf.
+   - Workflow pro Themengebiet (leite Themen aus TaskMap + Session-Histories ab):
+     1) dream_act({"action":"query_memory","payload":{"query":"<thema>","k":10}})
+        → Hits MIT id, space, created_at, source, score.
+     2) Prüfe die Hits auf: (a) direkte Widersprüche, (b) veraltete Fakten
+        (älterer Timestamp, durch neuere Aussage ersetzt), (c) vage Duplikate
+        die sich zu EINEM präzisen Fakt zusammenfassen lassen.
+     3) dream_act({"action":"crystallize_memory","payload":{
+          "invalidate_ids":["<id_alt1>","<id_alt2>"],
+          "memories":[{"text":"<EIN präziser konsolidierter Fakt>","concepts":["..."]}],
+          "reason":"<kurz: welcher Konflikt/warum>"}})
+        → alte Einträge werden deaktiviert, der präzise Fakt landet im
+        AgentKnowledge-Space (immer im Recall).
+   - REGELN: Bei Widerspruch gewinnt (a) explizites User-Wort aus Session-Histories,
+     dann (b) der neuere Timestamp. Einträge mit source vfs:... NICHT invalidieren
+     (die spiegeln Dateien — die Datei ist die Wahrheit); stattdessen den
+     widersprechenden Nicht-Datei-Eintrag invalidieren.
+   - Mindestens 3 query_memory-Stichproben pro Cycle (häufigste Task-Themen).
+     Kein Aufräumbedarf gefunden → explizit im Report vermerken.
 
 6b. TASK-GUIDES (Multi-Run-Auswertung der Task Map)
    - Pro Klasse mit genug Evidence (entry_count ≥ 3): vergleiche rows,
@@ -125,6 +150,8 @@ Ohne aktives Pruning bloated sich das gesamte System über Zeit.
 9. ABSCHLUSS
    - final_answer() mit strukturiertem Report:
      * Zusammenfassung (was verbessert UND was gelöscht)
+     * Memory-Pflege: gefundene Widersprüche, invalidierte Einträge (ids),
+       kristallisierte Fakten — oder explizit "keine Konflikte gefunden"
      * System Health Tabelle (Vorher/Nachher Δ für Counts + Bloat)
      * Skill-Änderungen Tabelle (Name, Aktion, Confidence Δ, Bloat)
      * Gelöschte/deaktivierte Items + Begründung

@@ -51,6 +51,8 @@ class DreamerToolHandler:
         dream_cycle_count: int = 1,
         vfs_provider=None,
         session_manager_provider=None,
+        memory_provider=None,
+        agent_name: str = "",
     ):
         self._skills = skills          # {id: Skill}
         self._rules = rules            # {id: SituationRule}
@@ -62,6 +64,9 @@ class DreamerToolHandler:
         self._vfs_provider = vfs_provider
         # callable -> parent SessionManager (full chat history lives there)
         self._session_manager_provider = session_manager_provider
+        # callable -> AISemanticMemory (real memory writes + maintenance)
+        self._memory_provider = memory_provider
+        self._agent_name = agent_name or "agent"
 
         self._report = {
             "skills_evolved": [], "skills_created": [], "skills_merged": [],
@@ -69,6 +74,8 @@ class DreamerToolHandler:
             "skills_deactivated": [], "rules_created": [], "rules_deleted": [],
             "patterns_added": [], "patterns_pruned": [], "personas_evolved": [],
             "personas_pruned": [], "memories_added": [],
+            "memories_crystallized": [], "memories_invalidated": [],
+            "memory_conflicts_found": [],
         }
 
     # ═══════════════════════════════════════════════════════════════
@@ -84,11 +91,151 @@ class DreamerToolHandler:
     _VALID_ACTIONS = frozenset({
         "get_taskmap", "get_all_state", "get_session_histories", "migrate_logs",
         "create_skill", "create_rule", "create_persona", "create_memories",
+        "query_memory", "crystallize_memory",
         "evolve_skill", "merge_skills", "split_skill", "compress_skill",
         "cleanup", "delete_skill", "delete_rule",
         "extract_rules", "learn_pattern",
         "write_taskmap_guide", "add_task_class", "persist_checkpoint", "update_classify_guide"
     })
+
+    # ── memory access ────────────────────────────────────────────────
+
+    def _memory(self):
+        try:
+            return self._memory_provider() if self._memory_provider else None
+        except Exception:
+            return None
+
+    def _knowledge_space(self) -> str:
+        return f"AgentKnowledge/{self._agent_name}"
+
+    async def handle_act_async(self, action: str, payload: dict | None = None) -> str:
+        """Async dispatcher — memory actions need await (embeddings).
+        Everything else routes to the sync handle_act unchanged."""
+        payload = payload or {}
+        if action == "query_memory":
+            return await self.handle_query_memory(
+                query=str(payload.get("query", "")),
+                k=int(payload.get("k", 8)),
+            )
+        if action == "crystallize_memory":
+            return await self.handle_crystallize_memory(
+                invalidate_ids=list(payload.get("invalidate_ids", []) or []),
+                memories=list(payload.get("memories", []) or []),
+                reason=str(payload.get("reason", "")),
+            )
+        if action == "create_memories":
+            return await self.handle_extract_memories_async(
+                list(payload.get("memories", []) or []),
+            )
+        return self.handle_act(action, payload)
+
+    async def handle_query_memory(self, query: str, k: int = 8) -> str:
+        """Search ALL memory spaces of this agent. Returns hits WITH entry ids,
+        timestamps and sources so the dreamer can spot stale/conflicting
+        entries and resolve them via crystallize_memory."""
+        mem = self._memory()
+        if mem is None:
+            return json.dumps({"success": False, "error": "no memory instance wired"})
+        if not query:
+            return json.dumps({"success": False, "error": "query required"})
+        try:
+            results = await mem.query(query, None, query_params={"k": k})
+            out = []
+            for block in results or []:
+                for h in block.get("hits", []):
+                    meta = h.get("meta", {}) if isinstance(h.get("meta"), dict) else {}
+                    out.append({
+                        "id": h.get("id"),
+                        "space": block.get("memory"),
+                        "content": (h.get("content") or "")[:300],
+                        "concepts": (h.get("concepts") or [])[:8],
+                        "created_at": h.get("created_at") or h.get("timestamp"),
+                        "source": meta.get("source"),
+                        "score": round(float(h.get("score", 0) or 0), 3),
+                    })
+            return json.dumps({"success": True, "count": len(out), "hits": out},
+                              ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)})
+
+    async def handle_crystallize_memory(
+        self, invalidate_ids: list, memories: list, reason: str = ""
+    ) -> str:
+        """Resolve contradictions / compress noise: soft-delete the listed
+        stale entry ids across all spaces, then write precise replacement
+        entries into the agent knowledge space (always part of recall)."""
+        mem = self._memory()
+        if mem is None:
+            return json.dumps({"success": False, "error": "no memory instance wired"})
+        invalidated = []
+        for eid in invalidate_ids:
+            for store in mem.get(None):
+                try:
+                    store.delete(str(eid))  # soft delete
+                    invalidated.append(str(eid))
+                    break
+                except Exception:
+                    continue
+        added = []
+        for m in memories:
+            text = m.get("text", "")
+            if not text:
+                continue
+            try:
+                ok = await mem.add_data(
+                    self._knowledge_space(),
+                    text,
+                    metadata={
+                        "source": "dreamer:crystallize",
+                        "category": "knowledge",
+                        "concepts": m.get("concepts", []),
+                        "reason": reason[:200],
+                    },
+                )
+                if ok:
+                    added.append(text[:80])
+            except Exception as e:
+                _log.warning(f"crystallize add failed: {e}")
+        self._report["memories_invalidated"].extend(invalidated)
+        self._report["memories_crystallized"].extend(added)
+        if reason:
+            self._report["memory_conflicts_found"].append(reason[:120])
+        return json.dumps({
+            "success": True,
+            "invalidated": len(invalidated),
+            "crystallized": len(added),
+        })
+
+    async def handle_extract_memories_async(self, memories: List[Dict] = None) -> str:
+        """REAL memory write (previous version was a stub that only touched
+        the report). Stores facts into the agent knowledge space, which is
+        included in every recall."""
+        memories = memories or []
+        mem = self._memory()
+        added = []
+        for m in memories:
+            text = m.get("text", "")
+            if not text:
+                continue
+            if mem is not None:
+                try:
+                    await mem.add_data(
+                        self._knowledge_space(),
+                        text,
+                        metadata={
+                            "source": "dreamer:extract",
+                            "category": "knowledge",
+                            "concepts": m.get("concepts", []),
+                        },
+                    )
+                except Exception as e:
+                    _log.warning(f"create_memories store failed: {e}")
+            added.append(text[:80])
+        self._report["memories_added"].extend(added)
+        note = "" if mem is not None else " (WARNING: no memory wired — report only)"
+        return (f"OK: {len(added)} memories stored{note}"
+                if added else "OK: No memories to extract")
 
     def handle_act(self, action: str, payload: dict | None = None) -> str:
         """Single dispatcher for all Dreamer actions.
