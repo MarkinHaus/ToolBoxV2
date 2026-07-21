@@ -141,17 +141,45 @@ class AISemanticMemory(metaclass=Singleton):
     # ── embedding ──────────────────────────────────────────────────────
 
     async def get_embeddings(self, text: str | list[str]):
-        """Generate embeddings via litellm (identical to V1)."""
-        from toolboxv2.mods.isaa.extras.adapter import litellm_embed
+        """Generate embeddings — cloud router with local HF/ONNX fallback.
+
+        Mode via TB_EMBED_LOCAL: 1=always local, 0=cloud only,
+        auto (default)=local when no cloud model is configured, and as
+        fallback when the cloud call fails. Local backend: fastembed
+        (see local_embeddings.py — model via TB_EMBED_LOCAL_MODEL/manifest).
+        """
+        from toolboxv2.mods.isaa.base.local_embeddings import (
+            local_embed,
+            resolve_mode,
+        )
 
         texts = [text] if isinstance(text, str) else text
-        return (
-            await litellm_embed(
-                texts=texts,
-                model=self.default_config["embedding_model"],
-                dimensions=self.default_config["embedding_dim"],
-            )
-        )[0]
+        dim = self.default_config["embedding_dim"]
+        mode = resolve_mode()
+        cloud_model = self.default_config["embedding_model"]
+
+        use_local_first = mode == "always" or (mode == "auto" and not cloud_model)
+
+        if not use_local_first:
+            try:
+                from toolboxv2.mods.isaa.extras.adapter import litellm_embed
+
+                return (
+                    await litellm_embed(
+                        texts=texts, model=cloud_model, dimensions=dim
+                    )
+                )[0]
+            except Exception as e:
+                if mode == "never":
+                    raise
+                if not getattr(self, "_local_fallback_logged", False):
+                    self._local_fallback_logged = True
+                    logger.warning(
+                        f"cloud embedding failed ({type(e).__name__}: {e}) — "
+                        "falling back to local model (TB_EMBED_LOCAL)"
+                    )
+
+        return (await local_embed(texts, dimensions=dim))[0]
 
     # ── CRUD ───────────────────────────────────────────────────────────
 
@@ -197,7 +225,7 @@ class AISemanticMemory(metaclass=Singleton):
     async def add_data(
         self,
         memory_name: str,
-        data: str | list[str] | bytes | dict,
+        data: str | list[str] | bytes,
         metadata: dict | None = None,
         direct: bool = False,
         **kwargs
@@ -231,8 +259,6 @@ class AISemanticMemory(metaclass=Singleton):
             texts = [data.replace("\\t", "").replace("\t", "")]
         elif isinstance(data, list):
             texts = [d.replace("\\t", "").replace("\t", "") for d in data]
-        elif isinstance(data, dict):
-            raise NotImplementedError("Custom knowledge graph insertion not supported")
         else:
             raise ValueError("Unsupported data type")
 

@@ -132,3 +132,15 @@ observability:
 app:
   profile: developer
   log_level: INFO
+isaa:
+  embedding:
+    mode: ${TB_EMBED_LOCAL:auto}          # auto | local | cloud
+    local_model: ${TB_EMBED_LOCAL_MODEL:nomic-ai/nomic-embed-text-v1.5-Q}
+    cache_dir: ${TB_EMBED_CACHE_DIR:}
+    auto_install: true
+    models:                                # extra Modelle über die Registry hinaus
+      - name: jinaai/jina-embeddings-v5-text-nano-retrieval
+        dim: 768
+        hf: jinaai/jina-embeddings-v5-text-nano-retrieval
+        model_file: onnx/model.onnx
+        pooling: last_token

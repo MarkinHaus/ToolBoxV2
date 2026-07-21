@@ -1032,6 +1032,59 @@ def wizard_advanced_agent(manifest_data: Dict[str, Any],
     cur_lang = os.getenv("NARRATOR_LANG") or updated_env.get("NARRATOR_LANG", "auto")
     updated_env["NARRATOR_LANG"] = prompt_input("Narrator language (auto|de|en)", cur_lang)
 
+    print()
+    c_print(f"  {Colors.CYAN}Embeddings (local / HF){Colors.RESET}")
+    print()
+
+    embedding = isaa.get("embedding", {})
+
+    # mode: auto (local when no cloud model + fallback) | local | cloud
+    cur_mode = embedding.get("mode", "${TB_EMBED_LOCAL:auto}")
+    if isinstance(cur_mode, str) and cur_mode.startswith("${"):
+        cur_mode = "auto"
+    mode = prompt_choice(
+        "Embedding mode  (auto=local w/ cloud fallback · local=always local · cloud=cloud only)",
+        ["auto", "local", "cloud"],
+        {"auto": 0, "local": 1, "cloud": 2}.get(cur_mode, 0))
+    embedding["mode"] = mode
+
+    if mode in ("auto", "local"):
+        # curated local model picks (all fastembed/ONNX; nano/small are CC BY-NC)
+        model_choices = [
+            "nomic-ai/nomic-embed-text-v1.5-Q",              # default, 768, Apache-class
+            "jinaai/jina-embeddings-v2-base-de",             # DE/EN, 768
+            "jinaai/jina-embeddings-v3",                     # multilingual, 1024
+            "jinaai/jina-embeddings-v5-text-nano-retrieval", # 2026 best <500M, 768, NC
+            "BAAI/bge-small-en-v1.5",                        # tiny, 384
+            "custom",                                        # type any HF model id
+        ]
+        cur_model = embedding.get("local_model", "${TB_EMBED_LOCAL_MODEL:nomic-ai/nomic-embed-text-v1.5-Q}")
+        if isinstance(cur_model, str) and cur_model.startswith("${"):
+            cur_model = "nomic-ai/nomic-embed-text-v1.5-Q"
+        default_idx = model_choices.index(cur_model) if cur_model in model_choices else 0
+        pick = prompt_choice("Local embedding model", model_choices, default_idx)
+        if pick == "custom":
+            pick = prompt_input("HF model id", cur_model)
+        embedding["local_model"] = pick
+
+        cur_cache = embedding.get("cache_dir", "")
+        if isinstance(cur_cache, str) and cur_cache.startswith("${"):
+            cur_cache = ""
+        cache = prompt_input("Model cache dir (empty = {data_dir}/embed_cache)", cur_cache)
+        if cache:
+            embedding["cache_dir"] = cache
+
+        embedding["auto_install"] = prompt_bool(
+            "Auto-install fastembed if missing?",
+            embedding.get("auto_install", True))
+
+        # keep prior extra models list untouched; hint how to add more
+        if embedding.get("models"):
+            c_print(f"    {Colors.DIM}{len(embedding['models'])} custom model(s) already declared "
+                    f"in isaa.embedding.models — edit the manifest to change them.{Colors.RESET}")
+
+    isaa["embedding"] = embedding
+
     isaa["self_agent"] = self_agent
     manifest_data["isaa"] = isaa
 

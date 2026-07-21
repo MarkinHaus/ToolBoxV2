@@ -47,6 +47,126 @@ def vfs_index_space(agent_name: str, session_id: str) -> str:
     return f"VFSIndex/{agent_name}.{session_id}"
 
 
+class _IndexProgressHub:
+    """Process-wide singleton that coalesces ALL concurrent VFS/global index
+    jobs into ONE shared spinner.
+
+    THE BUG THIS FIXES: the icli spins up several agent sessions; each ran its
+    own backfill concurrently, and each created its own Spinner. Under the
+    prompt-toolkit patch the render loop draws the primary line PLUS every
+    secondary spinner's info — so N concurrent index jobs produced
+    "… 279/668 …  [… 279/668 … | … 279/668 … | …]" stacked in the bottom
+    toolbar instead of one line.
+
+    THE FIX: there is only ever ONE Spinner for all VFS indexing. Each job
+    registers with a key and pushes its (done, total); the hub renders a single
+    aggregated line (summed done/total across live jobs). When the last job
+    finishes the spinner is closed exactly once. Thread-safe (backfills run in
+    different tasks/threads)."""
+
+    _instance: "_IndexProgressHub | None" = None
+    _cls_lock = __import__("threading").Lock()
+
+    def __new__(cls):
+        with cls._cls_lock:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+                cls._instance._init()
+        return cls._instance
+
+    def _init(self):
+        import threading
+
+        self._lock = threading.Lock()
+        self._jobs: dict[str, tuple[int, int]] = {}  # key → (done, total)
+        self._spinner = None
+
+    def _label(self) -> str:
+        done = sum(d for d, _ in self._jobs.values())
+        total = sum(t for _, t in self._jobs.values())
+        remaining = max(0, total - done)
+        pct = int(done * 100 / total) if total else 0
+        n = len(self._jobs)
+        scope = "memory index" if n == 1 else f"memory index ×{n}"
+        return f"Indexing into {scope} {done}/{total} ({pct}%, {remaining} left)"
+
+    def start(self, key: str, total: int, enabled: bool = True):
+        with self._lock:
+            self._jobs[key] = (0, total)
+            if enabled and self._spinner is None:
+                try:
+                    from toolboxv2 import Spinner
+
+                    self._spinner = Spinner(message=self._label(), symbols="d")
+                    self._spinner.__enter__()
+                except Exception:
+                    self._spinner = None
+            self._refresh()
+
+    def update(self, key: str, done: int):
+        with self._lock:
+            if key in self._jobs:
+                self._jobs[key] = (done, self._jobs[key][1])
+                self._refresh()
+
+    def finish(self, key: str):
+        with self._lock:
+            self._jobs.pop(key, None)
+            if self._jobs:
+                self._refresh()
+            elif self._spinner is not None:
+                # last job → close the single spinner exactly once
+                try:
+                    self._spinner.__exit__(None, None, None)
+                except Exception:
+                    pass
+                finally:
+                    self._spinner = None
+
+    def _refresh(self):
+        if self._spinner is not None:
+            try:
+                self._spinner.message = self._label()
+            except Exception:
+                pass
+
+
+class _ProgressReporter:
+    """Thin per-job handle over the shared _IndexProgressHub. A `progress_cb`,
+    when supplied, bypasses the hub entirely and routes to that callback (UI)."""
+
+    _counter = 0
+    _counter_lock = __import__("threading").Lock()
+
+    def __init__(self, label: str, total: int, cb=None, enabled: bool = True):
+        self.total = max(0, int(total))
+        self.cb = cb
+        self._closed = False
+        self._key = None
+        if cb is None and enabled and self.total > 0:
+            with _ProgressReporter._counter_lock:
+                _ProgressReporter._counter += 1
+                self._key = f"{label}#{_ProgressReporter._counter}"
+            _IndexProgressHub().start(self._key, self.total, enabled=True)
+
+    def update(self, done: int, path: str = "", suffix: str = ""):
+        if self.cb is not None:
+            try:
+                self.cb(done, self.total, path)
+            except Exception:
+                pass
+        elif self._key is not None:
+            _IndexProgressHub().update(self._key, done)
+
+    def close(self, final_message: str = ""):
+        if self._closed:
+            return
+        self._closed = True
+        if self._key is not None:
+            _IndexProgressHub().finish(self._key)
+            self._key = None
+
+
 def _chunk(text: str) -> list[str]:
     """Structure-aware chunking: split on markdown headers, then paragraphs,
     then merge greedily up to _CHUNK_SIZE. Falls back to fixed windows for
@@ -343,8 +463,12 @@ class VFSMemoryIndexer:
             logger.debug(f"[VFSMemoryIndexer] hash preload failed: {e}")
         return out
 
-    async def backfill(self):
-        """Index all eligible existing files. Idempotent via content hashes."""
+    async def backfill(self, show_progress: bool = True, progress_cb=None):
+        """Index all eligible existing files. Idempotent via content hashes.
+
+        Reports progress so the user knows how many files will be embedded and
+        how many remain. `progress_cb(done, total, path)` overrides the default
+        inline progress when supplied (e.g. to route progress to a UI)."""
         # ensure spaces/stores exist so hash preload has something to read
         for sp in (self.space, GLOBAL_INDEX_SPACE):
             try:
@@ -353,14 +477,27 @@ class VFSMemoryIndexer:
                 pass
         self._hashes.update(self._load_indexed_hashes())
         self._hashes.update(self._load_indexed_hashes(GLOBAL_INDEX_SPACE))
-        count = 0
-        for path in list(self.vfs.files.keys()):
-            if not self._eligible(path):
-                continue
-            await self._index_path(path)
-            count += 1
+
+        # count total up front so the bar has a denominator
+        todo = [p for p in list(self.vfs.files.keys()) if self._eligible(p)]
+        total = len(todo)
+        if total == 0:
+            logger.info(f"[VFSMemoryIndexer:{self.space}] backfill: nothing to index")
+            return
+
+        bar = _ProgressReporter(
+            f"Indexing VFS into memory", total,
+            cb=progress_cb, enabled=show_progress)
+        done = 0
+        try:
+            for path in todo:
+                await self._index_path(path)
+                done += 1
+                bar.update(done, path)
+        finally:
+            bar.close(f"VFS indexed: {done}/{total} files")
         logger.info(
-            f"[VFSMemoryIndexer:{self.space}] backfill scanned {count} files"
+            f"[VFSMemoryIndexer:{self.space}] backfill indexed {done}/{total} files"
         )
 
 
@@ -386,14 +523,16 @@ def _global_hash_current(store, source: str, h: str) -> bool:
     return False
 
 
-async def index_global_memory(memory, only_new: bool = True) -> dict:
+async def index_global_memory(memory, only_new: bool = True,
+                              show_progress: bool = True, progress_cb=None) -> dict:
     """Index the ENTIRE /global folder (from disk, recursively) into the
     shared GLOBAL_INDEX_SPACE. Skips content that is already indexed and
     unchanged (hash check) when only_new=True. Uses structure-aware chunking.
 
     Safe to call repeatedly — idempotent. Registered as an agent tool so the
     agent (or the user) can trigger a full /global refresh on demand.
-    """
+    Shows a progress bar (total files + how many remain) unless disabled;
+    `progress_cb(done, total, path)` overrides the default Spinner."""
     from pathlib import Path
 
     from toolboxv2.mods.isaa.base.patch.power_vfs import get_global_vfs
@@ -410,42 +549,55 @@ async def index_global_memory(memory, only_new: bool = True) -> dict:
     stores = memory.get(GLOBAL_INDEX_SPACE)
     store = stores[0] if stores else None
 
-    for fp in sorted(root.rglob("*")):
-        if not fp.is_file():
-            continue
-        rel = fp.relative_to(root).as_posix()
-        vpath = f"{GLOBAL_PREFIX}/{rel}"
-        stats["scanned"] += 1
-        try:
-            raw = fp.read_bytes()
-            if b"\x00" in raw[:1024]:
-                stats["skipped_binary"] += 1
-                continue
-            content = raw.decode("utf-8", "replace")
-            if not content.strip():
-                continue
-            h = hashlib.sha1(content.encode("utf-8", "replace")).hexdigest()
-            source = f"vfs:{vpath}"
-            if only_new and store is not None and _global_hash_current(store, source, h):
-                stats["skipped_unchanged"] += 1
-                continue
-            if store is not None:
-                try:
-                    store.invalidate_by_source(source)
-                except Exception:
-                    pass
-            ok = await memory.add_data(
-                GLOBAL_INDEX_SPACE,
-                _chunk(content),
-                metadata={
-                    "source": source,
-                    "vfs_path": vpath,
-                    "category": "vfs",
-                    "content_hash": h,
-                },
-            )
-            if ok:
-                stats["indexed"] += 1
-        except Exception as e:
-            stats["errors"].append(f"{vpath}: {e}")
+    # materialize + count up front so the bar has a denominator
+    files = [fp for fp in sorted(root.rglob("*")) if fp.is_file()]
+    total = len(files)
+
+    bar = _ProgressReporter(
+        "Indexing /global into memory", total,
+        cb=progress_cb, enabled=show_progress)
+    done = 0
+    try:
+        for fp in files:
+            rel = fp.relative_to(root).as_posix()
+            vpath = f"{GLOBAL_PREFIX}/{rel}"
+            stats["scanned"] += 1
+            try:
+                raw = fp.read_bytes()
+                if b"\x00" in raw[:1024]:
+                    stats["skipped_binary"] += 1
+                else:
+                    content = raw.decode("utf-8", "replace")
+                    if content.strip():
+                        h = hashlib.sha1(content.encode("utf-8", "replace")).hexdigest()
+                        source = f"vfs:{vpath}"
+                        if only_new and store is not None and _global_hash_current(store, source, h):
+                            stats["skipped_unchanged"] += 1
+                        else:
+                            if store is not None:
+                                try:
+                                    store.invalidate_by_source(source)
+                                except Exception:
+                                    pass
+                            ok = await memory.add_data(
+                                GLOBAL_INDEX_SPACE,
+                                _chunk(content),
+                                metadata={
+                                    "source": source,
+                                    "vfs_path": vpath,
+                                    "category": "vfs",
+                                    "content_hash": h,
+                                },
+                            )
+                            if ok:
+                                stats["indexed"] += 1
+            except Exception as e:
+                stats["errors"].append(f"{vpath}: {e}")
+            done += 1
+            bar.update(done, vpath,
+                       suffix=f"{stats['indexed']} new")
+    finally:
+        bar.close(
+            f"/global indexed: {stats['indexed']} new, "
+            f"{stats['skipped_unchanged']} unchanged, {total} scanned")
     return stats

@@ -518,6 +518,39 @@ class IsaaModelsConfig(BaseModel):
     embedding: str = Field(default="${DEFAULTMODELEMBEDDING:gemini/text-embedding-004}")
 
 
+class IsaaEmbeddingModelEntry(BaseModel):
+    """A local embedding model available to the fastembed/ONNX backend.
+
+    Extends the built-in validated registry. Entries with an `hf` source are
+    registered as fastembed custom models; with pooling='last_token' they use
+    the built-in last-token ONNX loader (jina-v5, Qwen3-Embedding, …)."""
+    name: str
+    dim: int = Field(default=768)
+    hf: Optional[str] = Field(default=None, description="HF repo for ONNX weights")
+    model_file: str = Field(default="onnx/model.onnx")
+    pooling: str = Field(default="mean", description="mean | cls | last_token")
+    normalization: bool = Field(default=True)
+    tags: List[str] = Field(default_factory=list)
+
+
+class IsaaEmbeddingConfig(BaseModel):
+    """Local embedding backend (fastembed/ONNX) — HF models, no API cost.
+
+    mode:
+      auto  → local when no cloud model configured + fallback on cloud failure
+      local → always local
+      cloud → cloud only (hard-fail on error)
+    Env overrides: TB_EMBED_LOCAL, TB_EMBED_LOCAL_MODEL, TB_EMBED_CACHE_DIR."""
+    mode: str = Field(default="${TB_EMBED_LOCAL:auto}")
+    local_model: str = Field(
+        default="${TB_EMBED_LOCAL_MODEL:nomic-ai/nomic-embed-text-v1.5-Q}")
+    cache_dir: str = Field(default="${TB_EMBED_CACHE_DIR:}")
+    auto_install: bool = Field(default=True)
+    models: List[IsaaEmbeddingModelEntry] = Field(
+        default_factory=list,
+        description="Extra local embedding models beyond the built-in registry")
+
+
 class IsaaCheckpointConfig(BaseModel):
     """ISAA checkpoint configuration."""
     enabled: bool = Field(default=True)
@@ -680,6 +713,7 @@ class IsaaConfig(BaseModel):
     """ISAA self-agent configuration (only loaded when isaa is installed)."""
     enabled: bool = Field(default=True)
     models: IsaaModelsConfig = Field(default_factory=IsaaModelsConfig)
+    embedding: IsaaEmbeddingConfig = Field(default_factory=IsaaEmbeddingConfig)
     self_agent: IsaaSelfAgentConfig = Field(default_factory=IsaaSelfAgentConfig)
     code_executor: IsaaCodeExecutorConfig = Field(default_factory=IsaaCodeExecutorConfig)
     mcp: IsaaMCPConfig = Field(default_factory=IsaaMCPConfig)
