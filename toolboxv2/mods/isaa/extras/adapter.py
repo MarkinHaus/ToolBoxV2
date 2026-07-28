@@ -52,6 +52,12 @@ async def litellm_complete_if_cache(
     return await llm_complete(model=model, messages=messages, api_key=_api_key, **clean_kw)
 
 async def llm_complete(model="model", messages=None, _api_key="", stream=False, **clean_kw):
+    global _lightrag_router
+    if "_lightrag_router" not in globals() or _lightrag_router is None:
+        from toolboxv2.mods.isaa.base.llm_router.router import CompletionRouter
+        from toolboxv2.mods.isaa.base.llm_router.adapters.setup import setup_default_adapters
+        _lightrag_router = CompletionRouter(strict_mode=False)
+        setup_default_adapters(_lightrag_router)
     try:
         if stream:
             async def inner():

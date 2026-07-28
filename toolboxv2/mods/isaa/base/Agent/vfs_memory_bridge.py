@@ -47,6 +47,19 @@ def vfs_index_space(agent_name: str, session_id: str) -> str:
     return f"VFSIndex/{agent_name}.{session_id}"
 
 
+def agent_index_space(agent_name: str) -> str:
+    """Agent-global VFS index — backfilled ONCE per agent and shared across all
+    that agent's sessions (bulk existing files live here). Session spaces hold
+    only the few session-specific files, written live via on_change."""
+    return f"VFSIndex/{agent_name}"
+
+
+# per-agent backfill guard: ensures the (expensive) initial scan runs at most
+# once per agent process, no matter how many sessions/sub-agents spin up.
+_AGENT_BACKFILL_LOCK = __import__("asyncio").Lock()
+_AGENT_BACKFILL_DONE: set[str] = set()
+
+
 class _IndexProgressHub:
     """Process-wide singleton that coalesces ALL concurrent VFS/global index
     jobs into ONE shared spinner.
@@ -226,6 +239,8 @@ class VFSMemoryIndexer:
         self.vfs = session.vfs
         self.memory = session._memory
         self.space = vfs_index_space(session.agent_name, session.session_id)
+        self.agent_space = agent_index_space(session.agent_name)
+        self.agent_name = session.agent_name
         self._pending: dict[str, float] = {}  # path → not-before timestamp
         self._deletes: set[str] = set()
         self._hashes: dict[str, str] = {}  # path → content sha1 (indexed state)
@@ -262,12 +277,14 @@ class VFSMemoryIndexer:
 
     # ── eligibility ───────────────────────────────────────────────────────
 
-    def _space_for(self, path: str) -> str:
-        """/global/* is indexed into a single shared space (all agents/sessions
-        see the same files, so they share one index — no per-session dupes)."""
+    def _space_for(self, path: str, session_scoped: bool = False) -> str:
+        """/global → shared global space. Otherwise: the initial backfill writes
+        into the agent-global space (once per agent, reused by all sessions);
+        live on_change writes go to this session's space (the few
+        session-specific files)."""
         if path.startswith(GLOBAL_PREFIX):
             return GLOBAL_INDEX_SPACE
-        return self.space
+        return self.space if session_scoped else self.agent_space
 
     def _eligible(self, path: str) -> bool:
         if any(path.startswith(p) for p in _SKIP_PREFIXES):
@@ -346,7 +363,7 @@ class VFSMemoryIndexer:
                     await self._unindex(p)
                 for p in due:
                     self._pending.pop(p, None)
-                    await self._index_path(p)
+                    await self._index_path(p, session_scoped=True)
                 if self._pending or self._deletes:
                     await asyncio.sleep(0.5)
         except asyncio.CancelledError:
@@ -361,7 +378,7 @@ class VFSMemoryIndexer:
         self._deletes.clear()
         for p in list(self._pending):
             self._pending.pop(p, None)
-            await self._index_path(p)
+            await self._index_path(p, session_scoped=True)
 
     # ── index ops ─────────────────────────────────────────────────────────
 
@@ -392,15 +409,22 @@ class VFSMemoryIndexer:
         return stores[0] if stores else None
 
     async def _unindex(self, path: str):
-        store = self._store(self._space_for(path))
-        if store is not None:
-            try:
-                store.invalidate_by_source(f"vfs:{path}")
-            except Exception as e:
-                logger.debug(f"[VFSMemoryIndexer] unindex {path}: {e}")
+        # a path may have been indexed in the agent space (backfill) or this
+        # session's space (live) — invalidate both; global stays separate.
+        if path.startswith(GLOBAL_PREFIX):
+            spaces = [GLOBAL_INDEX_SPACE]
+        else:
+            spaces = [self.space, self.agent_space]
+        for sp in spaces:
+            store = self._store(sp)
+            if store is not None:
+                try:
+                    store.invalidate_by_source(f"vfs:{path}")
+                except Exception as e:
+                    logger.debug(f"[VFSMemoryIndexer] unindex {path} in {sp}: {e}")
         self._hashes.pop(path, None)
 
-    async def _index_path(self, path: str):
+    async def _index_path(self, path: str, session_scoped: bool = False):
         if not self._eligible(path):
             return
         content = self._get_content(path)
@@ -409,11 +433,12 @@ class VFSMemoryIndexer:
         h = hashlib.sha1(content.encode("utf-8", "replace")).hexdigest()
         if self._hashes.get(path) == h:
             return  # unchanged
-        space = self._space_for(path)
+        space = self._space_for(path, session_scoped)
         source = f"vfs:{path}"
         store = self._store(space)
         if store is not None:
-            if space == GLOBAL_INDEX_SPACE and _global_hash_current(store, source, h):
+            if space in (GLOBAL_INDEX_SPACE, self.agent_space) and \
+                    _global_hash_current(store, source, h):
                 self._hashes[path] = h
                 return  # another session already indexed this exact content
             try:
@@ -464,40 +489,47 @@ class VFSMemoryIndexer:
         return out
 
     async def backfill(self, show_progress: bool = True, progress_cb=None):
-        """Index all eligible existing files. Idempotent via content hashes.
+        """Index existing VFS files ONCE PER AGENT into the agent-global space,
+        shared by all of that agent's sessions. Guarded so concurrent sessions
+        / sub-agents don't each re-scan (previously produced ×80 stacked jobs).
+        Idempotent via content hashes.
 
-        Reports progress so the user knows how many files will be embedded and
-        how many remain. `progress_cb(done, total, path)` overrides the default
-        inline progress when supplied (e.g. to route progress to a UI)."""
+        `progress_cb(done, total, path)` overrides the default inline progress."""
+        # run at most once per agent process
+        async with _AGENT_BACKFILL_LOCK:
+            if self.agent_name in _AGENT_BACKFILL_DONE:
+                return
+            _AGENT_BACKFILL_DONE.add(self.agent_name)
+
         # ensure spaces/stores exist so hash preload has something to read
-        for sp in (self.space, GLOBAL_INDEX_SPACE):
+        for sp in (self.agent_space, GLOBAL_INDEX_SPACE):
             try:
                 self.memory._get_or_create_store(self.memory._sanitize_name(sp))
             except Exception:
                 pass
-        self._hashes.update(self._load_indexed_hashes())
+        self._hashes.update(self._load_indexed_hashes(self.agent_space))
         self._hashes.update(self._load_indexed_hashes(GLOBAL_INDEX_SPACE))
 
         # count total up front so the bar has a denominator
         todo = [p for p in list(self.vfs.files.keys()) if self._eligible(p)]
         total = len(todo)
         if total == 0:
-            logger.info(f"[VFSMemoryIndexer:{self.space}] backfill: nothing to index")
+            logger.info(f"[VFSMemoryIndexer:{self.agent_space}] backfill: nothing to index")
             return
 
         bar = _ProgressReporter(
-            f"Indexing VFS into memory", total,
+            "Indexing VFS into memory", total,
             cb=progress_cb, enabled=show_progress)
         done = 0
         try:
             for path in todo:
-                await self._index_path(path)
+                await self._index_path(path)  # agent-scoped (session_scoped=False)
                 done += 1
                 bar.update(done, path)
         finally:
             bar.close(f"VFS indexed: {done}/{total} files")
         logger.info(
-            f"[VFSMemoryIndexer:{self.space}] backfill indexed {done}/{total} files"
+            f"[VFSMemoryIndexer:{self.agent_space}] backfill indexed {done}/{total} files"
         )
 
 

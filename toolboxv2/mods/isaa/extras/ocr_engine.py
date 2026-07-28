@@ -483,7 +483,7 @@ class VisionLLMEngine(OCREngine):
             return False
 
     async def ocr(self, images: list[Any]) -> list[OCRPage]:
-        from toolboxv2.mods.isaa.extras.adapter import litellm_complete
+        from toolboxv2.mods.isaa.extras.adapter import llm_complete
         pages: list[OCRPage] = []
         for i, img in enumerate(images):
             data_url = _image_to_data_url(img, "PNG")
@@ -494,7 +494,7 @@ class VisionLLMEngine(OCREngine):
                     {"type": "text", "text": self.prompt},
                 ],
             }]
-            response = await litellm_complete(model=self.model, messages=messages)
+            response = await llm_complete(model=self.model, messages=messages)
             text = _extract_response_text(response)
             pages.append(OCRPage(index=i, text=text.strip(), metadata={"model": self.model}))
         return pages

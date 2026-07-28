@@ -370,10 +370,12 @@ class AgentSessionV2:
         if "extra_spaces" not in kwargs:
             from toolboxv2.mods.isaa.base.Agent.vfs_memory_bridge import (
                 GLOBAL_INDEX_SPACE,
+                agent_index_space,
                 vfs_index_space,
             )
 
             kwargs["extra_spaces"] = [
+                agent_index_space(self.agent_name),
                 vfs_index_space(self.agent_name, self.session_id),
                 GLOBAL_INDEX_SPACE,
                 f"AgentKnowledge/{self.agent_name}",
