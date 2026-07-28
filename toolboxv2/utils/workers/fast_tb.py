@@ -347,17 +347,34 @@ class FastTB:
         already mounted (by the app or a previous call) this is a no-op and the
         existing mount is left untouched. Returns True if /web is now available.
         """
-        import os
+        return self.mount_dist()
+
+    def mount_dist(self) -> bool:
+        """Idempotently serve the built web bundle (dist) from this app.
+
+        Mounts twice on purpose:
+          ""      -> dist/…    so /web/assets/login.html, /mainPagen.html and
+                               webpack's publicPath='/' assets resolve
+          "/dist" -> dist/…    so explicit /dist/... links keep working
+
+        The directory is resolved via the manifest (paths.dist_dir), falling
+        back to <tb_root_dir>/dist. Returns False if the bundle isn't built.
+        """
         if self._web_mount_owned:
             return True
         try:
-            from toolboxv2 import tb_root_dir
+            from toolboxv2.utils.workers.fast.endpoint import dist_dir
+            resolved = dist_dir()
         except Exception:
+            resolved = None
+        if resolved is None:
             return False
-        directory = os.path.join(os.path.abspath(str(tb_root_dir)), "dist")
-        if not os.path.isdir(directory):
-            return False
-        self._static_mounts.append(("", directory))
+        directory = str(resolved)
+        existing = {p for p, _ in self._static_mounts}
+        if "" not in existing:
+            self._static_mounts.append(("", directory))
+        if "/dist" not in existing:
+            self._static_mounts.append(("/dist", directory))
         self._web_mount_owned = True
         return True
 

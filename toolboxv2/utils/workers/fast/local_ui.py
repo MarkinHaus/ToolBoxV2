@@ -26,6 +26,10 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from toolboxv2 import Result, get_app, tb_root_dir
+from toolboxv2.utils.workers.fast.endpoint import (
+    local_ui_url,
+    resolve_local_ui_endpoint,
+)
 from toolboxv2.utils.workers.fast_tb import FastTB
 from toolboxv2.utils.workers.server_worker import ParsedRequest
 from toolboxv2.utils.workers.session import SessionData
@@ -40,6 +44,13 @@ app = FastTB(title="ToolBox Local")
 # our own dist/web rather than the remote site — mount it permanently.
 app.serve_login_assets = True
 app.inject_style = False
+
+# The local UI is the ONLY thing serving the built web bundle when there is no
+# nginx in front (i.e. every non-server install). Mount it here, at import, and
+# unconditionally — previously the mount was gated behind `app.auth` inside
+# as_wsgi_app(), and since local_ui leaves app.auth off, /web/assets/login.html,
+# /mainPagen.html and the tbjs bundle 404'd on every desktop install.
+app.mount_dist()
 
 # =============================================================================
 # Helpers
@@ -779,8 +790,12 @@ async def root(
 
     # First-run path: no users yet → silently open the setup URL ourselves
     if not await _has_any_user():
-        host = (request.headers.get("host") or f"127.0.0.1:{os.getenv('TB_HTTP_PORT', '5000')}")
-        await _trigger_first_run(f"http://{host}")
+        host_header = request.headers.get("host")
+        if host_header:
+            base = f"http://{host_header}"
+        else:
+            base = local_ui_url()
+        await _trigger_first_run(base)
         # Show a quiet waiting card; the auto-open will land them on / with ?setup_token
         return _shell(_waiting_for_setup_fragment(), title="ToolBox — first run")
 
@@ -790,6 +805,21 @@ async def root(
 # =============================================================================
 # Routes — HTMX partials
 # =============================================================================
+
+@app.get("/local-ui/endpoint", auth=False)
+async def endpoint_info(request: ParsedRequest, session: SessionData = None):
+    """Where the local UI lives. The tray/Tauri use this to build 'Open Dashboard'."""
+    err = _ensure_local(request)
+    if err is not None:
+        return err
+    host, port = resolve_local_ui_endpoint()
+    return {
+        "host": host,
+        "port": port,
+        "url": local_ui_url(),
+        "dist_mounted": bool(app.list_mounted() is not None),
+    }
+
 
 @app.get("/local-ui/partials/root")
 async def partial_root(request: ParsedRequest, session: SessionData = None):

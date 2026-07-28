@@ -21,6 +21,54 @@ const DEFAULT_WS_PORT: u16 = 5001;
 const REMOTE_API_URL: &str = "https://simplecore.app";
 const REMOTE_WS_URL: &str = "wss://simplecore.app";
 
+const DEFAULT_LOCAL_UI_HOST: &str = "127.0.0.1";
+
+/// Endpoint file written by Python (`utils/workers/fast/endpoint.py`) whenever a
+/// worker binds the local UI. Reading it here is what keeps the Rust shell on
+/// the same port as the manifest instead of a hardcoded 5000.
+fn endpoint_file() -> Option<std::path::PathBuf> {
+    dirs::data_dir().map(|p| p.join("toolboxv2").join("local_ui.json"))
+}
+
+fn published_endpoint() -> Option<Value> {
+    let path = endpoint_file()?;
+    let raw = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<Value>(&raw).ok()
+}
+
+/// Host of the local UI: TB_LOCAL_UI_HOST -> local_ui.json -> 127.0.0.1
+pub fn resolve_local_ui_host() -> String {
+    if let Ok(h) = std::env::var("TB_LOCAL_UI_HOST") {
+        if !h.trim().is_empty() {
+            return h;
+        }
+    }
+    published_endpoint()
+        .and_then(|v| v.get("host").and_then(|h| h.as_str()).map(String::from))
+        .unwrap_or_else(|| DEFAULT_LOCAL_UI_HOST.to_string())
+}
+
+/// Port of the local UI: TB_LOCAL_UI_PORT -> local_ui.json -> DEFAULT_HTTP_PORT
+pub fn resolve_local_ui_port() -> u16 {
+    if let Ok(p) = std::env::var("TB_LOCAL_UI_PORT") {
+        if let Ok(parsed) = p.trim().parse::<u16>() {
+            if parsed != 0 {
+                return parsed;
+            }
+        }
+    }
+    published_endpoint()
+        .and_then(|v| v.get("port").and_then(|p| p.as_u64()))
+        .and_then(|p| u16::try_from(p).ok())
+        .filter(|p| *p != 0)
+        .unwrap_or(DEFAULT_HTTP_PORT)
+}
+
+/// The single URL the tray, the Tauri window and the browser fallback all open.
+pub fn local_ui_url() -> String {
+    format!("http://{}:{}", resolve_local_ui_host(), resolve_local_ui_port())
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ApiEndpoint {
     Local,
@@ -35,7 +83,7 @@ impl Default for ApiEndpoint {
 impl ApiEndpoint {
     pub fn get_http_url(&self, port: u16) -> String {
         match self {
-            ApiEndpoint::Local => format!("http://localhost:{}", port),
+            ApiEndpoint::Local => format!("http://{}:{}", resolve_local_ui_host(), port),
             ApiEndpoint::Remote => format!("{}/api", REMOTE_API_URL),
             ApiEndpoint::HomeServer(url) => format!("{}/api", url),
         }
@@ -43,7 +91,7 @@ impl ApiEndpoint {
 
     pub fn get_ws_url(&self, port: u16) -> String {
         match self {
-            ApiEndpoint::Local => format!("ws://localhost:{}", port),
+            ApiEndpoint::Local => format!("ws://{}:{}", resolve_local_ui_host(), port),
             ApiEndpoint::Remote => REMOTE_WS_URL.to_string(),
             ApiEndpoint::HomeServer(url) => url.replace("https://", "wss://").replace("http://", "ws://"),
         }
@@ -69,12 +117,19 @@ impl Default for WorkerManager {
 impl WorkerManager {
     pub fn new() -> Self {
         let data_dir = dirs::data_dir().map(|p| p.join("toolboxv2"));
+        // Resolved, not hardcoded: env -> local_ui.json -> compiled default.
+        let http_port = resolve_local_ui_port();
+        let ws_port = std::env::var("TB_WS_PORT")
+            .ok()
+            .and_then(|p| p.trim().parse::<u16>().ok())
+            .filter(|p| *p != 0)
+            .unwrap_or_else(|| if http_port == DEFAULT_HTTP_PORT { DEFAULT_WS_PORT } else { http_port + 1 });
         WorkerManager {
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             child_process: None,
             app_handle: None,
-            http_port: DEFAULT_HTTP_PORT,
-            ws_port: DEFAULT_WS_PORT,
+            http_port,
+            ws_port,
             endpoint: ApiEndpoint::default(),
             running: Arc::new(AtomicBool::new(false)),
             data_dir,
@@ -204,6 +259,7 @@ impl WorkerManager {
             "endpoint": endpoint_str,
             "http_url": self.endpoint.get_http_url(self.http_port),
             "ws_url": self.endpoint.get_ws_url(self.ws_port),
+            "local_ui_url": local_ui_url(),
             "remote_api_url": REMOTE_API_URL,
         })
     }
@@ -241,10 +297,14 @@ impl WorkerManager {
                 }
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 {
-                    std::net::TcpStream::connect_timeout(
-                        &format!("127.0.0.1:{}", self.http_port).parse().unwrap(),
-                        std::time::Duration::from_millis(500)
-                    ).is_ok()
+                    // parse() on a hostname would panic; only dial when the
+                    // resolved host is a literal address.
+                    match format!("{}:{}", resolve_local_ui_host(), self.http_port).parse() {
+                        Ok(addr) => std::net::TcpStream::connect_timeout(
+                            &addr, std::time::Duration::from_millis(500)
+                        ).is_ok(),
+                        Err(_) => false,
+                    }
                 }
                 #[cfg(any(target_os = "android", target_os = "ios"))]
                 { false }
@@ -285,8 +345,8 @@ mod tests {
     fn test_worker_manager_new() {
         let manager = WorkerManager::new();
         assert!(!manager.running.load(Ordering::SeqCst));
-        assert_eq!(manager.http_port, DEFAULT_HTTP_PORT);
-        assert_eq!(manager.ws_port, DEFAULT_WS_PORT);
+        assert_eq!(manager.http_port, resolve_local_ui_port());
+        assert_eq!(manager.ws_port, resolve_local_ui_port() + 1);
         assert_eq!(manager.endpoint, ApiEndpoint::Local);
         assert!(!manager.sidecar_available);
     }
@@ -328,8 +388,7 @@ mod tests {
         let status = manager.get_status();
         assert_eq!(status["running"], false);
         assert_eq!(status["sidecar_available"], false);
-        assert_eq!(status["http_port"], DEFAULT_HTTP_PORT);
-        assert_eq!(status["ws_port"], DEFAULT_WS_PORT);
+        assert_eq!(status["http_port"], resolve_local_ui_port());
         assert_eq!(status["endpoint"], "local");
     }
 
@@ -366,7 +425,7 @@ mod tests {
     fn test_api_endpoint_urls() {
         assert_eq!(
             ApiEndpoint::Local.get_http_url(5000),
-            "http://localhost:5000"
+            format!("http://{}:5000", resolve_local_ui_host())
         );
         assert_eq!(
             ApiEndpoint::Remote.get_http_url(5000),

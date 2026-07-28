@@ -444,15 +444,21 @@ fn setup_system_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
     use tauri::menu::{Menu, MenuItem};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder};
 
+    // NOTE: `separator`/`quit` were used one line before they were declared and
+    // the menu was built twice (the second build silently dropped Terminal CLI).
+    // Single, ordered construction now.
+    let open_dashboard = MenuItem::with_id(app, "open_dashboard", "🖥 Open Dashboard", true, None::<&str>)?;
     let open_app = MenuItem::with_id(app, "open_app", "🚀 Open App", true, None::<&str>)?;
     let app_mode = MenuItem::with_id(app, "app_mode", "📺 App Mode", true, None::<&str>)?;
     let hud_mode = MenuItem::with_id(app, "hud_mode", "🎯 HUD Mode", true, None::<&str>)?;
     let open_cli = MenuItem::with_id(app, "open_cli", "💻 Terminal CLI", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open_app, &app_mode, &hud_mode, &open_cli, &separator, &quit])?;
     let separator = MenuItem::with_id(app, "sep", "─────────", false, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "❌ Quit", true, None::<&str>)?;
 
-    let menu = Menu::with_items(app, &[&open_app, &app_mode, &hud_mode, &separator, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[&open_dashboard, &open_app, &app_mode, &hud_mode, &open_cli, &separator, &quit],
+    )?;
 
     let _tray = TrayIconBuilder::new()
         .icon(app.default_window_icon().unwrap().clone())
@@ -463,6 +469,14 @@ fn setup_system_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
                 "quit" => {
                     log::info!("[Tray] Quit requested");
                     app.exit(0);
+                }
+                "open_dashboard" => {
+                    // The one entry point: local UI on the manifest-resolved port,
+                    // rendered in the Tauri window, or in the browser if no
+                    // webview can be created (headless / build without webview).
+                    let url = worker_manager::local_ui_url();
+                    log::info!("[Tray] Open Dashboard -> {}", url);
+                    open_dashboard(app, &url);
                 }
                 "open_app" => {
                     log::info!("[Tray] Open App requested");
@@ -638,7 +652,7 @@ fn subscribe_tray_events(app: tauri::AppHandle) {
     use std::time::Duration;
 
     tauri::async_runtime::spawn(async move {
-        let base = "http://127.0.0.1:5000";
+        let base = worker_manager::local_ui_url();
         loop {
             let client = match reqwest::Client::builder()
                 .timeout(Duration::from_secs(0))
@@ -702,7 +716,7 @@ async fn apply_sse_frame(app: &tauri::AppHandle, frame: &str) {
     {
         tip.to_string()
     } else {
-        match reqwest::get("http://127.0.0.1:5000/tray/state").await {
+        match reqwest::get(format!("{}/tray/state", worker_manager::local_ui_url())).await {
             Ok(r) => match r.json::<serde_json::Value>().await {
                 Ok(v) => v.get("summary").and_then(|s| s.get("tooltip"))
                     .and_then(|t| t.as_str()).map(String::from).unwrap_or_default(),
@@ -716,6 +730,29 @@ async fn apply_sse_frame(app: &tauri::AppHandle, frame: &str) {
         if let Some(tray) = app.tray_by_id("main") {
             let _ = tray.set_tooltip(Some(&tooltip));
         }
+    }
+}
+
+/// Open `url` in the Tauri dashboard window; fall back to the system browser
+/// when no webview window exists and none can be created.
+fn open_dashboard(app: &tauri::AppHandle, url: &str) {
+    navigate_or_create_window(app, "main", url);
+    if app.get_webview_window("main").is_none() {
+        log::warn!("[Tray] no webview window — opening system browser");
+        open_in_browser(url);
+    }
+}
+
+fn open_in_browser(url: &str) {
+    #[cfg(target_os = "windows")]
+    let spawned = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
+    #[cfg(target_os = "macos")]
+    let spawned = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let spawned = std::process::Command::new("xdg-open").arg(url).spawn();
+
+    if let Err(e) = spawned {
+        log::error!("[Tray] browser open failed for {}: {}", url, e);
     }
 }
 

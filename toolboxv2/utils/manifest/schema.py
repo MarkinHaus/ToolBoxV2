@@ -209,7 +209,12 @@ class ManagerConfig(BaseModel):
     log_file: str = Field(default="")
     rolling_update_delay: int = Field(default=5)
     live_ui_host: str = Field(default="127.0.0.1")
-    live_ui_port: int = Field(default=8700)  # dedicated port for the '/' live-UI owner
+    # Dedicated port for the '/' live-UI owner. THIS is the port the tray icon,
+    # the Tauri shell and the browser fallback all open — see
+    # toolboxv2/utils/workers/fast/endpoint.py. Was 8700 here while every other
+    # layer defaulted to 5000; unified so an unconfigured install still agrees
+    # with itself.
+    live_ui_port: int = Field(default=5000)
     live_ui_replicas: int = Field(default=2)  # 1 owner + (n-1) standby for failover
 
 

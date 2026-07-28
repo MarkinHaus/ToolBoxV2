@@ -24,13 +24,18 @@ import webbrowser
 from typing import Any, Dict, Optional
 
 from toolboxv2 import get_logger
+from toolboxv2.utils.workers.fast.endpoint import (
+    publish_endpoint,
+    resolve_local_ui_endpoint,
+)
 
 logger = get_logger()
 
-DEFAULT_HOST = "127.0.0.1"
-# Default 5000 matches worker_manager.rs:DEFAULT_HTTP_PORT and is_healthy() check.
-DEFAULT_PORT = int(os.getenv("TB_HTTP_PORT", "5000"))
-DEFAULT_WS_PORT = int(os.getenv("TB_WS_PORT", "5001"))
+# Single source of truth: manifest services.manager.live_ui_host/live_ui_port
+# (env TB_LOCAL_UI_* overrides). worker_manager.rs reads the same value out of
+# the published local_ui.json, so Rust and Python cannot drift apart.
+DEFAULT_HOST, DEFAULT_PORT = resolve_local_ui_endpoint()
+DEFAULT_WS_PORT = int(os.getenv("TB_WS_PORT", str(DEFAULT_PORT + 1)))
 
 
 # =============================================================================
@@ -134,9 +139,13 @@ class TauriWorker:
         register_command_handler("open_url", _cmd_open_url)
         register_command_handler("health", _cmd_health)
 
-        # 3) Publish own URL so embedded TrayClients discover us
+        # 3) Publish own URL so embedded TrayClients discover us, and write
+        #    local_ui.json so the tray icon / Tauri shell open the right port.
         base_url = f"http://{self.host}:{self.port}"
         os.environ["TB_TRAY_URL"] = base_url
+        os.environ["TB_LOCAL_UI_HOST"] = self.host
+        os.environ["TB_LOCAL_UI_PORT"] = str(self.port)
+        publish_endpoint(self.host, self.port)
 
         # 4) Self-report into the tray
         self._self_tray = TrayClient(

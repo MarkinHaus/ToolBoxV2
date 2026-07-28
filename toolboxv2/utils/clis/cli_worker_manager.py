@@ -1214,6 +1214,12 @@ def _run_live_ui_process(worker_id: str, config_dict: Dict, port: int, standby: 
     mount_tray_api(local_ui_app)
     register_collective_commands(local_ui_app)
     host = getattr(config.manager, "live_ui_host", "127.0.0.1")
+    # Tray icon and Tauri shell discover the live UI through this file.
+    try:
+        from toolboxv2.utils.workers.fast.endpoint import publish_endpoint
+        publish_endpoint(host, port)
+    except Exception:
+        pass
     local_ui_app.serve(
         host=host, port=port, blocking=True, enable_ws=False,
         standby=standby, allow_specialist=False,

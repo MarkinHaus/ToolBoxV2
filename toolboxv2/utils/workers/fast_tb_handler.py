@@ -651,8 +651,11 @@ class FastTBHandler:
 
         # Permanently mount login UI assets when requested (e.g. remote base is
         # local). Idempotent: skipped if the app already mounted /web itself.
-        if self._app.auth and self._app.serve_login_assets:
-            self._app._ensure_web_mounted()
+        # NOTE: no longer gated on self._app.auth. An app that opts into
+        # serve_login_assets is declaring "I am the origin that serves dist",
+        # which is exactly the local-UI case — and local_ui runs with auth off.
+        if self._app.serve_login_assets:
+            self._app.mount_dist()
 
         # Register WS handlers from FastTB into the app
         ws_handlers = self._app.get_websocket_handlers()

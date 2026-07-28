@@ -95,8 +95,28 @@ def run_fallback_tray(tb_app):
     import webbrowser
 
     def on_open_dashboard(icon, item):
-        from toolboxv2 import get_app
-        webbrowser.open(f"http://{get_app().manifest.services.manager.live_ui_host}:{get_app().manifest.services.manager.live_ui_port}")
+        """Open the dashboard: Tauri window if one is listening, else browser.
+
+        Both paths land on the SAME url — the manifest-resolved local-UI port.
+        If a Tauri shell is subscribed to /tray/events it picks up the open_url
+        event and navigates its own window; otherwise we open the system
+        browser after a short grace period.
+        """
+        from toolboxv2.utils.workers.fast.endpoint import local_ui_url
+        url = local_ui_url()
+        try:
+            from toolboxv2.utils.workers.fast.tray_api import (
+                emit_open_url,
+                has_active_subscribers,
+            )
+            emit_open_url(url, target="main")
+            import time as _time
+            _time.sleep(0.3)
+            if has_active_subscribers():
+                return
+        except Exception:
+            pass
+        webbrowser.open(url)
 
     def on_open_wn(icon, item):
         os.system(f"{sys.executable} -m toolboxv2 workers live")
@@ -128,7 +148,8 @@ def run_fallback_tray(tb_app):
         """Best-effort fetch of tray API state. Returns dict or None."""
         import urllib.request
         import json as _json
-        url = os.getenv("TB_TRAY_URL", "http://localhost:6587").rstrip("/")
+        from toolboxv2.utils.workers.fast.endpoint import local_ui_url
+        url = (os.getenv("TB_TRAY_URL") or local_ui_url()).rstrip("/")
         try:
             with urllib.request.urlopen(f"{url}/tray/state", timeout=1.5) as r:
                 return _json.loads(r.read())
@@ -144,9 +165,12 @@ def run_fallback_tray(tb_app):
         # Dynamic instances from tray API
         state = _fetch_tray_state()
         if state:
-            running = sum(1 for w in state.values() if isinstance(w, dict) and w.get("running"))
+            # /tray/state returns {"workers": {...}, "summary": {...}} — iterating
+            # the top level made every worker entry fail the isinstance check.
+            workers = state.get("workers", state) if isinstance(state, dict) else {}
+            running = sum(1 for w in workers.values() if isinstance(w, dict) and w.get("running"))
             instance_items = []
-            for wid, info in state.items():
+            for wid, info in workers.items():
                 if not isinstance(info, dict):
                     continue
                 label = info.get("label", wid)

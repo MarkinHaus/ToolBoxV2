@@ -92,6 +92,10 @@ manager:
   web_ui_enabled: true
   web_ui_host: 127.0.0.1
   web_ui_port: 9000
+  # Local UI / dist origin. Tray "Open Dashboard", the Tauri window and the
+  # browser fallback all resolve to http://<live_ui_host>:<live_ui_port>.
+  live_ui_host: 127.0.0.1
+  live_ui_port: 5000
   control_socket: ''
   pid_file: ''
   log_file: ''
