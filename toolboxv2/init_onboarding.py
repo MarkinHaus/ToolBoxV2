@@ -239,7 +239,7 @@ def _start_tray(app, url: str) -> bool:
         return False
     try:
         import os as _os
-        _os.environ.setdefault("TB_TRAY_URL", url)
+        _os.environ["TB_TRAY_URL"] = url
         from toolboxv2.utils.extras.fallback_tray import run_fallback_tray
         import threading
         threading.Thread(target=run_fallback_tray, args=(app,), daemon=True).start()
@@ -258,6 +258,15 @@ def _serve_local_ui(host: str = "127.0.0.1", port: int = 5000) -> bool:
         from toolboxv2.utils.workers.fast_tb_handler import FastTBHandler
     except Exception:
         return False
+    # /tray/* must be mounted here too: without it the fallback tray polls a
+    # 404 and never shows any instance, and the Tauri SSE subscriber gets
+    # nothing from this surface.
+    try:
+        from toolboxv2.utils.workers.fast.tray_api import mount_tray_api
+        mount_tray_api(local_ui_app)
+    except Exception:
+        pass
+
     handler = FastTBHandler(local_ui_app)
     serve(handler.as_wsgi_app(enable_ws=False), host=host, port=port)
     return True

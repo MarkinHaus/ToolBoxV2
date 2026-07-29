@@ -1558,11 +1558,16 @@ async def setup_app(ov_name=None, App=TbApp):
         args.live_application = False
 
         # A2: Report daemon presence to tray API
+        _tray_port = args.port if args.port != 5000 else 6587
+        _tray_url = f"http://{args.host}:{_tray_port}"
+        # Single source of truth for the pystray fallback and the Tauri SSE
+        # subscriber; without it they poll different ports.
+        os.environ["TB_TRAY_URL"] = _tray_url
         _tray_client = None
         try:
             from toolboxv2.utils.workers.fast.tray_api import TrayClient
             _tray_client = TrayClient("daemon", label="Daemon App")
-            _tray_client.report(running=True, pid=os.getpid(), url=f"http://{args.host}:{args.port if args.port != 5000 else 6587}")
+            _tray_client.report(running=True, pid=os.getpid(), url=_tray_url)
         except Exception:
             pass
 

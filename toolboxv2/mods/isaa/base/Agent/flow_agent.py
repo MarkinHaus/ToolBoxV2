@@ -626,6 +626,52 @@ class FlowAgent:
         self._vison[model_preference] = not model.startswith("ollama/")
         return self._vison[model_preference]
 
+    async def look_at(self, file_path: str, question: str = "Beschreibe was du siehst") -> str:
+        """Laedt ein Bild (real FS oder VFS) und analysiert es mit Vision-Modell.
+
+        Tier 1: realer Dateisystem-Pfad → direkt <image=path>.
+        Tier 2: VFS shadow file mit local_path → nutze local_path.
+        Tier 3: VFS pure virtual → temp file, dann <image=tempfile>.
+        """
+        from pathlib import Path
+        import os
+
+        p = Path(file_path)
+        if p.exists():
+            content = f"<image={file_path}>\n\n{question}"
+            return await self.a_run_llm_completion(
+                messages=[{"role": "user", "content": content}], stream=False)
+
+        # VFS resolution
+        try:
+            session = await self.session_manager.get_or_create(
+                self.active_session or "default")
+            vfs = session.vfs
+            norm = vfs._normalize_path(file_path)
+            if vfs._is_file(norm):
+                f = vfs.files.get(norm)
+                local = getattr(f, "local_path", None) if f else None
+                if local and os.path.exists(str(local)):
+                    content = f"<image={local}>\n\n{question}"
+                else:
+                    result = vfs.read(norm)
+                    if not result.get("success"):
+                        return f"VFS read failed: {result.get('error')}"
+                    import tempfile
+                    suffix = Path(norm).suffix or ".png"
+                    tmp = tempfile.NamedTemporaryFile(
+                        suffix=suffix, delete=False, mode="wb")
+                    data = result["content"]
+                    tmp.write(data.encode() if isinstance(data, str) else data)
+                    tmp.close()
+                    content = f"<image={tmp.name}>\n\n{question}"
+                return await self.a_run_llm_completion(
+                    messages=[{"role": "user", "content": content}], stream=False)
+        except Exception:
+            pass
+
+        return f"File not found: {file_path}"
+
     async def chat(self, query:str,
                    is_new=False, with_tools=True, stream=False):
         res = await self.a_run_llm_completion(
@@ -3835,6 +3881,17 @@ class FlowAgent:
                 "name": "vfs_diagnostics",
                 "category": ["vfs", "lsp"],
                 "is_async": True,
+            },
+            # ── VISION ──────────────────────────────────────────────────────
+            {
+                "tool_func": self.look_at,
+                "name": "look_at",
+                "category": ["vision", "read"],
+                "is_async": True,
+                "description": (
+                    "Laedt ein Bild (file_path) und analysiert es mit dem "
+                    "Vision-Modell. Optionale question steuert die Frage."
+                ),
             },
             # ── HISTORY / RULES ───────────────────────────────────────────
             {

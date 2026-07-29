@@ -460,8 +460,17 @@ fn setup_system_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
         &[&open_dashboard, &open_app, &app_mode, &hud_mode, &open_cli, &separator, &quit],
     )?;
 
-    let _tray = TrayIconBuilder::new()
-        .icon(app.default_window_icon().unwrap().clone())
+    // No unwrap here: in tray-only (--minimized) start there is no window yet,
+    // and a missing bundle icon must not panic the whole setup.
+    let icon = app
+        .default_window_icon()
+        .cloned()
+        .ok_or("no default window icon configured in tauri.conf.json")?;
+
+    // The id is required: apply_sse_frame() looks the tray up via tray_by_id("main")
+    // to refresh the tooltip.
+    let _tray = TrayIconBuilder::with_id("main")
+        .icon(icon)
         .menu(&menu)
         .tooltip("SimpleCore - ToolBoxV2")
         .on_menu_event(move |app, event| {
@@ -1032,7 +1041,14 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Secondary windows (HUD, tray-spawned views) must never take the
+                // worker down with them; only closing the main window shuts down.
+                if window.label() != "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    return;
+                }
                 let state = window.state::<AppState>();
                 if let Ok(mut manager) = state.worker_manager.lock() {
                     let _ = manager.stop();

@@ -11973,6 +11973,25 @@ class ISAA_Host:
                 async def _run_coder_bg():
                     result = await self.active_coder.execute(task_prompt)
 
+                    # ── Post-Task: statische Analyse auf geänderte .py Dateien ──
+                    if result.success and result.changed_files:
+                        try:
+                            from toolboxv2.utils.extras.code_analyzer.tb_analyze import static_analyze
+                            from toolboxv2.flows.mini.toolbox_admin import _summarize_static_report
+                            for f in result.changed_files:
+                                if not f.endswith('.py'):
+                                    continue
+                                wt_path = self.active_coder.worktree.worktree_path
+                                full = str(wt_path / f) if wt_path else f
+                                report = static_analyze(full)
+                                summary = _summarize_static_report(report)
+                                self._ingest_chunk(_tid_holder[0], {
+                                    "type": "content",
+                                    "chunk": f"\n📋 Validation: {f}\n{summary}\n",
+                                })
+                        except Exception as _ve:
+                            self.app.logger.debug(f"Post-task validation skipped: {_ve}")
+
                     # Task abschließen
                     self._ingest_chunk(_tid_holder[0], {"type": "done", "success": result.success})
                     self._ingest_chunk(_tid_holder[0], {"type": "final_answer", "answer": result.message})

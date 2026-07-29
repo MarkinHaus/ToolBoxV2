@@ -170,7 +170,7 @@ isaa:
 
 ## Related
 
-- [Agent Reference](agent.md)
+- [Agent Reference](agents.md)
 - [chains.md](chains.md)
 - [jobs.md](jobs.md)
 - [quickstart.md](quickstart.md)

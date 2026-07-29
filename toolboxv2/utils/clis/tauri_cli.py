@@ -50,6 +50,10 @@ GITHUB_REPO = "MarkinHaus/ToolBoxV2"
 REGISTRY_URL = "https://registry.simplecore.app"
 APP_NAME = "simple-core"
 
+# Output directory for the PyInstaller-built sidecar. Named after the tool that
+# actually builds it; the old name referred to Nuitka, which is not used here.
+WORKER_BUILD_DIR = "tauri-build"
+
 # Platform-specific executable names
 EXECUTABLE_NAMES = {
     "windows": "simple-core.exe",
@@ -501,53 +505,6 @@ def update_app(source: str = "auto") -> bool:
     print_status(f"Updated to v{latest}!", "success")
     return True
 
-
-def update_app(source: str = "auto") -> bool:
-    """Check for update and install if newer version available."""
-    print_box_header("Updating SimpleCore Desktop App", "🔄")
-
-    current = get_installed_version()
-    if not current:
-        print_status("App not installed — run: tb gui init", "warning")
-        return False
-
-    print_status(f"Installed: v{current}", "info")
-    print_status("Checking for updates...", "progress")
-
-    # Fetch latest version tag without downloading
-    release_info = fetch_latest_release_info()
-    if not release_info:
-        print_status("Could not reach GitHub, trying registry...", "warning")
-        registry_info = fetch_registry_artifacts()
-        if not registry_info:
-            print_status("No update source reachable", "error")
-            return False
-        latest = (registry_info.get("versions") or [{}])[0].get("version", "")
-    else:
-        latest = release_info.get("tag_name", "").lstrip("v")
-
-    if not latest:
-        print_status("Could not determine latest version", "error")
-        return False
-
-    print_status(f"Latest:    v{latest}", "info")
-
-    if current == latest:
-        print_status("Already up to date!", "success")
-        return True
-
-    print_status(f"Update available: {current} → {latest}", "success")
-    if not download_app(source=source, force=True):
-        return False
-
-    # Refresh shortcut with potentially new path
-    app_path = get_installed_app_path()
-    if app_path:
-        create_desktop_shortcut(app_path)
-
-    print_status(f"Updated to v{latest}!", "success")
-    return True
-
 def _fallback_to_local_ui(http_port: int = 5000) -> None:
     """When the Tauri binary is unavailable, serve the local web UI (browser +
     tray) instead of dead-ending. Falls through to CLI if waitress is missing.
@@ -760,23 +717,29 @@ def build_worker(output_dir: Path, target: Optional[str] = None,
 
 
 def build_frontend(project_root: Path) -> bool:
-    """Build frontend with webpack."""
-    print_box_header("Building Frontend", "📦")
+    """Build the web frontend into ``toolboxv2/dist`` (Tauri's frontendDist).
 
-    web_dir = project_root / "toolboxv2" / "web"
-    if not (web_dir / "package.json").exists():
-        print_status("No package.json in web directory", "warning")
+    The build script lives in the package root and builds both ``web`` and
+    ``tbjs``; each of those has its own dependencies, so they are installed
+    explicitly instead of relying on the root `init` script.
+    """
+    print_box_header("Building Frontend", "\U0001f4e6")
+
+    pkg_dir = project_root / "toolboxv2"
+    if not (pkg_dir / "package.json").exists():
+        print_status("No package.json in toolboxv2 directory", "warning")
         return True
 
-    try:
-        # Install dependencies
-        print_status("Installing npm dependencies...", "install")
-        subprocess.run(["npm", "install"], cwd=web_dir, check=True, shell=IS_WINDOWS)
+    sub_packages = [d for d in (pkg_dir / "web", pkg_dir / "tbjs")
+                    if (d / "package.json").exists()]
 
-        # Build
+    try:
+        print_status("Installing npm dependencies...", "install")
+        for target in [pkg_dir, *sub_packages]:
+            subprocess.run(["npm", "install"], cwd=target, check=True, shell=IS_WINDOWS)
+
         print_status("Running webpack build...", "progress")
-        subprocess.run(["npm", "run", "build"], cwd=project_root / "toolboxv2",
-                       check=True, shell=IS_WINDOWS)
+        subprocess.run(["npm", "run", "build"], cwd=pkg_dir, check=True, shell=IS_WINDOWS)
 
         print_status("Frontend build complete!", "success")
         return True
@@ -786,6 +749,7 @@ def build_frontend(project_root: Path) -> bool:
     except FileNotFoundError:
         print_status("npm not found - please install Node.js", "error")
         return False
+
 
 def _install_local_build(project_root: Path) -> bool:
     """Copy built Tauri app to install dir so `tb gui run` finds it."""
@@ -853,6 +817,15 @@ def build_tauri_app(project_root: Path, target: Optional[str] = None,
     simple_core = project_root / "toolboxv2" / "simple-core"
     if not (simple_core / "src-tauri" / "Cargo.toml").exists():
         print_status("Tauri project not found", "error")
+        return False
+
+    # tauri.conf.json declares externalBin + frontendDist; both are generated
+    # artifacts. Fail fast with a usable hint instead of deep inside cargo.
+    if not list((simple_core / "src-tauri" / "binaries").glob("tb-worker*")):
+        print_status("Sidecar missing - run: tb gui build-worker", "error")
+        return False
+    if not (project_root / "toolboxv2" / "dist").exists():
+        print_status("Frontend dist/ missing - run the frontend build first", "error")
         return False
 
     cmd = ["npx", "tauri", "build"]
@@ -976,7 +949,7 @@ def clean_build(project_root: Path) -> None:
     dirs_to_clean = [
         project_root / "toolboxv2" / "simple-core" / "src-tauri" / "target",
         project_root / "toolboxv2" / "simple-core" / "src-tauri" / "binaries",
-        project_root / "nuitka-build",
+        project_root / WORKER_BUILD_DIR,
         project_root / "build",
     ]
 
@@ -1051,7 +1024,7 @@ Examples:
     # build-worker
     worker_parser = subparsers.add_parser("build-worker", help="Build tb-worker sidecar with PyInstaller")
     worker_parser.add_argument("--target", help="Target triple (e.g., x86_64-pc-windows-msvc)")
-    worker_parser.add_argument("--output", "-o", type=Path, default=Path("nuitka-build"),
+    worker_parser.add_argument("--output", "-o", type=Path, default=Path(WORKER_BUILD_DIR),
                                help="Output directory")
     worker_parser.add_argument("--no-standalone", action="store_true", help="Don't create standalone")
     worker_parser.add_argument("--no-onefile", action="store_true", help="Don't create single file")
@@ -1204,7 +1177,7 @@ def main():
     elif args.command == "build-app":
         print_status(f"Project root: {project_root}", "info")
         if not args.skip_worker:
-            if not build_worker(Path("nuitka-build"), args.target):
+            if not build_worker(Path(WORKER_BUILD_DIR), args.target):
                 sys.exit(1)
         if not args.skip_frontend:
             if not build_frontend(project_root):
@@ -1233,7 +1206,7 @@ def main():
                 targets = [get_target_triple()]
 
             for target in targets:
-                build_worker(Path("nuitka-build"), target)
+                build_worker(Path(WORKER_BUILD_DIR), target)
 
         build_frontend(project_root)
         build_tauri_app(project_root)
