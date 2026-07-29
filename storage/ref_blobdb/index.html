@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -509,8 +509,6 @@
       
         
       
-        
-      
     
     
     
@@ -571,34 +569,6 @@
     
   
     Onboarding
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../foundations/quickstart/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Quickstart
   
 
     
@@ -713,8 +683,6 @@
   
     
     
-      
-        
       
         
       
@@ -890,34 +858,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../flows/bg/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Background Flows
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../flows/adaptive_prompt_system/" class="md-nav__link">
         
   
@@ -955,6 +895,8 @@
   
     
     
+      
+        
       
         
       
@@ -1040,6 +982,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../devdocs/mod_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mod Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../devdocs/docs_toolchain/" class="md-nav__link">
         
   
@@ -1087,6 +1057,8 @@
       
         
           
+        
+      
         
       
         
@@ -1222,6 +1194,34 @@
     
   
     Chains
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/jobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job System
   
 
     
@@ -2210,22 +2210,66 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#blobdb-overview" class="md-nav__link">
+  <a href="#how-it-works" class="md-nav__link">
     <span class="md-ellipsis">
       
-        BlobDB Overview
+        How It Works
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="BlobDB Overview">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core API
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core API">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#kern-features" class="md-nav__link">
+  <a href="#crud-operations" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Kern-Features
+        CRUD Operations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sync-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sync Operations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#watch-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Watch System
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#importexport" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Import/Export
       
     </span>
   </a>
@@ -2238,160 +2282,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#offline-fallback" class="md-nav__link">
+  <a href="#schema" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Offline Fallback
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Offline Fallback">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#aktivierung" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Aktivierung
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#funktionsweise" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Funktionsweise
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#sqlite-schema" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        SQLite Schema
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#sync-status" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Sync-Status
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#when-to-use-blobdb-vs-lc" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        When to use BlobDB vs LC
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="When to use BlobDB vs LC">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#local-dictionary-lc-wann" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Local Dictionary (LC) - Wann?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#blobdb-minio-wann" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        BlobDB (MinIO) - Wann?
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#environment-variables" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Environment Variables
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Environment Variables">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#lokaler-minio" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Lokaler MinIO
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cloud-minio-optional" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Cloud MinIO (optional)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#betrieb" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Betrieb
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#usage-example" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Usage Example
+        Schema
       
     </span>
   </a>
@@ -2399,10 +2293,43 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#bucket-path-structure" class="md-nav__link">
+  <a href="#syncstatus-enum" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bucket &amp; Path Structure
+        SyncStatus Enum
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sqlite-pragmas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SQLite Pragmas
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#size-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Size Management
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related
       
     </span>
   </a>
@@ -3064,22 +2991,66 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#blobdb-overview" class="md-nav__link">
+  <a href="#how-it-works" class="md-nav__link">
     <span class="md-ellipsis">
       
-        BlobDB Overview
+        How It Works
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="BlobDB Overview">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core API
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core API">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#kern-features" class="md-nav__link">
+  <a href="#crud-operations" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Kern-Features
+        CRUD Operations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sync-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sync Operations
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#watch-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Watch System
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#importexport" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Import/Export
       
     </span>
   </a>
@@ -3092,160 +3063,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#offline-fallback" class="md-nav__link">
+  <a href="#schema" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Offline Fallback
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Offline Fallback">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#aktivierung" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Aktivierung
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#funktionsweise" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Funktionsweise
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#sqlite-schema" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        SQLite Schema
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#sync-status" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Sync-Status
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#when-to-use-blobdb-vs-lc" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        When to use BlobDB vs LC
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="When to use BlobDB vs LC">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#local-dictionary-lc-wann" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Local Dictionary (LC) - Wann?
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#blobdb-minio-wann" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        BlobDB (MinIO) - Wann?
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#environment-variables" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Environment Variables
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Environment Variables">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#lokaler-minio" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Lokaler MinIO
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cloud-minio-optional" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Cloud MinIO (optional)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#betrieb" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Betrieb
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#usage-example" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Usage Example
+        Schema
       
     </span>
   </a>
@@ -3253,10 +3074,43 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#bucket-path-structure" class="md-nav__link">
+  <a href="#syncstatus-enum" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bucket &amp; Path Structure
+        SyncStatus Enum
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sqlite-pragmas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SQLite Pragmas
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#size-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Size Management
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related
       
     </span>
   </a>
@@ -3289,288 +3143,218 @@
 
 
 <h1 id="blobdb-reference">BlobDB Reference<a class="headerlink" href="#blobdb-reference" title="Permanent link">&para;</a></h1>
-<p>Server-Blob-Datenbank basierend auf MinIO für skalierbaren Storage.</p>
-<hr />
-<h2 id="blobdb-overview">BlobDB Overview<a class="headerlink" href="#blobdb-overview" title="Permanent link">&para;</a></h2>
-<p>BlobDB ist eine Key-Value-Datenbank für Server-Daten mit MinIO-Backend.</p>
-<!-- verified: blob_instance.py::BlobDB -->
-
-<h3 id="kern-features">Kern-Features<a class="headerlink" href="#kern-features" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p><strong>File:</strong> <code>toolboxv2/utils/extras/db/mobile_db.py</code>
+SQLite-based offline-first blob storage with dirty tracking, conflict resolution, and auto-size management.</p>
+</blockquote>
+<h2 id="how-it-works">How It Works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
+<p><code>MobileDB</code> is a thread-safe, SQLite-backed key-value blob store designed for mobile and offline scenarios. Every blob write is tracked with a <code>sync_status</code> (<code>dirty</code> → <code>synced</code> / <code>deleted</code> / <code>conflict</code>). The database uses WAL journaling, thread-local connections, and auto-vacuum for crash safety and performance.</p>
+<pre class="mermaid"><code>flowchart TD
+    APP[Application Code] --&gt; PUT["put(path, data)"]
+    PUT --&gt; CHECKSUM[SHA-256 Checksum]
+    CHECKSUM --&gt; INSERT[INSERT OR REPLACE INTO blobs]
+    INSERT --&gt; SYNC[sync_status = dirty]
+    SYNC --&gt; NOTIFY[Notify Watchers]
+    NOTIFY --&gt; SIZE_CHECK{Size Limit?}
+    SIZE_CHECK --&gt;|Yes| CLEANUP[cleanup_old_synced]
+    SIZE_CHECK --&gt;|No| DONE[Done]</code></pre>
+<h2 id="core-api">Core API<a class="headerlink" href="#core-api" title="Permanent link">&para;</a></h2>
+<h3 id="crud-operations">CRUD Operations<a class="headerlink" href="#crud-operations" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
-<th>Feature</th>
-<th>Beschreibung</th>
+<th>Method</th>
+<th>Signature</th>
+<th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><strong>MinIO Backend</strong></td>
-<td>Lokaler MinIO + optionaler Cloud Sync</td>
+<td><code>put</code></td>
+<td><code>put(path, data, content_type, encrypted, skip_sync) → BlobMetadata</code></td>
+<td>Store blob. Sets <code>sync_status=DIRTY</code> unless <code>skip_sync=True</code></td>
 </tr>
 <tr>
-<td><strong>Offline-Fallback</strong></td>
-<td>SQLite bei keiner MinIO-Verbindung</td>
+<td><code>get</code></td>
+<td><code>get(path) → Optional[bytes]</code></td>
+<td>Retrieve blob data (skips deleted)</td>
 </tr>
 <tr>
-<td><strong>Cache mit TTL</strong></td>
-<td>Konfigurierbares Caching</td>
+<td><code>delete</code></td>
+<td><code>delete(path, hard_delete) → bool</code></td>
+<td>Soft delete (<code>sync_status=deleted</code>) or hard delete (row removed)</td>
 </tr>
 <tr>
-<td><strong>Manifest-Tracking</strong></td>
-<td>Schnelle Key-Suche ohne Scan</td>
+<td><code>exists</code></td>
+<td><code>exists(path) → bool</code></td>
+<td>Check if blob exists and not deleted</td>
+</tr>
+<tr>
+<td><code>list</code></td>
+<td><code>list(prefix, include_deleted, sync_status) → List[BlobMetadata]</code></td>
+<td>List blobs with optional prefix/status filtering</td>
 </tr>
 </tbody>
 </table>
-<!-- verified: blob_instance.py::Config -->
-
-<hr />
-<h2 id="offline-fallback">Offline Fallback<a class="headerlink" href="#offline-fallback" title="Permanent link">&para;</a></h2>
-<h3 id="aktivierung">Aktivierung<a class="headerlink" href="#aktivierung" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">IS_OFFLINE_DB</span><span class="o">=</span><span class="nb">true</span>
-</code></pre></div>
-<h3 id="funktionsweise">Funktionsweise<a class="headerlink" href="#funktionsweise" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>┌─────────────────────────────────────────────────────┐
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>│                    BlobDB                           │
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>├─────────────────────────────────────────────────────┤
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>│  IS_OFFLINE_DB=true?                                │
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>│  ├── JA → SQLite Fallback (lokal)                  │
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>│  └── NEIN → MinIO (lokal) → Cloud MinIO → SQLite   │
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>└─────────────────────────────────────────────────────┘
-</code></pre></div>
-<h3 id="sqlite-schema">SQLite Schema<a class="headerlink" href="#sqlite-schema" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">blobs</span><span class="w"> </span><span class="p">(</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">    </span><span class="n">path</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="k">data</span><span class="w"> </span><span class="nb">BLOB</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="n">checksum</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="n">updated_at</span><span class="w"> </span><span class="nb">REAL</span><span class="p">,</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="n">sync_status</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;dirty&#39;</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="p">);</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">manifest</span><span class="w"> </span><span class="p">(</span>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">    </span><span class="k">key</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="nb">REAL</span>
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="p">);</span>
-</code></pre></div>
-<!-- verified: blob_instance.py::SQLiteCache -->
-
-<h3 id="sync-status">Sync-Status<a class="headerlink" href="#sync-status" title="Permanent link">&para;</a></h3>
+<h3 id="sync-operations">Sync Operations<a class="headerlink" href="#sync-operations" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
-<th>Status</th>
-<th>Bedeutung</th>
+<th>Method</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_dirty_blobs</code></td>
+<td><code>→ List[BlobMetadata]</code></td>
+<td>All blobs needing cloud sync</td>
+</tr>
+<tr>
+<td><code>get_pending_deletes</code></td>
+<td><code>→ List[BlobMetadata]</code></td>
+<td>All blobs marked for deletion</td>
+</tr>
+<tr>
+<td><code>mark_synced</code></td>
+<td><code>mark_synced(path, cloud_timestamp)</code></td>
+<td>Mark blob as synced</td>
+</tr>
+<tr>
+<td><code>mark_conflict</code></td>
+<td><code>mark_conflict(path)</code></td>
+<td>Flag sync conflict</td>
+</tr>
+<tr>
+<td><code>resolve_conflict</code></td>
+<td><code>resolve_conflict(path, use_local)</code></td>
+<td>Keep local (<code>dirty</code>) or accept cloud (<code>hard_delete</code>)</td>
+</tr>
+<tr>
+<td><code>needs_sync</code></td>
+<td><code>needs_sync(cloud_manifest) → Dict[path, action]</code></td>
+<td>Compare local vs cloud → <code>upload</code>/<code>download</code>/<code>conflict</code></td>
+</tr>
+<tr>
+<td><code>get_sync_stats</code></td>
+<td><code>→ Dict</code></td>
+<td>Count by status + total size</td>
+</tr>
+</tbody>
+</table>
+<h3 id="watch-system">Watch System<a class="headerlink" href="#watch-system" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>watch</code></td>
+<td><code>watch(path_pattern, callback) → callback_id</code></td>
+<td>Subscribe to blob changes (glob pattern)</td>
+</tr>
+<tr>
+<td><code>unwatch</code></td>
+<td><code>unwatch(callback_id)</code></td>
+<td>Remove subscription</td>
+</tr>
+<tr>
+<td><code>start_watch_poller</code></td>
+<td><code>start_watch_poller(interval)</code></td>
+<td>Background thread polling <code>sync_log</code> for changes</td>
+</tr>
+</tbody>
+</table>
+<h3 id="importexport">Import/Export<a class="headerlink" href="#importexport" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>export_for_sync</code></td>
+<td><code>→ Iterator[(path, data, metadata)]</code></td>
+<td>Stream dirty blobs for upload</td>
+</tr>
+<tr>
+<td><code>import_from_cloud</code></td>
+<td><code>import_from_cloud(path, data, cloud_timestamp, checksum) → bool</code></td>
+<td>Verify checksum, detect conflicts, store</td>
+</tr>
+</tbody>
+</table>
+<h2 id="schema">Schema<a class="headerlink" href="#schema" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">blobs</span><span class="w"> </span><span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">    </span><span class="n">path</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="k">data</span><span class="w"> </span><span class="nb">BLOB</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="k">size</span><span class="w"> </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="n">checksum</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="n">local_updated_at</span><span class="w"> </span><span class="nb">REAL</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">    </span><span class="n">cloud_updated_at</span><span class="w"> </span><span class="nb">REAL</span><span class="p">,</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span><span class="n">sync_status</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;dirty&#39;</span><span class="p">,</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="k">version</span><span class="w"> </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span><span class="n">content_type</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">&#39;application/octet-stream&#39;</span><span class="p">,</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">    </span><span class="k">encrypted</span><span class="w"> </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">    </span><span class="n">created_at</span><span class="w"> </span><span class="nb">REAL</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="p">(</span><span class="n">julianday</span><span class="p">(</span><span class="s1">&#39;now&#39;</span><span class="p">))</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="p">);</span>
+</code></pre></div>
+<h2 id="syncstatus-enum">SyncStatus Enum<a class="headerlink" href="#syncstatus-enum" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Meaning</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>dirty</code></td>
-<td>Geändert, nicht gesynct</td>
+<td>Local change, needs cloud upload</td>
 </tr>
 <tr>
 <td><code>synced</code></td>
-<td>Mit Cloud synchronisiert</td>
+<td>In sync with cloud</td>
+</tr>
+<tr>
+<td><code>deleted</code></td>
+<td>Soft-deleted, needs cloud delete</td>
+</tr>
+<tr>
+<td><code>conflict</code></td>
+<td>Local and cloud both changed</td>
 </tr>
 </tbody>
 </table>
-<!-- verified: blob_instance.py::SQLiteCache.mark_synced -->
-
-<hr />
-<h2 id="when-to-use-blobdb-vs-lc">When to use BlobDB vs LC<a class="headerlink" href="#when-to-use-blobdb-vs-lc" title="Permanent link">&para;</a></h2>
-<h3 id="local-dictionary-lc-wann">Local Dictionary (LC) - Wann?<a class="headerlink" href="#local-dictionary-lc-wann" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Kriterium</th>
-<th>Empfehlung</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Datenvolumen</td>
-<td>&lt; 10 MB</td>
-</tr>
-<tr>
-<td>Zugriffe</td>
-<td>&lt; 100/s</td>
-</tr>
-<tr>
-<td>Verteilung</td>
-<td>Single-Instance</td>
-</tr>
-<tr>
-<td>Komplexität</td>
-<td>Einfache Key-Value</td>
-</tr>
-</tbody>
-</table>
-<p><strong>Typische Use-Cases:</strong>
-- User Settings
-- Mod-Konfiguration
-- Lokale Caches</p>
-<!-- verified: schema.py::LocalDBConfig -->
-
-<h3 id="blobdb-minio-wann">BlobDB (MinIO) - Wann?<a class="headerlink" href="#blobdb-minio-wann" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Kriterium</th>
-<th>Empfehlung</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Datenvolumen</td>
-<td>&gt; 10 MB bis TBs</td>
-</tr>
-<tr>
-<td>Zugriffe</td>
-<td>&gt; 100/s</td>
-</tr>
-<tr>
-<td>Verteilung</td>
-<td>Multi-Instance / Cluster</td>
-</tr>
-<tr>
-<td>Komplexität</td>
-<td>Enterprise-Grade</td>
-</tr>
-</tbody>
-</table>
-<p><strong>Typische Use-Cases:</strong>
-- Server-Sessions
-- Binäre Assets
-- Audit Logs
-- Backup-Storage</p>
-<!-- verified: blob_instance.py::BlobDB -->
-
-<hr />
-<h2 id="environment-variables">Environment Variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h2>
-<h3 id="lokaler-minio">Lokaler MinIO<a class="headerlink" href="#lokaler-minio" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Variable</th>
-<th>Default</th>
-<th>Pflicht</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>MINIO_ENDPOINT</code></td>
-<td><code>127.0.0.1:9000</code></td>
-<td>Nein</td>
-</tr>
-<tr>
-<td><code>MINIO_ACCESS_KEY</code></td>
-<td><code>admin</code></td>
-<td>Nein</td>
-</tr>
-<tr>
-<td><code>MINIO_SECRET_KEY</code></td>
-<td>-</td>
-<td><strong>Ja</strong></td>
-</tr>
-<tr>
-<td><code>MINIO_SECURE</code></td>
-<td><code>false</code></td>
-<td>Nein</td>
-</tr>
-</tbody>
-</table>
-<h3 id="cloud-minio-optional">Cloud MinIO (optional)<a class="headerlink" href="#cloud-minio-optional" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Variable</th>
-<th>Pflicht</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>CLOUD_ENDPOINT</code></td>
-<td>Nein</td>
-</tr>
-<tr>
-<td><code>CLOUD_ACCESS_KEY</code></td>
-<td>Nein</td>
-</tr>
-<tr>
-<td><code>CLOUD_SECRET_KEY</code></td>
-<td>Nein</td>
-</tr>
-<tr>
-<td><code>CLOUD_SECURE</code></td>
-<td>Nein</td>
-</tr>
-</tbody>
-</table>
-<h3 id="betrieb">Betrieb<a class="headerlink" href="#betrieb" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>Variable</th>
-<th>Default</th>
-<th>Beschreibung</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>IS_OFFLINE_DB</code></td>
-<td><code>false</code></td>
-<td>Nur SQLite, kein MinIO</td>
-</tr>
-<tr>
-<td><code>SERVER_ID</code></td>
-<td><code>hostname</code></td>
-<td>Server-Identifier</td>
-</tr>
-<tr>
-<td><code>DB_CACHE_TTL</code></td>
-<td><code>60</code></td>
-<td>Cache-Lebensdauer (Sekunden)</td>
-</tr>
-</tbody>
-</table>
-<!-- verified: blob_instance.py::Config -->
-
-<hr />
-<h2 id="usage-example">Usage Example<a class="headerlink" href="#usage-example" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.DB.blob_instance</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_db</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c1"># Initialisierung</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">db</span> <span class="o">=</span> <span class="n">create_db</span><span class="p">(</span><span class="s2">&quot;my_server&quot;</span><span class="p">)</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c1"># CRUD</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">db</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;users/123&quot;</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Alice&quot;</span><span class="p">})</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="n">result</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;users/123&quot;</span><span class="p">)</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">get</span><span class="p">())</span>  <span class="c1"># {&quot;name&quot;: &quot;Alice&quot;}</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="c1"># Pattern Matching</span>
-<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">db</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;config/theme&quot;</span><span class="p">,</span> <span class="s2">&quot;dark&quot;</span><span class="p">)</span>
-<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="n">results</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;config/*&quot;</span><span class="p">)</span>
-<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>
-<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="c1"># Cloud Sync</span>
-<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="n">db</span><span class="o">.</span><span class="n">sync_to_cloud</span><span class="p">()</span>
-<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>
-<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="c1"># Cleanup</span>
-<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="n">db</span><span class="o">.</span><span class="n">exit</span><span class="p">()</span>
+<h2 id="sqlite-pragmas">SQLite Pragmas<a class="headerlink" href="#sqlite-pragmas" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">PRAGMA</span><span class="w"> </span><span class="n">journal_mode</span><span class="o">=</span><span class="n">WAL</span><span class="p">;</span><span class="w">          </span><span class="c1">-- Crash-safe concurrent reads</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">PRAGMA</span><span class="w"> </span><span class="n">synchronous</span><span class="o">=</span><span class="n">NORMAL</span><span class="p">;</span><span class="w">        </span><span class="c1">-- Balance safety/performance</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">PRAGMA</span><span class="w"> </span><span class="n">busy_timeout</span><span class="o">=</span><span class="mi">30000</span><span class="p">;</span><span class="w">        </span><span class="c1">-- 30s wait on lock</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">PRAGMA</span><span class="w"> </span><span class="n">wal_autocheckpoint</span><span class="o">=</span><span class="mi">1000</span><span class="p">;</span><span class="w">   </span><span class="c1">-- Auto-checkpoint WAL</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">PRAGMA</span><span class="w"> </span><span class="n">mmap_size</span><span class="o">=</span><span class="mi">134217728</span><span class="p">;</span><span class="w">       </span><span class="c1">-- 128MB memory-mapped reads</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">PRAGMA</span><span class="w"> </span><span class="n">auto_vacuum</span><span class="o">=</span><span class="n">INCREMENTAL</span><span class="p">;</span><span class="w">   </span><span class="c1">-- Reclaim space incrementally</span>
 </code></pre></div>
-<!-- verified: blob_instance.py::create_db -->
-
-<hr />
-<h2 id="bucket-path-structure">Bucket &amp; Path Structure<a class="headerlink" href="#bucket-path-structure" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Bucket: tb-servers
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>│
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>└── {SERVER_ID}/
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    ├── _manifest.json      # Key-Index
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    ├── users/
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    │   └── 123.json
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    ├── config/
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    │   └── theme.json
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    └── ...
-</code></pre></div>
-<!-- verified: blob_instance.py::BlobDB._key_to_path -->
+<h2 id="size-management">Size Management<a class="headerlink" href="#size-management" title="Permanent link">&para;</a></h2>
+<p>Auto-cleanup triggers when DB exceeds <code>max_size_mb</code> (default 500MB):
+1. Advisory lock prevents concurrent cleanup (fcntl on Unix, direct on Windows)
+2. Removes old synced blobs (default: &gt;30 days)
+3. Target: 80% of max size
+4. <code>PRAGMA incremental_vacuum</code> reclaims freed pages</p>
+<h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../">Storage Overview</a> — DB modes, BlobStorage facade</li>
+<li><a href="../blob_sharing_api/">Blob Sharing API</a> — user-to-user sharing</li>
+<li><a href="../../mods/CloudM/folder_sync/">CloudM FolderSync</a> — encrypted folder sync (deprecated)</li>
+<li><code>LogSyncManager</code> in <code>toolboxv2/utils/system/tb_logger.py</code> — syncs MobileDB logs to MinIO</li>
+</ul>
 
 
 
@@ -3633,7 +3417,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.tabs", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "In Zwischenablage kopiert", "clipboard.copy": "In Zwischenablage kopieren", "search.result.more.one": "1 weiteres Suchergebnis auf dieser Seite", "search.result.more.other": "# weitere Suchergebnisse auf dieser Seite", "search.result.none": "Keine Suchergebnisse", "search.result.one": "1 Suchergebnis", "search.result.other": "# Suchergebnisse", "search.result.placeholder": "Suchbegriff eingeben", "search.result.term.missing": "Es fehlt", "select.version": "Version ausw\u00e4hlen"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

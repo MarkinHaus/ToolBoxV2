@@ -13,7 +13,7 @@
         <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/mods/isaa/reference/">
       
       
-        <link rel="prev" href="../chains/">
+        <link rel="prev" href="../jobs/">
       
       
         <link rel="next" href="../../CloudM/">
@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#isaa-intelligent-system-agent-architecture-documentation" class="md-skip">
+        <a href="#isaa-reference-legacy" class="md-skip">
           Zum Inhalt
         </a>
       
@@ -509,8 +509,6 @@
       
         
       
-        
-      
     
     
     
@@ -571,34 +569,6 @@
     
   
     Onboarding
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../foundations/quickstart/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Quickstart
   
 
     
@@ -713,8 +683,6 @@
   
     
     
-      
-        
       
         
       
@@ -890,34 +858,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../flows/bg/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Background Flows
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../../flows/adaptive_prompt_system/" class="md-nav__link">
         
   
@@ -955,6 +895,8 @@
   
     
     
+      
+        
       
         
       
@@ -1040,6 +982,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../devdocs/mod_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mod Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../devdocs/docs_toolchain/" class="md-nav__link">
         
   
@@ -1089,6 +1059,8 @@
       
         
           
+        
+      
         
       
         
@@ -1244,6 +1216,34 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../jobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -1255,24 +1255,6 @@
       
         
       
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Full Reference (legacy)
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
       
       <a href="./" class="md-nav__link md-nav__link--active">
         
@@ -1290,630 +1272,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Inhaltsverzeichnis">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Inhaltsverzeichnis
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#1-overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Overview
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-core-concepts" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Core Concepts
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="2. Core Concepts">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#21-flowagent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2.1. FlowAgent
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#22-flowagentbuilder" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2.2. FlowAgentBuilder
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#23-toolsinterface" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2.3. ToolsInterface
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#24-aisemanticmemory" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2.4. AISemanticMemory
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-initialization-and-configuration-tools-class" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Initialization and Configuration (Tools Class)
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. Initialization and Configuration (Tools Class)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#isaaon_exit" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        isaa.on_exit()
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-agent-management" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Agent Management
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="4. Agent Management">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#41-getting-an-agent-builder-get_agent_builder" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4.1. Getting an Agent Builder (get_agent_builder)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#42-registering-an-agent-async-register_agent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4.2. Registering an Agent (async register_agent)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#43-retrieving-an-agent-instance-async-get_agent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4.3. Retrieving an Agent Instance (async get_agent)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-running-agents-and-tasks" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Running Agents and Tasks
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="5. Running Agents and Tasks">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#51-running-an-agent-async-run_agent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5.1. Running an Agent (async run_agent)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#52-structured-output-async-format_class" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5.2. Structured Output (async format_class)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#6-code-execution-with-toolsinterface" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. Code Execution with ToolsInterface
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#7-semantic-memory-aisemanticmemory" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        7. Semantic Memory (AISemanticMemory)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#8-tool-integration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        8. Tool Integration
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="8. Tool Integration">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#default-isaa-tools" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Default ISAA Tools
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#adding-your-own-tools" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Adding Your Own Tools
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#9-example-usage-flow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        9. Example Usage Flow
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#10-important-notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        10. Important Notes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Overview
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#core-concepts" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Core Concepts
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Core Concepts">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-basic-chain-operations" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Basic Chain Operations
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-chain-components" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Chain Components
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#basic-usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Basic Usage
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Basic Usage">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-setting-up-agents-for-chaining" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Setting Up Agents for Chaining
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-simple-sequential-chain" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Simple Sequential Chain
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#advanced-chain-features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Advanced Chain Features
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Advanced Chain Features">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-data-formatting-with-cf" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Data Formatting with CF
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-data-extraction-with-key-selection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Data Extraction with Key Selection
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-parallel-processing" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Parallel Processing
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#4-auto-parallel-processing" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Auto-Parallel Processing
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#5-conditional-chains" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Conditional Chains
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#6-error-handling-chains" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. Error Handling Chains
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#complex-workflow-examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Complex Workflow Examples
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Complex Workflow Examples">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-multi-stage-document-processing" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Multi-Stage Document Processing
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-customer-service-chain" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Customer Service Chain
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chain-visualization-and-debugging" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chain Visualization and Debugging
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Chain Visualization and Debugging">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-visualize-chain-structure" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Visualize Chain Structure
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-progress-tracking" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Progress Tracking
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#best-practices" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Best Practices
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Best Practices">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-agent-specialization" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Agent Specialization
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-error-recovery-patterns" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Error Recovery Patterns
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-performance-optimization" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Performance Optimization
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#direckt-call-support" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Direckt call Support
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chain-operators-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chain Operators Reference
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#cf-chain-format-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        CF (Chain Format) Reference
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
       
     </li>
   
@@ -3462,619 +2820,6 @@
     
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Inhaltsverzeichnis
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#1-overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Overview
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-core-concepts" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Core Concepts
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="2. Core Concepts">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#21-flowagent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2.1. FlowAgent
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#22-flowagentbuilder" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2.2. FlowAgentBuilder
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#23-toolsinterface" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2.3. ToolsInterface
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#24-aisemanticmemory" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2.4. AISemanticMemory
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-initialization-and-configuration-tools-class" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Initialization and Configuration (Tools Class)
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="3. Initialization and Configuration (Tools Class)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#isaaon_exit" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        isaa.on_exit()
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-agent-management" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Agent Management
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="4. Agent Management">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#41-getting-an-agent-builder-get_agent_builder" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4.1. Getting an Agent Builder (get_agent_builder)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#42-registering-an-agent-async-register_agent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4.2. Registering an Agent (async register_agent)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#43-retrieving-an-agent-instance-async-get_agent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4.3. Retrieving an Agent Instance (async get_agent)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#5-running-agents-and-tasks" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Running Agents and Tasks
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="5. Running Agents and Tasks">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#51-running-an-agent-async-run_agent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5.1. Running an Agent (async run_agent)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#52-structured-output-async-format_class" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5.2. Structured Output (async format_class)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#6-code-execution-with-toolsinterface" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. Code Execution with ToolsInterface
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#7-semantic-memory-aisemanticmemory" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        7. Semantic Memory (AISemanticMemory)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#8-tool-integration" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        8. Tool Integration
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="8. Tool Integration">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#default-isaa-tools" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Default ISAA Tools
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#adding-your-own-tools" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Adding Your Own Tools
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#9-example-usage-flow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        9. Example Usage Flow
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#10-important-notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        10. Important Notes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Overview
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#core-concepts" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Core Concepts
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Core Concepts">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-basic-chain-operations" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Basic Chain Operations
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-chain-components" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Chain Components
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#basic-usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Basic Usage
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Basic Usage">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-setting-up-agents-for-chaining" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Setting Up Agents for Chaining
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-simple-sequential-chain" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Simple Sequential Chain
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#advanced-chain-features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Advanced Chain Features
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Advanced Chain Features">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-data-formatting-with-cf" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Data Formatting with CF
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-data-extraction-with-key-selection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Data Extraction with Key Selection
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-parallel-processing" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Parallel Processing
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#4-auto-parallel-processing" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Auto-Parallel Processing
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#5-conditional-chains" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        5. Conditional Chains
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#6-error-handling-chains" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        6. Error Handling Chains
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#complex-workflow-examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Complex Workflow Examples
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Complex Workflow Examples">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-multi-stage-document-processing" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Multi-Stage Document Processing
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-customer-service-chain" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Customer Service Chain
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chain-visualization-and-debugging" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chain Visualization and Debugging
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Chain Visualization and Debugging">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-visualize-chain-structure" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Visualize Chain Structure
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-progress-tracking" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Progress Tracking
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#best-practices" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Best Practices
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Best Practices">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-agent-specialization" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. Agent Specialization
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-error-recovery-patterns" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Error Recovery Patterns
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-performance-optimization" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Performance Optimization
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#direckt-call-support" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Direckt call Support
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chain-operators-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chain Operators Reference
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#cf-chain-format-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        CF (Chain Format) Reference
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -4098,6 +2843,21 @@
   
 
 
+<h1 id="isaa-reference-legacy">ISAA Reference (Legacy)<a class="headerlink" href="#isaa-reference-legacy" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>⚠️ <strong>Diese Seite enthält veraltete Dokumentation.</strong></p>
+<p>Die ISAA-Dokumentation wurde in modularisierte Seiten aufgeteilt.
+Bitte nutze die aktuellen Seiten:</p>
+<ul>
+<li><a href="../">Overview</a></li>
+<li><a href="../quickstart/">Quickstart</a></li>
+<li><a href="../agents/">Agents (FlowAgent)</a></li>
+<li><a href="../chains/">Chains</a></li>
+<li><a href="../jobs/">Job System</a></li>
+</ul>
+</blockquote>
+<p>Diese Seite bleibt als Redirect-Ziel für alte Bookmarks erhalten.
+Enthaltene Phantom-Klassen (<code>UnifiedContextManager</code>, <code>VariableManager</code>, <code>Pipeline</code>) existieren <strong>nicht</strong> im aktuellen Code und wurden entfernt.</p>
 <h1 id="isaa-intelligent-system-agent-architecture-documentation">ISAA (Intelligent System Agent Architecture) Documentation<a class="headerlink" href="#isaa-intelligent-system-agent-architecture-documentation" title="Permanent link">&para;</a></h1>
 <h2 id="1-overview">1. Overview<a class="headerlink" href="#1-overview" title="Permanent link">&para;</a></h2>
 <p>The ISAA (Intelligent System Agent Architecture) module is a sophisticated framework for building, configuring, and orchestrating advanced AI agents. At its core, ISAA now leverages the powerful <strong><code>FlowAgent</code></strong>, a next-generation agent designed for complex reasoning, dynamic planning, and robust tool use.</p>
@@ -5822,7 +4582,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.tracking", "navigation.tabs", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "In Zwischenablage kopiert", "clipboard.copy": "In Zwischenablage kopieren", "search.result.more.one": "1 weiteres Suchergebnis auf dieser Seite", "search.result.more.other": "# weitere Suchergebnisse auf dieser Seite", "search.result.none": "Keine Suchergebnisse", "search.result.one": "1 Suchergebnis", "search.result.other": "# Suchergebnisse", "search.result.placeholder": "Suchbegriff eingeben", "search.result.term.missing": "Es fehlt", "select.version": "Version ausw\u00e4hlen"}, "version": null}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

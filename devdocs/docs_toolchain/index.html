@@ -13,7 +13,7 @@
         <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/devdocs/docs_toolchain/">
       
       
-        <link rel="prev" href="../guidelines/">
+        <link rel="prev" href="../mod_architecture/">
       
       
         <link rel="next" href="../../mods/isaa/">
@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -511,8 +511,6 @@
       
         
       
-        
-      
     
     
     
@@ -573,34 +571,6 @@
     
   
     Onboarding
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../foundations/quickstart/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Quickstart
   
 
     
@@ -720,8 +690,6 @@
   
     
     
-      
-        
       
         
       
@@ -900,34 +868,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../flows/bg/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Background Flows
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../flows/adaptive_prompt_system/" class="md-nav__link">
         
   
@@ -967,6 +907,8 @@
   
     
     
+      
+        
       
         
       
@@ -1035,6 +977,34 @@
     
   
     Coding Guidelines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mod_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mod Architecture
   
 
     
@@ -1554,6 +1524,8 @@
       
         
       
+        
+      
     
     
     
@@ -1679,6 +1651,34 @@
     
   
     Chains
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/jobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job System
   
 
     
@@ -3721,7 +3721,7 @@
     M[Isaa Agent] --&gt; K</code></pre>
 <h3 id="core-components">Core Components<a class="headerlink" href="#core-components" title="Permanent link">&para;</a></h3>
 <p>The system consists of several specialized components working together:</p>
-<h4 id="docsindexer-toolboxv2modsmarkdown_docs_systempydocsindexer">DocsIndexer (<code>toolboxv2/mods/markdown_docs_system.py:DocsIndexer</code>)<a class="headerlink" href="#docsindexer-toolboxv2modsmarkdown_docs_systempydocsindexer" title="Permanent link">&para;</a></h4>
+<h4 id="indexmanager-toolboxv2utilsextrasmkdocspyindexmanager">IndexManager (<code>toolboxv2/utils/extras/mkdocs.py:IndexManager</code>)<a class="headerlink" href="#indexmanager-toolboxv2utilsextrasmkdocspyindexmanager" title="Permanent link">&para;</a></h4>
 <p>Responsible for building and maintaining the comprehensive documentation index.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Example: Initialize with custom directories</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">indexer</span> <span class="o">=</span> <span class="n">DocsIndexer</span><span class="p">(</span>
@@ -3735,7 +3735,7 @@
 - <code>build_initial_index()</code>: Creates complete index on first run
 - <code>update_index()</code>: Incremental updates based on git changes
 - <code>_get_filtered_files()</code>: Applies include/exclude directory filters</p>
-<h4 id="codeelementextractor-toolboxv2modsmarkdown_docs_systempycodeelementextractor">CodeElementExtractor (<code>toolboxv2/mods/markdown_docs_system.py:CodeElementExtractor</code>)<a class="headerlink" href="#codeelementextractor-toolboxv2modsmarkdown_docs_systempycodeelementextractor" title="Permanent link">&para;</a></h4>
+<h4 id="codeanalyzer-toolboxv2utilsextrasmkdocspycodeanalyzer">CodeAnalyzer (<code>toolboxv2/utils/extras/mkdocs.py:CodeAnalyzer</code>)<a class="headerlink" href="#codeanalyzer-toolboxv2utilsextrasmkdocspycodeanalyzer" title="Permanent link">&para;</a></h4>
 <p>Extracts classes, functions, and other code elements from Python source files.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Example: Extract elements from a Python file</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">extractor</span> <span class="o">=</span> <span class="n">CodeElementExtractor</span><span class="p">()</span>
@@ -3896,7 +3896,7 @@
 <h2 id="api-reference">API Reference<a class="headerlink" href="#api-reference" title="Permanent link">&para;</a></h2>
 <h3 id="core-functions">Core Functions<a class="headerlink" href="#core-functions" title="Permanent link">&para;</a></h3>
 <h4 id="docs_readerquery-section_id-file_path-tags-include_source_refs-format_type"><code>docs_reader(query, section_id, file_path, tags, include_source_refs, format_type)</code><a class="headerlink" href="#docs_readerquery-section_id-file_path-tags-include_source_refs-format_type" title="Permanent link">&para;</a></h4>
-<p><strong>Source:</strong> <code>toolboxv2/mods/markdown_docs_system.py:MarkdownDocsSystem.docs_reader</code></p>
+<p><strong>Source:</strong> <code>toolboxv2/utils/extras/mkdocs.py:DocsSystem.docs_reader</code></p>
 <p>Reads documentation using index-based lookups (no AI required).</p>
 <p><strong>Parameters:</strong>
 - <code>query</code> (str, optional): Search text for titles and content
@@ -4081,11 +4081,12 @@
 </code></pre></div>
 <hr />
 <p><strong>Source References:</strong>
-- <code>toolboxv2/utils/extras/mkdocs.py:MarkdownDocsSystem</code>
-- <code>toolboxv2/utils/extras/mkdocs.py:DocsIndexer</code>
-- <code>toolboxv2/utils/extras/mkdocs.py:CodeElementExtractor</code>
-- <code>toolboxv2/utils/extras/mkdocs.py:MarkdownParser</code></p>
-<p><strong>Last Updated:</strong> 2024-01-15
+- <code>toolboxv2/utils/extras/mkdocs.py:DocsSystem</code>
+- <code>toolboxv2/utils/extras/mkdocs.py:IndexManager</code>
+- <code>toolboxv2/utils/extras/mkdocs.py:CodeAnalyzer</code>
+- <code>toolboxv2/utils/extras/mkdocs.py:DocParser</code></p>
+<p><strong>Last Updated:</strong> 2025-01-18</p>
+<p><strong>Last Updated:</strong> 2025-01-18
 <strong>Version:</strong> 1.0.0
 <strong>Maintainer:</strong> ToolBoxV2</p>
 
@@ -4150,7 +4151,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.tabs", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "In Zwischenablage kopiert", "clipboard.copy": "In Zwischenablage kopieren", "search.result.more.one": "1 weiteres Suchergebnis auf dieser Seite", "search.result.more.other": "# weitere Suchergebnisse auf dieser Seite", "search.result.none": "Keine Suchergebnisse", "search.result.one": "1 Suchergebnis", "search.result.other": "# Suchergebnisse", "search.result.placeholder": "Suchbegriff eingeben", "search.result.term.missing": "Es fehlt", "select.version": "Version ausw\u00e4hlen"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

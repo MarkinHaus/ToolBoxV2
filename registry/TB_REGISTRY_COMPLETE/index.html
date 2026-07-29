@@ -1,0 +1,4287 @@
+
+<!doctype html>
+<html lang="de" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Modulares Python-Framework für Tools, Funktionen und komplette Anwendungen.">
+      
+      
+      
+        <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/registry/TB_REGISTRY_COMPLETE/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>TB Registry — Vollständige Dokumentation - ToolBoxV2 Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=IBM+Plex+Sans:300,300i,400,400i,700,700i%7CIBM+Plex+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"IBM Plex Sans";--md-code-font:"IBM Plex Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#tb-registry-vollstandige-dokumentation" class="md-skip">
+          Zum Inhalt
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Kopfzeile">
+    <a href="../.." title="ToolBoxV2 Docs" class="md-header__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ToolBoxV2 Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              TB Registry — Vollständige Dokumentation
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Suche" placeholder="Suche" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Suche">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Zurücksetzen" aria-label="Zurücksetzen" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Suche wird initialisiert
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Zum Repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    MarkinHaus/ToolBoxV2
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Hauptnavigation" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../foundations/onboarding/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../services/cli/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../mods/isaa/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  ISAA
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../mods/CloudM/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  CloudM
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../runtime/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Runtime
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../storage/ref_database/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Storage
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../frontend/tbjs/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Frontend
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Infrastructure
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/toolboxv2/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ToolBoxV2 Docs" class="md-nav__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ToolBoxV2 Docs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Zum Repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    MarkinHaus/ToolBoxV2
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../foundations/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../foundations/first_run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run & Profile
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLIs & Flows
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CLIs & Flows
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flows/icli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    icli
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flows/minicli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MiniCLI & Macros
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flows/chain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chains (Flows)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flows/adaptive_prompt_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adaptive Prompt System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Module Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../devdocs/guidelines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coding Guidelines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../devdocs/mod_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mod Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../devdocs/docs_toolchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docs Toolchain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../mods/isaa/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ISAA
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ISAA
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents (FlowAgent)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/chains/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chains
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/jobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Full Reference (legacy)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../mods/CloudM/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CloudM
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CloudM
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/user_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/developer_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Auth System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/login_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Login System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/user_data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/mod_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mod Manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/folder_sync/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Folder Sync
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/dashboards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dashboards
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../runtime/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runtime
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/workers_core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workers (Core)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/service_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ServiceManager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/server_worker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Server Worker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/fast_tb_handler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FastTB Handler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/fasttb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FastTB
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/session_custom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Custom Sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/event_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Event Manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/ws_bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WS Bridge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/toolbox_integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Toolbox Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/tauri_integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tauri Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/debug_runner/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debug Runner
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Storage
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage/ref_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database Modes (LC/LR/RR/CB)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage/ref_blobdb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    BlobDB & Offline Fallback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage/blob_sharing_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blob Sharing API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage/blob_watch_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blob Watch API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Frontend
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Frontend
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../frontend/tbjs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    tbjs Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../frontend/tauri/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tauri App Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../frontend/p2p_rpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P2P RPC Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../frontend/tb_browser/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    tb_browser Extension
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Infrastructure
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Infrastructure
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../USER_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — User Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DEVELOPERS_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — Developers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CONTRIBUTORS_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — Contributors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../API_REFERENCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../llm_gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM Gateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/toolboxv2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    toolboxv2 Core API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging & Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Inhaltsverzeichnis">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Inhaltsverzeichnis
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#inhaltsverzeichnis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inhaltsverzeichnis
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architektur-uberblick" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architektur-Überblick
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Architektur-Überblick">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#komponenten" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Komponenten
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#zwei-datenmodell-kategorien" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Zwei Datenmodell-Kategorien
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#auth-cloudmauth-jwt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auth: CloudM.Auth JWT
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consumer-guide" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consumer Guide
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Consumer Guide">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#voraussetzungen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Voraussetzungen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pakete-suchen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pakete suchen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#paket-details-abrufen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Paket-Details abrufen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#paket-herunterladen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Paket herunterladen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#update-check-update-ping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Update-Check (Update-Ping)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dependency-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dependency Resolution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inkrementelle-updates-diff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inkrementelle Updates (Diff)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#publisher-guide" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Publisher Guide
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Publisher Guide">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-publisher-werden" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Publisher werden
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-package-erstellen-modlibrary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Package erstellen (Mod/Library)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-version-hochladen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Version hochladen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-artifact-erstellen-appinstaller" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Artifact erstellen (App/Installer)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-package-verwalten" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Package verwalten
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#versionierung-sichtbarkeit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Versionierung &amp; Sichtbarkeit
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-guide" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin Guide
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Admin Guide">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#server-starten" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Server starten
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#konfiguration-env" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Konfiguration (.env)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-cli-direkt-auf-dem-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin CLI (Direkt auf dem Server)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#publisher-verifizierung-admin-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Publisher-Verifizierung (Admin API)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#health-readiness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health &amp; Readiness
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#storage-verwaltung" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Storage-Verwaltung
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#backup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backup
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-referenz" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API-Referenz
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="API-Referenz">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#basis-url" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Basis-URL
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#auth-endpunkte" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auth-Endpunkte
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#package-endpunkte" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Package-Endpunkte
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#artifact-endpunkte" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Artifact-Endpunkte
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#search-resolve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Search &amp; Resolve
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admin-endpunkte" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin-Endpunkte
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#health" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validierungs-ergebnisse" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validierungs-Ergebnisse
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Validierungs-Ergebnisse">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#funktionierende-endpunkte" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ✅ Funktionierende Endpunkte
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#getestete-uploads-non-destructive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Getestete Uploads (Non-destructive)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bekannte-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bekannte Issues
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Bekannte Issues">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-package-version-upload-route-fehlt-kritisch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Package Version Upload Route fehlt (kritisch)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-artifact-storage_locations-nicht-persisted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Artifact storage_locations nicht persisted
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-search-ohne-treffer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Search ohne Treffer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-config-variable-naming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Config-Variable Naming
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-debug-modus-reload-verursacht-windows-port-konflikte" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Debug-Modus reload verursacht Windows-Port-Konflikte
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/MarkinHaus/ToolBoxV2/edit/master/docs/registry/TB_REGISTRY_COMPLETE.md" title="Seite editieren" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="tb-registry-vollstandige-dokumentation">TB Registry — Vollständige Dokumentation<a class="headerlink" href="#tb-registry-vollstandige-dokumentation" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p><strong>Status:</strong> Validiert am 2026-07-17 durch Live-Tests (Server auf Port 4030, MinIO-Backend, alle Core-Endpunkte grün)</p>
+</blockquote>
+<h2 id="inhaltsverzeichnis">Inhaltsverzeichnis<a class="headerlink" href="#inhaltsverzeichnis" title="Permanent link">&para;</a></h2>
+<ol>
+<li><a href="#architektur-überblick">Architektur-Überblick</a></li>
+<li><a href="#consumer-guide">Consumer Guide — Pakete finden &amp; herunterladen</a></li>
+<li><a href="#publisher-guide">Publisher Guide — Pakete veröffentlichen</a></li>
+<li><a href="#admin-guide">Admin Guide — Registry verwalten</a></li>
+<li><a href="#api-referenz">API-Referenz (Kompakt)</a></li>
+<li><a href="#validierungs-ergebnisse">Validierungs-Ergebnisse</a></li>
+<li><a href="#bekannte-issues">Bekannte Issues</a></li>
+</ol>
+<hr />
+<h2 id="architektur-uberblick">Architektur-Überblick<a class="headerlink" href="#architektur-uberblick" title="Permanent link">&para;</a></h2>
+<h3 id="komponenten">Komponenten<a class="headerlink" href="#komponenten" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>┌──────────────────────────────────────────────────────────┐
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>│                    ToolBoxV2 (Client)                      │
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│  ┌─────────────┐  ┌──────────────┐  ┌─────────────────┐  │
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│  │ tb registry │  │ RegistryClient│  │ cli_registry.py │  │
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>│  │   (CLI)     │  │ (async HTTP) │  │   (18 cmds)     │  │
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│  └──────┬──────┘  └──────┬───────┘  └────────┬────────┘  │
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│         └────────────────┴───────────────────┘            │
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>│                          │ JWT Bearer Token                │
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>└──────────────────────────┼────────────────────────────────┘
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>                           │ HTTPS
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>┌──────────────────────────┼────────────────────────────────┐
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>│                   tb-registry (Server)                     │
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>│  ┌─────────────────────────────────────────────────────┐  │
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>│  │              FastAPI Application                     │  │
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>│  │  ┌──────┐ ┌──────────┐ ┌─────────┐ ┌─────────────┐ │  │
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>│  │  │ Auth │ │ Packages │ │Artifacts│ │ Search/Res. │ │  │
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>│  │  └──┬───┘ └────┬─────┘ └────┬────┘ └──────┬──────┘ │  │
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>│  │     │          │            │              │        │  │
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>│  │  ┌──┴──────────┴────────────┴──────────────┴──────┐ │  │
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>│  │  │          SQLite (aiosqlite, WAL mode)          │ │  │
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>│  │  └────────────────────────────────────────────────┘ │  │
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>│  └─────────────────────────────────────────────────────┘  │
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>│                          │                                 │
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>│  ┌───────────────────────┴─────────────────────────────┐  │
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>│  │            StorageManager (MinIO S3)                │  │
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>│  │  ┌─────────────────┐    ┌────────────────────────┐  │  │
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>│  │  │  Primary MinIO  │───▶│  Mirror MinIO (async)  │  │  │
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>│  │  └─────────────────┘    └────────────────────────┘  │  │
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>│  └─────────────────────────────────────────────────────┘  │
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>└──────────────────────────────────────────────────────────┘
+</code></pre></div>
+<h3 id="zwei-datenmodell-kategorien">Zwei Datenmodell-Kategorien<a class="headerlink" href="#zwei-datenmodell-kategorien" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Kategorie</th>
+<th>Model</th>
+<th>Upload-Pfad</th>
+<th>Beispiele</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Packages</strong> (Mods, Libraries)</td>
+<td><code>Package</code> → <code>PackageVersion</code></td>
+<td><code>POST /api/v1/packages/{name}/versions</code></td>
+<td>Python-Module, ToolBox-Erweiterungen</td>
+</tr>
+<tr>
+<td><strong>Artifacts</strong> (Apps, Installers)</td>
+<td><code>Artifact</code> → <code>ArtifactVersion</code> → <code>ArtifactBuild</code></td>
+<td><code>POST /api/v1/artifacts/{name}/builds</code></td>
+<td>GUI (Tauri), CLI-Executables, Browser-Extensions</td>
+</tr>
+</tbody>
+</table>
+<h3 id="auth-cloudmauth-jwt">Auth: CloudM.Auth JWT<a class="headerlink" href="#auth-cloudmauth-jwt" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Token-Format:</strong> HS256-signiertes JWT</li>
+<li><strong>Claims:</strong> <code>user_id</code>, <code>username</code>, <code>email</code>, <code>level</code>, <code>provider</code>, <code>exp</code>, <code>iat</code>, <code>jti</code></li>
+<li><strong>Validierung:</strong> Lokal via Shared Secret (<code>CLOUDM_JWT_SECRET</code>)</li>
+<li><strong>User-Auto-Provisioning:</strong> Erster API-Call mit gültigem Token erstellt User in Registry-DB</li>
+<li><strong>3 Rollen:</strong> Anonymous → User → Publisher (verified) → Admin</li>
+</ul>
+<hr />
+<h2 id="consumer-guide">Consumer Guide<a class="headerlink" href="#consumer-guide" title="Permanent link">&para;</a></h2>
+<h3 id="voraussetzungen">Voraussetzungen<a class="headerlink" href="#voraussetzungen" title="Permanent link">&para;</a></h3>
+<ul>
+<li>ToolBoxV2 installiert (<code>tb</code> CLI verfügbar)</li>
+<li>CloudM.Auth Login (<code>tb login</code>)</li>
+</ul>
+<h3 id="pakete-suchen">Pakete suchen<a class="headerlink" href="#pakete-suchen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Über CLI</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>tb<span class="w"> </span>registry<span class="w"> </span>search<span class="w"> </span><span class="s2">&quot;example&quot;</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>tb<span class="w"> </span>registry<span class="w"> </span>search<span class="w"> </span>--type<span class="w"> </span>mod<span class="w"> </span><span class="s2">&quot;database&quot;</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="c1"># Über API</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>GET<span class="w"> </span>/api/v1/search?q<span class="o">=</span>example<span class="p">&amp;</span><span class="nv">package_type</span><span class="o">=</span>mod<span class="p">&amp;</span><span class="nv">page</span><span class="o">=</span><span class="m">1</span><span class="p">&amp;</span><span class="nv">per_page</span><span class="o">=</span><span class="m">20</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="c1"># Auto-Vorschläge</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>GET<span class="w"> </span>/api/v1/search/suggest?q<span class="o">=</span>exam<span class="p">&amp;</span><span class="nv">limit</span><span class="o">=</span><span class="m">5</span>
+</code></pre></div>
+<h3 id="paket-details-abrufen">Paket-Details abrufen<a class="headerlink" href="#paket-details-abrufen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># CLI</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>tb<span class="w"> </span>registry<span class="w"> </span>info<span class="w"> </span>example-mod
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>tb<span class="w"> </span>registry<span class="w"> </span>versions<span class="w"> </span>example-mod
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="c1"># API</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>GET<span class="w"> </span>/api/v1/packages/example-mod
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>GET<span class="w"> </span>/api/v1/packages/example-mod/versions
+</code></pre></div>
+<h3 id="paket-herunterladen">Paket herunterladen<a class="headerlink" href="#paket-herunterladen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># CLI</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>tb<span class="w"> </span>registry<span class="w"> </span>download<span class="w"> </span>example-mod<span class="w"> </span>--version<span class="w"> </span><span class="m">0</span>.1.0
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># API (liefert presigned MinIO URL, 1h gültig)</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>GET<span class="w"> </span>/api/v1/packages/example-mod/versions/0.1.0/download
+</code></pre></div>
+<p><strong>Visibility-Regeln für Downloads:</strong>
+| Visibility | Wer kann herunterladen? |
+|------------|------------------------|
+| <code>public</code> | Jeder (anonym) |
+| <code>unlisted</code> | Nur authentifizierte User |
+| <code>private</code> | Nur der Owner |</p>
+<h3 id="update-check-update-ping">Update-Check (Update-Ping)<a class="headerlink" href="#update-check-update-ping" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># CLI — prüft alle installierten Mods auf Updates</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>tb<span class="w"> </span>registry<span class="w"> </span>list<span class="w"> </span>--check-updates
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># API — Batch-Abfrage der neuesten Versionen</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>GET<span class="w"> </span>/api/v1/versions?names<span class="o">=</span>mod1<span class="p">&amp;</span><span class="nv">names</span><span class="o">=</span>mod2<span class="p">&amp;</span><span class="nv">names</span><span class="o">=</span>mod3
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="c1"># Response: {&quot;versions&quot;: {&quot;mod1&quot;: &quot;1.2.3&quot;, &quot;mod2&quot;: null}}</span>
+</code></pre></div>
+<h3 id="dependency-resolution">Dependency Resolution<a class="headerlink" href="#dependency-resolution" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># API — Abhängigkeiten auflösen</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>POST<span class="w"> </span>/api/v1/resolve
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>Body:<span class="w"> </span><span class="o">{</span><span class="s2">&quot;requirements&quot;</span>:<span class="w"> </span><span class="o">[</span><span class="s2">&quot;example-mod&gt;=0.1.0&quot;</span>,<span class="w"> </span><span class="s2">&quot;other-lib&lt;2.0.0&quot;</span><span class="o">]}</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="c1"># Kompatibilitäts-Check</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>GET<span class="w"> </span>/api/v1/resolve/check?package<span class="o">=</span>example-mod<span class="p">&amp;</span><span class="nv">version</span><span class="o">=</span><span class="m">0</span>.1.0<span class="p">&amp;</span><span class="nv">toolbox_version</span><span class="o">=</span><span class="m">2</span>.0
+</code></pre></div>
+<h3 id="inkrementelle-updates-diff">Inkrementelle Updates (Diff)<a class="headerlink" href="#inkrementelle-updates-diff" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Diff zwischen zwei Versionen abrufen</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>GET<span class="w"> </span>/api/v1/packages/<span class="o">{</span>name<span class="o">}</span>/diff/<span class="o">{</span>from_version<span class="o">}</span>/<span class="o">{</span>to_version<span class="o">}</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># Patch-Datei herunterladen</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>GET<span class="w"> </span>/api/v1/packages/<span class="o">{</span>name<span class="o">}</span>/diff/<span class="o">{</span>from_version<span class="o">}</span>/<span class="o">{</span>to_version<span class="o">}</span>/download
+</code></pre></div>
+<hr />
+<h2 id="publisher-guide">Publisher Guide<a class="headerlink" href="#publisher-guide" title="Permanent link">&para;</a></h2>
+<h3 id="1-publisher-werden">1. Publisher werden<a class="headerlink" href="#1-publisher-werden" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Als Publisher registrieren</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>tb<span class="w"> </span>registry<span class="w"> </span>register-publisher<span class="w"> </span>--name<span class="w"> </span><span class="s2">&quot;my-org&quot;</span><span class="w"> </span>--display-name<span class="w"> </span><span class="s2">&quot;My Organization&quot;</span><span class="w"> </span>--email<span class="w"> </span><span class="s2">&quot;contact@my.org&quot;</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="c1"># Verifizierung einreichen (Warte auf Admin)</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>tb<span class="w"> </span>registry<span class="w"> </span>verify-publisher<span class="w"> </span>--method<span class="w"> </span>email<span class="w"> </span>--data<span class="w"> </span><span class="s1">&#39;{&quot;email&quot;:&quot;contact@my.org&quot;}&#39;</span>
+</code></pre></div>
+<p><strong>Publisher-Status Lifecycle:</strong>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>unverified → pending → verified  (Admin genehmigt)
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>                    ↘ rejected   (Admin lehnt ab)
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>verified → unverified (Admin revoke)
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>         → suspended  (Admin suspendiert)
+</code></pre></div></p>
+<p><strong>Wichtig:</strong> Nur <code>verified</code> Publisher mit <code>can_publish_public=true</code> können öffentliche Pakete veröffentlichen.</p>
+<h3 id="2-package-erstellen-modlibrary">2. Package erstellen (Mod/Library)<a class="headerlink" href="#2-package-erstellen-modlibrary" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># CLI</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>tb<span class="w"> </span>registry<span class="w"> </span>create-package<span class="w"> </span>--name<span class="w"> </span><span class="s2">&quot;my-mod&quot;</span><span class="w"> </span>--type<span class="w"> </span>mod<span class="w"> </span>--description<span class="w"> </span><span class="s2">&quot;My awesome mod&quot;</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="c1"># API</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>POST<span class="w"> </span>/api/v1/packages
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>Body:<span class="w"> </span><span class="o">{</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">  </span><span class="s2">&quot;name&quot;</span>:<span class="w"> </span><span class="s2">&quot;my-mod&quot;</span>,
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">  </span><span class="s2">&quot;display_name&quot;</span>:<span class="w"> </span><span class="s2">&quot;My Mod&quot;</span>,
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="w">  </span><span class="s2">&quot;package_type&quot;</span>:<span class="w"> </span><span class="s2">&quot;mod&quot;</span>,<span class="w">          </span>//<span class="w"> </span>mod<span class="w"> </span><span class="p">|</span><span class="w"> </span>library<span class="w"> </span><span class="p">|</span><span class="w"> </span>theme<span class="w"> </span><span class="p">|</span><span class="w"> </span>plugin<span class="w"> </span><span class="p">|</span><span class="w"> </span>artifact
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="w">  </span><span class="s2">&quot;description&quot;</span>:<span class="w"> </span><span class="s2">&quot;My awesome mod&quot;</span>,
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="w">  </span><span class="s2">&quot;homepage&quot;</span>:<span class="w"> </span><span class="s2">&quot;https://github.com/me/my-mod&quot;</span>,
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="w">  </span><span class="s2">&quot;repository&quot;</span>:<span class="w"> </span><span class="s2">&quot;https://github.com/me/my-mod&quot;</span>
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="o">}</span>
+</code></pre></div>
+<p><strong>Package-Namen-Regeln:</strong> <code>^[a-z0-9_-]+$</code>, 1-100 Zeichen.</p>
+<h3 id="3-version-hochladen">3. Version hochladen<a class="headerlink" href="#3-version-hochladen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># CLI</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>tb<span class="w"> </span>registry<span class="w"> </span>publish<span class="w"> </span>my-mod.zip<span class="w"> </span>--name<span class="w"> </span>my-mod<span class="w"> </span>--version<span class="w"> </span><span class="m">0</span>.1.0<span class="w"> </span>--changelog<span class="w"> </span><span class="s2">&quot;Initial release&quot;</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="c1"># API (multipart/form-data)</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>POST<span class="w"> </span>/api/v1/packages/my-mod/versions
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>Form:<span class="w"> </span><span class="o">{</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">  </span><span class="s2">&quot;version&quot;</span>:<span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>,
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">  </span><span class="s2">&quot;changelog&quot;</span>:<span class="w"> </span><span class="s2">&quot;Initial release&quot;</span>,
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">  </span><span class="s2">&quot;file&quot;</span>:<span class="w"> </span>&lt;binary<span class="w"> </span>zip<span class="w"> </span>file&gt;
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="o">}</span>
+</code></pre></div>
+<p><strong>Version-Format:</strong> SemVer <code>^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$</code></p>
+<h3 id="4-artifact-erstellen-appinstaller">4. Artifact erstellen (App/Installer)<a class="headerlink" href="#4-artifact-erstellen-appinstaller" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Artifact erstellen</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>POST<span class="w"> </span>/api/v1/artifacts
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>Body:<span class="w"> </span><span class="o">{</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">  </span><span class="s2">&quot;name&quot;</span>:<span class="w"> </span><span class="s2">&quot;toolbox-gui&quot;</span>,
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">  </span><span class="s2">&quot;artifact_type&quot;</span>:<span class="w"> </span><span class="s2">&quot;tauri_app&quot;</span>,<span class="w">   </span>//<span class="w"> </span>tauri_app<span class="w"> </span><span class="p">|</span><span class="w"> </span>cli_executable<span class="w"> </span><span class="p">|</span><span class="w"> </span>browser_extension<span class="w"> </span><span class="p">|</span><span class="w"> </span>mobile_app<span class="w"> </span><span class="p">|</span><span class="w"> </span>library
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="w">  </span><span class="s2">&quot;description&quot;</span>:<span class="w"> </span><span class="s2">&quot;ToolBox GUI&quot;</span>,
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="w">  </span><span class="s2">&quot;homepage&quot;</span>:<span class="w"> </span><span class="s2">&quot;https://toolbox.dev&quot;</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="o">}</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="c1"># Platform-spezifischen Build hochladen (multipart)</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>POST<span class="w"> </span>/api/v1/artifacts/toolbox-gui/builds
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>Form:<span class="w"> </span><span class="o">{</span>
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="w">  </span><span class="s2">&quot;version&quot;</span>:<span class="w"> </span><span class="s2">&quot;1.0.0&quot;</span>,
+<a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a><span class="w">  </span><span class="s2">&quot;platform&quot;</span>:<span class="w"> </span><span class="s2">&quot;windows&quot;</span>,<span class="w">          </span>//<span class="w"> </span>all<span class="w"> </span><span class="p">|</span><span class="w"> </span>windows<span class="w"> </span><span class="p">|</span><span class="w"> </span>linux<span class="w"> </span><span class="p">|</span><span class="w"> </span>macos<span class="w"> </span><span class="p">|</span><span class="w"> </span>android<span class="w"> </span><span class="p">|</span><span class="w"> </span>ios
+<a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a><span class="w">  </span><span class="s2">&quot;architecture&quot;</span>:<span class="w"> </span><span class="s2">&quot;x64&quot;</span>,<span class="w">          </span>//<span class="w"> </span>all<span class="w"> </span><span class="p">|</span><span class="w"> </span>x64<span class="w"> </span><span class="p">|</span><span class="w"> </span>x86<span class="w"> </span><span class="p">|</span><span class="w"> </span>arm64<span class="w"> </span><span class="p">|</span><span class="w"> </span>arm32
+<a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a><span class="w">  </span><span class="s2">&quot;changelog&quot;</span>:<span class="w"> </span><span class="s2">&quot;Release 1.0.0&quot;</span>,
+<a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a><span class="w">  </span><span class="s2">&quot;installer_type&quot;</span>:<span class="w"> </span><span class="s2">&quot;msi&quot;</span>,<span class="w">        </span>//<span class="w"> </span>optional:<span class="w"> </span>msi,<span class="w"> </span>exe,<span class="w"> </span>dmg,<span class="w"> </span>deb,<span class="w"> </span>etc.
+<a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a><span class="w">  </span><span class="s2">&quot;min_os_version&quot;</span>:<span class="w"> </span><span class="s2">&quot;10.0&quot;</span>,<span class="w">       </span>//<span class="w"> </span>optional
+<a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a><span class="w">  </span><span class="s2">&quot;file&quot;</span>:<span class="w"> </span>&lt;binary<span class="w"> </span>installer<span class="w"> </span>file&gt;
+<a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a><span class="o">}</span>
+</code></pre></div>
+<h3 id="5-package-verwalten">5. Package verwalten<a class="headerlink" href="#5-package-verwalten" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># Package aktualisieren</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>PATCH<span class="w"> </span>/api/v1/packages/my-mod
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>Body:<span class="w"> </span><span class="o">{</span><span class="s2">&quot;description&quot;</span>:<span class="w"> </span><span class="s2">&quot;Updated description&quot;</span>,<span class="w"> </span><span class="s2">&quot;visibility&quot;</span>:<span class="w"> </span><span class="s2">&quot;public&quot;</span><span class="o">}</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="c1"># Version yanken (als deprecated markieren, nicht löschen)</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>POST<span class="w"> </span>/api/v1/packages/my-mod/versions/0.1.0/yank
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>Body:<span class="w"> </span><span class="o">{</span><span class="s2">&quot;reason&quot;</span>:<span class="w"> </span><span class="s2">&quot;Security issue in dependency&quot;</span><span class="o">}</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="c1"># Package löschen (nur Owner oder Admin)</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>DELETE<span class="w"> </span>/api/v1/packages/my-mod
+</code></pre></div>
+<h3 id="versionierung-sichtbarkeit">Versionierung &amp; Sichtbarkeit<a class="headerlink" href="#versionierung-sichtbarkeit" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Feld</th>
+<th>Werte</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>version</code></td>
+<td><code>1.0.0</code>, <code>1.0.0-beta</code>, <code>2.1.3</code></td>
+<td>SemVer-konform</td>
+</tr>
+<tr>
+<td><code>visibility</code></td>
+<td><code>public</code>, <code>unlisted</code>, <code>private</code></td>
+<td>Wer kann das Paket sehen/herunterladen</td>
+</tr>
+<tr>
+<td><code>yanked</code></td>
+<td><code>true/false</code></td>
+<td>Version als problematisch markiert</td>
+</tr>
+<tr>
+<td><code>toolbox_version</code></td>
+<td><code>&gt;=2.0</code></td>
+<td>Kompatibilität mit ToolBox-Version</td>
+</tr>
+<tr>
+<td><code>python_version</code></td>
+<td><code>&gt;=3.11</code></td>
+<td>Benötigte Python-Version</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="admin-guide">Admin Guide<a class="headerlink" href="#admin-guide" title="Permanent link">&para;</a></h2>
+<h3 id="server-starten">Server starten<a class="headerlink" href="#server-starten" title="Permanent link">&para;</a></h3>
+<h4 id="lokal-entwicklung">Lokal (Entwicklung)<a class="headerlink" href="#lokal-entwicklung" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nb">cd</span><span class="w"> </span>tb-registry
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>cp<span class="w"> </span>.env.example<span class="w"> </span>.env
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="c1"># .env anpassen: MINIO creds, CLOUDM_JWT_SECRET, SERVER_PORT</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>uv<span class="w"> </span>sync
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>uv<span class="w"> </span>run<span class="w"> </span>tb-registry
+</code></pre></div>
+<h4 id="docker-produktion">Docker (Produktion)<a class="headerlink" href="#docker-produktion" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>tb-registry<span class="w"> </span>.
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span>-p<span class="w"> </span><span class="m">4025</span>:4025<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">  </span>--env-file<span class="w"> </span>.env<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">  </span>-v<span class="w"> </span>registry-data:/app/data<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">  </span>tb-registry
+</code></pre></div>
+<h4 id="docker-compose-full-stack">Docker Compose (Full Stack)<a class="headerlink" href="#docker-compose-full-stack" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nb">cd</span><span class="w"> </span>tb-registry
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>docker-compose<span class="w"> </span>up<span class="w"> </span>-d
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="c1"># Startet: tb-registry + MinIO (primary) + optional MinIO (mirror)</span>
+</code></pre></div>
+<h3 id="konfiguration-env">Konfiguration (.env)<a class="headerlink" href="#konfiguration-env" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SERVER_PORT</code></td>
+<td><code>4025</code></td>
+<td>Server-Port</td>
+</tr>
+<tr>
+<td><code>HOST</code></td>
+<td><code>0.0.0.0</code></td>
+<td>Bind-Adresse</td>
+</tr>
+<tr>
+<td><code>DEBUG</code></td>
+<td><code>false</code></td>
+<td>Debug-Modus (Mock-Auth bei leerem JWT-Secret)</td>
+</tr>
+<tr>
+<td><code>DATABASE_URL</code></td>
+<td><code>sqlite:///./data/registry.db</code></td>
+<td>SQLite-Pfad</td>
+</tr>
+<tr>
+<td><code>CLOUDM_JWT_SECRET</code></td>
+<td>—</td>
+<td>Shared Secret für JWT-Validierung</td>
+</tr>
+<tr>
+<td><code>CLOUDM_AUTH_URL</code></td>
+<td>—</td>
+<td>URL zu CloudM.Auth (Fallback-Validierung)</td>
+</tr>
+<tr>
+<td><code>CORS_ORIGINS</code></td>
+<td><code>["*"]</code></td>
+<td>Erlaubte CORS-Origins</td>
+</tr>
+<tr>
+<td><code>MINIO_PRIMARY_ENDPOINT</code></td>
+<td><code>localhost:9000</code></td>
+<td>MinIO-Server</td>
+</tr>
+<tr>
+<td><code>MINIO_PRIMARY_ACCESS_KEY</code></td>
+<td>—</td>
+<td>MinIO Access Key</td>
+</tr>
+<tr>
+<td><code>MINIO_PRIMARY_SECRET_KEY</code></td>
+<td>—</td>
+<td>MinIO Secret Key</td>
+</tr>
+<tr>
+<td><code>MINIO_PRIMARY_BUCKET</code></td>
+<td><code>tb-registry</code></td>
+<td>MinIO Bucket-Name</td>
+</tr>
+<tr>
+<td><code>MINIO_PRIMARY_SECURE</code></td>
+<td><code>false</code></td>
+<td>HTTPS für MinIO</td>
+</tr>
+<tr>
+<td><code>MINIO_MIRROR_*</code></td>
+<td>—</td>
+<td>Optionaler Mirror (alle 4 Felder nötig)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="admin-cli-direkt-auf-dem-server">Admin CLI (Direkt auf dem Server)<a class="headerlink" href="#admin-cli-direkt-auf-dem-server" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="nb">cd</span><span class="w"> </span>tb-registry
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>python<span class="w"> </span>admin_cli.py<span class="w"> </span>--db<span class="w"> </span>./data/registry.db
+</code></pre></div>
+<p><strong>Verfügbare Kommandos:</strong></p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Kommando</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>List users</td>
+<td>Alle registrierten User anzeigen</td>
+</tr>
+<tr>
+<td>2</td>
+<td>List publishers</td>
+<td>Alle Publisher mit Status/Stats</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Make publisher</td>
+<td>User → Publisher (mit sofortiger Verify-Option)</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Remove publisher</td>
+<td>Publisher-Status entfernen</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Edit publisher</td>
+<td>Felder bearbeiten (Name, Slug, Limits)</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Set publisher status</td>
+<td>Status ändern (verified/rejected/suspended)</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Toggle admin</td>
+<td>Admin-Rechte gewähren/entziehen</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Raw SQL</td>
+<td>Direkte SQL-Abfragen (<code>!</code> Prefix für Writes)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>⚠️ Sicherheit:</strong> Admin CLI läuft OHNE Authentifizierung. Nur lokal auf dem Server ausführen — niemals extern exponieren.</p>
+<h3 id="publisher-verifizierung-admin-api">Publisher-Verifizierung (Admin API)<a class="headerlink" href="#publisher-verifizierung-admin-api" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># Ausstehende Verifizierungen auflisten</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>GET<span class="w"> </span>/api/v1/packages/admin/pending<span class="w">    </span><span class="c1"># (erfordert Admin-Token)</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="c1"># Publisher verifizieren</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>POST<span class="w"> </span>/api/v1/packages/admin/<span class="o">{</span>publisher_id<span class="o">}</span>/verify
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>Body:<span class="w"> </span><span class="o">{</span><span class="s2">&quot;notes&quot;</span>:<span class="w"> </span><span class="s2">&quot;Verified via GitHub&quot;</span><span class="o">}</span>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="c1"># Publisher ablehnen</span>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a>POST<span class="w"> </span>/api/v1/packages/admin/<span class="o">{</span>publisher_id<span class="o">}</span>/reject
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>Body:<span class="w"> </span><span class="o">{</span><span class="s2">&quot;notes&quot;</span>:<span class="w"> </span><span class="s2">&quot;Invalid contact information&quot;</span><span class="o">}</span>
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a>
+<a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a><span class="c1"># Verifizierung widerrufen</span>
+<a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a>POST<span class="w"> </span>/api/v1/packages/admin/<span class="o">{</span>publisher_id<span class="o">}</span>/revoke
+<a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a>Body:<span class="w"> </span><span class="o">{</span><span class="s2">&quot;notes&quot;</span>:<span class="w"> </span><span class="s2">&quot;Policy violation&quot;</span><span class="o">}</span>
+</code></pre></div>
+<h3 id="health-readiness">Health &amp; Readiness<a class="headerlink" href="#health-readiness" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="c1"># Einfacher Health-Check (für Load Balancer)</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>GET<span class="w"> </span>/health<span class="w">                    </span><span class="c1"># → {&quot;status&quot;: &quot;healthy&quot;}</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>HEAD<span class="w"> </span>/health<span class="w">                   </span><span class="c1"># → 200 (Docker healthcheck)</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="c1"># Readiness (DB + Storage prüfen)</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>GET<span class="w"> </span>/api/v1/ready
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="c1"># → {&quot;status&quot;: &quot;ready&quot;, &quot;details&quot;: {&quot;database&quot;: true, &quot;storage&quot;: {&quot;healthy&quot;: true, ...}}}</span>
+</code></pre></div>
+<h3 id="storage-verwaltung">Storage-Verwaltung<a class="headerlink" href="#storage-verwaltung" title="Permanent link">&para;</a></h3>
+<p>Die Registry nutzt <strong>MinIO</strong> (S3-kompatibel) mit Primary + optionalem Mirror:</p>
+<ul>
+<li><strong>Upload-Flow:</strong> Datei → Primary MinIO → Async Queue → Mirror MinIO</li>
+<li><strong>Download-Flow:</strong> Presigned URL (1h gültig), Mirror bevorzugt wenn konfiguriert</li>
+<li><strong>Pfad-Schema:</strong> <code>packages/{name}/{version}/{filename}</code> bzw. <code>artifacts/{name}/{version}/{platform}_{arch}/{filename}</code></li>
+<li><strong>Checksum:</strong> SHA256 für jede hochgeladene Datei</li>
+</ul>
+<h3 id="backup">Backup<a class="headerlink" href="#backup" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="c1"># 1. SQLite DB</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>cp<span class="w"> </span>data/registry.db<span class="w"> </span>data/registry-backup-<span class="k">$(</span>date<span class="w"> </span>+%Y%m%d<span class="k">)</span>.db
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="c1"># 2. MinIO Bucket (via mc)</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>mc<span class="w"> </span>mirror<span class="w"> </span>local/tb-registry<span class="w"> </span>./backup-<span class="k">$(</span>date<span class="w"> </span>+%Y%m%d<span class="k">)</span>/
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>
+<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="c1"># 3. .env + Konfiguration</span>
+<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a>cp<span class="w"> </span>.env<span class="w"> </span>.env.backup
+</code></pre></div>
+<hr />
+<h2 id="api-referenz">API-Referenz<a class="headerlink" href="#api-referenz" title="Permanent link">&para;</a></h2>
+<h3 id="basis-url">Basis-URL<a class="headerlink" href="#basis-url" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>http://localhost:{SERVER_PORT}/api/v1
+</code></pre></div>
+<h3 id="auth-endpunkte">Auth-Endpunkte<a class="headerlink" href="#auth-endpunkte" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Auth</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/auth/me</code></td>
+<td>User</td>
+<td>Aktueller User + Publisher-Info</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/auth/register-publisher</code></td>
+<td>User</td>
+<td>Als Publisher registrieren</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/auth/publisher</code></td>
+<td>User</td>
+<td>Eigenen Publisher-Status</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/publishers/verify</code></td>
+<td>Publisher</td>
+<td>Verifizierung einreichen</td>
+</tr>
+</tbody>
+</table>
+<h3 id="package-endpunkte">Package-Endpunkte<a class="headerlink" href="#package-endpunkte" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Auth</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/packages</code></td>
+<td>—</td>
+<td>Pakete auflisten (paginiert)</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/packages</code></td>
+<td>Publisher</td>
+<td>Paket erstellen</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/packages/{name}</code></td>
+<td>—</td>
+<td>Paket-Details</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/packages/{name}/versions</code></td>
+<td>Publisher</td>
+<td>Version hochladen</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/packages/{name}</code></td>
+<td>Owner/Admin</td>
+<td>Paket löschen</td>
+</tr>
+</tbody>
+</table>
+<h3 id="artifact-endpunkte">Artifact-Endpunkte<a class="headerlink" href="#artifact-endpunkte" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Auth</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/artifacts</code></td>
+<td>—</td>
+<td>Artifacts auflisten</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/artifacts</code></td>
+<td>Publisher</td>
+<td>Artifact erstellen</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/artifacts/{name}</code></td>
+<td>—</td>
+<td>Artifact-Details</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/artifacts/{name}/builds</code></td>
+<td>Publisher</td>
+<td>Build hochladen</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/artifacts/{name}/latest</code></td>
+<td>—</td>
+<td>Neueste Version für Platform</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/artifacts/{name}/versions/{ver}/download</code></td>
+<td>—</td>
+<td>Presigned Download-URL</td>
+</tr>
+</tbody>
+</table>
+<h3 id="search-resolve">Search &amp; Resolve<a class="headerlink" href="#search-resolve" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Auth</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/search?q=...</code></td>
+<td>—</td>
+<td>Pakete durchsuchen</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/search/suggest?q=...</code></td>
+<td>—</td>
+<td>Auto-Vorschläge</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/resolve</code></td>
+<td>—</td>
+<td>Dependencies auflösen</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/resolve/check</code></td>
+<td>—</td>
+<td>Kompatibilität prüfen</td>
+</tr>
+</tbody>
+</table>
+<h3 id="admin-endpunkte">Admin-Endpunkte<a class="headerlink" href="#admin-endpunkte" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Auth</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/packages/admin/pending</code></td>
+<td>Admin</td>
+<td>Ausstehende Publisher</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/packages/admin/{id}/verify</code></td>
+<td>Admin</td>
+<td>Publisher verifizieren</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/packages/admin/{id}/reject</code></td>
+<td>Admin</td>
+<td>Publisher ablehnen</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/packages/admin/{id}/revoke</code></td>
+<td>Admin</td>
+<td>Verifizierung widerrufen</td>
+</tr>
+</tbody>
+</table>
+<h3 id="health">Health<a class="headerlink" href="#health" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Auth</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/health</code></td>
+<td>—</td>
+<td>Health-Check</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/health</code> (HEAD)</td>
+<td>—</td>
+<td>Docker healthcheck</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/ready</code></td>
+<td>—</td>
+<td>DB + Storage Readiness</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/versions</code></td>
+<td>—</td>
+<td>Update-Ping (Batch)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="validierungs-ergebnisse">Validierungs-Ergebnisse<a class="headerlink" href="#validierungs-ergebnisse" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p>Durchgeführt am 2026-07-17 gegen lokalen Server (Port 4030, SQLite, lokaler MinIO)</p>
+</blockquote>
+<h3 id="funktionierende-endpunkte">✅ Funktionierende Endpunkte<a class="headerlink" href="#funktionierende-endpunkte" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Endpoint</th>
+<th>Ergebnis</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Health-Check</td>
+<td><code>GET /health</code></td>
+<td>✅ <code>{"status":"healthy"}</code></td>
+</tr>
+<tr>
+<td>Readiness</td>
+<td><code>GET /api/v1/ready</code></td>
+<td>✅ DB healthy, MinIO healthy</td>
+</tr>
+<tr>
+<td>Auth — Token-Validierung</td>
+<td><code>GET /api/v1/auth/me</code></td>
+<td>✅ JWT validiert, User auto-created</td>
+</tr>
+<tr>
+<td>Auth — Admin-Erkennung</td>
+<td><code>GET /api/v1/auth/me</code></td>
+<td>✅ <code>is_admin: true</code> nach DB-Update</td>
+</tr>
+<tr>
+<td>Publisher registrieren</td>
+<td><code>POST /api/v1/auth/register-publisher</code></td>
+<td>✅ Publisher erstellt (Status: unverified)</td>
+</tr>
+<tr>
+<td>Publisher verifizieren</td>
+<td>Direct DB / Admin CLI</td>
+<td>✅ Status: verified, can_publish_public: 1</td>
+</tr>
+<tr>
+<td>Package erstellen (mod)</td>
+<td><code>POST /api/v1/packages</code></td>
+<td>✅ <code>{"id":"example-mod"}</code></td>
+</tr>
+<tr>
+<td>Package erstellen (library)</td>
+<td><code>POST /api/v1/packages</code></td>
+<td>✅ <code>{"id":"toolbox-core-lib"}</code></td>
+</tr>
+<tr>
+<td>Package auflisten</td>
+<td><code>GET /api/v1/packages</code></td>
+<td>✅ 2 Packages, korrekte Paginierung</td>
+</tr>
+<tr>
+<td>Artifact erstellen</td>
+<td><code>POST /api/v1/artifacts</code></td>
+<td>✅ <code>tauri_app</code> mit UUID</td>
+</tr>
+<tr>
+<td>Artifact Build upload</td>
+<td><code>POST /artifacts/{name}/builds</code></td>
+<td>✅ File → MinIO, SHA256 berechnet</td>
+</tr>
+<tr>
+<td>Artifact latest</td>
+<td><code>GET /artifacts/{name}/latest</code></td>
+<td>✅ Version + Build-Details</td>
+</tr>
+<tr>
+<td>Versions-Ping</td>
+<td><code>GET /versions?names=...</code></td>
+<td>✅ Korrekte Response</td>
+</tr>
+<tr>
+<td>Resolve</td>
+<td><code>POST /resolve</code></td>
+<td>✅ Korrekte Conflict-Erkennung</td>
+</tr>
+<tr>
+<td>Publisher-Liste</td>
+<td><code>GET /publishers</code></td>
+<td>✅ Stats (packages_count, downloads)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="getestete-uploads-non-destructive">Getestete Uploads (Non-destructive)<a class="headerlink" href="#getestete-uploads-non-destructive" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Upload-Typ</th>
+<th>Name</th>
+<th>Version</th>
+<th>Ergebnis</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mod Package</td>
+<td><code>example-mod</code></td>
+<td>(keine Version)</td>
+<td>✅ Metadaten gespeichert</td>
+</tr>
+<tr>
+<td>Library Package</td>
+<td><code>toolbox-core-lib</code></td>
+<td>(keine Version)</td>
+<td>✅ Metadaten gespeichert</td>
+</tr>
+<tr>
+<td>Artifact (Tauri App)</td>
+<td><code>toolbox-gui</code></td>
+<td><code>0.0.1</code></td>
+<td>✅ Build + File in MinIO</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="bekannte-issues">Bekannte Issues<a class="headerlink" href="#bekannte-issues" title="Permanent link">&para;</a></h2>
+<h3 id="1-package-version-upload-route-fehlt-kritisch">1. Package Version Upload Route fehlt (kritisch)<a class="headerlink" href="#1-package-version-upload-route-fehlt-kritisch" title="Permanent link">&para;</a></h3>
+<p><strong>Symptom:</strong> <code>POST /api/v1/packages/{name}/versions</code> → 404 Not Found</p>
+<p><strong>Analyse:</strong> Die Service-Methode <code>PackageService.upload_version()</code> existiert, aber es gibt <strong>keine HTTP-Route</strong> die sie exponiert. Die <code>packages.py</code> Route-Datei definiert keinen POST-Endpoint für <code>/packages/{name}/versions</code>.</p>
+<p><strong>Workaround:</strong> Artifact-Upload-System (<code>/artifacts/{name}/builds</code>) funktioniert vollständig und kann als Alternative für alle Upload-Typen genutzt werden.</p>
+<p><strong>Fix:</strong> Route in <code>packages.py</code> hinzufügen:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="nd">@router</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/</span><span class="si">{name}</span><span class="s2">/versions&quot;</span><span class="p">)</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">upload_version</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">Form</span><span class="p">(</span><span class="o">...</span><span class="p">),</span> <span class="n">file</span><span class="o">=</span><span class="n">File</span><span class="p">(</span><span class="o">...</span><span class="p">),</span> <span class="o">...</span><span class="p">):</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>    <span class="o">...</span>
+</code></pre></div></p>
+<h3 id="2-artifact-storage_locations-nicht-persisted">2. Artifact storage_locations nicht persisted<a class="headerlink" href="#2-artifact-storage_locations-nicht-persisted" title="Permanent link">&para;</a></h3>
+<p><strong>Symptom:</strong> Build-Upload Response zeigt <code>"storage_locations": ""</code> (leer).</p>
+<p><strong>Analyse:</strong> Die Datei wird erfolgreich zu MinIO hochgeladen (SHA256 + Size korrekt), aber die StorageLocation-Referenz wird nicht in der SQLite-DB gespeichert. Dies führt dazu, dass der Download-Endpoint "No download available" zurückgibt.</p>
+<p><strong>Impact:</strong> Presigned Download-URLs können nicht generiert werden.</p>
+<h3 id="3-search-ohne-treffer">3. Search ohne Treffer<a class="headerlink" href="#3-search-ohne-treffer" title="Permanent link">&para;</a></h3>
+<p><strong>Symptom:</strong> <code>GET /api/v1/search?q=example</code> → 0 Ergebnisse trotz existierender Packages.</p>
+<p><strong>Analyse:</strong> Mögliche Ursachen: SQLite FTS-Index nicht gebaut, oder Search implementiert nur LIKE auf Beschreibung/Name mit Case-Sensitivity-Issue.</p>
+<h3 id="4-config-variable-naming">4. Config-Variable Naming<a class="headerlink" href="#4-config-variable-naming" title="Permanent link">&para;</a></h3>
+<p><strong>Beobachtung:</strong> <code>.env</code> nutzt <code>PORT=4025</code>, aber <code>config.py</code> erwartet <code>SERVER_PORT</code> (Field alias). Pydantic-Settings löst dies korrekt auf, aber die <code>.env.example</code> verwendet <code>PORT</code> — inkonsistent.</p>
+<h3 id="5-debug-modus-reload-verursacht-windows-port-konflikte">5. Debug-Modus reload verursacht Windows-Port-Konflikte<a class="headerlink" href="#5-debug-modus-reload-verursacht-windows-port-konflikte" title="Permanent link">&para;</a></h3>
+<p><strong>Beobachtung:</strong> <code>DEBUG=true</code> aktiviert uvicorn <code>reload=True</code> (WatchFiles). Bei Dateiänderungen im Projektordner (inkl. <code>_fix_db.py</code>) trigger Reload, der alte Port bleibt in Windows TIME_WAIT.</p>
+<p><strong>Empfehlung:</strong> <code>DEBUG=false</code> für Tests, oder Reload-Excludes konfigurieren.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Zurück zum Seitenanfang
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      © 2022–2026 Markin Hausmanns
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.tabs", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "In Zwischenablage kopiert", "clipboard.copy": "In Zwischenablage kopieren", "search.result.more.one": "1 weiteres Suchergebnis auf dieser Seite", "search.result.more.other": "# weitere Suchergebnisse auf dieser Seite", "search.result.none": "Keine Suchergebnisse", "search.result.one": "1 Suchergebnis", "search.result.other": "# Suchergebnisse", "search.result.placeholder": "Suchbegriff eingeben", "search.result.term.missing": "Es fehlt", "select.version": "Version ausw\u00e4hlen"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
