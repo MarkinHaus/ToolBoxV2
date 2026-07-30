@@ -219,7 +219,7 @@ class RunRecord:
             "skills_matched": self.skills_matched,
             "parent_run_id": self.parent_run_id,
             "sub_agent_runs": self.sub_agent_runs,
-            "steps": [s.to_dict() for s in self.steps[-50:]],  # ponytail: last 50 steps to cap JSON size
+            "steps": [s.to_dict() for s in self.steps],
         }
 
     @classmethod
@@ -1070,10 +1070,6 @@ class ObservabilityLayer:
             d = step.to_dict()
             if step.ctx_snapshot:
                 d["ctx_snapshot"] = step.ctx_snapshot
-            # ponytail: cap large string payloads to prevent OOM in json.dumps
-            for _k in ("output", "result", "content", "error", "stdout", "stderr", "response"):
-                if isinstance(d.get(_k), str) and len(d[_k]) > 5000:
-                    d[_k] = d[_k][:5000] + "...[truncated]"
             line = json.dumps(d, ensure_ascii=False, separators=(",", ":"))
             slot.live_fd.write(line + "\n")
             slot.live_fd.flush()

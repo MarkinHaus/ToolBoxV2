@@ -333,11 +333,16 @@ class DaemonUtil:
                 await self._heartbeat_task
             except asyncio.CancelledError:
                 pass
+        # Signal connect() loop to stop BEFORE closing the socket,
+        # otherwise the loop may be mid-request and crash.
+        self.alive = False
         result = await self.server.aget()
         await result.get("close")()
-        self.alive = False
         if asyncio.iscoroutine(self.online):
-            await self.online
+            try:
+                await asyncio.wait_for(self.online, timeout=5.0)
+            except asyncio.TimeoutError:
+                get_logger().warning("connect() coroutine did not exit within 5s")
         print("Connection result :", result.get("host"), result.get("port"),
               "total connections:", result.get("connections"))
 

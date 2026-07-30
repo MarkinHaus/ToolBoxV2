@@ -58,8 +58,9 @@ from toolboxv2.utils.workers.event_manager import (
     create_ws_broadcast_event,
     create_ws_broadcast_all_event,
 )
+from toolboxv2 import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger()
 
 
 class ZMQWSBridge:

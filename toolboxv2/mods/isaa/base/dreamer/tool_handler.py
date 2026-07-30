@@ -563,7 +563,8 @@ class DreamerToolHandler:
         return json.dumps(out, indent=2, default=str)
 
     def handle_write_taskmap_guide(self, task_type: str, subtype: str, content: str) -> str:
-        """Write/replace guid.md for a class — the Dreamer's per-task guide."""
+        """Write/replace guid.md for a class — the Dreamer's per-task guide.
+        Will NOT overwrite agent-authored guides (marker check)."""
         vfs = self._taskmap_vfs()
         if vfs is None:
             return json.dumps({"error": "no VFS available"})
@@ -571,6 +572,13 @@ class DreamerToolHandler:
             return json.dumps({"error": "task_type and content required"})
         sub = subtype or "general"
         path = f"{self._TASKMAP_ROOT}/{task_type}/{sub}/guid.md"
+
+        # Agent-authored guide protection
+        _AGENT_MARKER = "<!-- source: agent -->"
+        existing_raw = self._vfs_read(vfs, path)
+        if existing_raw and _AGENT_MARKER in existing_raw[:200]:
+            return json.dumps({"skipped": True, "reason": "agent-authored guide — not overwritten", "path": path})
+
         try:
             vfs.mkdir(f"{self._TASKMAP_ROOT}/{task_type}/{sub}", parents=True)
         except Exception:

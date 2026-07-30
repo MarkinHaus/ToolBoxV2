@@ -186,8 +186,20 @@ def make_stop_handler(tb_app):
             loop = getattr(tb_app, "loop", None)
             if loop and not loop.is_closed():
                 try:
-                    loop.run_until_complete(asyncio.wait_for(tb_app.a_exit(), timeout=5.0))
-                except asyncio.TimeoutError:
+                    if loop.is_running():
+                        # We are on the tray thread, the loop belongs to main.
+                        # run_until_complete would raise "already running".
+                        fut = asyncio.run_coroutine_threadsafe(tb_app.a_exit(), loop)
+                        try:
+                            fut.result(timeout=5.0)
+                        except TimeoutError:
+                            fut.cancel()
+                            raise
+                    else:
+                        loop.run_until_complete(
+                            asyncio.wait_for(tb_app.a_exit(), timeout=5.0)
+                        )
+                except TimeoutError:
                     tb_app.sprint("Graceful shutdown timeout, forcing exit")
                 except RuntimeError as exc:
                     tb_app.sprint(f"Shutdown loop error: {exc}")

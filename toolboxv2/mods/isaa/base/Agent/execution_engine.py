@@ -138,6 +138,51 @@ STATIC_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "task_guid",
+            "description": (
+                "Task guide manager — check for existing guides, set your task type, "
+                "or save a guide after completing a task. "
+                "GET: Retrieve guide/happypath for a task type. If you know your type, "
+                "this locks it (overrides auto-classification). "
+                "SET: Save a context dump (mini-skill) after completing a non-trivial task. "
+                "LIST: Show all known task types."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["get", "set", "list"],
+                        "description": "get=retrieve guide, set=save guide, list=all types",
+                    },
+                    "task_type": {
+                        "type": "string",
+                        "description": "e.g. 'coding', 'debugging', 'research'",
+                    },
+                    "sub_type": {
+                        "type": "string",
+                        "description": "e.g. 'isaa', 'frontend', 'general'",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "For get: fuzzy search query if type unknown",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "For set: the guide content — goal, key paths, tool sequence, pitfalls",
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": "For set: overwrite existing agent-authored guide (default false)",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
 ]
 
 DISCOVERY_TOOLS = [
@@ -699,6 +744,7 @@ class ExecutionContext:
     pending_taskmap_inject: Optional[str] = None
     taskmap_injected: bool = False
     taskmap_injected_type: Optional[str] = None
+    task_guid_agent_locked: bool = False  # Agent hat aktiv task_type/subtype via task_guid gesetzt
 
     def get_dynamic_tool_names(self) -> List[str]:
         """Get names of currently loaded dynamic tools"""
@@ -3129,8 +3175,9 @@ BEISPIELE:
             task_type, subtype = await classify_for_injection(
                 query, guide, narrator_call=_narrator_classify
             )
-            ctx.task_type = task_type
-            ctx.subtype = subtype
+            if not ctx.task_guid_agent_locked:
+                ctx.task_type = task_type
+                ctx.subtype = subtype
 
             _pre = await build_preinjection(session.vfs, query, narrator_call=None)
             if _pre:
@@ -3146,6 +3193,10 @@ BEISPIELE:
         into ``ctx.working_history``. Must only be called from the main
         loop thread (no race with the LLM call).
         """
+        # Agent hat aktiv task_type via task_guid gesetzt — passive Injection blocken
+        if ctx.task_guid_agent_locked:
+            ctx.pending_taskmap_task = None
+            return None
         t = ctx.pending_taskmap_task
         if t is None or not t.done():
             return None
@@ -3630,7 +3681,7 @@ BEISPIELE:
             managed_msg = self._manage_context_budget(ctx, f_name, str(result), f_id)
             ctx.working_history.append(managed_msg)
             ctx.tools_dict.append({"name": f_name, "args": f_args, "result": result})
-            if f_name in ["think", "load_tools", "list_tools"]:
+            if f_name in ["think", "load_tools", "list_tools", "task_guid"]:
                 ctx.max_iterations += 1
         try:
             if f_name == "think":
@@ -3750,6 +3801,22 @@ BEISPIELE:
                 )
             except Exception as e:
                 print(e)
+                import traceback
+                result = traceback.format_exc()
+
+        # === TASK GUID TOOL ===
+        elif f_name == "task_guid":
+            try:
+                result = await self._tool_task_guid(
+                    ctx,
+                    action=f_args.get("action", "get"),
+                    task_type=f_args.get("task_type"),
+                    sub_type=f_args.get("sub_type"),
+                    query=f_args.get("query"),
+                    context=f_args.get("context"),
+                    overwrite=f_args.get("overwrite", False),
+                )
+            except Exception as e:
                 import traceback
                 result = traceback.format_exc()
 
@@ -3970,7 +4037,7 @@ BEISPIELE:
                     f_name = f_name+f_args.get("command", " _").split(" ")[0]
                     f_name = f_name.strip()
                 ctx.tools_dict.append({"name": f_name, "args": f_args, "result": result})
-            if f_name in ["think", "load_tools", "list_tools"]:
+            if f_name in ["think", "load_tools", "list_tools", "task_guid"]:
                 ctx.max_iterations += 1
         try:
             if f_name == "think":
@@ -4382,6 +4449,133 @@ BEISPIELE:
         except Exception as e:
             import traceback
             return f"Fehler: {e} + {traceback.format_exc()}"
+
+    # =========================================================================
+    # TASK GUID TOOL
+    # =========================================================================
+
+    _TG_ROOT = "/global/.memory/taskmap"
+    _TG_MARKER = "<!-- source: agent -->"
+    _TG_MAX_GUID = 4000
+
+    @staticmethod
+    def _sanitize_tg(raw: str, default: str) -> str:
+        import re
+        if not raw:
+            return default
+        clean = re.sub(r"[^a-z0-9_-]", "", str(raw).lower().strip())
+        return clean or default
+
+    async def _tool_task_guid(
+        self,
+        ctx: "ExecutionContext",
+        action: str = "get",
+        task_type: str = None,
+        sub_type: str = None,
+        query: str = None,
+        context: str = None,
+        overwrite: bool = False,
+    ) -> str:
+        """Handle task_guid tool: get/set/list task guides."""
+        try:
+            session = await self.agent.session_manager.get_or_create(ctx.session_id)
+            vfs = session.vfs
+
+            if action == "list":
+                idx_raw = vfs.read(f"{self._TG_ROOT}/_index.json")
+                if idx_raw.get("success"):
+                    import json as _json_tg
+                    idx = _json_tg.loads(idx_raw["content"])
+                    lines = ["Known task types:"]
+                    for tt, info in idx.get("task_types", {}).items():
+                        subs = ", ".join(info.get("subtypes", []))
+                        lines.append(f"  - {tt} ({subs}) [runs={info.get('entry_count', 0)}, success={info.get('success_rate', 0)}]")
+                    return "\n".join(lines) if len(lines) > 1 else "No task types found."
+                return "No task map index found."
+
+            if action == "get":
+                # Fuzzy search if no explicit type
+                if not task_type and query:
+                    from toolboxv2.mods.isaa.base.dreamer.run_aggregator import (
+                        fuzzy_preselect, parse_classify_guide, CLASSIFY_GUIDE_PATH,
+                    )
+                    r = vfs.read(CLASSIFY_GUIDE_PATH)
+                    guide = r.get("content", "") if r.get("success") else ""
+                    if guide:
+                        candidates = fuzzy_preselect(query, guide, top_n=3)
+                        if candidates:
+                            task_type = candidates[0][0]
+                            sub_type = candidates[0][1]
+                    if not task_type:
+                        return "No matching task type found. This appears to be a new task type. Use task_guid(action='set') after completing to create a guide."
+
+                if not task_type:
+                    return "Error: task_type or query required for get action."
+
+                tt = self._sanitize_tg(task_type, "new")
+                st = self._sanitize_tg(sub_type, "general")
+
+                # LOCK: Agent chose type — block passive injection
+                ctx.task_type = tt
+                ctx.subtype = st
+                ctx.task_guid_agent_locked = True
+                ctx.taskmap_injected_type = f"{tt}/{st}"
+
+                base = f"{self._TG_ROOT}/{tt}/{st}"
+                gd_r = vfs.read(f"{base}/guid.md")
+                hp_r = vfs.read(f"{base}/happypath.md")
+
+                guid = gd_r.get("content", "") if gd_r.get("success") else ""
+                happypath = hp_r.get("content", "") if hp_r.get("success") else ""
+
+                if not guid and not happypath:
+                    return f"No guide exists yet for {tt}/{st}. This is a new task type — proceed carefully. Use task_guid(action='set') after completing to create a guide."
+
+                parts = [f"## TASK GUIDE ({tt}/{st})"]
+                if guid:
+                    parts.append(f"### Guide\n{guid[:self._TG_MAX_GUID]}")
+                if happypath:
+                    parts.append(f"### Happy Path\n{happypath[:3200]}")
+                self.live.log(f"task_guid: get {tt}/{st} (locked)")
+                return "\n\n".join(parts)
+
+            if action == "set":
+                if not task_type or not context:
+                    return "Error: task_type and context required for set action."
+                if len(context) > self._TG_MAX_GUID * 2:
+                    return f"Error: context too long (max {self._TG_MAX_GUID * 2} chars). Be concise."
+
+                tt = self._sanitize_tg(task_type, "new")
+                st = self._sanitize_tg(sub_type, "general")
+
+                base = f"{self._TG_ROOT}/{tt}/{st}"
+                path = f"{base}/guid.md"
+
+                # Check for existing agent-authored guide
+                existing_r = vfs.read(path)
+                existing = existing_r.get("content", "") if existing_r.get("success") else ""
+                if existing and self._TG_MARKER in existing[:200] and not overwrite:
+                    return f"Agent-authored guide already exists at {path}. Use overwrite=true to replace."
+
+                # Create dirs
+                try:
+                    vfs.mkdir(f"{self._TG_ROOT}/{tt}", parents=True)
+                    vfs.mkdir(base, parents=True)
+                except Exception:
+                    pass
+
+                # Write with marker
+                content_with_marker = f"{self._TG_MARKER}\n{context}"
+                vfs.write(path, content_with_marker)
+
+                self.live.log(f"task_guid: set {tt}/{st} ({len(context)} chars)")
+                return f"Guide saved at {path} (source: agent). This guide will NOT be overwritten by the passive system."
+
+            return f"Unknown action: {action}. Use get/set/list."
+
+        except Exception as e:
+            import traceback
+            return f"Error: {e}\n{traceback.format_exc()}"
 
     async def _tool_load_tools(
         self, ctx: ExecutionContext, tools_input: Union[str, List[str]]
@@ -5201,6 +5395,16 @@ BEISPIELE:
                 "",
                 "- Sub-Agent Management: spawn_sub_agent, wait_for, resume_sub_agent",
                 "  → If a sub-agent hits max_iterations but made progress, resume it with more iterations",
+                "",
+                "TASK GUIDES (task_guid tool):",
+                "- At the START of complex tasks: call task_guid(action='get', query='<short task description>').",
+                "  If a guide exists → you get Happy Path, falltraps, tool sequence. If 'new' → uncharted territory, proceed carefully.",
+                "- If you KNOW your type: task_guid(action='get', task_type='coding', sub_type='isaa').",
+                "  This LOCKS your task type — overrides the system's auto-classification. The passive injection will NOT override your choice.",
+                "- After completing a non-trivial task: task_guid(action='set', task_type=..., sub_type=..., context='...').",
+                "  context = mini-skill: goal, key file paths (VFS), tool sequence used, what went wrong, solution, where to resume.",
+                "  Keep it concise — bullet points, not prose. This becomes the guide for the next agent doing the same task type.",
+                "- task_guid(action='list') shows all known task types.",
             ]))
 
         static_parts.append("\n".join([

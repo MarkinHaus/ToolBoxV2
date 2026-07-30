@@ -83,8 +83,39 @@ class BlobMetadata:
             encrypted=bool(row["encrypted"]),
         )
 
+import inspect
+import os
 
-class MobileDB:
+class PathSingleton(type):
+    """
+    Metaklasse, die sicherstellt, dass pro eindeutigem 'db_path'
+    nur eine Instanz einer Klasse existiert.
+    """
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        # Argumente anhand der Signatur des Konstruktors auflösen
+        sig = inspect.signature(cls)
+        bound_args = sig.bind(*args, **kwargs)
+        bound_args.apply_defaults()  # Standardwerte ergänzen, falls nicht übergeben
+
+        # Den 'db_path' aus den Argumenten heraussuchen
+        db_path = bound_args.arguments.get("db_path")
+
+        # Pfad normalisieren (in absoluten Pfad umwandeln)
+        if isinstance(db_path, str):
+            db_path = os.path.abspath(db_path)
+
+        # Eindeutiger Schlüssel aus Klasse und absolutem Pfad
+        key = (cls, db_path)
+
+        if key not in cls._instances:
+            # Instanz erzeugen und im Dictionary speichern
+            cls._instances[key] = super().__call__(*args, **kwargs)
+
+        return cls._instances[key]
+
+class MobileDB(metaclass=PathSingleton):
     """
     SQLite-based local storage for mobile and offline scenarios.
 
@@ -162,6 +193,7 @@ class MobileDB:
         self._lock = threading.RLock()
         self._watch_callbacks: Dict[str, List[Callable]] = {}
         self._closed = False
+        self._puts_since_trim = 0  # memfix: sync_log periodisch kappen
 
         # Initialize database
         self._init_db()
@@ -179,7 +211,7 @@ class MobileDB:
             self._local.connection.execute("PRAGMA synchronous=NORMAL")
             self._local.connection.execute("PRAGMA busy_timeout=30000")  # 30s wait on lock
             self._local.connection.execute("PRAGMA wal_autocheckpoint=1000")  # pages
-            self._local.connection.execute("PRAGMA mmap_size=134217728")  # 128MB read perf
+            self._local.connection.execute("PRAGMA mmap_size=33554432")  # memfix: 32MB (war 128MB je Connection x n Threads x n Prozesse)
             if self.auto_vacuum:
                 self._local.connection.execute("PRAGMA auto_vacuum=INCREMENTAL")
         return self._local.connection
@@ -264,6 +296,14 @@ class MobileDB:
                              INSERT INTO sync_log (path, action, details)
                              VALUES (?, ?, ?)
                              """, (path, "put", json.dumps({"size": len(data), "version": version})))
+                # memfix: append-only sync_log begrenzen, sonst waechst DB + Poll-Kosten monoton
+                self._puts_since_trim += 1
+                if self._puts_since_trim >= 500:
+                    self._puts_since_trim = 0
+                    conn.execute(
+                        "DELETE FROM sync_log WHERE id < "
+                        "(SELECT COALESCE(MAX(id), 0) - 1000 FROM sync_log)"
+                    )
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -370,7 +410,12 @@ class MobileDB:
         """
         conn = self._get_connection()
 
-        query = "SELECT * FROM blobs WHERE path LIKE ?"
+        # memfix: nur Metadaten-Spalten, NICHT die data-BLOB-Spalte ziehen.
+        # BlobMetadata/from_row nutzt genau diese 9 Spalten; SELECT * lud
+        # bisher jeden Blob-Payload in RAM (Hauptquelle des Footprints).
+        query = ("SELECT path,size,checksum,local_updated_at,cloud_updated_at,"
+                 "sync_status,version,content_type,encrypted "
+                 "FROM blobs WHERE path LIKE ?")
         params = [prefix + "%"]
 
         if not include_deleted:
