@@ -1938,6 +1938,8 @@ class ZenRenderer:
         if meta:
             lines.append("")
             for k, v in meta.items():
+                if k in ['final_answer', 'type', 'is_sub', 'iter', 'max_iter']:
+                    continue
                 lines.append(UI.kv(k, str(v), 16))
 
         # Summary stats

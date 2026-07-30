@@ -319,15 +319,53 @@ def download_app(source: str = "auto", version: str = "latest",
         registry_info = fetch_registry_artifacts()
         if registry_info:
             # Get download URL from registry
-            versions = registry_info.get("versions", [])
-            if versions:
-                target_version = versions[0] if version == "latest" else next(
-                    (v for v in versions if v.get("version") == version), None
+            # Parse 2-level server response: versions[].builds[]
+            latest_ver = registry_info.get("latest_version", "")
+            all_versions = registry_info.get("versions", [])
+            if not all_versions:
+                all_versions = []
+
+            # Map local platform/machine to registry enums
+            _plat = "windows" if IS_WINDOWS else ("macos" if IS_MACOS else "linux")
+            _mach = MACHINE
+            if _mach in ("x86_64", "amd64", "x64"):
+                _arch = "x64"
+            elif _mach in ("aarch64", "arm64"):
+                _arch = "arm64"
+            elif _mach in ("i386", "i686", "x86"):
+                _arch = "x86"
+            else:
+                _arch = "x64"  # fallback
+
+            # Find matching version
+            if version == "latest":
+                target_version = next(
+                    (v for v in all_versions if v.get("version") == latest_ver),
+                    all_versions[0] if all_versions else None,
                 )
-                if target_version:
-                    download_url = target_version.get("download_url")
-                    asset_name = target_version.get("filename", "app.zip")
-                    version = target_version.get("version", version)
+            else:
+                target_version = next(
+                    (v for v in all_versions if v.get("version") == version),
+                    None,
+                )
+
+            if target_version:
+                version = target_version.get("version", version)
+                # Find build for our platform/arch
+                matching_build = None
+                for b in target_version.get("builds", []):
+                    if (b.get("platform") == _plat
+                            and b.get("architecture") == _arch):
+                        matching_build = b
+                        break
+                if matching_build:
+                    asset_name = matching_build.get("filename", "app.bin")
+                    # Download via presigned URL endpoint
+                    download_url = (
+                        f"{REGISTRY_URL}/api/v1/artifacts/{APP_NAME}"
+                        f"/versions/{version}/download"
+                        f"?platform={_plat}&architecture={_arch}"
+                    )
 
     if not download_url and source in ("auto", "github"):
         print_status("Checking GitHub Releases...", "progress")
@@ -617,8 +655,69 @@ def ensure_pyinstaller() -> bool:
 
 
 def build_worker(output_dir: Path, target: Optional[str] = None,
-                 standalone: bool = True, onefile: bool = True) -> bool:
-    """Build tb-worker sidecar with PyInstaller."""
+                 standalone: bool = True, onefile: bool = True,
+                 use_nuitka: bool = True, features: str = "mini") -> bool:
+    """Build tb-worker sidecar.
+
+    use_nuitka=True (default): delegates to ci_standalone.build_nuitka_onefile.
+    use_nuitka=False: legacy PyInstaller (100MB).
+    """
+    if use_nuitka:
+        return _build_worker_nuitka(output_dir, target, features)
+    return _build_worker_pyinstaller(output_dir, target, onefile)
+
+
+def _build_worker_nuitka(output_dir: Path, target: Optional[str],
+                         features: str) -> bool:
+    """Build worker via Nuitka onefile and copy for Tauri sidecar."""
+    print_box_header("Building TB-Worker (Nuitka)", "🔧")
+
+    from toolboxv2.utils.system.ci.ci_standalone import (
+        build_nuitka_onefile,
+        detect_current_target,
+    )
+
+    target = target or get_target_triple()
+    project_root = get_project_root()
+    worker_entry = project_root / 'toolboxv2' / 'utils' / 'workers' / 'tauri_integration.py'
+    if not worker_entry.exists():
+        print_status(f"Worker entry not found: {worker_entry}", "error")
+        return False
+
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    binary_name = get_worker_binary_name(target)
+
+    feat_list = [f.strip() for f in features.split(',') if f.strip()]
+    print_status(f"Target: {target}", "info")
+    joined = ', '.join(feat_list)
+    print_status(f"Features: {joined}", "info")
+    print_status(f"Output: {output_dir / binary_name}", "info")
+
+    binary = build_nuitka_onefile(
+        features=feat_list,
+        target=detect_current_target(),
+        entry=worker_entry,
+        output_dir=output_dir,
+        binary_name=binary_name,
+    )
+    if not binary:
+        print_status("Nuitka build failed", "error")
+        return False
+
+    # Copy for Tauri sidecar
+    tauri_binaries = project_root / 'toolboxv2' / 'simple-core' / 'src-tauri' / 'binaries'
+    tauri_binaries.mkdir(parents=True, exist_ok=True)
+    dest = tauri_binaries / binary_name
+    shutil.copy2(binary, dest)
+    print_status(f"Copied to: {dest}", "success")
+    print_status("Worker build complete (Nuitka)!", "success")
+    return True
+
+
+def _build_worker_pyinstaller(output_dir: Path, target: Optional[str],
+                              onefile: bool) -> bool:
+    """Legacy: Build tb-worker sidecar with PyInstaller (100MB)."""
     print_box_header("Building TB-Worker Sidecar", "🔨")
 
     if not ensure_pyinstaller():
@@ -1028,6 +1127,8 @@ Examples:
                                help="Output directory")
     worker_parser.add_argument("--no-standalone", action="store_true", help="Don't create standalone")
     worker_parser.add_argument("--no-onefile", action="store_true", help="Don't create single file")
+    worker_parser.add_argument("--pyinstaller", action="store_true", help="Use legacy PyInstaller instead of Nuitka")
+    worker_parser.add_argument("--features", default="mini", help="Features for Nuitka (comma-list: mini,cli)")
 
     # build-app
     app_parser = subparsers.add_parser("build-app", help="Build Tauri desktop app from source")
@@ -1170,7 +1271,9 @@ def main():
             output_dir=args.output,
             target=args.target,
             standalone=not args.no_standalone,
-            onefile=not args.no_onefile
+            onefile=not args.no_onefile,
+            use_nuitka=not getattr(args, "pyinstaller", False),
+            features=getattr(args, "features", "mini"),
         )
         sys.exit(0 if success else 1)
 

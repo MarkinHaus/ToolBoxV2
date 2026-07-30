@@ -52,6 +52,7 @@ from urllib.parse import urlparse
 
 from toolboxv2 import tb_root_dir
 from toolboxv2.utils.workers.debug_runner import run_debug_server
+from toolboxv2.utils.clis.cli_printing import print_box_header, print_box_footer, print_table_header, print_table_row, print_separator
 
 # ZMQ optional import
 try:
@@ -1884,6 +1885,50 @@ def _get_live_url(api_host: str, api_port: int, secret: str) -> str | None:
         pass
     return None
 
+
+def _print_status_table(d: dict) -> None:
+    """Render worker status (get_status dict) as human-readable tables."""
+    w = d.get("workers", {})
+    if not isinstance(w, dict):
+        w = {x.get("worker_id", "?"): x for x in w}
+    wlist = list(w.values())
+    healthy = sum(1 for x in wlist if x.get("healthy"))
+    ng, cl, p2p = d.get("nginx", {}), d.get("cluster", {}), d.get("p2p", {})
+
+    print_box_header("SYSTEM STATUS", "*")
+    sys_w = [20, 50]
+    print_table_header([("Property", 20), ("Value", 50)], sys_w)
+    for k, v in (
+        ("Platform", str(d.get("platform", "?"))),
+        ("Running", "yes" if d.get("running") else "no"),
+        ("Broker", "alive" if d.get("broker_alive") else "down"),
+        ("Nginx", f"{'installed' if ng.get('installed') else 'missing'} "
+                  f"({'SSL' if ng.get('ssl_available') else 'no SSL'})"),
+        ("P2P Leader", str(p2p.get("leader") or "none")),
+        ("Cluster", f"{cl.get('nodes', 0)} ({cl.get('healthy_nodes', 0)} healthy)"),
+        ("Workers", f"{len(wlist)} ({healthy} ok, {len(wlist) - healthy} fail)"),
+    ):
+        print_table_row([k, v], sys_w, ["cyan", "white"])
+    print_separator("-", 76)
+
+    print_box_header("WORKERS", "*")
+    wk_w = [20, 8, 8, 6, 14, 8]
+    print_table_header(
+        [("Worker ID", 20), ("Typ", 8), ("PID", 8), ("Port", 6),
+         ("State", 14), ("Uptime", 8)], wk_w)
+    for wid, x in sorted(w.items(), key=lambda kv: (kv[1].get("worker_type", ""), kv[0])):
+        s = int(x.get("uptime") or 0)
+        upt = f"{s // 3600}h{(s % 3600) // 60:02d}m" if s >= 3600 else f"{s // 60}m"
+        ok = x.get("healthy")
+        print_table_row(
+            [str(wid)[:20], str(x.get("worker_type", "?"))[:8],
+             str(x.get("pid", "-"))[:8], str(x.get("port", "-"))[:6],
+             f"{'OK' if ok else 'FAIL'} {x.get('state', '?')}"[:14], upt[:8]],
+            wk_w,
+            ["white", "cyan", "white", "white", "green" if ok else "red", "white"])
+    print_box_footer()
+
+
 def main():
     if IS_WINDOWS:
         from multiprocessing import freeze_support
@@ -1896,7 +1941,7 @@ def main():
 tb workers start             Startet alle Services + Web UI
 tb workers stop              Stoppt alles
 tb workers restart           stop + start
-tb workers status            JSON Status-Dump
+tb workers status            Tabellarische Übersicht (--json für raw JSON)
 tb workers update            Rolling Update aller HTTP Worker
 
 tb workers nginx-init        Patcht nginx.conf include (einmalig, non-invasiv)
@@ -1954,6 +1999,8 @@ tb workers debug             Startet Debug-Server auf dist/"""
                         help="cluster-join: Remote port")
     parser.add_argument("--secret",           help="cluster-join: Cluster secret")
     parser.add_argument("-v", "--verbose",    action="store_true")
+    parser.add_argument("--json",             action="store_true",
+                        help="status: raw JSON output instead of table")
 
     args = parser.parse_args()
 
@@ -2093,7 +2140,11 @@ tb workers debug             Startet Debug-Server auf dist/"""
             conn.request("GET", "/api/status", headers={"X-Cluster-Secret": secret})
             resp = conn.getresponse()
             if resp.status == 200:
-                print(json.dumps(json.loads(resp.read().decode()), indent=2))
+                data = json.loads(resp.read().decode())
+                if getattr(args, "json", False):
+                    print(json.dumps(data, indent=2))
+                else:
+                    _print_status_table(data)
             else:
                 print(f"✗ API-Fehler: {resp.status} {resp.reason}")
             conn.close()

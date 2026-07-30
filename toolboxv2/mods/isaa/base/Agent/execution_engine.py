@@ -4352,6 +4352,24 @@ BEISPIELE:
             except Exception as e:
                 get_logger().warning(f"Hot swap failed: {e}")
 
+            # ctx.query aktualisieren: nur aktuellste Query + Shift-Info
+            # think-Tool liest ctx.query als current_user_task (L3519)
+            _last_user_line = ""
+            for _line in reversed(ctx.query.split("\n")):
+                _stripped = _line.strip()
+                if _stripped.startswith("user:"):
+                    _last_user_line = _stripped.removeprefix("user:").strip()
+                    break
+            if not _last_user_line:
+                _last_user_line = ctx.query.strip()
+
+            ctx.query = (
+                f"{_last_user_line}\n\n"
+                f"--- FOKUS-WECHSEL ---\n"
+                f"Vorher erledigt: {summary_of_achievements}\n"
+                f"Neuer Fokus: {next_objective}"
+            )
+
             ctx.loop_detector.reset()
             ctx.loop_warning_given = False
 

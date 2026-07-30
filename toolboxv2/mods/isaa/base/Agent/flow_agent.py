@@ -2168,7 +2168,10 @@ class FlowAgent:
                 # -- Done / Complete -----------------------------------------------
                 elif chunk_type == "done":
                     success = chunk.get("success", False)
-                    meta = chunk.get("meta")
+                    meta = chunk.get("meta", {})
+                    meta = {
+                        **meta, **chunk
+                    }
                     yield renderer.render_done(success, meta)
 
                 # -- Unknown chunk type --------------------------------------------

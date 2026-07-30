@@ -469,6 +469,7 @@ RUNNER_KEYS = [
     "jsx",
     "ytss",
     "LiveSync",
+    "tray",
 ]
 
 DEFAULT_MODI = "cli"
@@ -1579,6 +1580,19 @@ async def setup_app(ov_name=None, App=TbApp):
             _lg.basicConfig(level=_lg.DEBUG)
             _lg.info(f"check_and_start_fallback: has_active_subscribers={_subs}")
             if not _subs:
+                # Guard: skip if tray service is already running via tb services
+                try:
+                    from pathlib import Path as _P
+                    from toolboxv2 import tb_root_dir as _root
+                    _tray_pid_file = _P(_root) / ".info" / "pids" / "tray.pid"
+                    if _tray_pid_file.exists():
+                        _tpid = int(_tray_pid_file.read_text(encoding="utf-8").strip())
+                        from toolboxv2.utils.extras.fallback_tray import _pid_alive
+                        if _pid_alive(_tpid):
+                            tb_app.sprint("Tray service already running, skipping fallback")
+                            return
+                except Exception:
+                    pass
                 from toolboxv2.utils.extras.fallback_tray import run_fallback_tray
                 tb_app.sprint("No Tauri listener detected. Launching Fallback Tray...")
                 # icon.run() is BLOCKING (Win32 GetMessage loop).
@@ -2372,6 +2386,9 @@ def runner_setup():
         "LiveSync": lambda: __import__(
             "toolboxv2.mods.CloudM.LiveSync.cli", fromlist=["main"]
         ).main(),
+        "tray": lambda: __import__(
+            "toolboxv2.utils.extras.fallback_tray", fromlist=["run_tray_service"]
+        ).run_tray_service(),
     }
 
     runner = _build_guarded_runners(runner)

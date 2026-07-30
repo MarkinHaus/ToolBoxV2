@@ -1730,17 +1730,21 @@ class RegistryClient:
                 return None
 
             data = response.json()
-            builds = [
-                ArtifactBuild(
-                    version=b.get("version", ""),
-                    platform=b.get("platform", ""),
-                    arch=b.get("arch", ""),
-                    download_url=b.get("download_url", ""),
-                    checksum_sha256=b.get("checksum_sha256", ""),
-                    size=b.get("size", 0),
-                )
-                for b in data.get("builds", [])
-            ]
+            # Server: 2-stufig — artifact.versions[].builds[]
+            builds: list[ArtifactBuild] = []
+            for ver in data.get("versions", []):
+                v = ver.get("version", "")
+                for b in ver.get("builds", []):
+                    builds.append(
+                        ArtifactBuild(
+                            version=v,
+                            platform=b.get("platform", ""),
+                            arch=b.get("architecture", ""),
+                            download_url="",
+                            checksum_sha256=b.get("checksum_sha256", ""),
+                            size=b.get("size_bytes", 0),
+                        )
+                    )
 
             return ArtifactDetail(
                 name=data.get("name", ""),
@@ -1749,6 +1753,114 @@ class RegistryClient:
                 builds=builds,
             )
 
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
+
+
+    async def upload_artifact_build(
+        self,
+        name: str,
+        version: str,
+        platform: str,
+        architecture: str,
+        file_path: Path,
+        changelog: str = "",
+        installer_type: Optional[str] = None,
+        min_os_version: Optional[str] = None,
+    ) -> bool:
+        """Upload a platform-specific build for an artifact.
+
+        POST /api/v1/artifacts/{name}/builds  (multipart/form-data)
+        Server computes checksum_sha256 itself — do not send it.
+        Requires: user.publisher_id (403 otherwise).
+
+        Args:
+            name: Artifact name.
+            version: Version string.
+            platform: Platform enum value (windows|linux|macos|android|ios|all).
+            architecture: Arch enum value (x64|x86|arm64|arm32|all).
+            file_path: Path to binary file.
+            changelog: Changelog text.
+            installer_type: Installer type (msi, exe, dmg, etc.).
+            min_os_version: Minimum OS version.
+
+        Returns:
+            True if successful.
+        """
+        if not self.auth_token:
+            raise RegistryAuthError("Authentication required")
+        try:
+            client = await self._get_client()
+            with open(file_path, "rb") as f:
+                files = {"file": (file_path.name, f, "application/octet-stream")}
+                data = {
+                    "version": version,
+                    "platform": platform,
+                    "architecture": architecture,
+                    "changelog": changelog,
+                }
+                if installer_type:
+                    data["installer_type"] = installer_type
+                if min_os_version:
+                    data["min_os_version"] = min_os_version
+                response = await client.post(
+                    f"/api/v1/artifacts/{name}/builds", files=files, data=data,
+                )
+            if response.status_code == 403:
+                raise PublishPermissionError(
+                    "Must be a registered publisher"
+                )
+            if response.status_code == 404:
+                raise PackageNotFoundError(
+                    f"Artifact {name} not found - create it first"
+                )
+            return response.status_code in (200, 201)
+        except httpx.RequestError as e:
+            raise RegistryConnectionError(f"Connection failed: {e}") from e
+
+
+    async def create_artifact(
+        self,
+        name: str,
+        artifact_type: str,
+        description: str = "",
+        homepage: Optional[str] = None,
+        repository: Optional[str] = None,
+    ) -> bool:
+        """Create a new artifact container.
+
+        POST /api/v1/artifacts  (JSON body)
+        artifact_type: tauri_app|cli_executable|browser_extension|mobile_app|library
+
+        Args:
+            name: Artifact name.
+            artifact_type: ArtifactType enum value.
+            description: Short description.
+            homepage: Homepage URL.
+            repository: Repository URL.
+
+        Returns:
+            True if successful.
+        """
+        if not self.auth_token:
+            raise RegistryAuthError("Authentication required")
+        try:
+            client = await self._get_client()
+            payload: dict = {
+                "name": name,
+                "artifact_type": artifact_type,
+                "description": description,
+            }
+            if homepage:
+                payload["homepage"] = homepage
+            if repository:
+                payload["repository"] = repository
+            response = await client.post("/api/v1/artifacts", json=payload)
+            if response.status_code == 403:
+                raise PublishPermissionError(
+                    "Must be a registered publisher"
+                )
+            return response.status_code in (200, 201)
         except httpx.RequestError as e:
             raise RegistryConnectionError(f"Connection failed: {e}") from e
 
@@ -1827,7 +1939,27 @@ class RegistryClient:
         try:
             client = await self._get_client()
 
-            async with client.stream("GET", build.download_url) as response:
+            # Server provides download via presigned URL endpoint
+            # GET /api/v1/artifacts/{name}/versions/{version}/download
+            #   ?platform=...&architecture=...
+            dl_response = await client.get(
+                f"/api/v1/artifacts/{name}/versions/{version}/download",
+                params={"platform": platform, "architecture": arch},
+            )
+            if dl_response.status_code == 404:
+                raise VersionNotFoundError(
+                    f"No download available: {name}@{version} for {platform}/{arch}"
+                )
+            if dl_response.status_code != 200:
+                raise DownloadError(
+                    f"Download URL request failed: {dl_response.status_code}"
+                )
+
+            dl_url = dl_response.json().get("url")
+            if not dl_url:
+                raise DownloadError("No download URL in response")
+
+            async with client.stream("GET", dl_url) as response:
                 if response.status_code != 200:
                     raise DownloadError(f"Download failed: {response.status_code}")
 

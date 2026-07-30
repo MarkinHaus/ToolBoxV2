@@ -15,6 +15,8 @@ Features:
 - Access Control (open_modules, open* functions, level system)
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -30,12 +32,18 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Set
 from urllib.parse import parse_qs, unquote
-from dotenv import load_dotenv
-load_dotenv()
 
-import requests
+if TYPE_CHECKING:
+    from toolboxv2.utils.workers.event_manager import (
+        ZMQEventManager,
+        Event,
+        EventType,
+    )
+# load_dotenv deferred to HTTPWorker.run()
+
+# requests deferred to get_location() — saves ~15 MB per worker
 
 # Multipart parsing - Standard library für file uploads
 try:
@@ -46,11 +54,7 @@ except ImportError:
     MULTIPART_AVAILABLE = False
     # Warning wird später geloggt
 
-from toolboxv2.utils.workers.event_manager import (
-    ZMQEventManager,
-    Event,
-    EventType,
-)
+# event_manager imports deferred to method level (saves ~30-50 MB per worker)
 from toolboxv2.utils.system.types import RequestData
 
 logger = logging.getLogger(__name__)
@@ -1514,7 +1518,8 @@ class AsyncGenToSyncIter:
 
 
 def get_location(ip_address):
-    response = requests.get(f"https://ipapi.co/{ip_address}/json/").json()
+    import requests  # lazy — saves ~15 MB per worker
+    response = requests.get(f"https://ipapi.co/{ip_address}/json/", timeout=5).json()
     return response
 
 
@@ -1651,6 +1656,7 @@ class HTTPWorker:
 
     async def _init_event_manager(self):
         """Initialize ZeroMQ event manager and WS bridge."""
+        from toolboxv2.utils.workers.event_manager import ZMQEventManager
         await self._app.load_all_mods_in_file()
         self._event_manager = ZMQEventManager(
             worker_id=self.worker_id,
@@ -1691,6 +1697,7 @@ class HTTPWorker:
 
     def _register_event_handlers(self):
         """Register ZMQ event handlers."""
+        from toolboxv2.utils.workers.event_manager import Event, EventType
 
         @self._event_manager.on(EventType.CONFIG_RELOAD)
         async def handle_config_reload(event):
@@ -3161,6 +3168,9 @@ code { font-family: var(--font-mono); font-size: var(--text-xs); background: var
 
     def run(self, host: str = None, port: int = None, do_run=True):
         """Run the HTTP worker."""
+        from dotenv import load_dotenv
+        load_dotenv()
+
         host = host or self.config.http_worker.host
         port = port or self.config.http_worker.port
 

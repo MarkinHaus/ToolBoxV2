@@ -17,6 +17,7 @@ import math
 import os
 import subprocess
 import sys
+import time
 import urllib.request
 
 DEFAULT_TRAY_URL = "http://127.0.0.1:5000"
@@ -247,12 +248,86 @@ def build_menu_items(tb_app):
         yield pystray.MenuItem("Runner: Active", None, enabled=False)
         yield pystray.Menu.SEPARATOR
 
+    # Service-Status via PID-Files (works without tray API)
+    try:
+        services = _fetch_service_status()
+    except Exception:
+        services = {}
+    if services:
+        svc_running = sum(1 for s in services.values() if s.get("running"))
+        svc_items = [
+            pystray.MenuItem(
+                ("\u25cf " if s.get("running") else "\u25cb ")
+                + f"{name} (pid={s.get('pid', '?')})",
+                None, enabled=False,
+            )
+            for name, s in sorted(services.items())
+        ]
+        yield pystray.MenuItem(
+            f"Services ({svc_running} running)", pystray.Menu(*svc_items)
+        )
+        yield pystray.Menu.SEPARATOR
+
     yield pystray.MenuItem("Quit Application", make_stop_handler(tb_app))
 
 
 # --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
+
+def _pid_alive(pid: int) -> bool:
+    """Cross-platform check if PID is alive."""
+    if pid <= 0:
+        return False
+    try:
+        if os.name == "nt":
+            import ctypes
+            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+            if not handle:
+                return False
+            try:
+                ec = ctypes.c_ulong()
+                ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(ec))
+                return ec.value == 259
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
+def _fetch_service_status() -> dict:
+    """Read PID files from service_manager, check liveness."""
+    try:
+        from toolboxv2 import tb_root_dir
+        pids_dir = tb_root_dir / ".info" / "pids"
+    except Exception:
+        return {}
+    if not pids_dir.exists():
+        return {}
+    services = {}
+    _cutoff = time.time() - 2 * 86400
+    for pid_file in pids_dir.glob("*.pid"):
+        name = pid_file.stem
+        try:
+            pid = int(pid_file.read_text(encoding="utf-8").strip())
+        except (ValueError, IOError):
+            continue
+        alive = _pid_alive(pid)
+        if not alive and pid_file.stat().st_mtime < _cutoff:
+            pid_file.unlink(missing_ok=True)
+            continue
+        services[name] = {"pid": pid, "running": alive}
+    return services
+
+
+def run_tray_service():
+    """Standalone entry point for ``tb tray`` / ``tb services start tray``."""
+    from toolboxv2 import get_app
+    tb_app = get_app(name="tray_service")
+    run_fallback_tray(tb_app)
+
 
 def run_fallback_tray(tb_app) -> None:
     """Run the tray icon. Blocks until the icon is stopped."""

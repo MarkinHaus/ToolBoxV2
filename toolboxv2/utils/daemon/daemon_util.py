@@ -313,7 +313,10 @@ class DaemonUtil:
                     if identifier != "unknown":
                         running_dict["receive"][str(identifier)] = False
                         await self.runner_co(self.on_client_exit,  identifier)
-            await asyncio.sleep(0.1)
+                # Adaptive sleep: 10ms when processing data, 10s when idle
+                await asyncio.sleep(0.01)
+            else:
+                await asyncio.sleep(10)
         running_dict["server_receiver"] = False
         for x in running_dict["receive"]:
             running_dict["receive"][x] = False
@@ -361,30 +364,31 @@ class DaemonUtil:
 
     # ─── D3: Health Heartbeat ────────────────────────────────────────
     async def _health_loop(self):
-        """Periodic health check every 30s. Reports to tray API."""
+        """Periodic health check every 60s. Reports to tray API."""
         await asyncio.sleep(5)  # initial delay
+        _sm = None
+        _tc = None
         while self.alive:
             try:
-                from ..clis.service_manager import ServiceManager
-                sm = ServiceManager()
-                status = sm.get_all_status(include_registry=False)
+                if _sm is None:
+                    from ..clis.service_manager import ServiceManager
+                    _sm = ServiceManager()
+                status = _sm.get_all_status(include_registry=False)
                 running = sum(1 for s in status.values() if s.get("running"))
                 total = len(status)
 
                 # Best-effort tray report
-                try:
+                if _tc is None:
                     from ..workers.fast.tray_api import TrayClient
-                    tc = TrayClient("daemon-health", label="Health Monitor")
-                    tc.report(running=True, pid=os.getpid(), metric=f"{running}/{total} services")
-                except Exception:
-                    pass
+                    _tc = TrayClient("daemon-health", label="Health Monitor")
+                _tc.report(running=True, pid=os.getpid(), metric=f"{running}/{total} services")
 
                 get_logger().info(f"Health: {running}/{total} services running")
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 get_logger().warning(f"Health check error: {e}")
-            await asyncio.sleep(30)
+            await asyncio.sleep(60)
 
     # ─── D4: Signal Handlers ─────────────────────────────────────────
     def _setup_signal_handlers(self):

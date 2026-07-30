@@ -41,7 +41,7 @@ PACKED_DIR = TOOLBOXV2_DIR / "features_packed"
 DIST_DIR = ROOT / "dist"
 REPORT_DIR = ROOT / "build_reports"
 
-ALWAYS_SOURCE = {"core", "mini"}
+ALWAYS_SOURCE = {"core"}
 
 try:
     from rich.console import Console
@@ -936,6 +936,39 @@ def main():
     p_all.add_argument("--prod", action="store_true", help="Upload to pypi.org")
     p_all.add_argument("--skip-tests", action="store_true", help="Skip test phase")
 
+    # standalone (Nuitka onefile)
+    try:
+        from toolboxv2.utils.system.ci.ci_standalone import TARGETS, detect_current_target
+        target_choices = list(TARGETS)
+        default_target = detect_current_target()
+    except Exception:
+        target_choices = None
+        default_target = None
+    p_sa = sub.add_parser(
+        "standalone",
+        help="Nuitka onefile build (mini core + optional features)",
+    )
+    p_sa.add_argument(
+        "--features", default="mini",
+        help="Comma-list: mini,cli,web (mini always included)",
+    )
+    p_sa.add_argument(
+        "--target", choices=target_choices,
+        help=f"Build target (default: current = {default_target})",
+    )
+    p_sa.add_argument(
+        "--all-targets", action="store_true",
+        help="Build for all targets (requires cross-compile runners)",
+    )
+    p_sa.add_argument(
+        "--upload", action="store_true",
+        help="Upload to Registry as artifact build",
+    )
+    p_sa.add_argument(
+        "--artifact-name", default="tb-standalone",
+        help="Registry artifact name",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -988,9 +1021,29 @@ def main():
             cmd_upload(production=True)
         elif args.test:
             cmd_upload(production=False)
+        # Nuitka standalone build + upload
+        try:
+            from toolboxv2.utils.system.ci.ci_standalone import cmd_standalone
+            _p("\n  Standalone build ...")
+            cmd_standalone(
+                features=["mini"],
+                upload=bool(args.prod or args.test),
+            )
+        except Exception as e:
+            _p(f"  ! Standalone build skipped: {e}", style="yellow")
         _p(f"\n  Report: {report_path}")
         if has_test_fail or has_build_fail:
             sys.exit(1)
+
+    elif args.command == "standalone":
+        from toolboxv2.utils.system.ci.ci_standalone import cmd_standalone
+        cmd_standalone(
+            features=[f.strip() for f in args.features.split(",")],
+            target=args.target,
+            all_targets=args.all_targets,
+            upload=args.upload,
+            artifact_name=args.artifact_name,
+        )
 
     console.rule("Done")
 

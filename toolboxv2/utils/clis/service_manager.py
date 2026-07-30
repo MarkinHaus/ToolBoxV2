@@ -190,6 +190,14 @@ class ServiceRegistry:
             entry_point="cli_llm_gateway",
             runner_key="llm-gateway"
         ))
+        self.register(ServiceDefinition(
+            name="tray",
+            description="ToolBox System Tray (pystray) - zeigt Service-Status",
+            category="infrastructure",
+            module="toolboxv2.utils.extras.fallback_tray",
+            entry_point="run_tray_service",
+            runner_key="tray",
+        ))
 
     def register(self, service: ServiceDefinition) -> None:
         """Registriere einen Service"""

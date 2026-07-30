@@ -447,7 +447,7 @@ fn setup_system_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
     // NOTE: `separator`/`quit` were used one line before they were declared and
     // the menu was built twice (the second build silently dropped Terminal CLI).
     // Single, ordered construction now.
-    let open_dashboard = MenuItem::with_id(app, "open_dashboard", "🖥 Open Dashboard", true, None::<&str>)?;
+    let open_dashboard_item = MenuItem::with_id(app, "open_dashboard", "🖥 Open Dashboard", true, None::<&str>)?;
     let open_app = MenuItem::with_id(app, "open_app", "🚀 Open App", true, None::<&str>)?;
     let app_mode = MenuItem::with_id(app, "app_mode", "📺 App Mode", true, None::<&str>)?;
     let hud_mode = MenuItem::with_id(app, "hud_mode", "🎯 HUD Mode", true, None::<&str>)?;
@@ -457,7 +457,7 @@ fn setup_system_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
 
     let menu = Menu::with_items(
         app,
-        &[&open_dashboard, &open_app, &app_mode, &hud_mode, &open_cli, &separator, &quit],
+        &[&open_dashboard_item, &open_app, &app_mode, &hud_mode, &open_cli, &separator, &quit],
     )?;
 
     // No unwrap here: in tray-only (--minimized) start there is no window yet,

@@ -128,7 +128,18 @@ def _get_installed_version(feature_name: str) -> Optional[str]:
 
 
 def _get_features_packed_dir() -> Path:
-    """Verzeichnis für gepackte Feature-ZIPs."""
+    """Verzeichnis fuer gepackte Feature-ZIPs."""
+    # Nuitka onefile / PyInstaller: temp-dir that is deleted on exit
+    frozen = (
+        getattr(sys, "frozen", False)
+        or "__compiled__" in dir(sys.modules.get("__main__", type("", (), {})))
+        or "__compiled__" in globals()
+    )
+    if frozen:
+        base = Path(os.getenv("TB_DATA_DIR") or Path.home() / ".toolboxv2")
+        d = base / "features_packed"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
     try:
         from toolboxv2.feature_loader import get_features_packed_dir
         return get_features_packed_dir()

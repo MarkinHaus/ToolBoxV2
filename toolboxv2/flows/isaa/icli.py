@@ -4531,7 +4531,10 @@ class ISAA_Host:
                 # -- Done / Complete -----------------------------------------------
                 elif chunk_type == "done":
                     success = chunk.get("success", False)
-                    meta = chunk.get("meta")
+                    meta = chunk.get("meta", {})
+                    meta = {
+                        **meta, **chunk
+                    }
                     c_print(ANSI(renderer.render_done(success, meta)))
 
                 # -- Unknown chunk type --------------------------------------------

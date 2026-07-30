@@ -20,6 +20,7 @@ Author: Markin / ToolBoxV2
 from __future__ import annotations
 
 import asyncio
+import gc
 import hashlib
 import json
 import time
@@ -399,9 +400,12 @@ class VFSMemoryIndexer:
         f = self.vfs.files.get(path)
         if f is None:
             return None
-        content = getattr(f, "_content", None)
-        if content is None:
-            content = getattr(f, "content", None)
+        try:
+            content = getattr(f, "_content", None)
+            if content is None:
+                content = getattr(f, "content", None)
+        except Exception:
+            return None
         return content if isinstance(content, str) else None
 
     def _store(self, space: str | None = None):
@@ -526,6 +530,8 @@ class VFSMemoryIndexer:
                 await self._index_path(path)  # agent-scoped (session_scoped=False)
                 done += 1
                 bar.update(done, path)
+                if done % 50 == 0:
+                    gc.collect()
         finally:
             bar.close(f"VFS indexed: {done}/{total} files")
         logger.info(

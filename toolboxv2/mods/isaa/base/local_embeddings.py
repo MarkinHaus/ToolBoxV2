@@ -30,6 +30,7 @@ Author: Markin / ToolBoxV2
 from __future__ import annotations
 
 import asyncio
+import gc
 import os
 import subprocess
 import sys
@@ -398,7 +399,18 @@ class LocalEmbedder:
         """Blocking embed. Adapts native dim to `dimensions`:
         larger → truncate + renormalize (MRL-style); smaller → zero-pad."""
         self._load()
-        vecs = np.array(list(self._model.embed(texts)), dtype=np.float32)
+        # ponytail: batch_size=16 keeps ONNX peak memory bounded; increase on GPU/32GB hosts
+        batch_size = 16
+        vecs_list = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            for vec in self._model.embed(batch):
+                vecs_list.append(vec)
+            del batch
+            if i + batch_size < len(texts):
+                gc.collect()
+        vecs = np.array(vecs_list, dtype=np.float32)
+        del vecs_list
         if dimensions and vecs.shape[1] != dimensions:
             if vecs.shape[1] > dimensions:
                 vecs = vecs[:, :dimensions]
