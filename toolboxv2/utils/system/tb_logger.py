@@ -570,6 +570,7 @@ class LogSyncManager:
         self._auto_thread: Optional[threading.Thread] = None
         self._auto_stop = threading.Event()
         self._obs_adapter: Optional[Any] = None  # ObservabilityAdapter
+        self._forward_watermark: Optional[float] = None  # memfix: see _forward_to_adapter
 
     # ---- Observability Adapter ----
 
@@ -710,15 +711,45 @@ class LogSyncManager:
         date_to: Optional[str] = None,
         filename_filter: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Forward recently synced log entries to the observability adapter."""
+        """Forward *newly* synced log entries to the observability adapter.
+
+        memfix: this used to select ALL blobs with sync_status=SYNCED and
+        re-decode/re-forward the complete log history on every sync tick.
+        Since mark_synced() sets that status permanently the candidate set
+        grew monotonically -> O(n^2) work, unbounded RAM and duplicate data
+        in the observability backend.
+
+        Now: a persisted high-water mark (max local_updated_at already
+        forwarded) bounds the candidate set, and entries are streamed to the
+        adapter in fixed-size batches instead of being accumulated first.
+        """
         from ..extras.db.mobile_db import SyncStatus
 
-        synced_blobs = self.db.list(prefix=prefix, sync_status=SyncStatus.SYNCED)
+        watermark = self._get_forward_watermark()
+        new_watermark = watermark
 
-        system_entries: List[Dict[str, Any]] = []
-        audit_entries: List[Dict[str, Any]] = []
+        adapter_stats = {"system_sent": 0, "audit_sent": 0, "errors": []}
+        batch_size = 500
+        system_batch: List[Dict[str, Any]] = []
+        audit_batch: List[Dict[str, Any]] = []
 
-        for meta in synced_blobs:
+        def _flush(batch: List[Dict[str, Any]], audit: bool) -> None:
+            if not batch:
+                return
+            send = (self._obs_adapter.send_audit_batch if audit
+                    else self._obs_adapter.send_batch)
+            result = send(batch)
+            key = "audit_sent" if audit else "system_sent"
+            adapter_stats[key] += result.get("sent", 0)
+            if result.get("failed"):
+                adapter_stats["errors"].extend(result.get("errors", [])[:3])
+            batch.clear()
+
+        for meta in self.db.list(prefix=prefix, sync_status=SyncStatus.SYNCED):
+            # memfix: skip everything already forwarded in an earlier tick
+            if meta.local_updated_at <= watermark:
+                continue
+
             parts = meta.path.split("/")
             if len(parts) < 4:
                 continue
@@ -737,8 +768,7 @@ class LogSyncManager:
             if data is None:
                 continue
 
-            lines = data.decode("utf-8", errors="replace").split("\n")
-            for line in lines:
+            for line in data.decode("utf-8", errors="replace").splitlines():
                 line = line.strip()
                 if not line:
                     continue
@@ -748,28 +778,58 @@ class LogSyncManager:
                     continue
 
                 if "audit_action" in entry:
-                    audit_entries.append(entry)
+                    audit_batch.append(entry)
+                    if len(audit_batch) >= batch_size:
+                        _flush(audit_batch, audit=True)
                 else:
-                    system_entries.append(entry)
+                    system_batch.append(entry)
+                    if len(system_batch) >= batch_size:
+                        _flush(system_batch, audit=False)
 
-        adapter_stats = {"system_sent": 0, "audit_sent": 0, "errors": []}
-        batch_size = 500
+            del data
+            if meta.local_updated_at > new_watermark:
+                new_watermark = meta.local_updated_at
 
-        for i in range(0, len(system_entries), batch_size):
-            batch = system_entries[i:i + batch_size]
-            result = self._obs_adapter.send_batch(batch)
-            adapter_stats["system_sent"] += result.get("sent", 0)
-            if result.get("failed"):
-                adapter_stats["errors"].extend(result.get("errors", [])[:3])
+        _flush(system_batch, audit=False)
+        _flush(audit_batch, audit=True)
 
-        for i in range(0, len(audit_entries), batch_size):
-            batch = audit_entries[i:i + batch_size]
-            result = self._obs_adapter.send_audit_batch(batch)
-            adapter_stats["audit_sent"] += result.get("sent", 0)
-            if result.get("failed"):
-                adapter_stats["errors"].extend(result.get("errors", [])[:3])
+        if new_watermark > watermark:
+            self._set_forward_watermark(new_watermark)
 
         return adapter_stats
+
+    # ---- forward high-water mark (persisted in MobileDB.metadata) ----
+
+    def _watermark_key(self) -> str:
+        return f"obs_forward_watermark:{self.app_id}:{self.node_id}"
+
+    def _get_forward_watermark(self) -> float:
+        if self._forward_watermark is not None:
+            return self._forward_watermark
+        value = 0.0
+        try:
+            conn = self.db._get_connection()
+            row = conn.execute(
+                "SELECT value FROM metadata WHERE key = ?", (self._watermark_key(),)
+            ).fetchone()
+            if row is not None:
+                value = float(row["value"])
+        except Exception:
+            value = 0.0
+        self._forward_watermark = value
+        return value
+
+    def _set_forward_watermark(self, value: float) -> None:
+        self._forward_watermark = value
+        try:
+            conn = self.db._get_connection()
+            conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                (self._watermark_key(), str(value)),
+            )
+            conn.commit()
+        except Exception:
+            pass
 
     def _auto_sync_loop(self, interval: float):
         while not self._auto_stop.is_set():

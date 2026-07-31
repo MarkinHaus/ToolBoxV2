@@ -41,6 +41,9 @@ _SKIP_FILENAMES = {"vfs_guide.md", "active_rules.md"}
 _CHUNK_SIZE = 1400
 _CHUNK_OVERLAP = 120
 _MAX_CHUNKS_PER_FILE = 24
+# memfix: _chunk() never emits more than _MAX_CHUNKS_PER_FILE * _CHUNK_SIZE
+# (~34 KB) of text, so reading anything substantially larger only burns RAM.
+_MAX_INDEX_FILE_BYTES = 256 * 1024
 _DEBOUNCE_S = 3.0
 
 
@@ -290,6 +293,14 @@ class VFSMemoryIndexer:
     def _eligible(self, path: str) -> bool:
         if any(path.startswith(p) for p in _SKIP_PREFIXES):
             return False
+        # memfix: skip oversized files before anything reads them into RAM.
+        f_size = self.vfs.files.get(path)
+        if f_size is not None:
+            try:
+                if int(getattr(f_size, "size_bytes", 0) or 0) > _MAX_INDEX_FILE_BYTES:
+                    return False
+            except (TypeError, ValueError):
+                pass
         # /global IS a mount + shared store — but explicitly wanted in memory.
         # Allow it before the mount/shared checks below would reject it.
         if path.startswith(GLOBAL_PREFIX):

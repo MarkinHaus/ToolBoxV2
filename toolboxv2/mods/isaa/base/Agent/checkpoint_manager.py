@@ -94,7 +94,7 @@ class AgentCheckpoint:
         def fmt(n):
             for unit in ("", "k", "M", "B", "T"):
                 if abs(n) < 1000:
-                    return f"{n:.1f}{unit}".rstrip("0").rstrip(".") + unit
+                    return f"{n:.1f}{unit}".rstrip("0").rstrip(".")
                 n /= 1000
             return f"{n:.1f}P"
 

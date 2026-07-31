@@ -823,7 +823,7 @@ class JSTSAnalyzer:
 class IndexManager:
     """Thread-safe index management with atomic writes and inverted indexing."""
 
-    __slots__ = ("index_path", "index", "_lock", "_executor", "_dirty")
+    __slots__ = ("index_path", "index", "_lock", "_executor", "_dirty", "_loaded_mtime")
 
     # Stop words to exclude from inverted index
     STOP_WORDS = frozenset(
@@ -921,11 +921,32 @@ class IndexManager:
         self._lock = asyncio.Lock()
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="idx")
         self._dirty = False
+        self._loaded_mtime: float | None = None  # memfix: see load()
 
     async def load(self) -> DocsIndex:
-        """Load index from disk."""
+        """Load index from disk.
+
+        memfix: this had no idempotency guard while DocsService.initialize()
+        calls it unconditionally and the admin tools call initialize() at the
+        top of *every* docs tool. Each agent tool call therefore re-parsed the
+        whole index JSON, rebuilt every CodeElement/DocSection and recomputed
+        the inverted index. Skip that when the on-disk file has not changed.
+        """
         async with self._lock:
             if not self.index_path.exists():
+                return self.index
+
+            try:
+                mtime = self.index_path.stat().st_mtime
+            except OSError:
+                mtime = None
+
+            if (
+                mtime is not None
+                and self._loaded_mtime is not None
+                and mtime <= self._loaded_mtime
+                and (self.index.sections or self.index.code_elements)
+            ):
                 return self.index
 
             data = await asyncio.get_event_loop().run_in_executor(
@@ -934,6 +955,7 @@ class IndexManager:
             if data:
                 self.index = self._deserialize(data)
                 self._rebuild_inverted_index()
+                self._loaded_mtime = mtime
             return self.index
 
     def _sync_load(self) -> Optional[dict]:

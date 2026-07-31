@@ -33,6 +33,7 @@ import re
 import shutil
 import tempfile
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
@@ -117,6 +118,17 @@ class GlobalVFSManager:
         # Alle VFS-Instanzen die /global/ gemountet haben, sehen denselben Dict.
         # Verhindert Disk-Roundtrip für Multi-Agent-Reads im selben Prozess.
         self._shared_store: dict[str, dict] = {}
+        # memfix: the shared store cached FULL file contents for the entire
+        # process lifetime (module-level singleton via get_global_vfs(),
+        # eviction only on explicit delete). A VFS backfill pulled every
+        # /global file in through read_text() and the bytes were never
+        # released. Contents are always reconstructible from _disk_path,
+        # so cap them with an LRU byte budget.
+        self._cache_budget_bytes = int(
+            os.environ.get("TB_GLOBAL_VFS_CACHE_MB", "64")
+        ) * 1024 * 1024
+        self._cache_bytes = 0
+        self._cache_lru: OrderedDict[str, int] = OrderedDict()
         self._store_lock = threading.RLock()
 
         # Monotone Version für Change-Detection ohne mtime-Granularität
@@ -220,7 +232,41 @@ class GlobalVFSManager:
                     )
                 except (OSError, UnicodeError):
                     return None
+            self._cache_touch(relative_path, entry["content"])
             return dict(entry)
+
+    # ---- memfix: bounded content cache -------------------------------
+    # All three helpers require self._store_lock to be held by the caller.
+
+    def _cache_touch(self, key: str, content: str | None) -> None:
+        """Register/refresh a cached content blob, then evict down to budget."""
+        if content is None:
+            return
+        size = len(content)
+        previous = self._cache_lru.pop(key, None)
+        if previous is not None:
+            self._cache_bytes -= previous
+        self._cache_lru[key] = size
+        self._cache_bytes += size
+        self._cache_evict()
+
+    def _cache_forget(self, key: str) -> None:
+        previous = self._cache_lru.pop(key, None)
+        if previous is not None:
+            self._cache_bytes -= previous
+
+    def _cache_evict(self) -> None:
+        """Drop least-recently-used contents until under budget.
+
+        Only entry["content"] is cleared -- metadata and _disk_path stay, so
+        the next read transparently reloads from disk.
+        """
+        while self._cache_bytes > self._cache_budget_bytes and self._cache_lru:
+            old_key, old_size = self._cache_lru.popitem(last=False)
+            self._cache_bytes -= old_size
+            entry = self._shared_store.get(old_key)
+            if entry is not None and entry.get("_disk_path"):
+                entry["content"] = None
 
     def has_shared(self, relative_path: str) -> bool:
         with self._store_lock:
@@ -408,6 +454,7 @@ class GlobalVFSManager:
                     )
                 except (OSError, UnicodeError):
                     return None
+            self._cache_touch(store_key, entry["content"])
             return dict(entry)
 
     def shared_delete(
@@ -432,6 +479,7 @@ class GlobalVFSManager:
             store_key = f"{mount_key}::{relative_path}"
             with self._store_lock:
                 self._shared_store.pop(store_key, None)
+                self._cache_forget(store_key)  # memfix: keep byte budget honest
                 # Sub-pfade bei Dir-Delete
                 prefix = f"{mount_key}::{relative_path}/"
                 to_drop = [k for k in self._shared_store if k.startswith(prefix)]
@@ -601,6 +649,7 @@ class GlobalVFSManager:
                         entry["content"] = content
                     except (OSError, UnicodeError):
                         return {"success": False, "error": f"Failed to read: {relative_path}"}
+                self._cache_touch(relative_path, entry["content"])
 
                 return {
                     "success": True,
@@ -630,6 +679,7 @@ class GlobalVFSManager:
                     "version": version,
                     "_disk_path": str(file_path),
                 }
+                self._cache_touch(relative_path, content)
             return {
                 "success": True,
                 "path": f"{GLOBAL_VFS_PATH}/{relative_path}",
@@ -687,6 +737,7 @@ class GlobalVFSManager:
             # EBENE 3: Shared-Store aufräumen + Broadcast
             with self._store_lock:
                 removed = self._shared_store.pop(relative_path, None)
+                self._cache_forget(relative_path)  # memfix: keep byte budget honest
                 # Auch alle Sub-Pfade wenn es ein Dir war
                 to_drop = [
                     k for k in self._shared_store

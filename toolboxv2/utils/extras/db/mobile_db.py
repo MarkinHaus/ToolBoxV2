@@ -90,30 +90,60 @@ class PathSingleton(type):
     """
     Metaklasse, die sicherstellt, dass pro eindeutigem 'db_path'
     nur eine Instanz einer Klasse existiert.
+
+    memfix hardening:
+      * creation is guarded by a lock -- two threads racing on the same path
+        used to build (and leak) two independent instances, each with its own
+        thread-local connection pool
+      * Path objects are normalised like str, otherwise MobileDB(Path(p)) and
+        MobileDB(p) resolve to different keys and the singleton is defeated
+      * the signature is taken from cls.__init__ and cached. inspect.signature
+        (cls) resolves to the *metaclass* __call__ once a metaclass defines
+        one, i.e. (*args, **kwargs) -- so db_path never bound, every key was
+        (cls, None) and ALL MobileDB instances in the process collapsed onto
+        whichever database was constructed first (logs, blobs and scoped
+        storage silently shared one file). Verified against be13ac5.
     """
     _instances = {}
+    _instances_lock = threading.Lock()
+    _signatures = {}
+
+    @staticmethod
+    def _normalize(db_path):
+        if isinstance(db_path, (str, Path)):
+            return str(Path(db_path).expanduser().resolve())
+        return db_path
 
     def __call__(cls, *args, **kwargs):
-        # Argumente anhand der Signatur des Konstruktors auflösen
-        sig = inspect.signature(cls)
-        bound_args = sig.bind(*args, **kwargs)
-        bound_args.apply_defaults()  # Standardwerte ergänzen, falls nicht übergeben
+        sig = cls._signatures.get(cls)
+        if sig is None:
+            # bind against __init__, NOT against cls (see class docstring)
+            sig = inspect.signature(cls.__init__)
+            cls._signatures[cls] = sig
 
-        # Den 'db_path' aus den Argumenten heraussuchen
-        db_path = bound_args.arguments.get("db_path")
+        bound_args = sig.bind(None, *args, **kwargs)  # None = placeholder for self
+        bound_args.apply_defaults()
 
-        # Pfad normalisieren (in absoluten Pfad umwandeln)
-        if isinstance(db_path, str):
-            db_path = os.path.abspath(db_path)
+        key = (cls, PathSingleton._normalize(bound_args.arguments.get("db_path")))
 
-        # Eindeutiger Schlüssel aus Klasse und absolutem Pfad
-        key = (cls, db_path)
+        instance = cls._instances.get(key)
+        if instance is not None:
+            return instance
 
-        if key not in cls._instances:
-            # Instanz erzeugen und im Dictionary speichern
-            cls._instances[key] = super().__call__(*args, **kwargs)
+        with cls._instances_lock:
+            # re-check under the lock
+            instance = cls._instances.get(key)
+            if instance is None:
+                instance = super().__call__(*args, **kwargs)
+                cls._instances[key] = instance
+            return instance
 
-        return cls._instances[key]
+    def _forget(cls, db_path):
+        """Drop a closed instance so a later construction yields a fresh one."""
+        key = (cls, PathSingleton._normalize(db_path))
+
+        with cls._instances_lock:
+            cls._instances.pop(key, None)
 
 class MobileDB(metaclass=PathSingleton):
     """
@@ -245,6 +275,13 @@ class MobileDB(metaclass=PathSingleton):
         if hasattr(self._local, 'connection') and self._local.connection:
             self._local.connection.close()
             self._local.connection = None
+        # memfix: without this the closed instance stays in the singleton
+        # registry, so the next MobileDB(path) hands out a dead object --
+        # and any `with MobileDB(...)` block would poison the whole process.
+        try:
+            type(self)._forget(self.db_path)
+        except Exception:
+            pass
 
     def __enter__(self):
         return self
@@ -694,13 +731,26 @@ class MobileDB(metaclass=PathSingleton):
             conn.execute("DELETE FROM blobs WHERE sync_status = 'deleted'")
 
             # Get candidates for cleanup (synced blobs, oldest first)
-            cutoff = time.time() - (max_age_days * 24 * 3600)
-
-            candidates = conn.execute("""
-                SELECT path, size FROM blobs
-                WHERE sync_status = 'synced' AND local_updated_at < ?
-                ORDER BY local_updated_at ASC
-            """, (cutoff,)).fetchall()
+            #
+            # memfix: when a target_size is given the caller is reacting to the
+            # size limit, not to age. Applying the 30-day cutoff there meant
+            # nothing qualified in a short-lived process, so max_size_mb was
+            # never actually enforced for log-style workloads. Age-based
+            # cleanup keeps its cutoff; size-driven cleanup drops oldest-first
+            # until the target is met.
+            if target_size:
+                candidates = conn.execute("""
+                    SELECT path, size FROM blobs
+                    WHERE sync_status = 'synced'
+                    ORDER BY local_updated_at ASC
+                """).fetchall()
+            else:
+                cutoff = time.time() - (max_age_days * 24 * 3600)
+                candidates = conn.execute("""
+                    SELECT path, size FROM blobs
+                    WHERE sync_status = 'synced' AND local_updated_at < ?
+                    ORDER BY local_updated_at ASC
+                """, (cutoff,)).fetchall()
 
             removed = 0
             current_size = self.get_db_size()
