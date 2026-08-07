@@ -30,8 +30,10 @@ from .crypto import generate_encryption_key
 
 # ToolBox integration (graceful fallback)
 try:
-    from toolboxv2 import App, RequestData, Result, get_app
+    from toolboxv2 import App, RequestData, Result, get_app, get_logger
     _TB_AVAILABLE = True
+
+    logger = get_logger()
 except ImportError:
     _TB_AVAILABLE = False
 

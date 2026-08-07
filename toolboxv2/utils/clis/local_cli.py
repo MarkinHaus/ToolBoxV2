@@ -209,6 +209,7 @@ async def login_screen(sess: CLISession) -> bool:
     # No input required: the local anonymous root is auto-created at CloudM
     # startup and a token is minted in-process here (no HTTP, E3-compliant).
     options = [
+        ("guest", "Just a Guest"),
         ("local_root", "This machine's local root (no password)"),
         ("magic", "Magic link by email"),
         ("invite", "Device invite code"),
@@ -223,6 +224,34 @@ async def login_screen(sess: CLISession) -> bool:
     )
     if choice in (None, "quit"):
         raise SystemExit(0)
+
+    if choice == "guest":
+        try:
+            from toolboxv2.mods.CloudM.auth.local_admin import ensure_local_admin
+            from toolboxv2.mods.CloudM.auth.jwt_tokens import _generate_tokens
+            user = await ensure_local_admin(tb_app)
+            tokens = _generate_tokens(user, "local_admin")
+            s = tb_app.session
+            s.username = user.username
+            s._save_session_token(
+                tokens["access_token"],
+                tokens["refresh_token"],
+                user.user_id,
+            )
+            payload = {
+                "authenticated": True,
+                "user_id": user.user_id,
+                "username": s.username or user.username,
+                "level": user.level,
+                "provider": "local_admin",
+                **tokens,
+            }
+            res = await _finalize(sess, payload, tb_app, remote=False)
+            print(f"Finalized: {res}", "info")
+            return True
+        except Exception as e:
+            print_status(f"Local root login failed: {e}", "error")
+            return False
 
     if choice == "local_root":
         # Mint a token in-process for the local admin, then validate it against
@@ -239,7 +268,7 @@ async def login_screen(sess: CLISession) -> bool:
                 tokens["refresh_token"],
                 user.user_id,
             )
-            if not await s.login():
+            if not await s.login(verbose=True):
                 print_status(
                     "Remote validation failed — is TB_JWT_SECRET the same on your server?",
                     "error",
