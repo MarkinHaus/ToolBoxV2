@@ -626,51 +626,119 @@ class FlowAgent:
         self._vison[model_preference] = not model.startswith("ollama/")
         return self._vison[model_preference]
 
-    async def look_at(self, file_path: str, question: str = "Beschreibe was du siehst") -> str:
-        """Laedt ein Bild (real FS oder VFS) und analysiert es mit Vision-Modell.
+    async def _resolve_image_source(self, source: str) -> str:
+        """Resolve any image source to a local file path.
 
-        Tier 1: realer Dateisystem-Pfad → direkt <image=path>.
-        Tier 2: VFS shadow file mit local_path → nutze local_path.
-        Tier 3: VFS pure virtual → temp file, dann <image=tempfile>.
+        Supports: URLs, real FS, VFS, sandbox paths.
+        Returns: local file path (tempfile if downloaded/VFS).
+        Raises: FileNotFoundError if source cannot be resolved.
         """
-        from pathlib import Path
         import os
+        from pathlib import Path
+        import tempfile
 
-        p = Path(file_path)
-        if p.exists():
-            content = f"<image={file_path}>\n\n{question}"
-            return await self.a_run_llm_completion(
-                messages=[{"role": "user", "content": content}], stream=False)
+        # 1. URL
+        if source.startswith(("http://", "https://")):
+            import httpx
+            suffix = "." + source.rsplit(".", 1)[-1].split("?")[0][:4] if "." in source else ".png"
+            tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False, mode="wb")
+            tmp.close()
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(source, follow_redirects=True)
+                resp.raise_for_status()
+                with open(tmp.name, "wb") as f:
+                    f.write(resp.content)
+            return tmp.name
 
-        # VFS resolution
+        # 2. Real FS (check first for self-agent)
+        is_self = getattr(self.amd, 'name', '') == 'self'
+        if is_self and Path(source).exists():
+            return source
+
+        # 3. Sandbox (sbox: prefix)
+        if source.startswith("sbox:"):
+            clean = source[5:].lstrip("/")
+            for base in ["/work", "/tmp", "/root"]:
+                candidate = f"{base}/{clean}"
+                if Path(candidate).exists():
+                    return candidate
+            raise FileNotFoundError(f"Sandbox path not found: {source}")
+
+        # 4. VFS
         try:
             session = await self.session_manager.get_or_create(
                 self.active_session or "default")
             vfs = session.vfs
-            norm = vfs._normalize_path(file_path)
+            norm = vfs._normalize_path(source)
             if vfs._is_file(norm):
                 f = vfs.files.get(norm)
                 local = getattr(f, "local_path", None) if f else None
                 if local and os.path.exists(str(local)):
-                    content = f"<image={local}>\n\n{question}"
-                else:
-                    result = vfs.read(norm)
-                    if not result.get("success"):
-                        return f"VFS read failed: {result.get('error')}"
-                    import tempfile
+                    return str(local)
+                result = vfs.read(norm)
+                if result.get("success"):
                     suffix = Path(norm).suffix or ".png"
-                    tmp = tempfile.NamedTemporaryFile(
-                        suffix=suffix, delete=False, mode="wb")
+                    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False, mode="wb")
                     data = result["content"]
                     tmp.write(data.encode() if isinstance(data, str) else data)
                     tmp.close()
-                    content = f"<image={tmp.name}>\n\n{question}"
-                return await self.a_run_llm_completion(
-                    messages=[{"role": "user", "content": content}], stream=False)
+                    return tmp.name
         except Exception:
             pass
 
-        return f"File not found: {file_path}"
+        # 5. Real FS fallback (non-self agents)
+        if Path(source).exists():
+            return source
+
+        raise FileNotFoundError(f"Cannot resolve image source: {source}")
+
+    async def look_at(
+        self,
+        source: str,
+        question: str = "Beschreibe was du siehst",
+        mode: str = "vision",
+    ) -> str:
+        """Analyze an image from any source. Modes: vision, ocr.
+        Source can be: URL, real FS path, VFS path, sandbox path."""
+        import os
+
+        # --- Resolve source ---
+        try:
+            resolved = await self._resolve_image_source(source)
+        except FileNotFoundError as e:
+            return str(e)
+
+        # --- Mode: OCR using existing OCRRouter ---
+        if mode == "ocr":
+            try:
+                from toolboxv2.mods.isaa.extras.ocr_engine import OCRRouter, get_ocr_config
+                config = get_ocr_config()
+                if not config.enabled:
+                    raise RuntimeError("OCR config disabled")
+                router = OCRRouter(config)
+                result = await router.ocr(resolved)
+                return result.text  # ponytail: OCRResult.text joins pages
+            except Exception:
+                question = "Extract ALL text from this image. Return raw text only."
+
+        # --- Mode: vision using IMAGEMODEL ---
+        image_model = os.getenv("IMAGEMODEL", "")
+        if not image_model:
+            try:
+                from toolboxv2 import get_app
+                isaa = get_app().get_mod("isaa")
+                image_model = isaa.config.get("IMAGEMODEL", "")
+            except Exception:
+                pass
+        if not image_model:
+            image_model = self.amd.fast_llm_model
+
+        content = f"<image={resolved}>\n\n{question}"
+        return await self.a_run_llm_completion(
+            messages=[{"role": "user", "content": content}],
+            model=image_model,
+            stream=False,
+        )
 
     async def chat(self, query:str,
                    is_new=False, with_tools=True, stream=False):
@@ -3892,8 +3960,10 @@ class FlowAgent:
                 "category": ["vision", "read"],
                 "is_async": True,
                 "description": (
-                    "Laedt ein Bild (file_path) und analysiert es mit dem "
-                    "Vision-Modell. Optionale question steuert die Frage."
+                    "Analyze any image. Source: URL, real FS, VFS path, or sandbox path (auto-detected). "
+                    "mode='vision' (default): answer question about image using vision model. "
+                    "mode='ocr': extract text using OCR (Tesseract/PaddleOCR/DeepSeek). "
+                    "Uses IMAGEMODEL from ISAA config for vision mode."
                 ),
             },
             # ── HISTORY / RULES ───────────────────────────────────────────

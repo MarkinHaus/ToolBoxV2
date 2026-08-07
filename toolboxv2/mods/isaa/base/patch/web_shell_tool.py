@@ -1043,8 +1043,8 @@ def make_web_shell(
 
                 if do_ocr:
                     try:
-                        from toolboxv2.mods.isaa.extras.ocr_engine import OCRRouter, IsaaOCRConfig
-                        router = OCRRouter(IsaaOCRConfig())
+                        from toolboxv2.mods.isaa.extras.ocr_engine import OCRRouter, get_ocr_config
+                        router = OCRRouter(get_ocr_config())
                         result = await router.ocr(path, tier=tier)
                         ocr_text = result.to_markdown()
                         output += f"\n\n--- OCR ({result.engine}, {result.elapsed_s:.1f}s) ---\n{_truncate(ocr_text)}"
@@ -1066,8 +1066,8 @@ def make_web_shell(
             tier = _pop_flag("tier", ocr_default_tier)
 
             try:
-                from toolboxv2.mods.isaa.extras.ocr_engine import OCRRouter, IsaaOCRConfig
-                router = OCRRouter(IsaaOCRConfig())
+                from toolboxv2.mods.isaa.extras.ocr_engine import OCRRouter, get_ocr_config
+                router = OCRRouter(get_ocr_config())
                 result = await router.ocr(source, tier=tier)
                 output = (
                     f"Engine: {result.engine} | Tier: {result.tier.value} | "

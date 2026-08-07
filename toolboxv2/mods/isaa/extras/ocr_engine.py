@@ -36,6 +36,20 @@ logger = get_logger()
 def get_session() -> ClientSession:
     return get_app().session.session
 
+
+def get_ocr_config() -> IsaaOCRConfig:
+    """Load OCR config from the active TBManifest, fall back to defaults."""
+    try:
+        from toolboxv2 import get_app
+        app = get_app()
+        m = getattr(app, 'manifest', None)
+        if m and getattr(m, 'isaa', None) and m.isaa.ocr:
+            return m.isaa.ocr
+    except Exception:
+        pass
+    return IsaaOCRConfig()
+
+
 # ─── Data Models ───────────────────────────────────────────────────────────
 
 class OCRPage:

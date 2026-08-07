@@ -92,8 +92,6 @@ manager:
   web_ui_enabled: true
   web_ui_host: 127.0.0.1
   web_ui_port: 9000
-  # Local UI / dist origin. Tray "Open Dashboard", the Tauri window and the
-  # browser fallback all resolve to http://<live_ui_host>:<live_ui_port>.
   live_ui_host: 127.0.0.1
   live_ui_port: 5000
   control_socket: ''
@@ -138,13 +136,17 @@ app:
   log_level: INFO
 isaa:
   embedding:
-    mode: ${TB_EMBED_LOCAL:auto}          # auto | local | cloud
+    mode: ${TB_EMBED_LOCAL:auto}
     local_model: ${TB_EMBED_LOCAL_MODEL:nomic-ai/nomic-embed-text-v1.5-Q}
     cache_dir: ${TB_EMBED_CACHE_DIR:}
     auto_install: true
-    models:                                # extra Modelle über die Registry hinaus
-      - name: jinaai/jina-embeddings-v5-text-nano-retrieval
-        dim: 768
-        hf: jinaai/jina-embeddings-v5-text-nano-retrieval
-        model_file: onnx/model.onnx
-        pooling: last_token
+    models:
+    - name: jinaai/jina-embeddings-v5-text-nano-retrieval
+      dim: 768
+      hf: jinaai/jina-embeddings-v5-text-nano-retrieval
+      model_file: onnx/model.onnx
+      pooling: last_token
+  ocr:
+    api:
+      vision_llm_enabled: true
+      vision_llm_model: openrouter/openai/gpt-4o-mini
