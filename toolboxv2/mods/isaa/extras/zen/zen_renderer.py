@@ -1827,21 +1827,31 @@ class ZenRenderer:
 
         return "\n".join(lines)
 
-    def render_iteration_start(self, iteration: int, max_iter: int) -> str:
-        """Iteration header."""
+    def render_iteration_start(self, iteration: int, max_iter: int,
+                               tokens_used: int = 0, tokens_max: int = 0) -> str:
+        """Iteration header. Der Meter zeigt die ECHTE Context-Fuelle
+        (was ans Modell geht), nicht mehr den Iterations-Fortschritt.
+        Die Iterationszahl bleibt als Label erhalten."""
         self._iteration = iteration
         self._max_iter = max_iter
 
         lines = [""]
 
-        # Separator with iteration info
+        # Separator with iteration info (Zaehler bleibt sichtbar)
         iter_label = f" ITERATION {iteration}/{max_iter} "
         lines.append(UI.sep_label(iter_label, self.width, T.PRIMARY))
 
-        # Progress meter
-        meter = UI.meter(iteration, max_iter, width=40)
+        # Meter = Context-Fuelle (real → Modell), nicht Iterationen
+        if tokens_max > 0:
+            meter = UI.meter(tokens_used, tokens_max, width=40)
+            pct = tokens_used / tokens_max * 100
+            fill_lbl = Style().fg(*T.FG_MUTED).text(
+                f"ctx {tokens_used:,}/{tokens_max:,} ({pct:.1f}%)")
+        else:
+            meter = UI.meter(iteration, max_iter, width=40)
+            fill_lbl = Style().fg(*T.FG_MUTED).text("ctx n/a")
         elapsed = Style().fg(*T.FG_MUTED).text(f"elapsed: {self._elapsed()}")
-        lines.append(f"  {meter}  {elapsed}")
+        lines.append(f"  {meter}  {fill_lbl}  {elapsed}")
 
         return "\n".join(lines)
 

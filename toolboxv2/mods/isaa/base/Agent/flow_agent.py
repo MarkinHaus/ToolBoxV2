@@ -4135,15 +4135,28 @@ class FlowAgent:
             final_messages.extend(work_history[1:])
 
         model = self.amd.fast_llm_model.split("/")[-1]
+        # Limit == exakt die Autoritaet, die auch die Live-Bar und die Engine-
+        # Budget-Trigger nutzen (persona-aware, VOLLER Modellstring inkl.
+        # Provider-Prefix). ctx_limit(model.split('/')[-1]) verliert z.B. den
+        # '9rou/'-Prefix und faellt faelschlich auf _DEFAULT (262k) statt 1M.
         try:
-            from toolboxv2.mods.isaa.base.llm_router.model_info import ctx_limit
-            context_limit = ctx_limit(model)
-        except:
-            context_limit = 128000
+            context_limit = engine._get_max_context_tokens(ctx)
+        except Exception:
+            try:
+                from toolboxv2.mods.isaa.base.llm_router.model_info import ctx_limit
+                context_limit = ctx_limit(self.amd.fast_llm_model)
+            except Exception:
+                context_limit = 128000
 
-        # Einheitlicher iCLI-weiter Divisor (3.7)
+        # Einheitlicher iCLI-weiter Divisor (3.7).
+        # WICHTIG: inline Base64-Bilddaten werden VOR dem Zaehlen entfernt, sonst
+        # blaeht ein einzelnes 50KB-Bild den Text-Count um ~17k Phantom-Tokens
+        # auf. Die echten Vision-Kosten laufen separat als media_tokens (765/Bild).
+        import re as _re
+        _b64_re = _re.compile(r"data:[^;,]+;base64,[A-Za-z0-9+/=\r\n]+")
         def count(msgs, tools=None):
-            return int((len(str(msgs)) + len(str(tools or ""))) // 3.7)
+            txt = _b64_re.sub("<img>", str(msgs))
+            return int((len(txt) + len(str(tools or ""))) // 3.7)
 
         vfs_content = session.build_vfs_context()
         base_sys = self.amd.get_system_message()
@@ -4207,7 +4220,16 @@ class FlowAgent:
         t_hist_perm = count(perm_history)
         t_hist_work = count(work_slice)
         t_last = count(perm_history[-1:]) if perm_history else 0
-        t_total = count(final_messages, tools=active_tools)
+        # Text-Tokens (Base64-frei) + separat gefuehrte Vision-Kosten (765/Bild).
+        t_total = count(final_messages, tools=active_tools) + media_tokens
+
+        # REAL → was wirklich ans Modell geht: bei live working_history ist SIE
+        # die reale, bereits offload-/budget-managte Message-Liste → direkt zaehlen.
+        # Sonst Fresh-Build (== t_total). Vision-Kosten einmalig addieren.
+        if work_history:
+            t_effective = count(ctx.working_history, tools=active_tools) + media_tokens
+        else:
+            t_effective = t_total
 
         # ── 5. Compression / Offload Ratios aus der Engine-Config holen ──
         cfg = getattr(ctx, "context_config", None)
@@ -4218,6 +4240,7 @@ class FlowAgent:
             "session_id": target_session,
             "model": model,
             "t_total": t_total,
+            "t_effective": t_effective,
             "t_last": t_last,
             "limit": context_limit,
             "max_context_ratio": max_context_ratio,

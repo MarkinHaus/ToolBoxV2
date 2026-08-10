@@ -534,10 +534,11 @@ def _append_task_line(out: list, tv: TaskView, focused: bool, pad: str = " " * 1
     width = 12 if tv.is_swarm_sub else 10
     out.append((bg + fg_main, f"{_short(name, width):<{width}} "))
 
-    # Progress-Bar
-    bar = _bar(tv.iteration, tv.max_iter, 8)
+    # Progress-Bar → Context-Fuelle (nicht Iterations-Fortschritt)
+    ctx_pct = min(100, int(100 * tv.tokens_used / tv.tokens_max)) if tv.tokens_max > 0 else 0
+    bar = _bar(tv.tokens_used, tv.tokens_max, 8)
     out.append((bg + "bg:#67e8f9", bar))
-    out.append((bg + fg_dim, f" {tv.iteration}/{tv.max_iter:<3} "))
+    out.append((bg + fg_dim, f" {ctx_pct:3d}% "))
 
     # Persona (nur auf Non-Summary, Non-Sub)
     if tv.persona and tv.persona != "default" and not tv.is_swarm_sub and not tv.is_swarm_summary:
@@ -547,11 +548,10 @@ def _append_task_line(out: list, tv: TaskView, focused: bool, pad: str = " " * 1
     else:
         out.append((bg + fg_dim, " "))
 
-    # Token-Prozent
-    if tv.tokens_max > 0:
-        pct = min(100, int(100 * tv.tokens_used / tv.tokens_max))
-        tc = C["green"] if pct < 50 else (C["amber"] if pct < 80 else C["red"])
-        out.append((bg + f"bg:{tc}", f"{pct:3d}% "))
+    # Iterationen: nur noch Zaehler (kein Fortschritts-%), Info bleibt erhalten –
+    # der Balken zeigt jetzt die Context-Fuelle.
+    if tv.max_iter > 0:
+        out.append((bg + fg_dim, f"it {tv.iteration}/{tv.max_iter:<3} "))
     else:
         out.append((bg + fg_dim, "     "))
 
@@ -1434,6 +1434,7 @@ def show_xray_v3(data: dict):
     bd = data['breakdown']
     sys_det = data['system_details']
     meta = data['meta']
+    t_eff = data.get('t_effective', used)
     free = limit - used
 
     # Ratios & Media holen
@@ -1452,7 +1453,8 @@ def show_xray_v3(data: dict):
         sys_det["All Rules (Volume)"] +
         bd["History (Perm)"] +
         bd["History (Work)"] +
-        bd["Last Input"]
+        bd["Last Input"] +
+        media_tokens
     )
 
     BAR_W = 50
@@ -1492,13 +1494,26 @@ def show_xray_v3(data: dict):
     ))
     c_print(HTML(""))
 
-    # ── HAUPT-BAR ───────────────────────────────────────────────────────────
-    c_print(HTML(f"  {render_ratio_bar(used, limit, BAR_W)}"))
+    # ── ① REAL → was wirklich ans Modell geht ───────────────────────────────
+    c_print(HTML(f"  <style fg='{PTColors.GREEN}'><b>① REAL  →  was wirklich ans Modell geht</b></style>"))
+    c_print(HTML(f"  {render_ratio_bar(t_eff, limit, BAR_W)}"))
     c_print(HTML(
-        f"  <style fg='{PTColors.BRIGHT_WHITE}'><b>{used:,}</b></style>"
+        f"  <style fg='{PTColors.BRIGHT_WHITE}'><b>{t_eff:,}</b></style>"
         f"<style fg='{PTColors.GREY}'> / {limit:,} Token"
-        f"   ·   {used / limit * 100:.1f}% belegt"
-        f"   ·   {free:,} frei ({free / limit * 100:.1f}%)</style>"
+        f"   ·   {t_eff / limit * 100:.1f}% belegt"
+        f"   ·   {limit - t_eff:,} frei ({(limit - t_eff) / limit * 100:.1f}%)</style>"
+    ))
+    c_print(HTML(""))
+
+    # ── ② MAX → wenn alles geladen wäre (volle History + alle Tools/Skills/Rules)
+    _cap_pct = (max_potential / limit * 100) if limit else 0
+    _cap_col = PTColors.GREEN if _cap_pct < 100 else PTColors.RED
+    c_print(HTML(f"  <style fg='{PTColors.YELLOW}'><b>② MAX   →  wenn alles geladen wäre (volle History + alle Tools/Skills/Rules)</b></style>"))
+    c_print(HTML(f"  {render_ratio_bar(max_potential, limit, BAR_W)}"))
+    c_print(HTML(
+        f"  <style fg='{_cap_col}'><b>{max_potential:,}</b></style>"
+        f"<style fg='{PTColors.GREY}'> / {limit:,} Token"
+        f"   ·   {_cap_pct:.1f}% des Limits</style>"
     ))
 
     # ── TRIGGER ANZEIGE ──
@@ -4563,7 +4578,9 @@ class ISAA_Host:
                 elif chunk_type == "iteration_start":
                     c_print(ANSI(renderer.render_iteration_start(
                         iteration=chunk.get("iteration", 0),
-                        max_iter=chunk.get("max_iter", -1)
+                        max_iter=chunk.get("max_iter", -1),
+                        tokens_used=chunk.get("tokens_used", 0),
+                        tokens_max=chunk.get("tokens_max", 0),
                     )))
 
                 # -- Done / Complete -----------------------------------------------
