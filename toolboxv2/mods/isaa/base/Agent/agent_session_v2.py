@@ -456,10 +456,13 @@ class AgentSessionV2:
         """Get LSP diagnostics for a file"""
         return await self.vfs.get_diagnostics(path)
 
-    def build_vfs_context(self) -> str:
-        """Build VFS context for LLM"""
+    def build_vfs_context(self, exclude: set | None = None) -> str:
+        """Build VFS context for LLM.
+
+        exclude: Pfade auslassen, die anderswo schon in der Prompt stehen.
+        """
         self._sync_ruleset_to_vfs()
-        return self.vfs.build_context_string()
+        return self.vfs.build_context_string(exclude=exclude)
 
     # =========================================================================
     # DOCKER METHODS

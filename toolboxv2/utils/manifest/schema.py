@@ -714,6 +714,55 @@ class IsaaOCRConfig(BaseModel):
     http_timeout_s: float = Field(default=60.0)
 
 
+class IsaaEngineConfig(BaseModel):
+    """ISAA FlowAgent ExecutionEngine runtime knobs.
+
+    Werte stehen typisiert im Manifest unter isaa.engine. Jedes Feld hat eine
+    Env-Variable als Override, aufgelöst lesend in
+    execution_engine.get_engine_config(). Vorrang: Env > Manifest > Default.
+
+    Bewusst OHNE ${VAR:default}-Platzhalter im YAML: ManifestLoader.load()
+    validiert vor dem Auflösen, ein Platzhalter in einem int- oder bool-Feld
+    wirft deshalb ValidationError. Der wird in toolbox.py und in
+    __init__.py:199 stillschweigend geschluckt, das ganze Manifest fällt dann
+    auf Defaults zurück. Platzhalter bleiben str-Feldern vorbehalten.
+    """
+
+    # Prompt-Auslieferung (execution_engine._read_vfs_guide / _build_vfs_state_block)
+    vfs_guide_max_chars: int = Field(
+        default=60000,
+        description="Deckel für /vfs_guide.md im statischen Systemprompt, in Zeichen. 0 = nicht ausliefern. Env: ISAA_VFS_GUIDE_MAX_CHARS",
+    )
+    vfs_context_max_chars: int = Field(
+        default=80000,
+        description="Deckel für VFS-Baum, active_rules.md und offene Dateien im dynamischen Systemprompt, in Zeichen. 0 = nicht ausliefern. Env: ISAA_VFS_CONTEXT_MAX_CHARS",
+    )
+
+    # Notiz-Gate (execution_engine._notes_gate_message)
+    notes_gate: bool = Field(
+        default=True,
+        description="final_answer einmal ablehnen, wenn die checklist.md des Laufs noch offene Punkte hat. Env: ISAA_NOTES_GATE",
+    )
+    notes_gate_min_iterations: int = Field(
+        default=6,
+        description="Ab so vielen Iterationen gilt ein Lauf als mehrschrittig und das Notiz-Gate greift. Env: ISAA_NOTES_GATE_MIN_ITERATIONS",
+    )
+    notes_gate_min_tool_calls: int = Field(
+        default=8,
+        description="Alternative Schwelle für mehrschrittig, gemessen an den benutzten Tools. Env: ISAA_NOTES_GATE_MIN_TOOL_CALLS",
+    )
+
+    # Bestehende Schalter, hier sichtbar gemacht statt nur per Env erreichbar
+    taskmap_preinject: bool = Field(
+        default=True,
+        description="Task-Map-Vorkontext beim Runstart injizieren. Env: ISAA_TASKMAP_PREINJECT",
+    )
+    max_dynamic_tools: int = Field(
+        default=10,
+        description="Anzahl dynamischer Tool-Slots pro Lauf. Env: MAX_DYNAMIC_TOOLS",
+    )
+
+
 class IsaaConfig(BaseModel):
     """ISAA self-agent configuration (only loaded when isaa is installed)."""
     enabled: bool = Field(default=True)
@@ -724,6 +773,7 @@ class IsaaConfig(BaseModel):
     mcp: IsaaMCPConfig = Field(default_factory=IsaaMCPConfig)
     a2a: IsaaA2AConfig = Field(default_factory=IsaaA2AConfig)
     ocr: IsaaOCRConfig = Field(default_factory=IsaaOCRConfig)
+    engine: IsaaEngineConfig = Field(default_factory=IsaaEngineConfig)
     observability: IsaaObservabilityConfig = Field(default_factory=IsaaObservabilityConfig)
 
 

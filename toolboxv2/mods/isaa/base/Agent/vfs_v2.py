@@ -2897,11 +2897,22 @@ Nutzen für: ToolBox-Verwaltung, System-Config, Git-Operationen auf dem Host.
 
         return "\n".join(parts) if not as_list else parts
 
-    def build_context_string(self) -> str:
-        """Build VFS context string for LLM"""
-        if not self._dirty and hasattr(self, '_context_cache'):
+    def build_context_string(self, exclude: set | None = None) -> str:
+        """Build VFS context string for LLM.
+
+        Args:
+            exclude: Pfade, die nicht mit ausgegeben werden. Wird z.B. fuer
+                /vfs_guide.md benutzt, das im statischen (cachebaren) Teil der
+                System-Prompt ausgeliefert wird und hier nur Tokens doppeln
+                wuerde. Der Cache greift nur im Default-Fall (exclude=None),
+                damit gefilterte Ergebnisse nie den ungefilterten Cache
+                ueberschreiben.
+        """
+        if exclude is None and not self._dirty and hasattr(self, '_context_cache'):
             return self._context_cache
-        self._dirty = False
+        if exclude is None:
+            self._dirty = False
+        exclude = exclude or set()
         parts = self.file_tree_string(as_list=True)
 
         # Order: active_rules, then others
@@ -2914,6 +2925,8 @@ Nutzen für: ToolBox-Verwaltung, System-Config, Git-Operationen auf dem Host.
                 ordered.append((path, f))
 
         for path, f in ordered:
+            if path in exclude:
+                continue
             if f.state == "open" and (not isinstance(f, VFSFile) or f.is_loaded):
                 lines = f.content.split("\n")
                 end = f.view_end if f.view_end > 0 else len(lines)
@@ -2945,7 +2958,8 @@ Nutzen für: ToolBox-Verwaltung, System-Config, Git-Operationen auf dem Host.
         if closed_count > 0:
             parts.append(f"\n📋 {closed_count} closed files available")
         result = "\n".join(parts)
-        self._context_cache = result
+        if not exclude:
+            self._context_cache = result
         return result
 
     def _build_tree_string(

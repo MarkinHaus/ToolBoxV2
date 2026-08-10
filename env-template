@@ -123,6 +123,14 @@ WITH_GOOGLE_TOOLS="false"
 WITH_CODE_TOOLS="true"
 MAX_DYNAMIC_TOOLS=10                         # Max dynamic tools per agent
 
+# --- ISAA Engine (Override zu isaa.engine im tb-manifest.yaml) ---
+# Leer lassen = Manifest-Wert gilt. Gesetzt = gewinnt gegen das Manifest.
+ISAA_VFS_GUIDE_MAX_CHARS=                    # Deckel /vfs_guide.md im statischen Prompt, Zeichen (0 = aus)
+ISAA_VFS_CONTEXT_MAX_CHARS=                  # Deckel VFS-Baum + Rules + offene Dateien im dynamischen Prompt, Zeichen (0 = aus)
+ISAA_NOTES_GATE=                             # "true" = final_answer einmal ablehnen bei offener checklist.md
+ISAA_NOTES_GATE_MIN_ITERATIONS=              # ab wie vielen Iterationen das Notiz-Gate greift
+ISAA_NOTES_GATE_MIN_TOOL_CALLS=              # alternative Schwelle, gemessen an benutzten Tools
+
 # --- Sub-Agent Limits ---
 SUB_AGENT_MAX_TOKENS=512000                  # Token budget for sub-agents
 SUB_AGENT_MAX_ITERATIONS=120                 # Max iterations for sub-agents

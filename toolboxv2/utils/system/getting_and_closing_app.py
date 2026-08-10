@@ -1,5 +1,6 @@
 import asyncio
 import atexit
+import logging
 import os
 import sys
 import time
@@ -26,14 +27,14 @@ def override_main_app(app):
 
 def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=False) -> AppType:
     global registered_apps
-    # name = None
-    # inspect caller
-    # from inspect import getouterframes, currentframe
-    # print(f"get app requested from: {getouterframes(currentframe(), 2)[1].filename}::{getouterframes(currentframe(), 2)[1].lineno}")
 
     # print(f"get app requested from: {from_} withe name: {name}")
     logger = get_logger()
-    logger.info(Style.GREYBG(f"get app requested from: {from_}"))
+    caller_src = "set debug mod"
+    if from_ is None and logger.level >= logging.DEBUG:
+        from inspect import getouterframes, currentframe
+        caller_src = f"{getouterframes(currentframe(), 2)[1].filename}::{getouterframes(currentframe(), 2)[1].lineno}"
+    logger.info(Style.GREYBG(f"get app requested from: {from_ if from_ is not None else caller_src}"))
     if registered_apps[0] is not None:
         return registered_apps[0]
 

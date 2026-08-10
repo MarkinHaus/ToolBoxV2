@@ -13,6 +13,7 @@ Author: FlowAgent V2
 import asyncio
 import inspect
 import json
+import re
 import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -23,6 +24,26 @@ from functools import wraps
 # =============================================================================
 # DATA STRUCTURES
 # =============================================================================
+
+# Wortgrenzen-Match fuer die Flag-Inferenz. Vorher wurde per Substring gesucht:
+# "set" traf in "reset context", "reset" ebenso, dadurch bekam das reine
+# Ansichts-Tool vfs_view write=True, dangerous=True, requires_confirmation=True.
+_WORD_RE_CACHE: dict = {}
+
+
+def _has_word(text: str, word: str) -> bool:
+    """True wenn word als eigenstaendiges Wort in text vorkommt.
+
+    Der Unterstrich zaehlt bewusst als Trenner, nicht als Wortbestandteil:
+    in Toolnamen wie vfs_view ist "view" das Wort. "set" in "reset" trifft
+    trotzdem nicht, weil davor ein Buchstabe steht.
+    """
+    rx = _WORD_RE_CACHE.get(word)
+    if rx is None:
+        rx = re.compile(r"(?<![a-z0-9])" + re.escape(word) + r"(?![a-z0-9])")
+        _WORD_RE_CACHE[word] = rx
+    return bool(rx.search(text))
+
 
 @dataclass
 class ToolEntry:
@@ -82,29 +103,44 @@ class ToolEntry:
         self._infer_flags()
 
     def _infer_flags(self):
-        """Infer flags from tool name and description"""
+        """Infer flags from tool name and description.
+
+        Explizit gesetzte Flags haben Vorrang: jeder Block prueft vorher,
+        ob der Key schon in self.flags steht.
+        """
         name_lower = self.name.lower()
         desc_lower = self.description.lower()
 
+        def _any(keywords) -> bool:
+            return any(
+                _has_word(name_lower, kw) or _has_word(desc_lower, kw)
+                for kw in keywords
+            )
+
         # Read flag
         if 'read' not in self.flags:
-            read_keywords = ['get', 'list', 'fetch', 'query', 'search', 'find', 'show', 'view']
-            self.flags['read'] = any(kw in name_lower or kw in desc_lower for kw in read_keywords)
+            read_keywords = ['read', 'get', 'list', 'fetch', 'query', 'search',
+                             'find', 'show', 'view', 'inspect']
+            self.flags['read'] = _any(read_keywords)
 
-        # Write flag
+        # Write flag ('write' fehlte hier, deshalb galt vfs_shell als read-only)
         if 'write' not in self.flags:
-            write_keywords = ['create', 'update', 'set', 'add', 'insert', 'modify', 'change']
-            self.flags['write'] = any(kw in name_lower or kw in desc_lower for kw in write_keywords)
+            write_keywords = ['write', 'create', 'update', 'set', 'add', 'insert',
+                              'modify', 'change', 'edit', 'patch', 'append',
+                              'rename', 'move']
+            self.flags['write'] = _any(write_keywords)
 
         # Save/Permanent write flag
         if 'save_write' not in self.flags:
             save_keywords = ['save', 'store', 'persist', 'permanent', 'commit']
-            self.flags['save_write'] = any(kw in name_lower or kw in desc_lower for kw in save_keywords)
+            self.flags['save_write'] = _any(save_keywords)
 
-        # Dangerous flag
+        # Dangerous flag ('reset' und 'clear' raus: beide kommen in harmlosen
+        # Kontext-Beschreibungen vor, z.B. "reset context" bei vfs_view)
         if 'dangerous' not in self.flags:
-            danger_keywords = ['delete', 'remove', 'drop', 'destroy', 'purge', 'clear', 'reset']
-            self.flags['dangerous'] = any(kw in name_lower or kw in desc_lower for kw in danger_keywords)
+            danger_keywords = ['delete', 'remove', 'drop', 'destroy', 'purge',
+                               'wipe', 'uninstall']
+            self.flags['dangerous'] = _any(danger_keywords)
 
         if 'guaranteed_healthy' not in self.flags:
             self.flags['guaranteed_healthy'] = False

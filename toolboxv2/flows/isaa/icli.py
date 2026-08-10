@@ -1425,7 +1425,6 @@ def _bar_fet(used: int, limit: int, width: int = 44) -> str:
         f"<style fg='{PTColors.GREY}'>{'░' * empty}</style>"
     )
 
-
 def show_xray_v3(data: dict):
     sid = data['session_id']
     model = data['model']
@@ -1437,31 +1436,52 @@ def show_xray_v3(data: dict):
     meta = data['meta']
     free = limit - used
 
-    BAR_W = 20
+    # Ratios & Media holen
+    offload_pct = data.get("immediate_offload_ratio", 0.70)
+    max_pct = data.get("max_context_ratio", 0.85)
+    media_tokens = data.get("media_tokens", 0)
+    media_count = data.get("media_count", 0)
 
-    def mini_bar(tokens: int, total: int, width: int = BAR_W) -> str:
-        filled = int((tokens / total) * width) if total else 0
-        return (
-            f"<style fg='{PTColors.CYAN}'>{'▓' * filled}</style>"
-            f"<style fg='{PTColors.GREY}'>{'░' * (width - filled)}</style>"
-        )
+    # ── THEORETISCHES MAXIMUM (Wenn ALLES geladen wäre) ──
+    # Wir addieren: Base System Prompt + VFS + All Skills + All Tools + All Rules + History + Last Input
+    max_potential = (
+        sys_det["Base System Prompt"] +
+        sys_det["VFS Content"] +
+        sys_det["All Skills (Volume)"] +
+        sys_det["All Tools (Volume)"] +
+        sys_det["All Rules (Volume)"] +
+        bd["History (Perm)"] +
+        bd["History (Work)"] +
+        bd["Last Input"]
+    )
 
-    def sub_row(label: str, tokens: int, color: str = PTColors.GREY, note: str = ""):
-        """Eingerückte Sub-Zeile – korrekt an Tabellenspalten ausgerichtet."""
-        PREFIX = "  └ "  # 4 Zeichen
-        pad = max(0, NAME_W - len(PREFIX) - len(label))
-        empty_bar = " " * (BAR_W + 2)
-        note_html = (f" <style fg='{PTColors.GREY}'>{esc(note)}</style>" if note else "")
-        c_print(HTML(
-            f"  <style fg='{PTColors.GREY}'>{PREFIX}{esc(label)}{' ' * pad}</style>{sep}"
-            f"{empty_bar}{sep}"
-            f"<style fg='{color}'>{tokens:>9,}</style>{sep}"
-            f"<style fg='{PTColors.GREY}'>{_pct(tokens, used):>9}</style>"
-            f"{note_html}"
-        ))
+    BAR_W = 50
+
+    # Fortschrittsbalken mit expliziter Einzeichnung der Kompressions-Trigger
+    def render_ratio_bar(used_t: int, limit_t: int, w: int = BAR_W) -> str:
+        pct = used_t / limit_t if limit_t else 0
+        filled = int(pct * w)
+        offload_pos = int(offload_pct * w)
+        max_pos = int(max_pct * w)
+
+        chars = []
+        for i in range(w):
+            if i < filled:
+                chars.append(
+                    f"<style fg='{PTColors.GREEN if pct < offload_pct else (PTColors.YELLOW if pct < max_pct else PTColors.RED)}'>█</style>")
+            else:
+                chars.append(f"<style fg='{PTColors.GREY}'>░</style>")
+
+            # Trigger visuell in den Balken stanzen
+            if i == offload_pos:
+                chars[i] = f"<style fg='{PTColors.ZEN_CYAN}'>⧉ </style>"  # Offload Point
+            elif i == max_pos:
+                chars[i] = f"<style fg='{PTColors.ZEN_RED}'>⚡</style>"  # Compression Point
+
+        return "".join(chars)
 
     # ── HEADER ──────────────────────────────────────────────────────────────
-    print_box_header("CONTEXT X-RAY", icon="🔍")
+    print_box_header("CONTEXT X-RAY V4 (Unified)", icon="🔍")
     c_print(HTML(
         f"  <style fg='{PTColors.GREY}'>Session:</style> "
         f"<style fg='{PTColors.BRIGHT_WHITE}'><b>{esc(sid)}</b></style>   "
@@ -1473,92 +1493,108 @@ def show_xray_v3(data: dict):
     c_print(HTML(""))
 
     # ── HAUPT-BAR ───────────────────────────────────────────────────────────
-    c_print(HTML(f"  {_bar_fet(used, limit, width=50)}"))
+    c_print(HTML(f"  {render_ratio_bar(used, limit, BAR_W)}"))
     c_print(HTML(
         f"  <style fg='{PTColors.BRIGHT_WHITE}'><b>{used:,}</b></style>"
         f"<style fg='{PTColors.GREY}'> / {limit:,} Token"
-        f"   ·   {_pct(used, limit)} belegt"
-        f"   ·   {free:,} frei ({_pct(free, limit)})</style>"
+        f"   ·   {used / limit * 100:.1f}% belegt"
+        f"   ·   {free:,} frei ({free / limit * 100:.1f}%)</style>"
+    ))
+
+    # ── TRIGGER ANZEIGE ──
+    c_print(HTML(
+        f"  <style fg='{PTColors.ZEN_CYAN}'>⧉ Offload-Trigger:</style> <style fg='{PTColors.WHITE}'>{int(limit * offload_pct):,} ({offload_pct * 100:.0f}%)</style>  "
+        f"  <style fg='{PTColors.ZEN_RED}'>⚡ Kompressions-Trigger:</style> <style fg='{PTColors.WHITE}'>{int(limit * max_pct):,} ({max_pct * 100:.0f}%)</style>"
     ))
     c_print(HTML(""))
 
     # ── TABELLE ─────────────────────────────────────────────────────────────
-    NAME_W = 22
-    cols = [("KOMPONENTE", ""), ("MINI-BAR", ""), ("TOKENS", ""), ("ANTEIL", "")]
-    widths = [NAME_W, BAR_W + 2, 9, 9]
+    NAME_W = 24
+    cols = [("KOMPONENTE", ""), ("STEUERUNG", ""), ("TOKENS", ""), ("ANTEIL", "")]
+    widths = [NAME_W, 20, 11, 9]
     print_table_header(cols, widths)
 
     sep = f" <style fg='{PTColors.GREY}'>│</style> "
 
-    def main_row(name: str, tokens: int, name_color: str = PTColors.WHITE,
-                 tok_color: str = PTColors.CYAN):
+    def main_row(name: str, tokens: int, name_color: str = PTColors.WHITE, tok_color: str = PTColors.CYAN, extra=""):
         safe = esc(name)
         pad = max(0, NAME_W - len(name))
-        bar_h = mini_bar(tokens, used)
-        tok_s = f"{tokens:>9,}"
+        tok_s = f"{tokens:>11,}"
         pct_s = f"{_pct(tokens, used):>9}"
+        extra_padded = f"{extra:<20}"
         c_print(HTML(
             f"  <style fg='{name_color}'>{safe}{' ' * pad}</style>{sep}"
-            f"{bar_h}  {sep}"
+            f"<style fg='{PTColors.GREY}'>{extra_padded}</style>{sep}"
             f"<style fg='{tok_color}'>{tok_s}</style>{sep}"
             f"<style fg='{PTColors.YELLOW}'>{pct_s}</style>"
         ))
 
-    # System Prompt + Sub-Details
-    skills_vol = sys_det["All Skills (Volume)"]
-    skills_note = (f"{meta['active_skill_count']} aktiv · vol {skills_vol:,}" if skills_vol else "")
+    def sub_row(label: str, tokens: int, color: str = PTColors.GREY, note: str = ""):
+        PREFIX = "  └ "
+        pad = max(0, NAME_W - len(PREFIX) - len(label))
+        empty_bar = " " * 20
+        note_html = (f" <style fg='{PTColors.GREY}'>{esc(note)}</style>" if note else "")
+        c_print(HTML(
+            f"  <style fg='{PTColors.GREY}'>{PREFIX}{esc(label)}{' ' * pad}</style>{sep}"
+            f"{empty_bar}{sep}"
+            f"<style fg='{color}'>{tokens:>11,}</style>{sep}"
+            f"<style fg='{PTColors.GREY}'>{_pct(tokens, used):>9}</style>"
+            f"{note_html}"
+        ))
+
+    # System Prompts & Sub-Details
     main_row("System Prompt Total", bd["System Prompt Total"])
     sub_row("Base System Prompt", sys_det["Base System Prompt"])
     sub_row("VFS Content", sys_det["VFS Content"])
     if sys_det["Active Skills"] > 0:
-        sub_row("Active Skills", sys_det["Active Skills"],
-                color=PTColors.ZEN_CYAN, note=skills_note)
-    elif skills_vol > 0:
-        sub_row("Skills (inaktiv)", 0, note=f"vol {skills_vol:,}")
+        sub_row("Active Skills (gematcht)", sys_det["Active Skills"], color=PTColors.ZEN_CYAN,
+                note=f"({meta['active_skill_count']} aktiv)")
 
-    # Active Tools – Info als kompakte Anmerkungszeile
+    # Active Tools
     tools_note = f"{meta['tool_count']} defs · {meta['dynamic_tools_loaded']} dyn"
-    main_row("Active Tools", bd["Active Tools"], tok_color=PTColors.ZEN_AMBER)
-    c_print(HTML(f"  <style fg='{PTColors.GREY}'>  └ {tools_note}</style>"))
+    main_row("Active Tools", bd["Active Tools"], tok_color=PTColors.ZEN_AMBER, extra=tools_note)
 
-    # History getrennt – msg_count als kompakte Anmerkungszeile
-    main_row("History (Perm)", bd["History (Perm)"], tok_color=PTColors.CYAN)
-    c_print(HTML(f"  <style fg='{PTColors.GREY}'>  └ {meta['msg_count']} msgs</style>"))
-    main_row("History (Work)", bd["History (Work)"], tok_color=PTColors.CYAN)
-    c_print(HTML(f"  <style fg='{PTColors.GREY}'>  └ {meta['w_msg_count']} msgs</style>"))
+    # History
+    main_row("History (Permanent)", bd["History (Perm)"], tok_color=PTColors.CYAN, extra="RAG Basis")
+    main_row("History (Working)", bd["History (Work)"], tok_color=PTColors.CYAN, extra=f"{meta['w_msg_count']} msgs")
+
+    # Media-Zählung (separat aufgeschlüsselt)
+    if media_tokens > 0:
+        main_row("Multimedia (Vision)", media_tokens, name_color=PTColors.ZEN_GREEN, tok_color=PTColors.ZEN_GREEN,
+                 extra=f"({media_count} Bilder geladen)")
 
     # Last Input
-    main_row("Last Input", bd["Last Input"],
-             name_color=PTColors.ZEN_DIM, tok_color=PTColors.GREY)
+    main_row("Last Input", bd["Last Input"], name_color=PTColors.ZEN_DIM, tok_color=PTColors.GREY)
 
     print_separator()
 
-    # ── TOTALS + SAVINGS ────────────────────────────────────────────────────
-    hist_total = bd["History (Perm)"] + bd["History (Work)"]
-    print_status(
-        f"Skills: {meta['active_skill_count']} aktiv"
-        f"   Tools: {meta['tool_count']} defs · {meta['dynamic_tools_loaded']} dyn"
-        f"   Msgs: {meta['msg_count']}",
-        "info",
-    )
+    # ── TOTALS, CAPACITIES & THEORETICAL MAX ──
+    capacity_pct = (max_potential / limit * 100) if limit else 0
+    cap_color = PTColors.GREEN if capacity_pct < 100 else PTColors.RED
 
-    # Warnings
-    usage_pct = used / limit * 100 if limit else 0
-    if usage_pct > 85:
+    c_print(HTML(
+        f"  <style fg='{PTColors.GREY}'>Theoretische Maximalkapazität (wenn alles geladen wäre):</style>\n"
+        f"  <style fg='{cap_color}'><b>{max_potential:,}</b></style> <style fg='{PTColors.GREY}'>/ {limit:,} Tokens ({capacity_pct:.1f}% des Limits)</style>"
+    ))
+    c_print(HTML(
+        f"  <style fg='{PTColors.GREY}'>  ↳ Ungeladene Skills (Inaktiv): {sys_det['All Skills (Volume)'] - sys_det['Active Skills']:,} Tokens</style>\n"
+        f"  <style fg='{PTColors.GREY}'>  ↳ Ungeladene Tools: {sys_det['All Tools (Volume)'] - bd['Active Tools']:,} Tokens</style>\n"
+        f"  <style fg='{PTColors.GREY}'>  ↳ Gesamte Regelsätze: {sys_det['All Rules (Volume)']:,} Tokens</style>"
+    ))
+
+    print_separator()
+
+    # Warnings & Tips
+    if usage_pct := (used / limit * 100) > 85:
         print_status("KRITISCHE AUSLASTUNG – 'shift_focus' ausführen!", "error")
     elif sys_det["VFS Content"] > 4000:
+        print_status(f"Hohe VFS-Last ({sys_det['VFS Content']:,} tokens) – 'vfs_close' empfohlen", "warning")
+    elif max_potential > limit:
         print_status(
-            f"Hohe VFS-Last ({sys_det['VFS Content']:,} tokens) – 'vfs_close' empfohlen",
-            "warning",
-        )
-    elif hist_total > 6000:
-        print_status(
-            f"Langer Kontext ({hist_total:,} History-Tokens) – Zusammenfassung empfohlen",
-            "warning",
-        )
+            f"Achtung: Maximales Volumen ({max_potential:,} Tokens) übersteigt das Modell-Limit! Slot-Eviction ist zwingend aktiv.",
+            "info")
 
     print_box_footer()
-
 
 # =============================================================================
 # CONSTANTS & VERSION
@@ -4951,7 +4987,7 @@ class ISAA_Host:
 
         @kb.add("f8")
         def _(event):
-            """F8: Cancel the focused task — isolated, does not kill the CLI."""
+            """F8: Cancel the focused task"""
             if not self._focused_task_id:
                 return
             exc = self.all_executions.get(self._focused_task_id)

@@ -135,6 +135,14 @@ app:
   profile: developer
   log_level: INFO
 isaa:
+  engine:
+    vfs_guide_max_chars: 6000
+    vfs_context_max_chars: 8000
+    notes_gate: false
+    notes_gate_min_iterations: 3
+    notes_gate_min_tool_calls: 4
+    taskmap_preinject: false
+    max_dynamic_tools: 10
   embedding:
     mode: ${TB_EMBED_LOCAL:auto}
     local_model: ${TB_EMBED_LOCAL_MODEL:nomic-ai/nomic-embed-text-v1.5-Q}

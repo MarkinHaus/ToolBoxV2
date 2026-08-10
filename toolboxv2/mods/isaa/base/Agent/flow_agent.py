@@ -3800,7 +3800,9 @@ class FlowAgent:
             {
                 "tool_func": vfs_shell_fn,
                 "name": "vfs_shell",
-                "category": ["vfs", "shell"],
+                # "core" = dauerhaft im API-Schema, ohne load_tools aufrufbar.
+                # Ersetzt die verrottete VFS_TOOL_NAMES-Liste in execution_engine.
+                "category": ["core", "vfs", "shell"],
                 "description": (
                     "Unix-like shell for VFS: ls cat head tail wc stat tree "
                     "find grep touch write edit echo mkdir rm mv cp close exec. "
@@ -3810,7 +3812,7 @@ class FlowAgent:
             {
                 "tool_func": vfs_view_fn,
                 "name": "vfs_view",
-                "category": ["vfs", "context"],
+                "category": ["core", "vfs", "context"],
                 "description": (
                     "Open / scroll a file in the context window. "
                     "Use scroll_to= to jump to a pattern, close_others=True to "
@@ -3834,7 +3836,7 @@ class FlowAgent:
             {
                 "tool_func": search_vfs_fn,
                 "name": "search_vfs",
-                "category": ["vfs", "discovery", "context"],
+                "category": ["core", "vfs", "discovery", "context"],
                 "description": (
                     "Search the Virtual File System (VFS) for files or code snippets matching a query.\n"
                     "\n"
@@ -4094,19 +4096,15 @@ class FlowAgent:
     ) -> dict:
         """
         Analysiert den *exakten* Token-Verbrauch durch Simulation eines echten Engine-Schritts.
-        Schlüsselt System-Prompt, Tools und History präzise auf.
+        Schlüsselt System-Prompt, Tools, History, Medien und theoretische Maximalkapazitäten präzise auf.
         """
-
         target_session = session_id or self.active_session or "default"
         session = await self.session_manager.get_or_create(target_session)
-
-        # 1. Engine holen (Wichtig für exakten Prompt-Bau inkl. Rules & Sub-Agent Constraints)
         engine = self._get_execution_engine()
 
         ctx = None
         if execution_id:
             ctx = engine.get_execution(execution_id)
-        # Versuch, den aktiven Kontext wiederherzustellen oder einen neuen zu simulieren
 
         if ctx is None:
             if engine._active_executions:
@@ -4118,36 +4116,24 @@ class FlowAgent:
         if not ctx:
             from toolboxv2.mods.isaa.base.Agent.execution_engine import ExecutionContext
             ctx = ExecutionContext(session_id=target_session)
-            # Simuliere Start-Zustand für korrekte Tool-Berechnung
-            # (Relevanz-Berechnung triggern, damit Dynamic Tools korrekt simuliert werden)
             try:
                 engine._calculate_tool_relevance(ctx, "status check")
                 engine._preload_skill_tools(ctx, "status check")
             except Exception:
-                pass  # Fallback falls SkillsManager noch nicht bereit
+                pass
 
-        # 2. Exakte Komponenten generieren (DRY RUN)
-
-        # A. System Prompt (Der echte String, den die Engine bauen würde)
         sys_prompt_content = engine._build_static_system_prompt(ctx, session)
         sys_prompt_content += engine._build_dynamic_system_prompt(ctx)
 
-        # B. History-Komponenten
         perm_history = session.get_history_for_llm(last_n=6)
         work_history = ctx.working_history
 
-        # C. Tools (Das kritische Delta: Exakte API-Definition holen)
         active_tools = engine._get_tool_definitions(ctx)
-
-        # 3. Message Stack rekonstruieren (Engine-Logik)
         final_messages = [{"role": "system", "content": sys_prompt_content}] + perm_history
 
-        # Wenn Working History existiert, ist der System Prompt dort meist Index 0.
-        # Wir ersetzen ihn durch den FRISCHEN System Prompt (mit aktuellen VFS-Daten).
         if work_history and len(work_history) > 0 and work_history[0].get('role') == 'system':
             final_messages.extend(work_history[1:])
 
-        # 4. Präzises Token Counting mit Overhead
         model = self.amd.fast_llm_model.split("/")[-1]
         try:
             from toolboxv2.mods.isaa.base.llm_router.model_info import ctx_limit
@@ -4155,25 +4141,32 @@ class FlowAgent:
         except:
             context_limit = 128000
 
+        # Einheitlicher iCLI-weiter Divisor (3.7)
         def count(msgs, tools=None):
-            return len(str(msgs)) // 3.7 + len(str(tools or "")) // 3.7
+            return int((len(str(msgs)) + len(str(tools or ""))) // 3.7)
 
-        # -- Deep Dive Analyse der System-Komponenten --
-        # Wir zerlegen den System-Prompt, um zu sehen, was Platz frisst
         vfs_content = session.build_vfs_context()
         base_sys = self.amd.get_system_message()
         skills_content = ""
         if ctx.matched_skills and hasattr(engine, 'skills_manager'):
             skills_content = engine.skills_manager.build_skill_prompt_section(ctx.matched_skills)
 
-        # 5. Metriken berechnen
-        # System-Prompt gesamt & Sub-Komponenten
-        t_sys_total = count([{"role": "system", "content": sys_prompt_content}])
-        t_vfs = count([{"role": "system", "content": vfs_content}]) if vfs_content else 0
-        t_base = count([{"role": "system", "content": base_sys}]) if base_sys else 0
-        t_skills = count([{"role": "system", "content": skills_content}]) if skills_content else 0
+        # ── 1. Medien-Token-Kosten isolieren ──
+        media_tokens = 0
+        media_count = 0
+        for msg in final_messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if part.get("type") == "image_url":
+                        media_tokens += 765  # Standard High-Detail Vision Token
+                        media_count += 1
+            elif isinstance(content, str) and "[media:" in content:
+                matches = content.count("[media:")
+                media_tokens += matches * 765
+                media_count += matches
 
-        # Vollständiges Skill-Volumen (alle, nicht nur gematchte)
+        # ── 2. Gesamte Skill-Datenmenge (Inaktive + Aktive) ──
         t_skills_all = 0
         try:
             if hasattr(engine, 'skills_manager') and engine.skills_manager:
@@ -4185,21 +4178,41 @@ class FlowAgent:
         except Exception:
             pass
 
-        # Tools
+        # ── 3. Gesamte Tool-Datenmenge (Wenn ALLES registrierte geladen wäre) ──
+        t_tools_all = 0
+        try:
+            all_registered_tools = self.tool_manager.get_all_litellm()
+            t_tools_all = count([], tools=all_registered_tools)
+        except Exception:
+            pass
+
+        # ── 4. Gesamte Regeln-Datenmenge ──
+        t_rules_all = 0
+        try:
+            if hasattr(session, 'rule_set') and session.rule_set:
+                t_rules_all = count([{"role": "system", "content": str(session.rule_set.to_checkpoint())}])
+        except Exception:
+            pass
+
+        # Kern-Komponenten berechnen
+        t_sys_total = count([{"role": "system", "content": sys_prompt_content}])
+        t_vfs = count([{"role": "system", "content": vfs_content}]) if vfs_content else 0
+        t_base = count([{"role": "system", "content": base_sys}]) if base_sys else 0
+        t_skills = count([{"role": "system", "content": skills_content}]) if skills_content else 0
         t_tools = count([], tools=active_tools)
 
-        # History: Perm und Work getrennt zählen
         work_slice = (work_history[1:]
                       if work_history and work_history[0].get('role') == 'system'
                       else work_history or [])
         t_hist_perm = count(perm_history)
         t_hist_work = count(work_slice)
-
-        # Letzte Nachricht (Next / Last Input)
         t_last = count(perm_history[-1:]) if perm_history else 0
-
-        # Total (Tokenizer-Fusion kann von Summe abweichen)
         t_total = count(final_messages, tools=active_tools)
+
+        # ── 5. Compression / Offload Ratios aus der Engine-Config holen ──
+        cfg = getattr(ctx, "context_config", None)
+        max_context_ratio = getattr(cfg, "max_context_ratio", 0.85) if cfg else 0.85
+        immediate_offload_ratio = getattr(cfg, "immediate_offload_ratio", 0.70) if cfg else 0.70
 
         metrics = {
             "session_id": target_session,
@@ -4207,6 +4220,10 @@ class FlowAgent:
             "t_total": t_total,
             "t_last": t_last,
             "limit": context_limit,
+            "max_context_ratio": max_context_ratio,
+            "immediate_offload_ratio": immediate_offload_ratio,
+            "media_tokens": media_tokens,
+            "media_count": media_count,
             "breakdown": {
                 "System Prompt Total": t_sys_total,
                 "Active Tools": t_tools,
@@ -4219,6 +4236,8 @@ class FlowAgent:
                 "VFS Content": t_vfs,
                 "Active Skills": t_skills,
                 "All Skills (Volume)": t_skills_all,
+                "All Tools (Volume)": t_tools_all,
+                "All Rules (Volume)": t_rules_all,
             },
             "meta": {
                 "tool_count": len(active_tools),

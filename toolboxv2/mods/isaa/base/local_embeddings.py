@@ -105,7 +105,16 @@ def _data_dir() -> Path:
     except Exception:
         return Path.home() / ".toolboxv2"
 
+___res = [None]
+def min_cash(func):
+    def _():
+        if ___res[0] is None:
+            ___res[0] = func()
 
+        return ___res[0]
+    return _
+
+@min_cash
 def _embedding_manifest():
     """Return app.manifest.isaa.embedding or None (isaa may be absent)."""
     try:

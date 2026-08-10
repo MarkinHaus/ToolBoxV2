@@ -265,7 +265,118 @@ SKILL_DISCOVERY_TOOLS = [
 ]
 
 # VFS Tools - always available for file navigation (part of static)
-VFS_TOOL_NAMES = ["vfs_read", "vfs_write", "vfs_list", "vfs_navigate", "vfs_control"]
+# Kategorie, die ein Session-Tool als "immer sichtbar" markiert.
+# Frueher stand hier VFS_TOOL_NAMES, eine Namensliste. Die ist beim Umbau auf
+# vfs_shell/vfs_view still verrottet: keiner der gelisteten Namen existierte
+# noch, dadurch landete kein einziges Session-Tool im API-Schema.
+# Die Kategorie wird bei der Registrierung vergeben (flow_agent.init_session_tools)
+# und ueberlebt Umbenennungen.
+CORE_TOOL_CATEGORY = "core"
+
+
+# Pfad des VFS-Handbuchs. Es ist pro Session bytestabil (wird einmal beim
+# Session-Init aus den Sandbox/Shell-Flags gebaut) und gehoert deshalb in den
+# statischen, cachebaren Teil der System-Prompt.
+VFS_GUIDE_PATH = "/vfs_guide.md"
+
+# Deckel fuer die VFS-Auslieferung stehen in IsaaEngineConfig
+# (isaa.engine.vfs_guide_max_chars / vfs_context_max_chars im tb-manifest.yaml,
+# Env ISAA_VFS_GUIDE_MAX_CHARS / ISAA_VFS_CONTEXT_MAX_CHARS). Beide in Zeichen,
+# nicht Token, weil der Schnitt auf Zeilengrenzen passiert.
+
+
+NOTES_ROOT = "/notes/"
+
+# Laufzeit-Konfiguration der Engine. Frueher standen hier os.getenv-Konstanten
+# auf Modulebene, ausgewertet beim Import, also bevor das tb-manifest.yaml
+# geladen war, und in keiner Config sichtbar. Jetzt: Manifest als Quelle,
+# Env als Override, beides nur LESEND. Nichts wird nach os.environ oder .env
+# zurueckgeschrieben, dafuer ist ManifestConverter.append_missing_env_vars
+# zustaendig und das fasst ausschliesslich fehlende Pflichtvariablen an.
+_ENGINE_CFG = None
+
+# Feldname in IsaaEngineConfig -> Env-Variable. Explizit, damit ein Rename im
+# Schema nicht still eine Env-Variable mit umbenennt.
+_ENGINE_ENV_OVERRIDES = {
+    "vfs_guide_max_chars": "ISAA_VFS_GUIDE_MAX_CHARS",
+    "vfs_context_max_chars": "ISAA_VFS_CONTEXT_MAX_CHARS",
+    "notes_gate": "ISAA_NOTES_GATE",
+    "notes_gate_min_iterations": "ISAA_NOTES_GATE_MIN_ITERATIONS",
+    "notes_gate_min_tool_calls": "ISAA_NOTES_GATE_MIN_TOOL_CALLS",
+    "taskmap_preinject": "ISAA_TASKMAP_PREINJECT",
+    "max_dynamic_tools": "MAX_DYNAMIC_TOOLS",
+}
+
+
+def get_engine_config(refresh: bool = False):
+    """IsaaEngineConfig: Manifest als Basis, Env als Override.
+
+    Vorrang Env > Manifest > Schema-Default. Faellt auf die Schema-Defaults
+    zurueck, wenn kein Manifest geladen ist. Muster wie get_ocr_config() in
+    mods/isaa/extras/ocr_engine.py.
+    """
+    global _ENGINE_CFG
+    if _ENGINE_CFG is not None and not refresh:
+        return _ENGINE_CFG
+
+    from toolboxv2.utils.manifest.schema import IsaaEngineConfig
+
+    base = None
+    try:
+        m = getattr(get_app(), "manifest", None)
+        if m is not None and getattr(m, "isaa", None) is not None:
+            base = getattr(m.isaa, "engine", None)
+    except Exception:
+        base = None
+    if base is None:
+        base = IsaaEngineConfig()
+
+    overrides = {}
+    for field_name, env_name in _ENGINE_ENV_OVERRIDES.items():
+        raw = os.getenv(env_name)
+        if raw is None or raw == "":
+            continue
+        overrides[field_name] = raw  # pydantic castet "12" / "true" typgerecht
+
+    if overrides:
+        try:
+            base = base.model_copy(update=IsaaEngineConfig.model_validate(
+                {**base.model_dump(), **overrides}
+            ).model_dump())
+        except Exception as e:
+            get_logger().warning(f"[Engine] invalid ISAA env override ignored: {e}")
+
+    _ENGINE_CFG = base
+    return _ENGINE_CFG
+
+
+def clip_to_lines(text: str, max_chars: int, source_hint: str) -> str:
+    """Kuerzt auf max_chars an einer Zeilengrenze und haengt einen Hinweis an.
+
+    Mitten im Satz abschneiden produziert bei kleinen Modellen Halluzinationen
+    ueber den fehlenden Rest, deshalb der explizite Hinweis auf die Quelldatei.
+    """
+    if max_chars <= 0 or not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars]
+    nl = cut.rfind("\n")
+    if nl > 0:
+        cut = cut[:nl]
+    return cut + f"\n[truncated, open {source_hint} with vfs_view for the rest]"
+
+
+def tool_categories(t_entry) -> set:
+    """Kategorien eines ToolEntry als Menge. Toleriert str, list und None."""
+    if t_entry is None:
+        return set()
+    raw = getattr(t_entry, "category", None)
+    if not raw:
+        return set()
+    if isinstance(raw, (list, tuple, set)):
+        return {c for c in raw if c}
+    return {raw}
 _VFS_PERSONAS = "/global/.memory/dreamer/personas.json"
 
 # =============================================================================
@@ -712,7 +823,9 @@ class ExecutionContext:
 
     # Tool Management (dynamic tools, separate from static)
     dynamic_tools: List[ToolSlot] = field(default_factory=list)
-    max_dynamic_tools: int = int(os.getenv("MAX_DYNAMIC_TOOLS", 10))
+    max_dynamic_tools: int = field(
+        default_factory=lambda: get_engine_config().max_dynamic_tools
+    )
     tool_relevance_cache: Dict[str, float] = field(default_factory=dict)
     tool_category_cache: Dict[str, Set[str]] = field(default_factory=dict)
 
@@ -745,6 +858,7 @@ class ExecutionContext:
     taskmap_injected: bool = False
     taskmap_injected_type: Optional[str] = None
     task_guid_agent_locked: bool = False  # Agent hat aktiv task_type/subtype via task_guid gesetzt
+    notes_gate_fired: bool = False  # Notiz-Gate hat final_answer bereits einmal abgelehnt
 
     def get_dynamic_tool_names(self) -> List[str]:
         """Get names of currently loaded dynamic tools"""
@@ -1464,11 +1578,11 @@ class ExecutionEngine(SubAgentResumeExtension):
 
         # Background-learning aggregator (lazy — created on first bg task)
         self._run_aggregator = None
-        # Flag: task-map pre-injection at run start (happypath+guid few-shot).
-        # Opt-in via env or set engine.taskmap_preinject = True at runtime.
-        self.taskmap_preinject = (
-            os.getenv("ISAA_TASKMAP_PREINJECT", "false").lower() == "true"
-        )
+        # Quelle: isaa.engine im tb-manifest.yaml, Env als Override.
+        # Zur Laufzeit weiterhin direkt setzbar.
+        _engine_cfg = get_engine_config()
+        self.taskmap_preinject = _engine_cfg.taskmap_preinject
+        self.notes_gate = _engine_cfg.notes_gate
 
         # Sub-agent state
         self.is_sub_agent = is_sub_agent
@@ -1962,6 +2076,16 @@ BEISPIELE:
                             final_response = None
                             success = False
                             continue
+                        # Notiz-Gate: lehnt final_answer einmal ab, wenn die vom Agenten
+                        # selbst angelegte checklist.md noch offene Punkte hat.
+                        _gate = self._notes_gate_message(ctx)
+                        if _gate:
+                            ctx.working_history.append({"role": "system", "content": _gate})
+                            if _obs:
+                                _obs.record_tool_end("final_answer", result_summary="notes gate", status="error")
+                            final_response = None
+                            success = False
+                            continue
                         if _obs:
                             _obs.record_tool_end("final_answer", result_summary="break loop", status="ok")
                         self._narrator.on_summarise()
@@ -2119,7 +2243,7 @@ BEISPIELE:
                     chunk.setdefault("tokens_used", self._calculate_context_load(ctx))
                 except Exception:
                     chunk.setdefault("tokens_used", 0)
-                chunk.setdefault("tokens_max", self._get_max_context_tokens())
+                chunk.setdefault("tokens_max", self._get_max_context_tokens(ctx))
                 chunk.setdefault("narrator_msg", self.live.narrator_msg)
                 chunk.setdefault("narrator_mini_plan", self._narrator._mini.plan_summary)
                 chunk.setdefault("status_msg", self.live.status_msg)
@@ -2375,6 +2499,16 @@ BEISPIELE:
                                 final_response = None
                                 success = False
                                 continue
+                            # Notiz-Gate: lehnt final_answer einmal ab, wenn die vom Agenten
+                            # selbst angelegte checklist.md noch offene Punkte hat.
+                            _gate = self._notes_gate_message(ctx)
+                            if _gate:
+                                ctx.working_history.append({"role": "system", "content": _gate})
+                                if _obs:
+                                    _obs.record_tool_end("final_answer", result_summary="notes gate", status="error")
+                                final_response = None
+                                success = False
+                                continue
                             if _obs:
                                 _obs.record_tool_end("final_answer", result_summary="break loop", status="ok")
                             self._narrator.on_summarise()
@@ -2618,7 +2752,7 @@ BEISPIELE:
                 chunk.setdefault("tokens_used", self._calculate_context_load(ctx))
             except Exception:
                 chunk.setdefault("tokens_used", 0)
-            chunk.setdefault("tokens_max", self._get_max_context_tokens())
+            chunk.setdefault("tokens_max", self._get_max_context_tokens(ctx))
             chunk.setdefault("narrator_msg", self.live.narrator_msg)
             chunk.setdefault("narrator_mini_plan", self._narrator._mini.plan_summary)
             chunk.setdefault("status_msg", self.live.status_msg)
@@ -2833,6 +2967,16 @@ BEISPIELE:
                                 })
                                 if _obs:
                                     _obs.record_tool_end("final_answer", result_summary="empty answer", status="error")
+                                final_response = None
+                                success = False
+                                continue
+                            # Notiz-Gate: lehnt final_answer einmal ab, wenn die vom Agenten
+                            # selbst angelegte checklist.md noch offene Punkte hat.
+                            _gate = self._notes_gate_message(ctx)
+                            if _gate:
+                                ctx.working_history.append({"role": "system", "content": _gate})
+                                if _obs:
+                                    _obs.record_tool_end("final_answer", result_summary="notes gate", status="error")
                                 final_response = None
                                 success = False
                                 continue
@@ -3374,13 +3518,16 @@ BEISPIELE:
         # Build current tool list
 
         messages = self._sanitize_history_for_api(ctx.working_history.copy())
-        # Append dynamic context as second-to-last or last message to optimize prefix caching
+        # Append dynamic context as late as possible to optimize prefix caching.
+        # Nur zwei Positionen sind erlaubt: direkt vor der letzten user-Message,
+        # sonst ganz ans Ende. Das fruehere insert(-2) hat die System-Message bei
+        # parallelen Tool-Calls zwischen assistant(tool_calls) und die
+        # zugehoerigen tool-Messages geschoben; OpenAI-kompatible Endpunkte
+        # lehnen das mit 400 ab.
         if messages:
             dynamic_msg = {"role": "system", "content": self._build_dynamic_system_prompt(ctx)}
             if messages[-1].get("role") == "user":
                 messages.insert(len(messages) - 1, dynamic_msg)
-            elif len(messages) > 2:
-                messages.insert(-2, dynamic_msg)
             else:
                 messages.append(dynamic_msg)
 
@@ -4008,10 +4155,12 @@ BEISPIELE:
 
         # === VFS & DYNAMIC TOOLS ===
         elif f_name:
-            is_vfs = f_name in VFS_TOOL_NAMES
+            # Muss dasselbe Praedikat sein wie in _get_tool_definitions,
+            # sonst steht ein Tool im Schema, ist aber nicht ausfuehrbar.
+            is_core = self._is_core_tool(f_name)
             is_loaded = f_name in ctx.get_dynamic_tool_names()
 
-            if is_vfs or is_loaded:
+            if is_core or is_loaded:
                 try:
                     result = await self.agent.arun_function(f_name, **f_args)
                     result = str(result) if result is not None else "Success (no output)"
@@ -4081,34 +4230,67 @@ BEISPIELE:
         """Schnelle Token-Schätzung (~4 chars/token)."""
         if not text:
             return 0
-        return len(text) // 4
+        return int(len(text) // 3.7)
 
-    def _get_max_context_tokens(self) -> int:
-        """Hole max context window des aktuellen Models."""
+    def _get_max_context_tokens(self, ctx: Optional[ExecutionContext] = None) -> int:
+        """Hole max context window des aktuellen Models basierend auf der aktiven Persona."""
         try:
             model = getattr(self.agent, "amd", None)
-            if model and hasattr(model, "model_name"):
+            if model:
+                model_pref = "fast"
+                if ctx and ctx.active_persona:
+                    model_pref = ctx.active_persona.model_preference
+
+                model_str = (
+                    getattr(model, "fast_llm_model", "")
+                    if model_pref == "fast"
+                    else getattr(model, "complex_llm_model", "")
+                )
+                model_name = model_str
                 from toolboxv2.mods.isaa.base.llm_router.model_info import ctx_limit
-                return ctx_limit(model.model_name)
+                return ctx_limit(model_name)
         except Exception:
             pass
         return 128000  # Fallback
 
     def _calculate_context_load(self, ctx: ExecutionContext) -> int:
-        """Berechne aktuelle Context-Größe in Tokens."""
-        total = 0
-        for msg in ctx.working_history:
-            content = msg.get("content", "") or ""
-            total += self._estimate_tokens(content)
-            # Tool calls in assistant messages
-            for tc in msg.get("tool_calls", []):
-                if isinstance(tc, dict):
-                    total += self._estimate_tokens(
-                        tc.get("function", {}).get("arguments", "")
-                    )
-                elif hasattr(tc, "function"):
-                    total += self._estimate_tokens(tc.function.arguments or "")
-        return total
+        """Berechne aktuelle Context-Größe in Tokens (vollständig & synchron mit /context)."""
+        try:
+            # 1. System Prompt (statisch + dynamisch für diesen Iterationsschritt bauen)
+            session = self._current_session or self.agent.session_manager.get(ctx.session_id)
+            system_prompt = self._build_static_system_prompt(ctx, session)
+            system_prompt += self._build_dynamic_system_prompt(ctx)
+
+            # 2. Tool Definitionen
+            active_tools = self._get_tool_definitions(ctx)
+
+            # 3. Vollständigen Message-Stack simulieren
+            messages = [{"role": "system", "content": system_prompt}]
+
+            if ctx.working_history:
+                # Statischen Prompt an Index 0 überspringen um Doppelzählung zu vermeiden
+                work_slice = (
+                    ctx.working_history[1:]
+                    if ctx.working_history[0].get("role") == "system"
+                    else ctx.working_history
+                )
+                messages.extend(work_slice)
+
+            # Akkurate Token-Schätzung mit dem vereinheitlichten 3.7-Divisor
+            total_chars = len(str(messages)) + len(str(active_tools or ""))
+            return int(total_chars // 3.7)
+        except Exception:
+            # Fallback bei Initialisierungs-Verzögerungen
+            total = 0
+            for msg in ctx.working_history:
+                content = msg.get("content", "") or ""
+                total += self._estimate_tokens(content)
+                for tc in msg.get("tool_calls", []):
+                    if isinstance(tc, dict):
+                        total += self._estimate_tokens(tc.get("function", {}).get("arguments", ""))
+                    elif hasattr(tc, "function"):
+                        total += self._estimate_tokens(tc.function.arguments or "")
+            return total
 
     def _content_hash(self, content: str) -> str:
         """Erzeuge Hash für Dedup."""
@@ -5304,8 +5486,19 @@ BEISPIELE:
         self.live.log(f"Skill activated: {skill.name} (+{len(loaded_tools)} tools)")
         return msg
 
+    def _is_core_tool(self, tool_name: str) -> bool:
+        """True wenn das Tool per Kategorie dauerhaft im Schema steht.
+
+        Einzige Quelle der Wahrheit fuer 'ist ohne load_tools aufrufbar'.
+        Wird sowohl beim Bauen der Tool-Definitionen als auch beim Dispatch
+        benutzt, damit Schema und Executor nicht auseinanderlaufen.
+        """
+        return CORE_TOOL_CATEGORY in tool_categories(
+            self.agent.tool_manager.get(tool_name)
+        )
+
     def _get_tool_definitions(self, ctx: ExecutionContext) -> List[dict]:
-        """Build tool definitions for LLM (static + VFS + sub-agent + dynamic)"""
+        """Build tool definitions for LLM (static + core + sub-agent + dynamic)"""
         definitions = []
 
         # 1. Static tools (always available, not counted in limit)
@@ -5322,13 +5515,13 @@ BEISPIELE:
             definitions.extend(SUB_AGENT_TOOLS)
             definitions.append(RESUME_SUB_AGENT_TOOL)  # NEW: Resume capability
 
-        # 4. VFS tools (always available, not counted in limit)
+        # 4. Session tools with the core category (always available, not counted in limit)
         all_tools = self.agent.tool_manager.get_all_litellm()
 
         # 5. Dynamic tools (from slots)
         dynamic_names = ctx.get_dynamic_tool_names()
 
-        # 5. Filter für VFS + SYSTEM_TOOL_BY_NAME + DYNAMIC SLOTS
+        # 6. Filter: CORE_TOOL_CATEGORY + SYSTEM_TOOL_BY_NAME + DYNAMIC SLOTS
         for tool_def in all_tools:
             t_name = tool_def["function"]["name"]
             t_entry = self.agent.tool_manager.get(t_name)
@@ -5339,10 +5532,10 @@ BEISPIELE:
                 if t_entry and t_entry.flags
                 else False
             )
-            is_vfs = t_name in VFS_TOOL_NAMES
+            is_core = CORE_TOOL_CATEGORY in tool_categories(t_entry)
             is_dynamic = t_name in dynamic_names
 
-            if is_system or is_vfs or is_dynamic:
+            if is_system or is_core or is_dynamic:
                 # Duplikate vermeiden (falls ein Tool in mehreren Listen ist)
                 if not any(d["function"]["name"] == t_name for d in definitions):
                     definitions.append(tool_def)
@@ -5388,10 +5581,19 @@ BEISPIELE:
                 "IDENTITY: You are FlowAgent, an autonomous execution unit capable of file operations, code execution, and data processing.",
                 "",
                 "OPERATING PROTOCOL:",
-                "1. INITIATIVE: Do not complain about missing tools. If a task requires file access, USE `vfs_view` or `vfs_shell`. If you need to search, USE the memory tools.",
+                "1. TOOLS: Only tools present in your current tool schema are callable. If you need one that is not listed, call list_tools(category) to find it and load_tools([...]) to equip it. Never emit a call for a tool that is not in the schema.",
                 "2. FORMAT: When asked for data, output ONLY data (JSON/Markdown). Do not use conversational filler ('Here is the data').",
                 "3. HONESTY: Differentiate between 'Information missing in context' (Unknown) and 'Factually non-existent' (False). Never apologize.",
                 "4. ITERATION: If a step fails, analyze the error in `think()`, then try a different approach. Do not give up immediately.",
+                "",
+                "NOTES (multi-step tasks only, skip single-answer requests):",
+                "- Folder vfs:/notes/<type>-<subtype>/, e.g. vfs:/notes/coding-isaa/. Never /global.",
+                "- Files: checklist.md (`- [ ] item` per open point), findings.md (evidence + source), open.md (unresolved + reason).",
+                "- Write checklist.md before your first read, then keep all three open via vfs_view. Closed files are not in your prompt.",
+                "- After every long read or tool output, append the finding to findings.md in the SAME iteration. A point only said in `think` is lost.",
+                "- Keep the last two lines of findings.md as `ACTIVE: <current step>` and `NEXT: <single next objective>`.",
+                "- Done item -> flip `- [ ]` to `- [x]`.",
+                "- Before final_answer read checklist.md and findings.md; every `- [ ]` is done or listed in open.md with a reason.",
                 "",
                 "- Sub-Agent Management: spawn_sub_agent, wait_for, resume_sub_agent",
                 "  → If a sub-agent hits max_iterations but made progress, resume it with more iterations",
@@ -5407,6 +5609,15 @@ BEISPIELE:
                 "- task_guid(action='list') shows all known task types.",
             ]))
 
+        # ═══ COMMON SENSE & INTERACTION PRINCIPLES ═══
+        static_parts.append("\n".join([
+            "",
+            "COMMON SENSE & INTERACTION PRINCIPLES:",
+            "1. RESPECT PRIOR WORK: When given a request, first analyze what already exists. Frequently, a large part of the solution or information is already present. Build directly on top of existing work instead of reinventing the wheel or repeating already completed steps.",
+            "2. CLARIFY THE 'HOW': Before starting execution, proactively clarify ambiguities. Ensure you understand not just *what* the goal is, but specifically *how* (format, style, tone, level of detail) and *in what manner* the result should be delivered.",
+            "3. PLAN COMPLEX TASKS: For larger or multi-step tasks, independently create internal notes in the vfs and a structured task list (action plan). Work through this plan step-by-step and adapt it flexibly as needed.",
+            "4. NATURAL & CONCISE COMMUNICATION: Avoid artificial filler or excessive pleasantries. Provide precise, direct, and solution-oriented responses to keep the collaboration as efficient as possible.",
+        ]))
         static_parts.append("\n".join([
             "",
             "FILESYSTEM NAMESPACES — the path prefix tells you WHICH filesystem a path belongs to:",
@@ -5421,6 +5632,7 @@ BEISPIELE:
             "and time at request arrival. Use it as your temporal anchor for 'today', dates and deadlines.",
         ]))
 
+
         static_parts.append(
             "\nIf the task has exceeded 10 iterations and prior summaries exist in the history, "
             "use your second-to-last tool call to invoke `think` — assess your progress so far, "
@@ -5428,9 +5640,133 @@ BEISPIELE:
             "if the run is resumed later."
         )
 
+        # VFS-Handbuch. Pro Session bytestabil, also cachebar. Vorher wurde
+        # session hier entgegengenommen und nie benutzt, dadurch hat das
+        # Modell das Handbuch im a_run-Pfad nie gesehen.
+        guide = self._read_vfs_guide(session)
+        if guide:
+            static_parts.append("\n" + guide)
+
         static_parts.append("\n--- RUNTIME CONTEXT (varies per run, not cached) ---\n")
 
         return "\n".join(static_parts)
+
+    def _read_vfs_guide(self, session) -> str:
+        """Inhalt von /vfs_guide.md, gedeckelt. Leerstring wenn nicht vorhanden."""
+        try:
+            vfs = getattr(session, "vfs", None)
+            f = getattr(vfs, "files", {}).get(VFS_GUIDE_PATH) if vfs else None
+            if f is None:
+                return ""
+            cap = get_engine_config().vfs_guide_max_chars
+            return clip_to_lines(f.content, cap, VFS_GUIDE_PATH)
+        except Exception as e:
+            self.live.log(f"vfs_guide not delivered: {e}", logging.DEBUG)
+            return ""
+
+    def _notes_gate_message(self, ctx: ExecutionContext) -> str | None:
+        """Prueft vor final_answer, ob die Notizen des Laufs abgeschlossen sind.
+
+        Gibt einen Rueckmeldetext zurueck, wenn abgelehnt wird, sonst None.
+        Greift bewusst nur wenn ALLE Bedingungen erfuellt sind:
+          - per Flag aktiviert
+          - kein Sub-Agent
+          - der Lauf war mehrschrittig
+          - der Agent hat selbst einen Notizordner angelegt und offen gehalten
+          - es wurde noch nicht abgelehnt (zweiter Versuch geht immer durch,
+            sonst entsteht ein Deadlock)
+        """
+        if not self.notes_gate or self.is_sub_agent:
+            return None
+        if getattr(ctx, "notes_gate_fired", False):
+            return None
+        _cfg = get_engine_config()
+        if (ctx.current_iteration < _cfg.notes_gate_min_iterations
+                and len(ctx.tools_used) < _cfg.notes_gate_min_tool_calls):
+            return None
+
+        session = self._current_session
+        vfs = getattr(session, "vfs", None)
+        files = getattr(vfs, "files", None)
+        if not files:
+            return None
+
+        # Notizordner ueber die offen gehaltenen Dateien finden. Das koppelt
+        # das Gate an die Offenhalte-Pflicht aus der Prompt: was nicht offen
+        # ist, steht auch nicht im Kontext des Agenten.
+        checklists = [
+            p for p, f in files.items()
+            if p.startswith(NOTES_ROOT) and p.endswith("/checklist.md")
+            and getattr(f, "state", "") == "open"
+        ]
+        if not checklists:
+            return None
+
+        problems = []
+        for path in sorted(checklists):
+            folder = path.rsplit("/", 1)[0]
+            try:
+                checklist = files[path].content
+            except Exception:
+                continue
+            openers = [
+                ln.strip() for ln in checklist.splitlines()
+                if ln.strip().startswith("- [ ]")
+            ]
+            if not openers:
+                continue
+            open_md = ""
+            open_f = files.get(f"{folder}/open.md")
+            if open_f is not None:
+                try:
+                    open_md = open_f.content
+                except Exception:
+                    open_md = ""
+            # Ein offener Punkt ist akzeptabel, wenn er in open.md begruendet ist.
+            unexplained = [
+                ln for ln in openers
+                if ln[len("- [ ]"):].strip()[:40] not in open_md
+            ]
+            if unexplained:
+                problems.append((folder, unexplained))
+
+        if not problems:
+            return None
+
+        ctx.notes_gate_fired = True
+        lines = [
+            "final_answer blocked once: your own checklist still has open items.",
+            "Resolve each one, or move it to open.md with a reason, then call "
+            "final_answer again. The next call goes through either way.",
+        ]
+        for folder, items in problems:
+            lines.append(f"\n{folder}/checklist.md:")
+            lines.extend(f"  {it}" for it in items[:10])
+            if len(items) > 10:
+                lines.append(f"  ... and {len(items) - 10} more")
+        return "\n".join(lines)
+
+    def _build_vfs_state_block(self) -> str:
+        """VFS-Baum, active_rules.md und offene Dateien, gedeckelt.
+
+        Nutzt self._current_session (in _setup_ctx gesetzt, also vor jedem
+        Prompt-Bau vorhanden), damit die Signatur von
+        _build_dynamic_system_prompt unveraendert bleibt.
+        """
+        cap = get_engine_config().vfs_context_max_chars
+        if cap <= 0:
+            return ""
+        session = self._current_session
+        if session is None:
+            return ""
+        try:
+            raw = session.build_vfs_context(exclude={VFS_GUIDE_PATH})
+        except Exception as e:
+            self.live.log(f"vfs state not delivered: {e}", logging.DEBUG)
+            return ""
+        if not raw or not raw.strip():
+            return ""
+        return clip_to_lines(raw, cap, "the listed files")
 
     def _build_dynamic_system_prompt(self, ctx: ExecutionContext) -> str:
         """Dynamic suffix (changes per run/query), injected near the end to optimize caching."""
@@ -5469,6 +5805,15 @@ BEISPIELE:
                     categories.add(t.category)
         cat_list = ", ".join(sorted(categories)) if categories else "keine"
         dynamic_parts.append(f"- Context Access: {cat_list}")
+
+        # VFS-Zustand: Baum, active_rules.md und alle offenen Dateien.
+        # Gehoert hierhin und nicht in den statischen Teil, weil sich der
+        # Inhalt mit jedem vfs_view / vfs_shell aendert und ein wechselnder
+        # statischer Praefix das Provider-Caching aushebelt.
+        # /vfs_guide.md wird ausgelassen, es steht bereits im statischen Teil.
+        vfs_state = self._build_vfs_state_block()
+        if vfs_state:
+            dynamic_parts.append(vfs_state)
 
         if ctx.matched_skills:
             dynamic_parts.append(self.skills_manager.build_skill_prompt_section(ctx.matched_skills))
