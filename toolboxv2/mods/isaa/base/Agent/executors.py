@@ -548,23 +548,32 @@ class DockerConfig:
 # TOOL DEFINITIONS FOR REGISTRATION
 # =============================================================================
 
-def create_local_code_exec_tool(agent) -> dict:
+def create_local_code_exec_tool(agent, legacy: bool = False, **kw) -> dict:
     """
-    Create local code execution tool for agent registration.
+    Create the local code execution tool for agent registration.
+
+    Default path is the persistent live harness (exec_code_tool.create_exec_code_tool):
+    two modes (execute / write), persistent namespace + harness package,
+    real top-level await, structured results.
 
     Args:
         agent: FlowAgent instance
+        legacy: force the old MockIPython single-mode tool
+        **kw: forwarded to create_exec_code_tool (session_id, allowed_mods,
+              privileged, persist, default_timeout)
 
     Returns:
         Tool definition dict for add_tool()
     """
+    if not legacy:
+        from toolboxv2.mods.isaa.base.Agent.exec_code_tool import create_exec_code_tool
+        return create_exec_code_tool(agent, **kw)
+
     executor = LocalCodeExecutor(agent=agent)
 
     async def exec_code(code: str) -> dict:
         """
-        Execute Python code locally using MockIPython.
-
-        Supports top-level await, async functions, and agent tool access.
+        Execute Python code locally using MockIPython (legacy path).
 
         Args:
             code: Python code to execute
@@ -656,19 +665,33 @@ _TOOL_HEALTH_EXTENSIONS = {
 }
 
 
-def register_code_exec_tools(agent, docker=False):
+def register_code_exec_tools(agent, docker=False, legacy: bool = False, **kw):
     """
-    Register both code execution tools for a session.
+    Register the code execution tools for a session.
     Call this from init_session_tools().
+
+    kw is forwarded to the live harness factory:
+        session_id, allowed_mods, privileged, persist, default_timeout
     """
-    local_tool = create_local_code_exec_tool(agent)
+    local_tool = create_local_code_exec_tool(agent, legacy=legacy, **kw)
+    live = local_tool.pop("_live_session", None)
 
     # --- HEALTH-CHECK INTEGRATION ---
-    if local_tool["name"] in _TOOL_HEALTH_EXTENSIONS:
+    if local_tool["name"] in _TOOL_HEALTH_EXTENSIONS and live is None:
         local_tool.update(_TOOL_HEALTH_EXTENSIONS[local_tool["name"]])
 
-    agent.add_tool(**local_tool)
+    agent.add_tool(**{k: v for k, v in local_tool.items() if k != "is_async"})
     registered_tools = [local_tool]
+
+    if live is not None:
+        from toolboxv2.mods.isaa.base.Agent.exec_code_tool import (
+            refresh_exec_code_description,
+        )
+        entry = agent.tool_manager.get("exec_code")
+        if entry is not None:
+            entry.metadata["live_session"] = live
+        live.bootstrap()
+        refresh_exec_code_description(agent, live)
 
     if docker:
         docker_tool = create_docker_code_exec_tool(agent)

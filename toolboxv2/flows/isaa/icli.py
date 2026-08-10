@@ -1788,14 +1788,16 @@ def load_execute(fm):
     tools_set = [None]
 
     def enable(agent):
-        tools_set[0] = register_code_exec_tools(agent)[0]
+        tools_set[0] = register_code_exec_tools(agent)
         print_status("exec_code enabled.", "success")
 
     def disable(agent):
-        agent.remove_tools(tools_set[0])
+        for t in (tools_set[0] or []):
+            agent.remove_tool(t["name"] if isinstance(t, dict) else t)
+        tools_set[0] = None
         print_status("exec_code disabled.", "success")
 
-    fm.add_feature("chain", activation_f=enable, deactivation_f=disable)
+    fm.add_feature("execute", activation_f=enable, deactivation_f=disable)
 
 def load_docs_feature(fm):
     """
