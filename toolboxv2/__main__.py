@@ -2635,4 +2635,5 @@ def server_helper(instance_id: str = "main", db_mode=None):
 
 if __name__ == "__main__":
     # print("STARTED START FROM __main__")
-    os._exit(main_runner())
+    main_runner()
+    os._exit(0)

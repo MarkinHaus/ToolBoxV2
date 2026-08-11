@@ -135,20 +135,10 @@ const user = {
     // Fix:    If init was already called and user is NOT authenticated, re-run
     //         _checkAuthCallback() which now reads current window.location.
     // =========================================================================
-    async init(forceServerFetch = false) {
-        if (this._initPromise) {
-            await this._initPromise;
-
-            // Re-check auth callback if user is still not authenticated
-            // This handles the Tauri case where router navigated to a URL
-            // with token params AFTER the initial init completed
-            if (!this.isAuthenticated() && !this._authCallbackProcessed) {
-                await this._checkAuthCallback();
-            }
-
-            return true;
+    init(forceServerFetch = false) {
+        if (!this._initPromise) {
+            this._initPromise = this._doInit(forceServerFetch);
         }
-        this._initPromise = this._doInit(forceServerFetch);
         return this._initPromise;
     },
 

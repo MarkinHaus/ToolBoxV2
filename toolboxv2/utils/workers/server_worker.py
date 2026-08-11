@@ -51,7 +51,12 @@ try:
 
     MULTIPART_AVAILABLE = True
 except ImportError:
-    MULTIPART_AVAILABLE = False
+    try:
+        from multipart import parse_form_data, is_form_request, MultipartPart
+
+        MULTIPART_AVAILABLE = True
+    except ImportError:
+        MULTIPART_AVAILABLE = False
     # Warning wird später geloggt
 
 # event_manager imports deferred to method level (saves ~30-50 MB per worker)

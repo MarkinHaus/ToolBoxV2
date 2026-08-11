@@ -2230,7 +2230,9 @@ class FlowAgent:
                     need_new_line = True
                     yield renderer.render_iteration_start(
                         iteration=chunk.get("iteration", 0),
-                        max_iter=chunk.get("max_iter", max_iterations)
+                        max_iter=chunk.get("max_iter", max_iterations),
+                        tokens_used=chunk.get("tokens_used", 0),
+                        tokens_max=chunk.get("tokens_max", 0),
                     )
 
                 # -- Done / Complete -----------------------------------------------

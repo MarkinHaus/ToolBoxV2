@@ -18,6 +18,10 @@ jest.mock('../index.js', () => ({
             return undefined;
         }),
     },
+    env: {
+        isTauri: jest.fn(() => false),
+        getWorkerSseUrl: jest.fn(() => null),
+    },
 }));
 
 import SseManager from '../sse.js';

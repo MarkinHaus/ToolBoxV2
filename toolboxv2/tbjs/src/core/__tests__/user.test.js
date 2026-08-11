@@ -83,17 +83,25 @@ const mockLocation = {
     origin: 'http://localhost:3000'
 };
 
-// Mock window.history.replaceState
-const mockReplaceState = jest.fn();
+// jsdom's window.location is a read-only getter — spread assignment fails silently.
+// Must use defineProperty to properly override.
+Object.defineProperty(window, 'location', {
+    value: mockLocation,
+    writable: true,
+    configurable: true,
+});
 
-global.window = {
-    ...global.window,
-    location: mockLocation,
-    history: { replaceState: mockReplaceState },
-    TB: {
-        ui: { Toast: { showError: jest.fn() } },
-        router: { navigateTo: jest.fn() },
-    }
+// jsdom's window.history.replaceState enforces same-origin — mock it.
+const mockReplaceState = jest.fn(() => {});
+Object.defineProperty(window, 'history', {
+    value: { replaceState: mockReplaceState, pushState: jest.fn() },
+    writable: true,
+    configurable: true,
+});
+
+window.TB = {
+    ui: { Toast: { showError: jest.fn() } },
+    router: { navigateTo: jest.fn() },
 };
 
 // Mock document for activity monitor
@@ -131,6 +139,7 @@ describe('User Module (Custom Auth)', () => {
         // Clear timers
         user._stopTokenRefreshTimer();
         user._initPromise = null;
+        user._authCallbackProcessed = false;
     });
 
     afterEach(() => {
@@ -178,7 +187,11 @@ describe('User Module (Custom Auth)', () => {
 
             await user.init();
 
-            expect(TB.events.emit).toHaveBeenCalledWith('user:signedIn', expect.objectContaining({
+            // Source intentionally does NOT emit user:signedIn on session restore
+            // (comment: "Don't emit user:signedIn here - it may trigger unwanted redirects")
+            // Instead verify state was set correctly
+            expect(TB.state.set).toHaveBeenCalledWith('user', expect.objectContaining({
+                isAuthenticated: true,
                 username: 'testuser',
                 userId: 'user_123',
             }));

@@ -1,32 +1,30 @@
-"""Tests for memory_index module — unit + integration layers."""
+"""Tests for memory_index module — snapshot-based API (SQL-driven, zero LLM).
+
+Covers the actual exported API:
+  SpaceSnapshot, MemoryIndex,
+  load_index, save_index,
+  build_snapshot, build_index_from_memory,
+  build_initial_index, update_index_after_save,
+  render_index, filter_spaces_by_query,
+  _top_concepts, _entry_count
+
+Hypothesis tests at the end target the save_index type-confusion bug.
+"""
 import json
 import os
+import shutil
 import tempfile
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-import sys
-import types
-
-# Fake the toolboxv2 import chain so build_initial_index's lazy import resolves
-_mka_module = types.ModuleType("toolboxv2.mods.isaa.base.MemoryKnowledgeActor")
-_mka_module.MemoryKnowledgeActor = MagicMock  # placeholder, overridden per-test
-for _mod_path in [
-    "toolboxv2",
-    "toolboxv2.mods",
-    "toolboxv2.mods.isaa",
-    "toolboxv2.mods.isaa.base",
-    "toolboxv2.mods.isaa.base.MemoryKnowledgeActor",
-]:
-    sys.modules.setdefault(_mod_path, types.ModuleType(_mod_path))
-sys.modules["toolboxv2.mods.isaa.base.MemoryKnowledgeActor"] = _mka_module
-
-from memory_index import (
+from toolboxv2.mods.isaa.memory_index import (
     MemoryIndex,
-    MemoryIndexEdit,
-    MemoryIndexEntry,
-    apply_edit,
+    SpaceSnapshot,
+    _entry_count,
+    _top_concepts,
+    build_index_from_memory,
     build_initial_index,
+    build_snapshot,
     filter_spaces_by_query,
     load_index,
     render_index,
@@ -35,388 +33,651 @@ from memory_index import (
 )
 
 
-# ── Factories ───────────────────────────────────────────────────────────
+# ── Mock infrastructure ──────────────────────────────────────────
 
-def make_entry(concepts=None, summary="test summary"):
-    return MemoryIndexEntry(
-        key_concepts=concepts or ["default"],
-        summary=summary,
-    )
+class MockCursor:
+    """Fake DB cursor — iterable + fetchone/fetchall."""
 
+    def __init__(self, rows):
+        self._rows = rows
 
-def make_edit(space="testspace", cluster="auth", info="new auth info"):
-    return MemoryIndexEdit(
-        space=space,
-        concept_cluster=cluster,
-        new_information=info,
-    )
+    def __iter__(self):
+        return iter(self._rows)
 
+    def fetchall(self):
+        return self._rows
 
-def make_index(entries=None):
-    return MemoryIndex(entries=entries or {})
+    def fetchone(self):
+        return self._rows[0] if self._rows else (0,)
 
 
-# ── Unit: Schema ────────────────────────────────────────────────────────
+class MockConn:
+    """Fake SQLite connection. Routes by SQL keyword."""
 
-class TestMemoryIndexEntry(unittest.TestCase):
-    def test_defaults_empty(self):
-        e = MemoryIndexEntry()
-        self.assertEqual(e.key_concepts, [])
-        self.assertEqual(e.summary, "")
+    def __init__(self, count=0, concepts=None):
+        self._count = count
+        self._concepts = concepts or []
+
+    def execute(self, q, params=()):
+        ql = q.lower()
+        if "concept_index" in ql:
+            return MockCursor(self._concepts)
+        if "count" in ql:
+            return MockCursor([(self._count,)])
+        return MockCursor([])
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class MockStore:
+    """Fake HybridMemoryStore — has .space + ._tx()."""
+
+    def __init__(self, space="test", count=0, concepts=None):
+        self.space = space
+        self._count = count
+        self._concepts = concepts or []
+
+    def _tx(self):
+        return MockConn(count=self._count, concepts=self._concepts)
+
+
+class MockMemory:
+    """Fake AISemanticMemory — has .memories dict."""
+
+    def __init__(self, stores):
+        self.memories = stores
+
+
+# ── Unit: Schema ─────────────────────────────────────────────────
+
+class TestSpaceSnapshot(unittest.TestCase):
+    def test_defaults(self):
+        s = SpaceSnapshot()
+        self.assertEqual(s.nodes, [])
+        self.assertEqual(s.edges, [])
+        self.assertEqual(s.concepts, {})
+        self.assertEqual(s.entry_count, 0)
 
     def test_roundtrip_json(self):
-        e = make_entry(["auth", "jwt"], "handles token validation")
-        data = json.loads(e.model_dump_json())
-        restored = MemoryIndexEntry(**data)
-        self.assertEqual(restored.key_concepts, ["auth", "jwt"])
-        self.assertEqual(restored.summary, "handles token validation")
+        s = SpaceSnapshot(
+            nodes=[{"id": "n1"}],
+            edges=[{"source": "n1", "target": "n2"}],
+            concepts={"auth": 3},
+            entry_count=2,
+        )
+        data = json.loads(s.model_dump_json())
+        restored = SpaceSnapshot(**data)
+        self.assertEqual(restored.entry_count, 2)
+        self.assertEqual(restored.concepts, {"auth": 3})
+        self.assertEqual(restored.nodes, [{"id": "n1"}])
 
 
-class TestMemoryIndexEdit(unittest.TestCase):
-    def test_required_fields(self):
-        with self.assertRaises(Exception):
-            MemoryIndexEdit()  # all fields required
-
-    def test_construction(self):
-        e = make_edit()
-        self.assertEqual(e.space, "testspace")
-        self.assertEqual(e.concept_cluster, "auth")
-
-
-class TestMemoryIndex(unittest.TestCase):
+class TestMemoryIndexSchema(unittest.TestCase):
     def test_empty_default(self):
         idx = MemoryIndex()
-        self.assertEqual(idx.entries, {})
+        self.assertEqual(idx.spaces, {})
+
+    def test_entries_backcompat(self):
+        """entries property must alias spaces (module.py checks len(idx.entries))."""
+        idx = MemoryIndex(spaces={"sp": SpaceSnapshot(entry_count=1)})
+        self.assertEqual(len(idx.entries), 1)
+        self.assertIs(idx.entries, idx.spaces)
 
     def test_multiple_spaces(self):
-        idx = make_index({
-            "space_a": [make_entry(["x"])],
-            "space_b": [make_entry(["y"]), make_entry(["z"])],
+        idx = MemoryIndex(spaces={
+            "a": SpaceSnapshot(entry_count=1),
+            "b": SpaceSnapshot(entry_count=2),
         })
-        self.assertEqual(len(idx.entries["space_a"]), 1)
-        self.assertEqual(len(idx.entries["space_b"]), 2)
+        self.assertEqual(len(idx.spaces), 2)
+        self.assertEqual(idx.spaces["a"].entry_count, 1)
+        self.assertEqual(idx.spaces["b"].entry_count, 2)
 
 
-# ── Unit: apply_edit ────────────────────────────────────────────────────
+# ── Unit: _top_concepts / _entry_count ───────────────────────────
 
-class TestApplyEdit(unittest.TestCase):
-    def test_insert_new_space_and_cluster(self):
-        idx = make_index()
-        edit = make_edit(space="new_space", cluster="db", info="database layer")
-        result = apply_edit(idx, edit)
-        self.assertIn("new_space", result.entries)
-        self.assertEqual(len(result.entries["new_space"]), 1)
-        self.assertEqual(result.entries["new_space"][0].summary, "database layer")
-        self.assertEqual(result.entries["new_space"][0].key_concepts, ["db"])
+class TestTopConcepts(unittest.TestCase):
+    def test_returns_dict(self):
+        store = MockStore(space="sp", concepts=[("auth", 3), ("jwt", 1)])
+        result = _top_concepts(store)
+        self.assertEqual(result, {"auth": 3, "jwt": 1})
 
-    def test_upsert_existing_cluster(self):
-        idx = make_index({"sp": [make_entry(["auth"], "old info")]})
-        edit = make_edit(space="sp", cluster="auth", info="updated info")
-        result = apply_edit(idx, edit)
-        self.assertEqual(len(result.entries["sp"]), 1, msg="should not add duplicate")
-        self.assertEqual(result.entries["sp"][0].summary, "updated info")
+    def test_empty_store(self):
+        store = MockStore(space="sp", concepts=[])
+        self.assertEqual(_top_concepts(store), {})
 
-    def test_upsert_case_insensitive(self):
-        idx = make_index({"sp": [make_entry(["Auth"], "old")]})
-        edit = make_edit(space="sp", cluster="auth", info="new")
-        result = apply_edit(idx, edit)
-        self.assertEqual(len(result.entries["sp"]), 1)
-        self.assertEqual(result.entries["sp"][0].summary, "new")
-
-    def test_add_second_cluster_to_existing_space(self):
-        idx = make_index({"sp": [make_entry(["auth"], "auth stuff")]})
-        edit = make_edit(space="sp", cluster="db", info="db stuff")
-        result = apply_edit(idx, edit)
-        self.assertEqual(len(result.entries["sp"]), 2)
-
-    def test_multiple_sequential_edits(self):
-        idx = make_index()
-        idx = apply_edit(idx, make_edit(space="s", cluster="a", info="1"))
-        idx = apply_edit(idx, make_edit(space="s", cluster="b", info="2"))
-        idx = apply_edit(idx, make_edit(space="s", cluster="a", info="1-updated"))
-        self.assertEqual(len(idx.entries["s"]), 2)
-        self.assertEqual(idx.entries["s"][0].summary, "1-updated")
+    def test_exception_returns_empty(self):
+        store = MagicMock()
+        store._tx.side_effect = RuntimeError("db locked")
+        store.space = "sp"
+        self.assertEqual(_top_concepts(store), {})
 
 
-# ── Unit: render_index ──────────────────────────────────────────────────
+class TestEntryCount(unittest.TestCase):
+    def test_returns_count(self):
+        store = MockStore(space="sp", count=7)
+        self.assertEqual(_entry_count(store), 7)
+
+    def test_zero(self):
+        store = MockStore(space="sp", count=0)
+        self.assertEqual(_entry_count(store), 0)
+
+    def test_exception_returns_zero(self):
+        store = MagicMock()
+        store._tx.side_effect = RuntimeError("db locked")
+        self.assertEqual(_entry_count(store), 0)
+
+
+# ── Unit: build_snapshot (patched MemoryGraphVisualizer) ─────────
+
+class TestBuildSnapshot(unittest.TestCase):
+    @patch("toolboxv2.mods.isaa.memory_index.MemoryGraphVisualizer")
+    def test_empty_store(self, mock_vis_cls):
+        mock_vis = MagicMock()
+        mock_vis.to_json.return_value = {"nodes": [], "edges": []}
+        mock_vis_cls.return_value = mock_vis
+
+        store = MockStore(space="sp", count=0, concepts=[])
+        snap = build_snapshot(store)
+        self.assertEqual(snap.entry_count, 0)
+        self.assertEqual(snap.nodes, [])
+        self.assertEqual(snap.edges, [])
+        self.assertEqual(snap.concepts, {})
+
+    @patch("toolboxv2.mods.isaa.memory_index.MemoryGraphVisualizer")
+    def test_with_data(self, mock_vis_cls):
+        mock_vis = MagicMock()
+        mock_vis.to_json.return_value = {
+            "nodes": [{"id": "doc:1", "label": "auth.py", "type": "code"}],
+            "edges": [{"source": "doc:1", "target": "concept:auth", "type": "has_concept"}],
+        }
+        mock_vis_cls.return_value = mock_vis
+
+        store = MockStore(space="sp", count=3, concepts=[("auth", 2), ("jwt", 1)])
+        snap = build_snapshot(store)
+        self.assertEqual(snap.entry_count, 3)
+        self.assertEqual(len(snap.nodes), 1)
+        self.assertEqual(snap.nodes[0]["label"], "auth.py")
+        self.assertEqual(snap.concepts, {"auth": 2, "jwt": 1})
+        self.assertEqual(len(snap.edges), 1)
+
+
+# ── Unit: build_index_from_memory ────────────────────────────────
+
+class TestBuildIndexFromMemory(unittest.TestCase):
+    @patch("toolboxv2.mods.isaa.memory_index.build_snapshot")
+    def test_skip_empty_spaces(self, mock_build):
+        def side_effect(store):
+            if store.space == "empty":
+                return SpaceSnapshot(entry_count=0, nodes=[])
+            return SpaceSnapshot(entry_count=5, nodes=[{"id": "n1"}], concepts={"x": 1})
+        mock_build.side_effect = side_effect
+
+        mem = MockMemory({
+            "empty": MockStore("empty", count=0),
+            "full": MockStore("full", count=5),
+        })
+        idx = build_index_from_memory(mem)
+        self.assertNotIn("empty", idx.spaces)
+        self.assertIn("full", idx.spaces)
+        self.assertEqual(idx.spaces["full"].entry_count, 5)
+
+    @patch("toolboxv2.mods.isaa.memory_index.build_snapshot")
+    def test_all_empty_returns_empty(self, mock_build):
+        mock_build.return_value = SpaceSnapshot(entry_count=0, nodes=[])
+        mem = MockMemory({"a": MockStore("a"), "b": MockStore("b")})
+        idx = build_index_from_memory(mem)
+        self.assertEqual(idx.spaces, {})
+
+    @patch("toolboxv2.mods.isaa.memory_index.build_snapshot")
+    def test_snapshot_exception_skipped(self, mock_build):
+        mock_build.side_effect = [
+            RuntimeError("boom"),
+            SpaceSnapshot(entry_count=1, concepts={"ok": 1}),
+        ]
+        mem = MockMemory({"bad": MockStore("bad"), "good": MockStore("good")})
+        idx = build_index_from_memory(mem)
+        self.assertNotIn("bad", idx.spaces)
+        self.assertIn("good", idx.spaces)
+
+    @patch("toolboxv2.mods.isaa.memory_index.build_snapshot")
+    def test_nodes_only_no_entries(self, mock_build):
+        """Space with nodes but 0 entries should still be included."""
+        mock_build.return_value = SpaceSnapshot(
+            entry_count=0, nodes=[{"id": "n1", "label": "entity"}]
+        )
+        mem = MockMemory({"sp": MockStore("sp")})
+        idx = build_index_from_memory(mem)
+        self.assertIn("sp", idx.spaces)
+
+
+# ── Unit: render_index ───────────────────────────────────────────
 
 class TestRenderIndex(unittest.TestCase):
     def test_empty_index(self):
-        result = render_index(make_index())
-        self.assertIn("Empty", result)
+        result = render_index(MemoryIndex())
         self.assertIn("# Memory Index", result)
+        self.assertIn("Empty", result)
 
     def test_renders_spaces_sorted(self):
-        idx = make_index({
-            "zebra": [make_entry(["z"], "z stuff")],
-            "alpha": [make_entry(["a"], "a stuff")],
+        idx = MemoryIndex(spaces={
+            "zebra": SpaceSnapshot(entry_count=1, concepts={"z": 1}),
+            "alpha": SpaceSnapshot(entry_count=1, concepts={"a": 1}),
         })
         result = render_index(idx)
-        alpha_pos = result.index("## alpha")
-        zebra_pos = result.index("## zebra")
-        self.assertLess(alpha_pos, zebra_pos, msg="spaces should be sorted alphabetically")
+        self.assertLess(result.index("## alpha"), result.index("## zebra"))
 
-    def test_renders_concepts_and_summary(self):
-        idx = make_index({"sp": [make_entry(["auth", "jwt"], "token handling")]})
+    def test_renders_concepts(self):
+        idx = MemoryIndex(spaces={
+            "sp": SpaceSnapshot(entry_count=1, concepts={"auth": 3, "jwt": 1}),
+        })
         result = render_index(idx)
-        self.assertIn("auth, jwt", result)
-        self.assertIn("token handling", result)
+        self.assertIn("`auth`", result)
+        self.assertIn("(3)", result)
 
-    def test_skips_empty_entry_lists(self):
-        idx = make_index({"empty_sp": [], "full_sp": [make_entry(["x"], "y")]})
+    def test_renders_entities_and_relations(self):
+        idx = MemoryIndex(spaces={
+            "sp": SpaceSnapshot(
+                nodes=[
+                    {"id": "n1", "label": "auth.py", "type": "code"},
+                    {"id": "n2", "label": "login.py", "type": "code"},
+                ],
+                edges=[{"source": "n1", "target": "n2", "type": "imports"}],
+                entry_count=2,
+            ),
+        })
         result = render_index(idx)
-        self.assertNotIn("## empty_sp", result)
-        self.assertIn("## full_sp", result)
+        self.assertIn("**auth.py**", result)
+        self.assertIn("**login.py**", result)
+        self.assertIn("imports", result)
+
+    def test_entity_without_relations(self):
+        idx = MemoryIndex(spaces={
+            "sp": SpaceSnapshot(
+                nodes=[{"id": "n1", "label": "standalone", "type": "doc"}],
+                entry_count=1,
+            ),
+        })
+        result = render_index(idx)
+        self.assertIn("**standalone**", result)
+
+    def test_skips_empty_spaces(self):
+        idx = MemoryIndex(spaces={
+            "empty": SpaceSnapshot(entry_count=0, nodes=[]),
+            "full": SpaceSnapshot(entry_count=1, concepts={"x": 1}),
+        })
+        result = render_index(idx)
+        self.assertNotIn("## empty", result)
+        self.assertIn("## full", result)
 
 
-# ── Unit: filter_spaces_by_query ────────────────────────────────────────
+# ── Unit: filter_spaces_by_query ─────────────────────────────────
 
 class TestFilterSpacesByQuery(unittest.TestCase):
-    def test_empty_index_returns_empty(self):
-        self.assertEqual(filter_spaces_by_query(make_index(), "anything"), [])
+    def test_empty_index(self):
+        self.assertEqual(filter_spaces_by_query(MemoryIndex(), "anything"), [])
 
-    def test_exact_concept_match(self):
-        idx = make_index({
-            "sp_auth": [make_entry(["auth"], "auth stuff")],
-            "sp_db": [make_entry(["database"], "db stuff")],
+    def test_node_label_match(self):
+        idx = MemoryIndex(spaces={
+            "sp_auth": SpaceSnapshot(
+                nodes=[{"id": "n1", "label": "authentication", "type": "code"}],
+                entry_count=1,
+            ),
+            "sp_db": SpaceSnapshot(
+                nodes=[{"id": "n2", "label": "database", "type": "code"}],
+                entry_count=1,
+            ),
         })
-        result = filter_spaces_by_query(idx, "auth system")
+        result = filter_spaces_by_query(idx, "authentication")
         self.assertEqual(result[0], "sp_auth")
 
-    def test_partial_concept_match(self):
-        idx = make_index({"sp": [make_entry(["authentication"], "login flow")]})
+    def test_concept_substring_match(self):
+        """'auth' should match concept 'authentication' via substring."""
+        idx = MemoryIndex(spaces={
+            "sp": SpaceSnapshot(entry_count=1, concepts={"authentication": 2}),
+        })
         result = filter_spaces_by_query(idx, "auth")
-        self.assertIn("sp", result, msg="'auth' should match 'authentication' via substring")
-
-    def test_summary_word_match(self):
-        idx = make_index({"sp": [make_entry(["x"], "handles JWT token validation")]})
-        result = filter_spaces_by_query(idx, "JWT")
         self.assertIn("sp", result)
 
-    def test_ranking_by_hit_count(self):
-        idx = make_index({
-            "low": [make_entry(["auth"], "one hit")],
-            "high": [make_entry(["auth", "jwt"], "auth and jwt tokens")],
+    def test_edge_type_match(self):
+        idx = MemoryIndex(spaces={
+            "sp": SpaceSnapshot(
+                nodes=[{"id": "n1", "label": "x", "type": "doc"}],
+                edges=[{"source": "n1", "target": "n2", "type": "auth_dependency"}],
+                entry_count=1,
+            ),
         })
-        result = filter_spaces_by_query(idx, "auth jwt")
-        self.assertEqual(result[0], "high", msg="more hits should rank higher")
+        result = filter_spaces_by_query(idx, "auth")
+        self.assertIn("sp", result)
 
-    def test_no_match_returns_empty(self):
-        idx = make_index({"sp": [make_entry(["auth"], "login")]})
-        result = filter_spaces_by_query(idx, "quantum physics")
-        self.assertEqual(result, [])
+    def test_ranking_by_hits(self):
+        idx = MemoryIndex(spaces={
+            "low": SpaceSnapshot(
+                nodes=[{"id": "n1", "label": "auth", "type": "code"}],
+                entry_count=1,
+            ),
+            "high": SpaceSnapshot(
+                nodes=[{"id": "n2", "label": "auth module", "type": "code"}],
+                edges=[{"source": "n2", "target": "n3", "type": "auth"}],
+                concepts={"auth": 3, "jwt": 2},
+                entry_count=3,
+            ),
+        })
+        result = filter_spaces_by_query(idx, "auth")
+        self.assertEqual(result[0], "high")
+
+    def test_no_match(self):
+        idx = MemoryIndex(spaces={
+            "sp": SpaceSnapshot(
+                nodes=[{"id": "n1", "label": "auth", "type": "code"}],
+                entry_count=1,
+            ),
+        })
+        self.assertEqual(filter_spaces_by_query(idx, "quantum"), [])
 
     def test_case_insensitive(self):
-        idx = make_index({"sp": [make_entry(["Auth"], "Login Flow")]})
-        result = filter_spaces_by_query(idx, "auth login")
+        idx = MemoryIndex(spaces={
+            "sp": SpaceSnapshot(
+                nodes=[{"id": "n1", "label": "Auth Module", "type": "Code"}],
+                entry_count=1,
+            ),
+        })
+        result = filter_spaces_by_query(idx, "auth code")
         self.assertIn("sp", result)
 
+    def test_short_tokens_ignored(self):
+        """Tokens with len <= 2 are filtered out."""
+        idx = MemoryIndex(spaces={
+            "sp": SpaceSnapshot(
+                nodes=[{"id": "n1", "label": "ab", "type": "code"}],
+                entry_count=1,
+            ),
+        })
+        result = filter_spaces_by_query(idx, "ab")
+        self.assertEqual(result, [])
 
-# ── Integration: Persistence (real filesystem) ─────────────────────────
+    def test_multiple_spaces_ranked(self):
+        idx = MemoryIndex(spaces={
+            "second": SpaceSnapshot(
+                nodes=[{"id": "n1", "label": "auth", "type": "x"}],
+                entry_count=1,
+            ),
+            "first": SpaceSnapshot(
+                nodes=[{"id": "n2", "label": "auth", "type": "x"}],
+                concepts={"auth": 5},
+                entry_count=3,
+            ),
+        })
+        result = filter_spaces_by_query(idx, "auth")
+        self.assertEqual(result[0], "first")
+        self.assertEqual(len(result), 2)
+
+
+# ── Integration: Persistence ─────────────────────────────────────
 
 class TestPersistence(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
 
     def tearDown(self):
-        import shutil
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
-    def test_save_and_load_roundtrip(self):
-        idx = make_index({"sp": [make_entry(["auth", "jwt"], "token stuff")]})
-        save_index(self.tmpdir, "test_agent", idx)
-        loaded = load_index(self.tmpdir, "test_agent")
-        self.assertEqual(len(loaded.entries["sp"]), 1)
-        self.assertEqual(loaded.entries["sp"][0].key_concepts, ["auth", "jwt"])
-        self.assertEqual(loaded.entries["sp"][0].summary, "token stuff")
-
     def test_load_nonexistent_returns_empty(self):
-        loaded = load_index(self.tmpdir, "nonexistent_agent")
-        self.assertEqual(loaded.entries, {})
+        loaded = load_index(self.tmpdir, "ghost")
+        self.assertEqual(loaded.spaces, {})
 
-    def test_load_corrupt_file_returns_empty(self):
+    def test_load_corrupt_returns_empty(self):
         agent_dir = os.path.join(self.tmpdir, "Agents", "broken")
         os.makedirs(agent_dir)
         with open(os.path.join(agent_dir, "memory_index.json"), "w") as f:
             f.write("{{{invalid json")
         loaded = load_index(self.tmpdir, "broken")
-        self.assertEqual(loaded.entries, {})
+        self.assertEqual(loaded.spaces, {})
 
     def test_save_creates_directories(self):
-        save_index(self.tmpdir, "new_agent", make_index({"s": [make_entry()]}))
-        expected_path = os.path.join(self.tmpdir, "Agents", "new_agent", "memory_index.json")
-        self.assertTrue(os.path.exists(expected_path))
+        idx = MemoryIndex(spaces={"s": SpaceSnapshot(entry_count=1)})
+        save_index(self.tmpdir, "new_agent", idx)
+        expected = os.path.join(self.tmpdir, "Agents", "new_agent", "memory_index.json")
+        self.assertTrue(os.path.exists(expected))
 
     def test_save_overwrites_existing(self):
-        save_index(self.tmpdir, "ag", make_index({"old": [make_entry(["old"], "old")]}))
-        save_index(self.tmpdir, "ag", make_index({"new": [make_entry(["new"], "new")]}))
+        save_index(self.tmpdir, "ag", MemoryIndex(spaces={"old": SpaceSnapshot(entry_count=1)}))
+        save_index(self.tmpdir, "ag", MemoryIndex(spaces={"new": SpaceSnapshot(entry_count=2)}))
         loaded = load_index(self.tmpdir, "ag")
-        self.assertNotIn("old", loaded.entries)
-        self.assertIn("new", loaded.entries)
+        self.assertNotIn("old", loaded.spaces)
+        self.assertIn("new", loaded.spaces)
+
+    def test_save_load_roundtrip(self):
+        snap = SpaceSnapshot(
+            nodes=[{"id": "doc:1", "label": "auth.py", "type": "code"}],
+            edges=[{"source": "doc:1", "target": "concept:auth", "type": "has_concept", "weight": 0.8}],
+            concepts={"auth": 3, "jwt": 1},
+            entry_count=2,
+        )
+        idx = MemoryIndex(spaces={"core": snap})
+        save_index(self.tmpdir, "agent1", idx)
+        loaded = load_index(self.tmpdir, "agent1")
+        self.assertEqual(len(loaded.spaces), 1)
+        self.assertIn("core", loaded.spaces)
+        self.assertEqual(loaded.spaces["core"].entry_count, 2)
+        self.assertEqual(loaded.spaces["core"].concepts["auth"], 3)
+        self.assertEqual(len(loaded.spaces["core"].nodes), 1)
 
 
-# ── Integration: build_initial_index (mocked ISAA) ─────────────────────
+# ── Integration: build_initial_index ─────────────────────────────
 
 class TestBuildInitialIndex(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
 
     def tearDown(self):
-        import shutil
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
-    def _make_isaa_ref(self, spaces, format_class_return):
-        """Build a fake isaa_ref with controllable memory and format_class."""
-        mem = MagicMock()
-        mem.memories = {s: True for s in spaces}
-
+    @patch("toolboxv2.mods.isaa.memory_index.build_snapshot")
+    async def test_empty_memory_returns_empty(self, mock_build):
+        mock_build.return_value = SpaceSnapshot(entry_count=0, nodes=[])
+        mem = MockMemory({})
         isaa = MagicMock()
         isaa.get_memory.return_value = mem
-        isaa.format_class = AsyncMock(return_value=format_class_return)
-        return isaa
-
-    async def test_empty_spaces_returns_empty_index(self):
-        isaa = self._make_isaa_ref(spaces=[], format_class_return=[])
         result = await build_initial_index(isaa, "agent", self.tmpdir)
-        self.assertEqual(result.entries, {})
+        self.assertEqual(result.spaces, {})
 
-    async def test_all_empty_spaces_skipped(self):
-        # MKA with no stats and no concepts → space should be skipped
-        isaa = self._make_isaa_ref(spaces=["empty1", "empty2"], format_class_return=[])
+    @patch("toolboxv2.mods.isaa.memory_index.build_snapshot")
+    async def test_successful_build(self, mock_build):
+        def side_effect(store):
+            if store.space == "empty":
+                return SpaceSnapshot(entry_count=0, nodes=[])
+            return SpaceSnapshot(entry_count=5, concepts={"auth": 2}, nodes=[{"id": "n1"}])
+        mock_build.side_effect = side_effect
 
-        with patch("toolboxv2.mods.isaa.base.MemoryKnowledgeActor.MemoryKnowledgeActor") as MockMKA:
-            mock_mka = MagicMock()
-            mock_mka.get_stats = AsyncMock(return_value={"total_entries": 0})
-            mock_mka.list_concepts = AsyncMock(return_value=[])
-            MockMKA.return_value = mock_mka
+        mem = MockMemory({"empty": MockStore("empty"), "core": MockStore("core")})
+        isaa = MagicMock()
+        isaa.get_memory.return_value = mem
 
-            result = await build_initial_index(isaa, "agent", self.tmpdir)
-            self.assertEqual(result.entries, {})
-            isaa.format_class.assert_not_called()
+        result = await build_initial_index(isaa, "agent", self.tmpdir)
+        self.assertNotIn("empty", result.spaces)
+        self.assertIn("core", result.spaces)
+        self.assertEqual(result.spaces["core"].entry_count, 5)
 
-    async def test_successful_build_applies_edits(self):
-        edits = [
-            {"space": "core", "concept_cluster": "auth", "new_information": "auth system overview"},
-            {"space": "core", "concept_cluster": "db", "new_information": "database layer"},
-        ]
-        isaa = self._make_isaa_ref(spaces=["core"], format_class_return=edits)
-
-        with patch("toolboxv2.mods.isaa.base.MemoryKnowledgeActor.MemoryKnowledgeActor") as MockMKA:
-            mock_mka = MagicMock()
-            mock_mka.get_stats = AsyncMock(return_value={"total_entries": 5})
-            mock_mka.list_concepts = AsyncMock(return_value=["auth", "jwt", "db"])
-            MockMKA.return_value = mock_mka
-
-            result = await build_initial_index(isaa, "agent", self.tmpdir)
-            self.assertEqual(len(result.entries["core"]), 2)
-            # verify persisted to disk
-            loaded = load_index(self.tmpdir, "agent")
-            self.assertEqual(len(loaded.entries["core"]), 2)
-
-    async def test_format_class_failure_returns_empty_index(self):
-        isaa = self._make_isaa_ref(spaces=["sp"], format_class_return=None)
-        isaa.format_class = AsyncMock(side_effect=RuntimeError("LLM down"))
-
-        with patch("toolboxv2.mods.isaa.base.MemoryKnowledgeActor.MemoryKnowledgeActor") as MockMKA:
-            mock_mka = MagicMock()
-            mock_mka.get_stats = AsyncMock(return_value={"total_entries": 3})
-            mock_mka.list_concepts = AsyncMock(return_value=["x"])
-            MockMKA.return_value = mock_mka
-
-            result = await build_initial_index(isaa, "agent", self.tmpdir)
-            self.assertEqual(result.entries, {})
-
-    async def test_malformed_edits_skipped_gracefully(self):
-        edits = [
-            {"space": "sp", "concept_cluster": "ok", "new_information": "valid"},
-            {"garbage": True},  # malformed
-            42,  # not a dict
-        ]
-        isaa = self._make_isaa_ref(spaces=["sp"], format_class_return=edits)
-
-        with patch("toolboxv2.mods.isaa.base.MemoryKnowledgeActor.MemoryKnowledgeActor") as MockMKA:
-            mock_mka = MagicMock()
-            mock_mka.get_stats = AsyncMock(return_value={"total_entries": 1})
-            mock_mka.list_concepts = AsyncMock(return_value=["ok"])
-            MockMKA.return_value = mock_mka
-
-            result = await build_initial_index(isaa, "agent", self.tmpdir)
-            self.assertEqual(len(result.entries["sp"]), 1, msg="only valid edit should apply")
+        # Verify persisted to disk
+        loaded = load_index(self.tmpdir, "agent")
+        self.assertIn("core", loaded.spaces)
 
 
-# ── Integration: update_index_after_save (mocked ISAA) ──────────────────
+# ── Integration: update_index_after_save ─────────────────────────
 
 class TestUpdateIndexAfterSave(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
 
     def tearDown(self):
-        import shutil
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
-    async def test_adds_new_cluster(self):
-        idx = make_index({"sp": [make_entry(["auth"], "auth stuff")]})
-        isaa = MagicMock()
-        isaa.format_class = AsyncMock(return_value={
-            "space": "sp", "concept_cluster": "db", "new_information": "added db layer"
-        })
-
-        result = await update_index_after_save(
-            isaa, "agent", self.tmpdir, idx, "sp", "new db content", ["db"]
+    @patch("toolboxv2.mods.isaa.memory_index.build_snapshot")
+    async def test_refresh_existing_space(self, mock_build):
+        mock_build.return_value = SpaceSnapshot(
+            entry_count=10, concepts={"auth": 5},
+            nodes=[{"id": "n1", "label": "updated"}],
         )
-        self.assertEqual(len(result.entries["sp"]), 2)
-        # verify persisted
+        idx = MemoryIndex(spaces={"sp": SpaceSnapshot(entry_count=3)})
+        mem = MockMemory({"sp": MockStore("sp", count=10)})
+        isaa = MagicMock()
+        isaa.get_memory.return_value = mem
+
+        result = await update_index_after_save(isaa, "agent", self.tmpdir, idx, "sp")
+        self.assertEqual(result.spaces["sp"].entry_count, 10)
+        self.assertEqual(result.spaces["sp"].concepts["auth"], 5)
+
+    @patch("toolboxv2.mods.isaa.memory_index.build_snapshot")
+    async def test_new_space_added(self, mock_build):
+        mock_build.return_value = SpaceSnapshot(entry_count=2, concepts={"db": 1})
+        idx = MemoryIndex()
+        mem = MockMemory({"new_space": MockStore("new_space", count=2)})
+        isaa = MagicMock()
+        isaa.get_memory.return_value = mem
+
+        result = await update_index_after_save(isaa, "agent", self.tmpdir, idx, "new_space")
+        self.assertIn("new_space", result.spaces)
+        self.assertEqual(result.spaces["new_space"].entry_count, 2)
+
+    @patch("toolboxv2.mods.isaa.memory_index.build_snapshot")
+    async def test_empty_space_removed(self, mock_build):
+        mock_build.return_value = SpaceSnapshot(entry_count=0, nodes=[])
+        idx = MemoryIndex(spaces={"sp": SpaceSnapshot(entry_count=5)})
+        mem = MockMemory({"sp": MockStore("sp", count=0)})
+        isaa = MagicMock()
+        isaa.get_memory.return_value = mem
+
+        result = await update_index_after_save(isaa, "agent", self.tmpdir, idx, "sp")
+        self.assertNotIn("sp", result.spaces)
+
+    async def test_missing_space_returns_unchanged(self):
+        idx = MemoryIndex(spaces={"existing": SpaceSnapshot(entry_count=1)})
+        mem = MockMemory({})  # no "nonexistent" space
+        isaa = MagicMock()
+        isaa.get_memory.return_value = mem
+
+        result = await update_index_after_save(isaa, "agent", self.tmpdir, idx, "nonexistent")
+        self.assertEqual(result.spaces, idx.spaces)
+
+    @patch("toolboxv2.mods.isaa.memory_index.build_snapshot")
+    async def test_persisted_to_disk(self, mock_build):
+        mock_build.return_value = SpaceSnapshot(entry_count=7, concepts={"x": 1})
+        idx = MemoryIndex()
+        mem = MockMemory({"sp": MockStore("sp", count=7)})
+        isaa = MagicMock()
+        isaa.get_memory.return_value = mem
+
+        await update_index_after_save(isaa, "agent", self.tmpdir, idx, "sp")
         loaded = load_index(self.tmpdir, "agent")
-        self.assertEqual(len(loaded.entries["sp"]), 2)
+        self.assertIn("sp", loaded.spaces)
+        self.assertEqual(loaded.spaces["sp"].entry_count, 7)
 
-    async def test_updates_existing_cluster(self):
-        idx = make_index({"sp": [make_entry(["auth"], "old auth")]})
+    @patch("toolboxv2.mods.isaa.memory_index.build_snapshot")
+    async def test_ignored_content_and_concepts_params(self, mock_build):
+        """content + concepts params are ignored — graph is source of truth."""
+        mock_build.return_value = SpaceSnapshot(entry_count=1, concepts={"real": 1})
+        idx = MemoryIndex()
+        mem = MockMemory({"sp": MockStore("sp", count=1)})
         isaa = MagicMock()
-        isaa.format_class = AsyncMock(return_value={
-            "space": "sp", "concept_cluster": "auth", "new_information": "updated auth"
+        isaa.get_memory.return_value = mem
+
+        result = await update_index_after_save(
+            isaa, "agent", self.tmpdir, idx, "sp",
+            content="ignored content", concepts=["ignored"],
+        )
+        # Concepts come from build_snapshot, not from params
+        self.assertEqual(result.spaces["sp"].concepts, {"real": 1})
+
+
+# ── Hypothesis Tests: save_index type confusion ──────────────────
+#
+# HYPOTHESIS H1: save_index serializes SpaceSnapshot instead of MemoryIndex
+#   when agent_name matches a space key.
+#   Root cause line 52:
+#     p.write_text(index.spaces.get(agent_name, index).model_dump_json(indent=2))
+#   If agent_name IS a key in spaces → returns SpaceSnapshot → JSON has
+#   {nodes, edges, concepts, entry_count} but NOT {spaces: {...}}.
+#   load_index tries MemoryIndex.model_validate_json → fails → empty index.
+#
+# HYPOTHESIS H2 (control): roundtrip works when agent_name does NOT match
+#   any space key — should always PASS.
+#
+# HYPOTHESIS H3: Production scenario — agent "self", space key "self".
+#   Multi-space index loses all data on save/load cycle.
+
+class TestHypothesisSaveIndexBug(unittest.TestCase):
+    """Tests that DISCRINATE the save_index bug.
+    Before fix: H1+H3 FAIL, H2 PASSES.
+    After fix:  all PASS.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_h1_agent_name_equals_space_key(self):
+        """H1: save_index corrupts when agent_name == space key.
+
+        Before fix: saves SpaceSnapshot JSON, load_index can't parse → empty.
+        After fix: saves full MemoryIndex, roundtrip works.
+        """
+        snap = SpaceSnapshot(entry_count=1, concepts={"auth": 1})
+        idx = MemoryIndex(spaces={"self": snap})
+
+        save_index(self.tmpdir, "self", idx)
+        loaded = load_index(self.tmpdir, "self")
+
+        self.assertIn("self", loaded.spaces,
+                      msg="H1 FAIL: save_index saved SpaceSnapshot instead of MemoryIndex")
+        self.assertEqual(loaded.spaces["self"].entry_count, 1)
+
+    def test_h2_control_agent_name_differs(self):
+        """H2 (control): roundtrip works when agent_name != space key."""
+        snap = SpaceSnapshot(
+            nodes=[{"id": "n1", "label": "x", "type": "doc"}],
+            edges=[{"source": "n1", "target": "n2", "type": "rel"}],
+            concepts={"a": 1, "b": 2},
+            entry_count=3,
+        )
+        idx = MemoryIndex(spaces={"workspace": snap})
+
+        save_index(self.tmpdir, "agent_x", idx)
+        loaded = load_index(self.tmpdir, "agent_x")
+
+        self.assertEqual(len(loaded.spaces), 1)
+        self.assertIn("workspace", loaded.spaces)
+        self.assertEqual(loaded.spaces["workspace"].entry_count, 3)
+        self.assertEqual(loaded.spaces["workspace"].concepts["a"], 1)
+        self.assertEqual(len(loaded.spaces["workspace"].nodes), 1)
+
+    def test_h3_production_self_self_multi_space(self):
+        """H3: agent_name='self', multiple spaces including key 'self'.
+
+        Before fix: save_index does spaces.get('self') → returns SpaceSnapshot
+        for 'self' space → all other spaces lost on reload.
+        After fix: full MemoryIndex saved → all spaces survive.
+        """
+        idx = MemoryIndex(spaces={
+            "self": SpaceSnapshot(entry_count=5, concepts={"python": 2}),
+            "work": SpaceSnapshot(entry_count=3, concepts={"api": 1}),
+            "projects": SpaceSnapshot(entry_count=10, concepts={"isaa": 4}),
         })
 
-        result = await update_index_after_save(
-            isaa, "agent", self.tmpdir, idx, "sp", "new auth fact", ["auth"]
-        )
-        self.assertEqual(len(result.entries["sp"]), 1)
-        self.assertEqual(result.entries["sp"][0].summary, "updated auth")
+        save_index(self.tmpdir, "self", idx)
+        loaded = load_index(self.tmpdir, "self")
 
-    async def test_format_class_returns_none_preserves_index(self):
-        idx = make_index({"sp": [make_entry(["auth"], "original")]})
-        isaa = MagicMock()
-        isaa.format_class = AsyncMock(return_value=None)
-
-        result = await update_index_after_save(
-            isaa, "agent", self.tmpdir, idx, "sp", "content", ["x"]
-        )
-        self.assertEqual(result.entries["sp"][0].summary, "original")
-
-    async def test_format_class_exception_preserves_index(self):
-        idx = make_index({"sp": [make_entry(["auth"], "original")]})
-        isaa = MagicMock()
-        isaa.format_class = AsyncMock(side_effect=RuntimeError("boom"))
-
-        result = await update_index_after_save(
-            isaa, "agent", self.tmpdir, idx, "sp", "content", None
-        )
-        self.assertEqual(result.entries["sp"][0].summary, "original")
-
-    async def test_content_truncated_to_500_chars(self):
-        idx = make_index()
-        isaa = MagicMock()
-        isaa.format_class = AsyncMock(return_value={
-            "space": "sp", "concept_cluster": "big", "new_information": "summary"
-        })
-
-        long_content = "x" * 1000
-        await update_index_after_save(
-            isaa, "agent", self.tmpdir, idx, "sp", long_content, None
-        )
-        # verify the prompt sent to format_class had truncated content
-        call_args = isaa.format_class.call_args
-        task_prompt = call_args.kwargs.get("task", "")
-        self.assertNotIn("x" * 501, task_prompt, msg="content should be capped at 500 chars")
+        self.assertEqual(len(loaded.spaces), 3,
+                         msg="H3 FAIL: multi-space index lost spaces on save/load roundtrip")
+        self.assertIn("self", loaded.spaces)
+        self.assertIn("work", loaded.spaces)
+        self.assertIn("projects", loaded.spaces)
+        self.assertEqual(loaded.spaces["work"].entry_count, 3)
 
 
 if __name__ == "__main__":

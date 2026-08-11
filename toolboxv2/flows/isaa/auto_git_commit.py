@@ -58,7 +58,7 @@ async def run(app, _, tags: str | None = None, summarize: bool = False, **kwargs
         cwd = tb_root_dir.parent
 
         # Configuration
-        max_tokens = kwargs.get('max_tokens', 8000)
+        max_tokens = kwargs.get('max_tokens', 30000)
         chunk_size = kwargs.get('chunk_size', 20)
         max_summarization_iterations = kwargs.get('max_summarization_iterations', 3)
         auto_push = kwargs.get('push', True)

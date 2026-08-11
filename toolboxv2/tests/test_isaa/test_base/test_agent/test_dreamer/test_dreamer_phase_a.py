@@ -54,9 +54,6 @@ class RunRecord:
 # Import the modules under test (will be created after tests)
 # ═══════════════════════════════════════════════════════════════════
 
-import sys
-sys.path.insert(0, "/home/claude")
-
 from toolboxv2.mods.isaa.base.dreamer.harvest import (
     parse_log,
     filter_records,

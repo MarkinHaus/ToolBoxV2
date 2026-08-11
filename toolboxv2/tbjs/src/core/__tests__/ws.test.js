@@ -12,6 +12,14 @@ jest.mock('../index.js', () => ({
     events: {
         emit: jest.fn(),
     },
+    state: {
+        get: jest.fn(() => null),
+        set: jest.fn(),
+    },
+    env: {
+        isTauri: jest.fn(() => false),
+        getWorkerWsUrl: jest.fn(() => null),
+    },
 }));
 
 import WsManager from '../ws.js';
