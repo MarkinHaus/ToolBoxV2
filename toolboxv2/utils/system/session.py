@@ -8,6 +8,7 @@ import json
 import os
 import socket
 import time
+import weakref
 from pathlib import Path
 from typing import Optional
 
@@ -50,6 +51,10 @@ class Session(metaclass=Singleton):
     Uses Encrypted BlobStorage for persistent CLI sessions.
     """
 
+    # Option C: loop-scoped sessions — each event loop gets its own
+    # aiohttp.ClientSession. WeakKeyDictionary auto-cleans when loop is GC'd.
+    _loop_sessions: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
     def __init__(self, username=None, base=None):
         self.username = username
         self._session: Optional[ClientSession] = None
@@ -72,28 +77,23 @@ class Session(metaclass=Singleton):
 
     @property
     def session(self):
-        self._ensure_session()
-        return self._session
+        """Loop-scoped session (Option C). Each event loop gets its own
+        aiohttp.ClientSession via WeakKeyDictionary. No cross-loop close."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+        s = self._loop_sessions.get(loop)
+        if s is None or s.closed:
+            s = ClientSession()
+            self._loop_sessions[loop] = s
+            self._session = s       # backward-compat cache
+            self._event_loop = loop  # backward-compat cache
+        return s
 
     def _ensure_session(self):
-        """Ensure session is valid for current event loop"""
-        try:
-            current_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            if self._session is not None:
-                self._session = None
-                self._event_loop = None
-            return
-
-        if self._session is None or self._event_loop != current_loop:
-            if self._session is not None:
-                try:
-                    if not self._session.closed:
-                        asyncio.create_task(self._session.close())
-                except:
-                    pass
-            self._session = ClientSession()
-            self._event_loop = current_loop
+        """Delegate to session property (Option C)."""
+        _ = self.session
 
     # =================== Secure Storage (BlobFile) ===================
 
@@ -552,15 +552,16 @@ class Session(metaclass=Singleton):
                 return None
 
     async def cleanup(self):
-        """Cleanup session resources"""
-        try:
-            if self._session is not None and not self._session.closed:
-                await self._session.close()
-        except:
-            pass
-        finally:
-            self._session = None
-            self._event_loop = None
+        """Cleanup session resources (Option C: close all loop-scoped sessions)."""
+        for loop, s in list(self._loop_sessions.items()):
+            try:
+                if not s.closed:
+                    await s.close()
+            except Exception:
+                pass
+        self._loop_sessions.clear()
+        self._session = None
+        self._event_loop = None
 
     def exit(self):
         """Exit and clear session (legacy compatibility)"""

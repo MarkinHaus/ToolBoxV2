@@ -27,6 +27,9 @@ from typing import Any, Dict, List, Optional
 
 from .config import SyncConfig, ShareToken, load_env_config
 from .crypto import generate_encryption_key
+from .share_store import (
+    VALID_MODES, delete_share, get_share, list_share_records, save_share,
+)
 
 # ToolBox integration (graceful fallback)
 try:
@@ -54,9 +57,12 @@ Name = "CloudM.LiveSync"
 version = "1.0.0"
 
 # ── Subprocess State ──
+#
+# Share records live in the encrypted store on disk (share_store), not in a
+# process-local dict: a restart used to lose every share, and a server in
+# replica mode needs its token back after a crash without a human retyping it.
 
 _sync_process: Optional[subprocess.Popen] = None
-_share_registry: Dict[str, Dict[str, Any]] = {}
 
 
 # ── Share Token ──
@@ -68,7 +74,15 @@ def create_share_token(
     ws_endpoint: str,
     bucket: str = "tb-shared",
 ) -> str:
-    """Create a share token (base64 string) for distribution."""
+    """
+    Create a signed v4 share token for distribution.
+
+    Requires the TB device key of this node — only the node that hosts the
+    share can mint tokens for it.
+
+    The token carries the AES key, so it is a secret: anyone holding it can
+    read the share. Distribute it like a password.
+    """
     tok = ShareToken(
         share_id=share_id,
         minio_endpoint=minio_endpoint,
@@ -82,25 +96,30 @@ def create_share_token(
 
 # ── Share Registry ──
 
-def register_share(share_id: str, vault_path: str, token: str):
-    """Register a share in the local registry."""
-    _share_registry[share_id] = {
-        "share_id": share_id,
-        "vault_path": vault_path,
-        "token": token,
-        "created_at": time.time(),
-    }
+def register_share(
+    share_id: str,
+    vault_path: str,
+    token: str,
+    mode: str = "relay",
+    ws_port: int = 8765,
+):
+    """
+    Persist a share record in the encrypted store.
+
+    The record holds the token, so it is written device-key encrypted with
+    mode 0600 — see share_store for the reasoning.
+    """
+    save_share(share_id, vault_path, token, mode=mode, ws_port=ws_port)
 
 
 def list_shares() -> List[Dict[str, Any]]:
-    """List all registered shares."""
-    return list(_share_registry.values())
+    """All registered shares, oldest first."""
+    return list_share_records()
 
 
 def stop_share(share_id: str) -> dict:
     """Stop and deregister a share."""
-    if share_id in _share_registry:
-        del _share_registry[share_id]
+    if delete_share(share_id):
         logger.info(
             f"[LiveSync] Share stopped: {share_id}",
             extra={"audit_action": "SHARE_STOP", "share_id": share_id}
@@ -111,13 +130,34 @@ def stop_share(share_id: str) -> dict:
 
 # ── Subprocess Management ──
 
-def start_sync(vault_path: str, share_id: str = "default", port: int = 8765) -> dict:
+def start_sync(
+    vault_path: str,
+    share_id: str = "default",
+    port: int = 8765,
+    mode: str = "relay",
+) -> dict:
     """
     Start SyncService as a subprocess.
 
     The server runs independently — if ToolBox crashes, the sync continues.
+
+    mode "relay": broker only, the folder on this machine stays empty.
+    mode "replica": the server additionally runs its own SyncClient on the
+    folder, so this machine carries a copy too. That needs the share token in
+    the encrypted store, which register_share() puts there.
     """
     global _sync_process
+
+    if mode not in VALID_MODES:
+        return {"ok": False, "error": f"mode must be one of {VALID_MODES}"}
+    if mode == "replica":
+        record = get_share(share_id)
+        if not record or not record.get("token"):
+            return {
+                "ok": False,
+                "error": f"replica mode needs a stored token for share "
+                         f"{share_id} — create or join the share first",
+            }
 
     if _sync_process is not None and _sync_process.poll() is None:
         return {
@@ -134,16 +174,20 @@ def start_sync(vault_path: str, share_id: str = "default", port: int = 8765) -> 
                 "--vault", vault_path,
                 "--share-id", share_id,
                 "--port", str(port),
+                "--mode", mode,
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        logger.info(f"[LiveSync] Server started: PID {_sync_process.pid}, port {port}")
+        logger.info(
+            f"[LiveSync] Server started: PID {_sync_process.pid}, "
+            f"port {port}, mode {mode}")
         return {
             "ok": True,
             "info": "Server started",
             "pid": _sync_process.pid,
             "port": port,
+            "mode": mode,
         }
     except Exception as e:
         logger.error(f"[LiveSync] Failed to start server: {e}")
@@ -173,11 +217,16 @@ def stop_sync() -> dict:
     return {"ok": True, "info": "Stopped", "pid": pid}
 
 
-def restart_sync(vault_path: str, share_id: str = "default", port: int = 8765) -> dict:
+def restart_sync(
+    vault_path: str,
+    share_id: str = "default",
+    port: int = 8765,
+    mode: str = "relay",
+) -> dict:
     """Hard restart the SyncService."""
     stop_sync()
     time.sleep(1)
-    return start_sync(vault_path, share_id, port)
+    return start_sync(vault_path, share_id, port, mode=mode)
 
 
 def get_sync_status() -> dict:
@@ -211,16 +260,29 @@ def _get_lan_ip() -> str:
      except Exception:
          return '127.0.0.1'
 
-def create_share(vault_path: str, ws_host: str = None, ws_port: int = 8765) -> dict:
+def create_share(
+    vault_path: str,
+    ws_host: str = None,
+    ws_port: int = 8765,
+    mode: str = "relay",
+) -> dict:
     """
     Create a new share for a vault folder.
 
     Steps:
       1. Generate share_id + encryption key
-      2. Create share token
-      3. Start SyncService if not running
-      4. Return token for distribution
+      2. Mint a signed share token
+      3. Persist the share record (encrypted)
+      4. Start SyncService if not running
+      5. Return token for distribution
+
+    mode decides whether this machine only brokers the share ("relay") or also
+    keeps its own copy of the folder ("replica"). It is fixed here, at share
+    creation, because it decides whether the server needs the key at all.
     """
+    if mode not in VALID_MODES:
+        return {"ok": False, "error": f"mode must be one of {VALID_MODES}"}
+
     env = load_env_config()
 
     share_id = uuid.uuid4().hex[:8]
@@ -239,18 +301,22 @@ def create_share(vault_path: str, ws_host: str = None, ws_port: int = 8765) -> d
         bucket=env.get("bucket", "tb-shared"),
     )
 
-    register_share(share_id, vault_path, token)
-    start_sync(vault_path, share_id, ws_port)
+    # Store first: replica mode reads the token back from the store on start.
+    register_share(share_id, vault_path, token, mode=mode, ws_port=ws_port)
+    started = start_sync(vault_path, share_id, ws_port, mode=mode)
 
     logger.info(
-        f"[LiveSync] Share created: {share_id} vault={vault_path} port={ws_port}",
+        f"[LiveSync] Share created: {share_id} vault={vault_path} "
+        f"port={ws_port} mode={mode}",
         extra={"audit_action": "SHARE_CREATE", "share_id": share_id,
-               "vault_path": vault_path, "ws_port": ws_port}
+               "vault_path": vault_path, "ws_port": ws_port, "mode": mode}
     )
     return {
         "ok": True,
         "share_id": share_id,
         "token": token,
+        "mode": mode,
+        "server": started,
         "info": "Share created. Distribute token to join.",
     }
 
@@ -262,7 +328,9 @@ def join_share(vault_path: str, token: str) -> dict:
     except ValueError as e:
         return {"ok": False, "error": str(e)}
 
-    config = tok.to_sync_config(vault_path)
+    # raw_token must go into the config: the client sends it back on AUTH and
+    # the server verifies its signature. Without it every connect is denied.
+    config = tok.to_sync_config(vault_path, raw_token=token)
     register_share(config.share_id, vault_path, token)
 
     logger.info(f"[LiveSync] Joined share: {config.share_id}")
@@ -322,8 +390,9 @@ def get_sync_log(share_id: str, vault_path: str = "", limit: int = 50) -> dict:
     import asyncio
     from .index import LocalIndex
 
-    if share_id in _share_registry:
-        vault_path = _share_registry[share_id].get("vault_path", vault_path)
+    record = get_share(share_id)
+    if record:
+        vault_path = record.get("vault_path", vault_path)
 
     if not vault_path:
         return {"ok": False, "error": "vault_path required"}
@@ -491,29 +560,9 @@ if _TB_AVAILABLE:
         )
         return Result.ok(data={"token": token, "share_id": share_id})
 
-    @export(mod_name=Name, api=True, version=version)
-    def tb_get_share_credentials(
-        app: App,
-        request: RequestData = None,
-        share_id: str = "",
-    ):
-        """
-        Return scoped MinIO credentials for a specific share.
-
-        Args:
-            share_id: the share identifier
-
-        Returns:
-            Result.ok(data={endpoint, access_key, secret_key, secure,
-                bucket, prefix, policy_applied})
-        """
-        if not share_id:
-            return Result.error("share_id required")
-
-        env = load_env_config()
-        from .minio_helper import vend_credentials_for_share
-        creds = vend_credentials_for_share(share_id, env)
-        return Result.ok(data=creds)
+    # NOTE: there is deliberately no "get share credentials" endpoint.
+    # Share members never receive object-storage credentials; the LiveSync
+    # server hands out a presigned URL per object instead.
 
 
 # ── Helpers ──

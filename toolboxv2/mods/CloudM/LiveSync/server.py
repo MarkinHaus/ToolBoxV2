@@ -5,7 +5,8 @@ Central coordination service running on the remote server.
 
 Responsibilities:
   - WebSocket server for client notifications (NEVER file content)
-  - Auth + MinIO credential provisioning via CredentialBroker
+  - Auth via HMAC-signed share tokens
+  - Presigned per-object URLs (clients never receive S3 credentials)
   - Server-side SQLite index (source of truth for checksums)
   - File-change broadcast to all connected clients
   - Conflict detection on incoming changes
@@ -29,15 +30,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .protocol import (
-    MsgType, SyncMessage, FileType, classify_file, should_ignore, MAX_FILE_SIZE,
+    MsgType, SyncMessage, FileType, classify_file, should_ignore,
 )
-from .config import SyncConfig, load_env_config
-from .crypto import compute_checksum_file
+from .config import SyncConfig, ShareToken, load_env_config
+from .share_store import VALID_MODES, get_share
 from .index import LocalIndex
 from .minio_helper import (
     create_minio_client, ensure_bucket, healthcheck,
-    upload_bytes, download_bytes, make_object_key,
-    list_remote_files, vend_credentials_for_share,
+    upload_bytes, download_bytes, make_object_key, make_meta_key,
+    list_remote_files, presign_get, presign_put, object_exists,
 )
 from .conflict import detect_conflict
 
@@ -49,76 +50,11 @@ try:
 except ImportError:
     WS_AVAILABLE = False
 
-try:
-    from watchdog.observers import Observer
-    from watchdog.events import FileSystemEventHandler
-    WATCHDOG_AVAILABLE = True
-except ImportError:
-    WATCHDOG_AVAILABLE = False
-    FileSystemEventHandler = object  # type: ignore
-
 from toolboxv2 import get_logger
 logger = get_logger()
 
 
 # ── Thread-safe Watchdog → asyncio Queue (BUG FIX from spec) ──
-
-class AsyncWatchdogHandler(FileSystemEventHandler):
-    """
-    Bridge between synchronous Watchdog callbacks and asyncio.
-
-    CRITICAL: Never call asyncio.create_task() from Watchdog threads.
-    Instead, use loop.call_soon_threadsafe() to enqueue events.
-    """
-
-    def __init__(self, loop: asyncio.AbstractEventLoop, queue: asyncio.Queue, vault_path: str):
-        self.loop = loop
-        self.queue = queue
-        self.vault_path = Path(vault_path)
-
-    def _enqueue(self, event_type: str, src_path: str):
-        """Thread-safe enqueue into asyncio queue."""
-        try:
-            rel_path = str(Path(src_path).relative_to(self.vault_path)).replace("\\", "/")
-        except ValueError:
-            return
-
-        if should_ignore(rel_path):
-            return
-
-        self.loop.call_soon_threadsafe(self.queue.put_nowait, (event_type, rel_path))
-
-    def on_modified(self, event):
-        if event.is_directory:
-            return
-        self._enqueue("modified", event.src_path)
-
-    def on_created(self, event):
-        if event.is_directory:
-            return
-        self._enqueue("created", event.src_path)
-
-    def on_deleted(self, event):
-        if event.is_directory:
-            return
-        self._enqueue("deleted", event.src_path)
-
-    def on_moved(self, event):
-        if event.is_directory:
-            return
-        try:
-            old = str(Path(event.src_path).relative_to(self.vault_path)).replace("\\", "/")
-            new = str(Path(event.dest_path).relative_to(self.vault_path)).replace("\\", "/")
-            if should_ignore(new) or should_ignore(old):
-                return
-            self.loop.call_soon_threadsafe(
-                self.queue.put_nowait, ("renamed", old, new)
-            )
-        except ValueError:
-            pass
-
-
-# ── SyncServer ──
 
 class SyncServer:
     """
@@ -126,10 +62,27 @@ class SyncServer:
 
     Manages:
     - WebSocket connections + auth
-    - Server-side file index
+    - Server-side file index (fed by client messages only)
     - Change broadcast
     - Conflict detection
-    - Watchdog on vault directory
+
+    Modes
+    -----
+    relay (default)
+        The server is a pure broker. It never reads or writes share content
+        and never watches its own directory; the vault folder holds nothing
+        but ``.livesync_server.db``.
+
+    replica
+        Same broker, plus an ordinary SyncClient of its own on the same
+        folder, so this machine also carries a copy. All file handling goes
+        through that client — the identical code path every other node uses,
+        with the encryption key on the client side. The broker half still
+        never sees plaintext.
+
+    The old design had the server watch its own vault and broadcast changes it
+    could not upload (no key), which announced files no client could ever
+    fetch. That path is gone.
     """
 
     def __init__(
@@ -137,10 +90,20 @@ class SyncServer:
         vault_path: str,
         share_id: str,
         env_config: Optional[dict] = None,
+        mode: str = "relay",
     ):
+        if mode not in VALID_MODES:
+            raise ValueError(f"mode must be one of {VALID_MODES}, got {mode!r}")
         self.vault_path = Path(vault_path)
         self.share_id = share_id
+        self.mode = mode
         self.env_config = env_config or load_env_config()
+
+        # One authoritative bucket name for the whole server. The old code
+        # defaulted to "livesync" in two places and "tb-shared" in a third,
+        # so a missing env key silently split reads from writes.
+        self.bucket = self.env_config.get("bucket") or "tb-shared"
+        self.url_ttl = int(self.env_config.get("url_ttl") or 900)
 
         # Index
         index_path = self.vault_path / ".livesync_server.db"
@@ -152,16 +115,12 @@ class SyncServer:
         # Pending broadcasts (batched)
         self._pending_broadcasts: List[SyncMessage] = []
 
-        # Watchdog → asyncio queue
-        self._watch_queue: asyncio.Queue = asyncio.Queue()
-        self._observer: Optional[Any] = None
-
-        # Debounce state: {rel_path: last_event_time}
-        self._debounce: Dict[str, float] = {}
-        self._debounce_delay = 2.0  # seconds
-
-        # MinIO admin client (for full-state export, healthcheck)
+        # MinIO admin client (for presigning, full-state export, healthcheck)
         self._minio_admin = None
+
+        # replica mode: our own SyncClient on the same folder
+        self._replica_client = None
+        self._replica_task: Optional[asyncio.Task] = None
 
         self._running = False
 
@@ -199,8 +158,7 @@ class SyncServer:
         # Init MinIO admin client
         try:
             self._minio_admin = create_minio_client(self.env_config)
-            bucket = self.env_config.get("bucket", "livesync")
-            ensure_bucket(self._minio_admin, bucket)
+            ensure_bucket(self._minio_admin, self.bucket)
             ok, msg = healthcheck(self._minio_admin)
             if ok:
                 logger.info(f"[LiveSync] MinIO connected: {self.env_config['endpoint']}")
@@ -210,30 +168,28 @@ class SyncServer:
             logger.error(f"[LiveSync] MinIO init failed: {e}")
             self._minio_admin = None
 
-        # Start watchdog
-        if WATCHDOG_AVAILABLE:
-            self._start_watchdog()
-            logger.info(f"[LiveSync] File watcher started for {self.vault_path}")
-
         # FIX 4: Build SSL context for WSS (None = plain ws://)
         ssl_ctx = self._build_ssl_context()
         scheme = "wss" if ssl_ctx else "ws"
         logger.info(f"[LiveSync] Starting server on {scheme}://{host}:{port}")
 
         async with ws_serve(self._handle_client, host, port, ssl=ssl_ctx):
-            logger.info(f"[LiveSync] Server running on {scheme}://{host}:{port}")
-            # Main loop: process watchdog events + pending broadcasts
+            logger.info(
+                f"[LiveSync] Server running on {scheme}://{host}:{port} "
+                f"[mode={self.mode}]")
+
+            if self.mode == "replica":
+                await self._start_replica_client(port)
+
+            # Main loop: flush pending broadcasts
             while self._running:
-                await self._process_watch_events()
                 await self._flush_broadcasts()
                 await asyncio.sleep(0.1)
 
     async def stop(self):
         """Graceful shutdown."""
         self._running = False
-        if self._observer:
-            self._observer.stop()
-            self._observer.join()
+        await self._stop_replica_client()
         for cid, client in list(self.clients.items()):
             try:
                 await client["ws"].close()
@@ -245,148 +201,18 @@ class SyncServer:
     # ── Index Init ──
 
     async def _init_index(self):
-        """Build initial checksum index from vault files."""
+        """
+        Open the index. Contents come from clients, never from a disk scan.
+
+        Scanning the vault used to add local files with a checksum but no
+        object in storage, so the server advertised files that nobody could
+        download — and the entry stayed in the index for good. In replica mode
+        the embedded SyncClient uploads those same files properly and reports
+        them like any other client.
+        """
         await self.index.init()
-        count = 0
-        for root, dirs, files in os.walk(self.vault_path):
-            # Prune ignored dirs in-place
-            dirs[:] = [d for d in dirs if d not in (".obsidian", ".git", ".sync-trash", "__pycache__", ".livesync_server.db")]
-            for fname in files:
-                full = os.path.join(root, fname)
-                rel = str(Path(full).relative_to(self.vault_path)).replace("\\", "/")
-                if should_ignore(rel):
-                    continue
-                try:
-                    stat = os.stat(full)
-                    if stat.st_size > MAX_FILE_SIZE:
-                        continue
-                    checksum = compute_checksum_file(full)
-                    await self.index.upsert_file(
-                        rel, stat.st_mtime, stat.st_size, checksum, "synced",
-                        make_object_key(self.share_id, rel),
-                    )
-                    count += 1
-                except Exception as e:
-                    logger.warning(f"[LiveSync] Index build skip {rel}: {e}")
-        logger.info(f"[LiveSync] Index built: {count} files")
-
-    # ── Watchdog ──
-
-    def _start_watchdog(self):
-        loop = asyncio.get_event_loop()
-        handler = AsyncWatchdogHandler(loop, self._watch_queue, str(self.vault_path))
-        self._observer = Observer()
-        self._observer.schedule(handler, str(self.vault_path), recursive=True)
-        self._observer.start()
-
-    async def _process_watch_events(self):
-        """
-        Drain watchdog queue with debouncing.
-
-        Collect events for 2s, deduplicate by path, then process.
-        """
-        batch: Dict[str, tuple] = {}
-        deadline = time.time() + 0.5  # check every 0.5s
-
-        while not self._watch_queue.empty() and time.time() < deadline:
-            try:
-                event = self._watch_queue.get_nowait()
-                if event[0] == "renamed":
-                    _, old, new = event
-                    batch[new] = ("renamed", old, new)
-                else:
-                    event_type, rel_path = event
-                    # Debounce: only keep latest event per path
-                    now = time.time()
-                    last = self._debounce.get(rel_path, 0)
-                    if now - last >= self._debounce_delay:
-                        batch[rel_path] = (event_type, rel_path)
-                        self._debounce[rel_path] = now
-            except asyncio.QueueEmpty:
-                break
-
-        # Process batch
-        for key, event in batch.items():
-            try:
-                if event[0] == "renamed":
-                    await self._on_server_file_renamed(event[1], event[2])
-                elif event[0] == "deleted":
-                    await self._on_server_file_deleted(event[1])
-                else:
-                    await self._on_server_file_changed(event[1])
-            except Exception as e:
-                logger.error(f"[LiveSync] Watchdog event error {event}: {e}")
-
-    async def _on_server_file_changed(self, rel_path: str):
-        """Handle a server-side file change (from agent, script, etc.)."""
-        full = self.vault_path / rel_path
-        if not full.exists():
-            return
-        try:
-            stat = full.stat()
-            if stat.st_size > MAX_FILE_SIZE:
-                logger.warning(f"[LiveSync] File too large, skipping: {rel_path}")
-                return
-            checksum = compute_checksum_file(str(full))
-            minio_key = make_object_key(self.share_id, rel_path)
-
-            # Check if actually changed
-            existing = await self.index.get_file(rel_path)
-            if existing and existing["checksum"] == checksum:
-                return
-
-            await self.index.upsert_file(
-                rel_path, stat.st_mtime, stat.st_size, checksum, "synced", minio_key,
-            )
-
-            # Upload to MinIO if admin client available
-            if self._minio_admin:
-                from .crypto import encrypt_file
-                # We need the encryption key — for server-side changes we use
-                # the share's key. This requires the key to be available.
-                # For now, broadcast the notification; clients pull from MinIO.
-                pass
-
-            # Broadcast
-            msg = SyncMessage.file_changed(
-                rel_path, checksum, minio_key,
-                file_type=classify_file(rel_path).value,
-                source_client="server",
-            )
-            self._pending_broadcasts.append(msg)
-            await self.index.log_sync_event(rel_path, "server_change", checksum, "server")
-            logger.info(f"[LiveSync] Server file changed: {rel_path}")
-        except Exception as e:
-            logger.error(f"[LiveSync] Server change error {rel_path}: {e}")
-
-    async def _on_server_file_deleted(self, rel_path: str):
-        """Handle server-side file deletion."""
-        await self.index.delete_file(rel_path)
-        msg = SyncMessage.file_deleted(rel_path, source_client="server")
-        self._pending_broadcasts.append(msg)
-        await self.index.log_sync_event(rel_path, "delete", "", "server")
-        logger.info(f"[LiveSync] Server file deleted: {rel_path}")
-
-    async def _on_server_file_renamed(self, old_path: str, new_path: str):
-        """Handle server-side file rename."""
-        full = self.vault_path / new_path
-        checksum = ""
-        if full.exists():
-            checksum = compute_checksum_file(str(full))
-        minio_key = make_object_key(self.share_id, new_path)
-
-        await self.index.delete_file(old_path)
-        if full.exists():
-            stat = full.stat()
-            await self.index.upsert_file(
-                new_path, stat.st_mtime, stat.st_size, checksum, "synced", minio_key,
-            )
-
-        msg = SyncMessage.file_renamed(
-            old_path, new_path, checksum, minio_key, source_client="server",
-        )
-        self._pending_broadcasts.append(msg)
-        logger.info(f"[LiveSync] Server file renamed: {old_path} → {new_path}")
+        existing = len(await self.index.get_all_checksums())
+        logger.info(f"[LiveSync] Index opened: {existing} known files")
 
     # ── Client Handling ──
 
@@ -422,36 +248,37 @@ class SyncServer:
                 )
                 return
 
-            # Validate token: decode and check share_id matches
-            token_valid = False
-            if client_token:
+            # Verify the token: HMAC signature (this node's device key),
+            # expiry, and share binding. A token we did not sign is a forgery
+            # and there is no unsigned fallback.
+            reason = ""
+            if not client_token:
+                reason = "missing_token"
+            else:
                 try:
-                    from .config import ShareToken
-                    tok = ShareToken.decode(client_token)
-                    token_valid = (tok.share_id == share_id)
-                    # Expiry-Check: Token nach 24h ungültig
-                    if token_valid and tok.expires_at > 0:
-                        if time.time() > tok.expires_at:
-                            token_valid = False
-                            logger.warning(
-                                f"[LiveSync] AUTH_DENIED: token expired. "
-                                f"Client={client_id} share={share_id} "
-                                f"expired_at={tok.expires_at}",
-                                extra={"audit_action": "AUTH_DENIED",
-                                       "client_id": client_id,
-                                       "share_id": share_id,
-                                       "reason": "token_expired"}
-                            )
-                except Exception:
-                    token_valid = False
+                    tok = ShareToken.verify(client_token)
+                    if tok.share_id != share_id:
+                        reason = "share_id_mismatch"
+                except ValueError as exc:
+                    reason = str(exc)
+                except RuntimeError as exc:
+                    # Device key unavailable — the server cannot authenticate
+                    # anyone. Fail closed and say so.
+                    logger.error(f"[LiveSync] AUTH unavailable: {exc}")
+                    await websocket.send(
+                        SyncMessage.error("Server cannot verify tokens").to_json()
+                    )
+                    return
 
-            if not token_valid:
+            if reason:
                 await websocket.send(
                     SyncMessage.error("Invalid or missing share token").to_json()
                 )
                 logger.warning(
-                    f"[LiveSync] AUTH_DENIED: invalid token. "
-                    f"Client={client_id} share={share_id}"
+                    f"[LiveSync] AUTH_DENIED: {reason}. "
+                    f"Client={client_id} share={share_id}",
+                    extra={"audit_action": "AUTH_DENIED", "client_id": client_id,
+                           "share_id": share_id, "reason": reason}
                 )
                 return
 
@@ -462,15 +289,8 @@ class SyncServer:
                 f"device={device_type} ip={peer}"
             )
 
-            # Mint scoped MinIO credentials
-            minio_creds = vend_credentials_for_share(share_id, self.env_config)
-            logger.info(
-                f"[LiveSync] CREDENTIAL_VEND: client={client_id} share={share_id} "
-                f"scoped={minio_creds.get('policy_applied', False)} ip={peer}",
-                extra={"audit_action": "CREDENTIAL_VEND", "client_id": client_id,
-                       "share_id": share_id, "scoped": minio_creds.get("policy_applied", False)}
-            )
-            # Get current checksums for initial sync
+            # No credentials are handed out. The client asks for a presigned
+            # URL per object via REQUEST_URLS when it needs one.
             checksums = await self.index.get_all_checksums()
 
             # Register client
@@ -484,7 +304,8 @@ class SyncServer:
 
             # Send auth success
             await websocket.send(
-                SyncMessage.auth_success(client_id, minio_creds, checksums).to_json()
+                SyncMessage.auth_success(
+                    client_id, checksums, url_ttl=self.url_ttl).to_json()
             )
             logger.info(f"[LiveSync] Client connected: {client_id} ({device_type}) from {peer}")
 
@@ -529,6 +350,13 @@ class SyncServer:
                 await self._process_file_renamed(
                     client_id, p["old_path"], p["new_path"],
                     p.get("checksum", ""), p.get("minio_key", ""),
+                )
+
+            elif msg.type == MsgType.REQUEST_URLS:
+                p = msg.payload
+                await self._grant_urls(
+                    client_id, p.get("req_id", ""), p.get("op", ""),
+                    p.get("paths", []),
                 )
 
             elif msg.type == MsgType.REQUEST_SYNC:
@@ -615,11 +443,11 @@ class SyncServer:
         """Process file_deleted from a client."""
         await self.index.delete_file(path)
         # Delete encrypted object from MinIO to prevent orphaned data
-        bucket = self.env_config.get("bucket", "tb-shared")
         if self._minio_admin:
             try:
                 from .minio_helper import delete_file_and_meta
-                delete_file_and_meta(self._minio_admin, bucket, self.share_id, path)
+                delete_file_and_meta(
+                    self._minio_admin, self.bucket, self.share_id, path)
                 logger.info(f"[LiveSync] MinIO object deleted: {self.share_id}/{path}")
             except Exception as e:
                 logger.warning(f"[LiveSync] MinIO delete failed for {path}: {e}")
@@ -690,8 +518,166 @@ class SyncServer:
         checksums = await self.index.get_all_checksums()
         ws = self.clients[client_id]["ws"]
         await ws.send(SyncMessage.auth_success(
-            client_id, {}, checksums,
+            client_id, checksums, url_ttl=self.url_ttl,
         ).to_json())
+
+    # ── Replica mode ──
+
+    async def _start_replica_client(self, port: int):
+        """
+        Run an ordinary SyncClient against our own vault folder.
+
+        The token comes from the encrypted share store, never from the command
+        line or the environment, so it does not leak through ``ps`` or
+        ``/proc/<pid>/environ``. The client connects to loopback regardless of
+        the endpoint baked into the token: it is on this machine.
+        """
+        record = get_share(self.share_id)
+        if not record or not record.get("token"):
+            logger.error(
+                f"[LiveSync] replica mode needs a stored token for share "
+                f"{self.share_id}, none found — running as relay instead"
+            )
+            self.mode = "relay"
+            return
+
+        try:
+            from .client import SyncClient
+            config = ShareToken.decode(record["token"]).to_sync_config(
+                str(self.vault_path), raw_token=record["token"])
+        except ValueError as e:
+            logger.error(
+                f"[LiveSync] replica mode: stored token unusable ({e}) — "
+                "running as relay instead"
+            )
+            self.mode = "relay"
+            return
+
+        config.ws_endpoint = f"ws://127.0.0.1:{port}"
+        self._replica_client = SyncClient(config)
+        self._replica_task = asyncio.create_task(self._replica_client.run())
+        logger.info(
+            f"[LiveSync] Replica client started on {self.vault_path}")
+
+    async def _stop_replica_client(self):
+        """Stop the embedded client and release its threads."""
+        if self._replica_client:
+            try:
+                await self._replica_client.stop()
+            except Exception as e:
+                logger.error(f"[LiveSync] Replica client stop failed: {e}")
+        if self._replica_task:
+            self._replica_task.cancel()
+            try:
+                await self._replica_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._replica_client = None
+        self._replica_task = None
+
+    # ── Presigned URL vending ──
+
+    MAX_URL_BATCH = 500
+
+    @staticmethod
+    def _is_safe_rel_path(rel_path: str) -> bool:
+        """
+        Reject anything that could escape the share prefix.
+
+        A client controls this string, so it decides which object key the
+        server signs. Without this check ``../<other-share>/x`` would produce
+        a valid presigned URL for a foreign share.
+        """
+        if not rel_path or not isinstance(rel_path, str):
+            return False
+        if len(rel_path) > 1024:
+            return False
+        normalized = rel_path.replace("\\", "/")
+        if normalized.startswith("/") or normalized.startswith("~"):
+            return False
+        if ":" in normalized.split("/")[0] and len(normalized.split("/")[0]) == 2:
+            return False  # drive letter, e.g. C:/
+        parts = normalized.split("/")
+        if any(part in ("", ".", "..") for part in parts):
+            return False
+        if should_ignore(normalized):
+            return False
+        return True
+
+    async def _grant_urls(
+        self, client_id: str, req_id: str, op: str, paths: list
+    ):
+        """
+        Hand out short-lived presigned URLs for specific objects.
+
+        op "get" → one URL per existing object.
+        op "put" → one URL for the encrypted object plus one for its metadata
+        sidecar.
+
+        Every path is validated against the share prefix first: the client
+        never gets a URL for anything outside its own share.
+        """
+        if client_id not in self.clients:
+            return
+        ws = self.clients[client_id]["ws"]
+
+        if op not in ("get", "put"):
+            await ws.send(SyncMessage.urls_granted(
+                req_id, op, {}, error=f"unsupported op '{op}'").to_json())
+            return
+
+        if not self._minio_admin:
+            logger.error(
+                "[LiveSync] URL request but no object storage connection")
+            await ws.send(SyncMessage.urls_granted(
+                req_id, op, {}, missing=list(paths),
+                error="object storage unavailable").to_json())
+            return
+
+        if len(paths) > self.MAX_URL_BATCH:
+            await ws.send(SyncMessage.urls_granted(
+                req_id, op, {}, missing=list(paths),
+                error=f"too many paths (max {self.MAX_URL_BATCH})").to_json())
+            return
+
+        urls: dict = {}
+        missing: list = []
+
+        for rel_path in paths:
+            if not self._is_safe_rel_path(rel_path):
+                missing.append(rel_path)
+                logger.warning(
+                    f"[LiveSync] URL_DENIED: unsafe path from {client_id}: "
+                    f"{rel_path!r}",
+                    extra={"audit_action": "URL_DENIED",
+                           "client_id": client_id, "share_id": self.share_id}
+                )
+                continue
+
+            file_key = make_object_key(self.share_id, rel_path)
+            try:
+                if op == "get":
+                    if not object_exists(self._minio_admin, self.bucket, file_key):
+                        missing.append(rel_path)
+                        continue
+                    urls[rel_path] = {
+                        "file": presign_get(
+                            self._minio_admin, self.bucket, file_key, self.url_ttl),
+                    }
+                else:
+                    meta_key = make_meta_key(self.share_id, rel_path)
+                    urls[rel_path] = {
+                        "file": presign_put(
+                            self._minio_admin, self.bucket, file_key, self.url_ttl),
+                        "meta": presign_put(
+                            self._minio_admin, self.bucket, meta_key, self.url_ttl),
+                    }
+            except Exception as e:
+                missing.append(rel_path)
+                logger.error(f"[LiveSync] Presign failed for {rel_path}: {e}")
+
+        await ws.send(SyncMessage.urls_granted(
+            req_id, op, urls, missing=missing, expires_in=self.url_ttl).to_json())
 
     async def _send_full_state(self, client_id: str):
         """
@@ -708,15 +694,19 @@ class SyncServer:
             minio_key = f"{self.share_id}/.meta/index.db.gz"
 
             if self._minio_admin:
-                bucket = self.env_config.get("bucket", "livesync")
-                upload_bytes(self._minio_admin, bucket, minio_key, data)
+                upload_bytes(self._minio_admin, self.bucket, minio_key, data)
 
             checksums = await self.index.get_all_checksums()
             file_count = len(checksums)
 
+            url = ""
+            if self._minio_admin:
+                url = presign_get(
+                    self._minio_admin, self.bucket, minio_key, self.url_ttl)
+
             ws = self.clients[client_id]["ws"]
             await ws.send(
-                SyncMessage.full_state_ready(minio_key, file_count).to_json()
+                SyncMessage.full_state_ready(minio_key, file_count, url).to_json()
             )
             logger.info(
                 f"[LiveSync] Full state exported for {client_id}: "
@@ -737,6 +727,11 @@ async def _run_standalone():
     parser.add_argument("--share-id", "-s", default="default", help="Share ID")
     parser.add_argument("--host", default="0.0.0.0", help="Bind host")
     parser.add_argument("--port", "-p", type=int, default=8765, help="WS port")
+    parser.add_argument(
+        "--mode", choices=list(VALID_MODES), default="relay",
+        help="relay: broker only. replica: also keep a local copy of the folder "
+             "(needs the share token in the encrypted share store)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -752,6 +747,7 @@ async def _run_standalone():
         vault_path=args.vault,
         share_id=args.share_id,
         env_config=env_config,
+        mode=args.mode,
     )
 
     try:

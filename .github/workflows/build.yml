@@ -378,6 +378,13 @@ jobs:
                   output-dir: build
                   # Include package data
                   include-package: toolboxv2
+                  # Include data directories that aren't auto-detected
+                  include-package-data: toolboxv2
+                  include-data-dir: |
+                    toolboxv2/mods=toolboxv2/mods
+                    toolboxv2/features=toolboxv2/features
+                  # Allow self-spawn for service manager
+                  no-deployment-flag: self-execution
                   # Auto-download missing dependencies
                   assume-yes-for-downloads: true
 

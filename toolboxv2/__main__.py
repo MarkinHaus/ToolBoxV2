@@ -21,6 +21,10 @@ load_dotenv()
 import os
 import sys
 
+# ponytail: Nuitka no_site (standalone default) removes builtin exit()/quit().
+# Remove this shim when --python-flag=no_site is disabled in build config.
+exit = sys.exit
+
 from toolboxv2 import tb_root_dir, _feature_enabled
 from toolboxv2.utils.system.feature_manager import FeatureManager
 from toolboxv2.flows import flows_dict as flows_dict_func
@@ -254,6 +258,19 @@ def start(pidname, args, filename):
     caller = args[0]
     sub_args = args[1:]
     sub_args = ["-bgr" if arg == "-bg" else arg for arg in sub_args]
+
+    # ponytail: In Nuitka standalone/onefile, sys.executable IS the compiled binary.
+    # Skip python/pythonw swap — spawn self directly without "-m toolboxv2".
+    try:
+        __compiled__
+        p = run_executable_in_background(sys.executable, sub_args)
+        pid = p.pid
+        with open(filename, "w", encoding="utf8") as f:
+            f.write(str(pid))
+        print(f"Service {pidname} started (PID {pid})")
+        return
+    except NameError:
+        pass
 
     if system() == "Windows":
         # Ersetze python.exe durch pythonw.exe, um Fenster vollständig zu unterdrücken
@@ -2456,7 +2473,8 @@ def main_runner():
                 )
 
         else:
-            os._exit(run_service_manager_startup())
+            rc = run_service_manager_startup()
+            os._exit(rc if isinstance(rc, int) else 0)
 
     elif "--print-root" in sys.argv:
         from toolboxv2 import tb_root_dir

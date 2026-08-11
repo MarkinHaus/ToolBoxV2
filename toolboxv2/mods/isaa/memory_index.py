@@ -41,7 +41,7 @@ def load_index(data_dir: str, agent_name: str) -> MemoryIndex:
     p = _index_path(data_dir, agent_name)
     if p.exists():
         try:
-            return MemoryIndex.model_validate_json(p.read_text())
+            return MemoryIndex.model_validate_json(p.read_text(encoding="utf-8"))
         except Exception as e:
             logger.warning(f"memory_index load failed ({p}): {e}")
     return MemoryIndex()
@@ -50,7 +50,7 @@ def load_index(data_dir: str, agent_name: str) -> MemoryIndex:
 def save_index(data_dir: str, agent_name: str, index: MemoryIndex) -> None:
     p = _index_path(data_dir, agent_name)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(index.model_dump_json(indent=2))
+    p.write_text(index.model_dump_json(indent=2), encoding="utf-8")
 
 
 # ── Per-space snapshot (no LLM) ─────────────────────────────────────────

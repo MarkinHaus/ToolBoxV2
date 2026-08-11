@@ -196,6 +196,13 @@ jobs:
           mode: onefile
           output-dir: build
           include-package: toolboxv2
+          # Include data directories that aren't auto-detected
+          include-package-data: toolboxv2
+          include-data-dir: |
+            toolboxv2/mods=toolboxv2/mods
+            toolboxv2/features=toolboxv2/features
+          # Allow self-spawn for service manager (Fix 2 defense-in-depth)
+          no-deployment-flag: self-execution
           assume-yes-for-downloads: true
 
       - name: Package Artifact

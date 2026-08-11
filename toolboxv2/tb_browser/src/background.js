@@ -54,7 +54,8 @@ class ToolBoxBackground {
                         this.useNative = false;
                         break;
                     case 'native':
-                        // Kein HTTP-Server -- direkt via Chrome Native Messaging
+                        // EXPERIMENTAL: Native mode — requires toolboxv2 Python package on host
+                        // Uses Chrome Native Messaging (no HTTP server needed)
                         this.apiBase = null;
                         this.useNative = true;
                         break;

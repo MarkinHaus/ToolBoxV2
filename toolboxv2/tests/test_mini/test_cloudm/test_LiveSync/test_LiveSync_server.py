@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import shutil
 import tempfile
 import time
 import unittest
@@ -42,26 +43,12 @@ class TestSyncServer(unittest.TestCase):
             },
         )
 
-    def test_init_builds_checksum_index(self):
+    def test_init_opens_index_without_scanning(self):
+        """The index starts empty; clients fill it, not a disk walk."""
         server = self._make_server()
         run(server._init_index())
         checksums = run(server.index.get_all_checksums())
-        self.assertIn("notes.md", checksums)
-        self.assertIn("sub/deep.md", checksums)
-        run(server.index.close())
-
-    def test_ignores_system_dirs(self):
-        # Create .obsidian dir
-        obs = os.path.join(self.vault, ".obsidian")
-        os.makedirs(obs)
-        with open(os.path.join(obs, "config.json"), "w") as f:
-            f.write("{}")
-
-        server = self._make_server()
-        run(server._init_index())
-        checksums = run(server.index.get_all_checksums())
-        for path in checksums:
-            self.assertNotIn(".obsidian", path)
+        self.assertEqual(checksums, {})
         run(server.index.close())
 
     def test_handle_file_changed_updates_index(self):
@@ -141,66 +128,98 @@ class TestSyncServer(unittest.TestCase):
         run(server.index.close())
 
 
-class TestWatchdogQueue(unittest.TestCase):
-    """Test the thread-safe watchdog → asyncio queue bridge."""
+class TestServerModes(unittest.TestCase):
+    """
+    The server never touches share content itself.
 
-    def test_queue_receives_events(self):
-        loop = asyncio.new_event_loop()
-        q = asyncio.Queue()
+    relay: broker only. replica: broker plus an ordinary SyncClient on the
+    same folder. Watching its own vault and broadcasting changes it could not
+    upload is gone — that announced files no client could ever fetch.
+    """
 
-        from toolboxv2.mods.CloudM.LiveSync.server import AsyncWatchdogHandler
-        handler = AsyncWatchdogHandler(loop, q, "/tmp/vault")
+    def setUp(self):
+        self.vault = tempfile.mkdtemp()
+        with open(os.path.join(self.vault, "preexisting.md"), "w") as f:
+            f.write("was here before the server")
 
-        # Simulate a watchdog event
-        event = MagicMock()
-        event.is_directory = False
-        event.src_path = "/tmp/vault/notes.md"
+    def tearDown(self):
+        shutil.rmtree(self.vault, ignore_errors=True)
 
-        handler.on_modified(event)
+    def _env(self):
+        return {"endpoint": "127.0.0.1:9000", "access_key": "x",
+                "secret_key": "y", "secure": False, "bucket": "tb-shared"}
 
-        async def check():
-            item = await asyncio.wait_for(q.get(), timeout=1.0)
-            return item
+    def test_default_mode_is_relay(self):
+        from toolboxv2.mods.CloudM.LiveSync.server import SyncServer
+        server = SyncServer(self.vault, "s1", self._env())
+        self.assertEqual(server.mode, "relay")
 
-        result = loop.run_until_complete(check())
-        self.assertEqual(result[0], "modified")
-        self.assertEqual(result[1], "notes.md")
-        loop.close()
+    def test_unknown_mode_rejected(self):
+        from toolboxv2.mods.CloudM.LiveSync.server import SyncServer
+        with self.assertRaises(ValueError):
+            SyncServer(self.vault, "s1", self._env(), mode="whatever")
 
-    def test_queue_ignores_system_files(self):
-        loop = asyncio.new_event_loop()
-        q = asyncio.Queue()
+    def test_index_does_not_scan_the_vault(self):
+        """
+        Files sitting in the server folder must not enter the index: there is
+        no object for them in storage, so the entry would advertise a download
+        that can never succeed.
+        """
+        from toolboxv2.mods.CloudM.LiveSync.server import SyncServer
+        server = SyncServer(self.vault, "s1", self._env())
+        run(server._init_index())
+        checksums = run(server.index.get_all_checksums())
+        self.assertEqual(checksums, {})
+        run(server.index.close())
 
-        from toolboxv2.mods.CloudM.LiveSync.server import AsyncWatchdogHandler
-        handler = AsyncWatchdogHandler(loop, q, "/tmp/vault")
+    def test_server_has_no_vault_watchdog(self):
+        from toolboxv2.mods.CloudM.LiveSync import server as server_mod
+        self.assertFalse(hasattr(server_mod, "AsyncWatchdogHandler"))
+        self.assertFalse(hasattr(server_mod.SyncServer, "_start_watchdog"))
+        self.assertFalse(hasattr(server_mod.SyncServer, "_on_server_file_changed"))
 
-        event = MagicMock()
-        event.is_directory = False
-        event.src_path = "/tmp/vault/.obsidian/config.json"
-        handler.on_modified(event)
+    def test_replica_without_stored_token_falls_back_to_relay(self):
+        """No token in the store → no silent half-broken replica."""
+        from toolboxv2.mods.CloudM.LiveSync.server import SyncServer
+        server = SyncServer(self.vault, "no-such-share", self._env(), mode="replica")
+        with patch("toolboxv2.mods.CloudM.LiveSync.server.get_share",
+                   return_value=None):
+            run(server._start_replica_client(8765))
+        self.assertEqual(server.mode, "relay")
+        self.assertIsNone(server._replica_client)
 
-        event2 = MagicMock()
-        event2.is_directory = False
-        event2.src_path = "/tmp/vault/file.tmp"
-        handler.on_modified(event2)
+    def test_replica_client_connects_to_loopback(self):
+        """
+        The token carries the LAN endpoint peers use; the embedded client is
+        on this machine and must not take the detour.
+        """
+        from toolboxv2.mods.CloudM.LiveSync.server import SyncServer
+        from toolboxv2.mods.CloudM.LiveSync import create_share_token
 
-        self.assertTrue(q.empty())
-        loop.close()
+        token = create_share_token(
+            share_id="s1", encryption_key="c29tZWtleQ==",
+            minio_endpoint="10.0.0.5:9000",
+            ws_endpoint="ws://10.0.0.5:8765", bucket="tb-shared",
+        )
+        server = SyncServer(self.vault, "s1", self._env(), mode="replica")
+        created = {}
 
-    def test_queue_ignores_directories(self):
-        loop = asyncio.new_event_loop()
-        q = asyncio.Queue()
+        class _FakeClient:
+            def __init__(self, config):
+                created["config"] = config
 
-        from toolboxv2.mods.CloudM.LiveSync.server import AsyncWatchdogHandler
-        handler = AsyncWatchdogHandler(loop, q, "/tmp/vault")
+            async def run(self):
+                await asyncio.sleep(0)
 
-        event = MagicMock()
-        event.is_directory = True
-        event.src_path = "/tmp/vault/subdir"
-        handler.on_modified(event)
+        with patch("toolboxv2.mods.CloudM.LiveSync.server.get_share",
+                   return_value={"token": token, "mode": "replica"}), \
+                patch("toolboxv2.mods.CloudM.LiveSync.client.SyncClient", _FakeClient):
+            run(server._start_replica_client(9123))
+            run(server._stop_replica_client())
 
-        self.assertTrue(q.empty())
-        loop.close()
+        self.assertEqual(created["config"].ws_endpoint, "ws://127.0.0.1:9123")
+        self.assertEqual(created["config"].share_token, token)
+        self.assertEqual(created["config"].vault_path, self.vault)
 
 
 if __name__ == "__main__":

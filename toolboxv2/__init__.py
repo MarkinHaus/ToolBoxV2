@@ -67,6 +67,33 @@ __email__ = 'Markinhausmanns@gmail.com'
 
 __init_cwd__ = init_cwd = Path.cwd()
 __tb_root_dir__ = tb_root_dir = Path(__file__).parent
+
+# ponytail: Nuitka standalone/onefile detection for writable data directory.
+# In standalone mode __file__ points inside dist/ (read-only if installed to Program Files).
+# In onefile mode __file__ points to ephemeral temp dir. Need persistent writable location.
+# Remove this shim when all platforms enforce user-local install dirs.
+_IS_NUITKA = False
+try:
+    __compiled__
+    _IS_NUITKA = True
+except NameError:
+    pass
+
+if _IS_NUITKA:
+    # Writable data home: alongside exe (standalone) or APPDATA (onefile)
+    try:
+        _exe_dir = Path(__compiled__.containing_dir)
+    except (NameError, AttributeError):
+        _exe_dir = Path(os.path.dirname(os.path.abspath(sys.argv[0])))
+    # Use exe dir as writable root if __file__ dir is not writable
+    try:
+        os.makedirs(__tb_root_dir__ / '.data', exist_ok=True)
+        _writable_root = __tb_root_dir__
+    except (PermissionError, OSError):
+        _writable_root = _exe_dir
+else:
+    _writable_root = __tb_root_dir__
+
 os.makedirs(__tb_root_dir__ / 'dist', exist_ok=True)
 VERSION = '0.1.28'
 __version__ = get_version_from_pyproject(str(tb_root_dir.parent / "pyproject.toml")) if get_version_from_pyproject is not None else VERSION
@@ -93,6 +120,12 @@ FeatureManager = None
 try:
     from .utils.system.feature_manager import FeatureManager
     _features_dir = tb_root_dir / "features"
+    # ponytail: In Nuitka standalone/onefile, features/ may be alongside exe, not in __file__ dir.
+    if not _features_dir.exists() and _IS_NUITKA:
+        try:
+            _features_dir = Path(__compiled__.containing_dir) / "toolboxv2" / "features"
+        except (NameError, AttributeError):
+            _features_dir = Path(os.path.dirname(os.path.abspath(sys.argv[0]))) / "toolboxv2" / "features"
     if _features_dir.exists():
         _feature_manager = FeatureManager(features_dir=str(_features_dir))
 except ImportError:
