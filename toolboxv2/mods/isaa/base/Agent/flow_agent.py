@@ -4223,13 +4223,17 @@ class FlowAgent:
         # Text-Tokens (Base64-frei) + separat gefuehrte Vision-Kosten (765/Bild).
         t_total = count(final_messages, tools=active_tools) + media_tokens
 
-        # REAL → was wirklich ans Modell geht: bei live working_history ist SIE
-        # die reale, bereits offload-/budget-managte Message-Liste → direkt zaehlen.
-        # Sonst Fresh-Build (== t_total). Vision-Kosten einmalig addieren.
-        if work_history:
-            t_effective = count(ctx.working_history, tools=active_tools) + media_tokens
-        else:
-            t_effective = t_total
+        # REAL → was WIRKLICH an den Agent geht: exakt die Funktion, die auch die
+        # Live-Bar (ctx x/limit) speist und den finalen Stack nach Working-Memory-
+        # Offloading/Compression baut (System + working_history + Tools).
+        # → REAL zeigt damit garantiert dieselbe Zahl wie die Live-Bar.
+        try:
+            t_effective = engine._calculate_context_load(ctx)
+        except Exception:
+            if work_history:
+                t_effective = count(ctx.working_history, tools=active_tools) + media_tokens
+            else:
+                t_effective = t_total
 
         # ── 5. Compression / Offload Ratios aus der Engine-Config holen ──
         cfg = getattr(ctx, "context_config", None)

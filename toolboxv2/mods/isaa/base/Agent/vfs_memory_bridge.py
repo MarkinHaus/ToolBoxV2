@@ -392,6 +392,23 @@ class VFSMemoryIndexer:
             self._pending.pop(p, None)
             await self._index_path(p, session_scoped=True)
 
+    def save_index(self):
+        """Persist FAISS vectors for all VFSIndex spaces to disk.
+
+        Critical: without this call, FAISS vectors live in RAM only and are
+        lost on every process restart. The SQLite entries survive (WAL flush),
+        but vector search returns nothing → recall degrades to BM25-only.
+        """
+        for sp in (self.space, self.agent_space, GLOBAL_INDEX_SPACE):
+            store = self._store(sp)
+            if store is None:
+                continue
+            try:
+                if store._faiss.index.ntotal > 0:
+                    store.save()
+            except Exception as e:
+                logger.debug(f"[VFSMemoryIndexer] save_index {sp}: {e}")
+
     # ── index ops ─────────────────────────────────────────────────────────
 
     def _get_content(self, path: str) -> str | None:
@@ -479,11 +496,27 @@ class VFSMemoryIndexer:
     # ── retroactive backfill ──────────────────────────────────────────────
 
     def _load_indexed_hashes(self, space: str | None = None) -> dict[str, str]:
-        """Read already-indexed vfs sources + hashes from the store (cheap SQL)."""
+        """Read already-indexed vfs sources + hashes from the store (cheap SQL).
+
+        Guard: if FAISS is empty for this space (e.g. after restart where
+        vectors.faiss was never saved), the SQLite hashes are stale — the
+        content is in SQLite but the vectors are gone. Returning empty forces
+        a full re-index, repopulating FAISS.
+        """
         out: dict[str, str] = {}
         store = self._store(space)
         if store is None:
             return out
+        # Guard: empty FAISS → stale hashes → force re-index
+        try:
+            if store._faiss.index.ntotal == 0:
+                logger.info(
+                    f"[VFSMemoryIndexer] FAISS empty for {space or self.space} "
+                    f"— forcing full re-index (hashes in SQLite are stale)"
+                )
+                return out
+        except Exception:
+            pass
         try:
             rows = store._exec(
                 "SELECT meta_source, meta_custom FROM entries "
@@ -542,7 +575,10 @@ class VFSMemoryIndexer:
                 done += 1
                 bar.update(done, path)
                 if done % 50 == 0:
+                    self.save_index()
                     gc.collect()
+            # final save after backfill complete
+            self.save_index()
         finally:
             bar.close(f"VFS indexed: {done}/{total} files")
         logger.info(
@@ -556,7 +592,16 @@ class VFSMemoryIndexer:
 
 
 def _global_hash_current(store, source: str, h: str) -> bool:
-    """True if the store already holds ACTIVE entries for source with this hash."""
+    """True if the store already holds ACTIVE entries for source with this hash.
+
+    Guard: if FAISS is empty the SQLite hashes are stale (vectors lost on
+    restart).  Returning False forces a re-index, repopulating FAISS.
+    """
+    try:
+        if store._faiss.index.ntotal == 0:
+            return False
+    except Exception:
+        pass
     try:
         rows = store._exec(
             "SELECT meta_custom FROM entries "

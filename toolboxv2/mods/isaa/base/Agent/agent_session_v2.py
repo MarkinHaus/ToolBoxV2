@@ -862,6 +862,10 @@ class AgentSessionV2:
                 await self.vfs_indexer.flush()
             except Exception:
                 pass
+            try:
+                self.vfs_indexer.save_index()
+            except Exception as e:
+                logger.warning(f"VFSIndex FAISS save failed on shutdown: {e}")
             self.vfs_indexer.stop()
 
         # Close all open VFS files

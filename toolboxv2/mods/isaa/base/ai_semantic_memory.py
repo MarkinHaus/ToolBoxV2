@@ -559,6 +559,12 @@ class AISemanticMemory(metaclass=Singleton):
             space=sanitized_name,
         )
 
+    def vis(self, memory_name: str, output_file: str = "graph.html", **kwargs):
+        sanitized = self._sanitize_name(memory_name)
+        if store := self.memories.get(sanitized):
+            return store.vis(output_file=output_file, **kwargs)
+        raise ValueError(f"Memory '{memory_name}' nicht gefunden.")
+
     # ── lifecycle ──────────────────────────────────────────────────────
 
     def close(self):

@@ -3,18 +3,14 @@ Memory Graph Visualizer for HybridMemoryStore (V2)
 
 Provides advanced, highly performant visualization capabilities for entity relations
 and knowledge graphs natively extracted from the SQLite backend.
-
-Generates a standalone, interactive HTML dashboard using D3.js.
-Strictly adheres to professional UI/UX guidelines:
-- Dark mode (#08080d)
-- IBM Plex typography
-- Multi-edge support via curved links
-- Degree-centrality based node scaling
-- Accordion-style data inspection (no modals)
+Auto-builds a rich Document-Concept Knowledge Graph from `entries` and `concept_index`
+when explicit entity tables are empty.
 """
 
 import json
+import time
 from typing import Any, Dict, List, Optional, Tuple
+
 
 class MemoryGraphVisualizer:
     """
@@ -23,13 +19,6 @@ class MemoryGraphVisualizer:
     """
 
     def __init__(self, store, max_depth: int = 3):
-        """
-        Initialize visualizer with a HybridMemoryStore instance.
-
-        Args:
-            store: HybridMemoryStore instance (V2)
-            max_depth: Default maximum depth for subgraph traversal
-        """
         self.store = store
         self.max_depth = max_depth
 
@@ -66,15 +55,132 @@ class MemoryGraphVisualizer:
                 })
         return relations
 
+    def _build_graph_from_index(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Erstellt automatisch einen Knowledge Graph aus entries + concept_index.
+        Generiert Dokumenten-Knoten mit ALLEN Metadaten sowie Kanten zu den Konzepten.
+        """
+        nodes = []
+        edges = []
+        seen_nodes = set()
+
+        with self.store._tx() as conn:
+            # 1. Aktive Einträge (Dokumente/Code/Texte) mit vollständigen Metadaten laden
+            entries = conn.execute("""
+                SELECT id, content, content_type, created_at, access_count,
+                       meta_role, meta_source, meta_language, meta_category,
+                       meta_importance, meta_custom
+                FROM entries
+                WHERE space = ? AND is_active = 1
+                ORDER BY created_at DESC
+                LIMIT 50
+            """, (self.store.space,)).fetchall()
+
+            entry_ids = [e["id"] for e in entries]
+            if not entry_ids:
+                return [], []
+
+            # Dokumenten-Knoten mit Metadaten anlegen
+            for e in entries:
+                doc_id = f"doc:{e['id']}"
+                source_name = e["meta_source"] or f"Entry-{e['id'][:8]}"
+                clean_label = source_name.replace("\\", "/").split("/")[-1] if "/" in source_name or "\\" in source_name else source_name
+
+                custom_meta = {}
+                if e["meta_custom"]:
+                    try:
+                        custom_meta = json.loads(e["meta_custom"])
+                    except Exception:
+                        pass
+
+                meta = {
+                    "source_path": e["meta_source"] or "unknown",
+                    "content_type": e["content_type"],
+                    "role": e["meta_role"],
+                    "language": e["meta_language"],
+                    "category": e["meta_category"],
+                    "importance": e["meta_importance"],
+                    "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(e["created_at"])),
+                    "access_count": e["access_count"],
+                    "preview": e["content"][:200] + ("..." if len(e["content"]) > 200 else ""),
+                    **custom_meta
+                }
+                # Werte aufräumen
+                meta = {k: v for k, v in meta.items() if v is not None}
+
+                nodes.append({
+                    "id": doc_id,
+                    "label": clean_label,
+                    "type": e["content_type"] or "document",
+                    "meta": meta,
+                })
+                seen_nodes.add(doc_id)
+
+            # 2. Konzepte laden und Kanten Dokument -> Konzept erstellen
+            placeholders = ",".join(["?"] * len(entry_ids))
+            concept_rows = conn.execute(f"""
+                SELECT ci.concept, ci.entry_id, COUNT(*) OVER(PARTITION BY ci.concept) as concept_freq
+                FROM concept_index ci
+                WHERE ci.entry_id IN ({placeholders})
+            """, entry_ids).fetchall()
+
+            for row in concept_rows:
+                c_name = row["concept"]
+                c_id = f"concept:{c_name}"
+
+                if c_id not in seen_nodes:
+                    nodes.append({
+                        "id": c_id,
+                        "label": c_name,
+                        "type": "concept",
+                        "meta": {
+                            "type": "concept",
+                            "occurrences": row["concept_freq"],
+                            "space": self.store.space
+                        }
+                    })
+                    seen_nodes.add(c_id)
+
+                doc_id = f"doc:{row['entry_id']}"
+                edges.append({
+                    "source": doc_id,
+                    "target": c_id,
+                    "type": "has_concept",
+                    "weight": 0.8,
+                    "meta": {"relation": "contains_concept"}
+                })
+
+            # 3. Kanten Konzept <-> Konzept (Co-occurrence in selben Dokumenten)
+            co_occur_rows = conn.execute(f"""
+                SELECT c1.concept, c2.concept, COUNT(*) as weight
+                FROM concept_index c1
+                JOIN concept_index c2 ON c1.entry_id = c2.entry_id AND c1.concept < c2.concept
+                WHERE c1.entry_id IN ({placeholders})
+                GROUP BY c1.concept, c2.concept
+                HAVING weight >= 1
+                ORDER BY weight DESC
+                LIMIT 100
+            """, entry_ids).fetchall()
+
+            for row in co_occur_rows:
+                c1_id = f"concept:{row['concept']}"
+                c2_id = f"concept:{row['concept']}"
+                if c1_id in seen_nodes and c2_id in seen_nodes:
+                    edges.append({
+                        "source": c1_id,
+                        "target": c2_id,
+                        "type": "co_occurs",
+                        "weight": min(1.0, float(row["weight"]) * 0.3 + 0.2),
+                        "meta": {"shared_documents": row["weight"]}
+                    })
+
+        return nodes, edges
+
     def get_entity_network(
         self, entity_id: str, depth: int = 2
     ) -> Tuple[List[Dict], List[Dict]]:
-        """
-        Get entities and relations within N hops of a given entity.
-        Uses a Recursive CTE in SQLite for maximum performance and O(1) memory overhead.
-        """
+        """Get entities and relations within N hops of a given entity."""
         with self.store._tx() as conn:
-            # 1. Recursive CTE to find all node IDs within `depth` hops (undirected traversal)
             query = """
             WITH RECURSIVE traverse(id, current_depth) AS (
                 SELECT ?, 0
@@ -95,7 +201,6 @@ class MemoryGraphVisualizer:
         if not node_ids:
             return [], []
 
-        # 2. Fetch Entity Details
         placeholders = ",".join(["?"] * len(node_ids))
         entities = []
         with self.store._tx() as conn:
@@ -111,7 +216,6 @@ class MemoryGraphVisualizer:
                     "meta": json.loads(row[3]) if row[3] else {},
                 })
 
-        # 3. Fetch all edges exclusively between the discovered nodes
         relations = []
         with self.store._tx() as conn:
             r_cursor = conn.execute(
@@ -136,13 +240,24 @@ class MemoryGraphVisualizer:
         entities: Optional[List[Dict]] = None,
         relations: Optional[List[Dict]] = None,
     ) -> Dict[str, Any]:
-        """Format data perfectly for the D3.js frontend."""
+        """Format data for the D3.js frontend."""
         if entities is None:
             entities = self.get_all_entities()
         if relations is None:
             relations = self.get_all_relations()
 
-        # Deduplicate nodes to ensure valid graph state
+        # Automatische Generierung nutzen, falls keine manuellen Entitäten/Rel. existieren
+        if not entities:
+            dyn_nodes, dyn_edges = self._build_graph_from_index()
+            return {
+                "nodes": dyn_nodes,
+                "edges": dyn_edges,
+                "metadata": {
+                    "node_count": len(dyn_nodes),
+                    "edge_count": len(dyn_edges)
+                }
+            }
+
         seen_nodes = set()
         nodes = []
         for e in entities:
@@ -155,7 +270,6 @@ class MemoryGraphVisualizer:
                     "meta": e["meta"],
                 })
 
-        # Ensure edges only reference existing nodes
         edges = []
         for r in relations:
             if r["source"] in seen_nodes and r["target"] in seen_nodes:
@@ -182,14 +296,10 @@ class MemoryGraphVisualizer:
         relations: Optional[List[Dict]] = None,
         title: str = "Memory Intelligence Graph"
     ) -> str:
-        """
-        Generate standalone HTML with an interactive, professional D3.js visualization.
-        Adheres strictly to UI rules: IBM Plex, CSS Grid, No Modals, Subdued styling.
-        """
+        """Generate standalone HTML dashboard."""
         graph_data = self.to_json(entities, relations)
         json_str = json.dumps(graph_data)
 
-        # Using a raw string block with string replacement to avoid { } escaping hell in python f-strings.
         html_template = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -224,14 +334,12 @@ class MemoryGraphVisualizer:
             font-size: 14px;
         }
 
-        /* Layout */
         .dashboard {
             display: grid;
             grid-template-columns: 1fr 400px;
             height: 100vh;
         }
 
-        /* Graph Canvas */
         .graph-container {
             position: relative;
             outline: none;
@@ -268,7 +376,6 @@ class MemoryGraphVisualizer:
             stroke-width: 3px !important;
         }
 
-        /* Controls Overlays */
         .top-bar {
             position: absolute;
             top: 20px;
@@ -312,7 +419,6 @@ class MemoryGraphVisualizer:
             border-color: var(--border-active);
         }
 
-        /* Sidebar UI */
         .sidebar {
             border-left: 1px solid var(--border);
             background: var(--surface);
@@ -334,14 +440,13 @@ class MemoryGraphVisualizer:
             gap: 24px;
         }
 
-        /* Typography & Data */
         .mono-text { font-family: 'IBM Plex Mono', monospace; }
         .text-dim { color: var(--text-muted); }
         h3 { font-size: 16px; font-weight: 500; margin: 0 0 12px 0; }
 
         .key-val {
             display: grid;
-            grid-template-columns: 100px 1fr;
+            grid-template-columns: 110px 1fr;
             font-size: 12px;
             margin-bottom: 8px;
             line-height: 1.5;
@@ -349,7 +454,6 @@ class MemoryGraphVisualizer:
         .key-val .key { color: var(--text-muted); }
         .key-val .val { font-family: 'IBM Plex Mono', monospace; color: var(--text); word-break: break-all; }
 
-        /* Accordion List */
         .accordion-list {
             display: flex;
             flex-direction: column;
@@ -383,7 +487,6 @@ class MemoryGraphVisualizer:
         }
         .accordion-item.active .accordion-body { display: block; }
 
-        /* Score Bar (Weights) */
         .score-wrap { display: flex; align-items: center; gap: 8px; }
         .score-bar { display: flex; gap: 2px; }
         .score-segment {
@@ -394,7 +497,6 @@ class MemoryGraphVisualizer:
         }
         .score-segment.active { background: var(--text-muted); }
 
-        /* Utility */
         .empty-state {
             color: var(--text-faint);
             text-align: center;
@@ -406,7 +508,6 @@ class MemoryGraphVisualizer:
 </head>
 <body>
     <div class="dashboard">
-        <!-- Canvas -->
         <div class="graph-container" id="graph-container">
             <div class="top-bar">
                 <div class="label-micro">Graph Visualization</div>
@@ -420,7 +521,6 @@ class MemoryGraphVisualizer:
             <svg id="graph-svg"></svg>
         </div>
 
-        <!-- Inspector -->
         <div class="sidebar">
             <div class="sidebar-header" id="sidebar-header">
                 <div class="label-micro">Inspector</div>
@@ -435,7 +535,6 @@ class MemoryGraphVisualizer:
     <script>
         const GRAPH_DATA = __GRAPH_DATA__;
 
-        // --- Utils: Badges & Colors ---
         const colorPalette = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#a5b4fc", "#ec4899", "#8b5cf6", "#14b8a6"];
 
         function getHashColor(str) {
@@ -470,8 +569,6 @@ class MemoryGraphVisualizer:
             return html;
         }
 
-        // --- Data Preprocessing ---
-        // Calculate degree centrality for node sizing
         const degrees = {};
         GRAPH_DATA.edges.forEach(e => {
             degrees[e.source] = (degrees[e.source] || 0) + 1;
@@ -480,15 +577,12 @@ class MemoryGraphVisualizer:
 
         GRAPH_DATA.nodes.forEach(n => {
             n.degree = degrees[n.id] || 0;
-            n.radius = Math.max(4, Math.min(24, 4 + Math.sqrt(n.degree) * 3));
+            n.radius = Math.max(5, Math.min(26, 5 + Math.sqrt(n.degree) * 3));
             n.color = getHashColor(n.type);
         });
 
-        // Calculate multi-edges (Curved links logic)
         const edgeCounts = {};
         GRAPH_DATA.edges.forEach(e => {
-            // Strictly directed key to separate A->B and B->A curves if needed,
-            // but for UI clarity we group undirected bounds to spread arcs.
             const s = e.source < e.target ? e.source : e.target;
             const t = e.source < e.target ? e.target : e.source;
             const key = `${s}|||${t}`;
@@ -496,7 +590,6 @@ class MemoryGraphVisualizer:
             e.linknum = edgeCounts[key]++;
         });
 
-        // --- D3 Graph Setup ---
         const container = document.getElementById("graph-container");
         const width = container.clientWidth;
         const height = container.clientHeight;
@@ -504,7 +597,6 @@ class MemoryGraphVisualizer:
         const svg = d3.select("#graph-svg");
         const g = svg.append("g");
 
-        // Zoom & Pan
         const zoomBehavior = d3.zoom()
             .scaleExtent([0.1, 8])
             .on("zoom", (e) => g.attr("transform", e.transform));
@@ -514,13 +606,12 @@ class MemoryGraphVisualizer:
         window.zoomOut = () => svg.transition().duration(300).call(zoomBehavior.scaleBy, 0.7);
         window.resetZoom = () => svg.transition().duration(300).call(zoomBehavior.transform, d3.zoomIdentity.translate(width/2, height/2).scale(0.8));
 
-        // Define Arrow Markers
         svg.append("defs").selectAll("marker")
             .data(["arrow"])
             .enter().append("marker")
             .attr("id", String)
             .attr("viewBox", "0 -5 10 10")
-            .attr("refX", 15) // Will be updated dynamically per node radius
+            .attr("refX", 15)
             .attr("refY", 0)
             .attr("markerWidth", 5)
             .attr("markerHeight", 5)
@@ -529,14 +620,12 @@ class MemoryGraphVisualizer:
             .attr("d", "M0,-5L10,0L0,5")
             .attr("fill", "var(--text-muted)");
 
-        // Force Simulation
         const simulation = d3.forceSimulation(GRAPH_DATA.nodes)
-            .force("link", d3.forceLink(GRAPH_DATA.edges).id(d => d.id).distance(120))
-            .force("charge", d3.forceManyBody().strength(-300))
+            .force("link", d3.forceLink(GRAPH_DATA.edges).id(d => d.id).distance(130))
+            .force("charge", d3.forceManyBody().strength(-350))
             .force("center", d3.forceCenter(0, 0))
-            .force("collide", d3.forceCollide().radius(d => d.radius + 15).iterations(2));
+            .force("collide", d3.forceCollide().radius(d => d.radius + 18).iterations(2));
 
-        // Edges (Paths for curves)
         const link = g.append("g")
             .selectAll("path")
             .data(GRAPH_DATA.edges)
@@ -547,7 +636,6 @@ class MemoryGraphVisualizer:
             .attr("marker-end", "url(#arrow)")
             .on("click", (event, d) => inspectEdge(d, event));
 
-        // Nodes
         const node = g.append("g")
             .selectAll("g")
             .data(GRAPH_DATA.nodes)
@@ -566,19 +654,17 @@ class MemoryGraphVisualizer:
         node.append("text")
             .attr("dy", d => d.radius + 12)
             .attr("text-anchor", "middle")
-            .text(d => d.label);
+            .text(d => d.label || d.id);
 
-        // Simulation Tick Update
         simulation.on("tick", () => {
             link.attr("d", d => {
                 const dx = d.target.x - d.source.x;
                 const dy = d.target.y - d.source.y;
                 const dr = Math.sqrt(dx * dx + dy * dy);
 
-                // Adjust arrow position to edge of circle
                 const targetRadius = d.target.radius + 2;
-                const offsetX = (dx * targetRadius) / dr;
-                const offsetY = (dy * targetRadius) / dr;
+                const offsetX = dr ? (dx * targetRadius) / dr : 0;
+                const offsetY = dr ? (dy * targetRadius) / dr : 0;
                 const tx = d.target.x - offsetX;
                 const ty = d.target.y - offsetY;
 
@@ -586,7 +672,6 @@ class MemoryGraphVisualizer:
                     return `M${d.source.x},${d.source.y}L${tx},${ty}`;
                 }
 
-                // Multiple edges: Draw arcs
                 const sweep = d.linknum % 2 === 0 ? 0 : 1;
                 const scale = 1 + Math.floor((d.linknum - 1) / 2) * 0.4;
                 const r = dr * scale;
@@ -596,7 +681,6 @@ class MemoryGraphVisualizer:
             node.attr("transform", d => `translate(${d.x},${d.y})`);
         });
 
-        // Initial Center
         setTimeout(() => resetZoom(), 100);
 
         function dragstarted(event, d) {
@@ -611,7 +695,6 @@ class MemoryGraphVisualizer:
             d.fx = null; d.fy = null;
         }
 
-        // --- UI Interaction / Sidebar ---
         const sHeader = document.getElementById("sidebar-header");
         const sContent = document.getElementById("sidebar-content");
 
@@ -623,17 +706,15 @@ class MemoryGraphVisualizer:
         function inspectNode(d, event) {
             event.stopPropagation();
 
-            // Highlight
             node.style("opacity", o => (o.id === d.id || isConnected(o, d)) ? 1 : 0.2);
             link.style("stroke-opacity", o => (o.source.id === d.id || o.target.id === d.id) ? 0.8 : 0.05);
 
             sHeader.innerHTML = `
-                <div class="label-micro">Entity Details</div>
-                <h3 style="margin-bottom:8px">${d.label}</h3>
+                <div class="label-micro">Entity / Document Details</div>
+                <h3 style="margin-bottom:8px">${d.label || d.id}</h3>
                 ${createBadge(d.type, d.color)}
             `;
 
-            // Find connected edges
             const edges = GRAPH_DATA.edges.filter(e => e.source.id === d.id || e.target.id === d.id);
 
             let connectionsHtml = '<div class="accordion-list">';
@@ -650,7 +731,7 @@ class MemoryGraphVisualizer:
                                 <span class="mono-text" style="color:${dirColor}; font-size:10px; margin-right:6px">${dirLabel}</span>
                                 ${e.type}
                                 <span class="text-dim" style="margin: 0 4px">→</span>
-                                ${other.label}
+                                ${other.label || other.id}
                             </div>
                         </div>
                         <div class="accordion-body">
@@ -685,7 +766,6 @@ class MemoryGraphVisualizer:
         function inspectEdge(d, event) {
             event.stopPropagation();
 
-            // Highlight
             link.style("stroke-opacity", o => o === d ? 1 : 0.05)
                 .style("stroke-width", o => o === d ? Math.max(2, o.weight*4) : 1);
             node.style("opacity", o => (o.id === d.source.id || o.id === d.target.id) ? 1 : 0.2);
@@ -694,7 +774,7 @@ class MemoryGraphVisualizer:
 
             sHeader.innerHTML = `
                 <div class="label-micro">Relation Details</div>
-                <h3 style="margin-bottom:8px">${d.source.label} <span class="text-dim">→</span> ${d.target.label}</h3>
+                <h3 style="margin-bottom:8px">${d.source.label || d.source.id} <span class="text-dim">→</span> ${d.target.label || d.target.id}</h3>
                 ${createBadge(d.type, typeColor)}
             `;
 
@@ -726,7 +806,6 @@ class MemoryGraphVisualizer:
             return GRAPH_DATA.edges.some(e => (e.source.id === a.id && e.target.id === b.id) || (e.source.id === b.id && e.target.id === a.id));
         }
 
-        // Reset click
         svg.on("click", () => {
             node.style("opacity", 1);
             link.style("stroke-opacity", 0.3).style("stroke-width", d => Math.max(1, d.weight * 3));

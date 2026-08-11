@@ -704,9 +704,9 @@ class AgentCheckpoint:
 @dataclass
 class ContextBudgetConfig:
     """Konfiguration für dynamisches Context-Budget-Management."""
-    max_context_ratio: float = 0.85       # Wie viel % des Model-Kontexts genutzt werden dürfen (0.7 - 0.95)
-    immediate_offload_ratio: float = 0.7  # Ab diesem Anteil am Gesamt-Kontext → sofort offloaden (Szenario C)
-    displacement_threshold: float = 0.4   # Max Größe für Displacement-Strategie (Szenario B)
+    max_context_ratio: float = 0.6       # Wie viel % des Model-Kontexts genutzt werden dürfen (0.7 - 0.95)
+    immediate_offload_ratio: float = 0.45  # Ab diesem Anteil am Gesamt-Kontext → sofort offloaden (Szenario C)
+    displacement_threshold: float = 0.35   # Max Größe für Displacement-Strategie (Szenario B)
     safety_margin_tokens: int = 500       # Reserve
     heavy_hitter_min_tokens: int = 1000    # Min Größe für Offload-Kandidaten
 

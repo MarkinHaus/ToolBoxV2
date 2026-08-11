@@ -1603,3 +1603,19 @@ class HybridMemoryStore:
             )
 
         return results
+
+    # ════════════════════ Visualization ════════════════════
+
+    def vis(self, output_file: str = "concept_graph.html", depth: int = 2, get_html: bool = False) -> str:
+        """
+        Generiert ein interaktives D3.js Knowledge Graph Dashboard aus den SQLite-Entities & Relations.
+        """
+        from .memory_graph_visualizer import MemoryGraphVisualizer
+
+        viz = MemoryGraphVisualizer(self, max_depth=depth)
+
+        if get_html:
+            return viz.to_html(title=f"Memory Graph: {self.space}")
+
+        viz.save_html(output_file, title=f"Memory Graph: {self.space}")
+        return output_file

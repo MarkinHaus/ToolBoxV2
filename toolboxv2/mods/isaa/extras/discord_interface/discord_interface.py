@@ -648,6 +648,51 @@ class MediaHandler:
                     pass
 
 
+def parse_discord_target(value: Any) -> dict:
+    """Parse anything the agent may hand us into a routing target.
+
+    Accepted forms:
+      discord://dm:<user_id>                      -> DM (user_id)
+      discord://server:<guild>/channel:<chan>     -> guild channel
+      discord://channel:<chan>                    -> guild channel
+      <int> / "<int>"                             -> ambiguous id, tried as
+                                                     channel first, then as a
+                                                     user id (DM fallback)
+    """
+    result = {"type": None, "channel_id": None, "user_id": None, "raw_id": None}
+    if value is None:
+        return result
+
+    raw = str(value).strip()
+    if not raw:
+        return result
+
+    if raw.startswith("discord://dm:"):
+        result["type"] = "dm"
+        result["user_id"] = int(raw.rsplit(":", 1)[-1])
+        return result
+
+    if raw.startswith("discord://server:"):
+        result["type"] = "channel"
+        parts = raw.replace("discord://server:", "").split("/channel:")
+        if len(parts) > 1:
+            result["channel_id"] = int(parts[1])
+        return result
+
+    if raw.startswith("discord://channel:"):
+        result["type"] = "channel"
+        result["channel_id"] = int(raw.rsplit(":", 1)[-1])
+        return result
+
+    if raw.lstrip("-").isdigit():
+        # Bare id: could be a channel or a user. Resolution tries both.
+        result["type"] = "id"
+        result["raw_id"] = int(raw)
+        return result
+
+    return result
+
+
 class AutoRouter:
     """
     Routet Agent-Antworten automatisch zum richtigen Ziel.
@@ -670,6 +715,52 @@ class AutoRouter:
     def clear_pending_context(self):
         """Löscht den pending Context"""
         self._pending_context = None
+
+    async def resolve_channel(
+        self,
+        channel_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+        raw_id: Optional[int] = None,
+    ):
+        """Single resolution point for every Discord send target.
+
+        Order: explicit user id (DM) -> guild channel cache/fetch -> ambiguous
+        id tried as channel, then as user (DM). Returns None if nothing matches.
+        """
+        async def _dm(uid: int):
+            user = self.bot.get_user(uid) or await self.bot.fetch_user(uid)
+            if user is None:
+                return None
+            return getattr(user, "dm_channel", None) or await user.create_dm()
+
+        if user_id:
+            return await _dm(int(user_id))
+
+        if channel_id:
+            cid = int(channel_id)
+            channel = self.bot.get_channel(cid)
+            if channel is not None:
+                return channel
+            try:
+                return await self.bot.fetch_channel(cid)
+            except Exception:
+                return None
+
+        if raw_id:
+            rid = int(raw_id)
+            channel = self.bot.get_channel(rid)
+            if channel is not None:
+                return channel
+            try:
+                return await self.bot.fetch_channel(rid)
+            except Exception:
+                pass
+            try:
+                return await _dm(rid)
+            except Exception:
+                return None
+
+        return None
 
     async def route_response(
         self,
@@ -694,10 +785,16 @@ class AutoRouter:
         if target_address:
             target = self._parse_address(target_address)
         elif self._pending_context:
+            # A bot can NEVER resolve a DM channel by its channel id: incoming
+            # DMs are built via DMChannel._from_message() and are never put into
+            # ConnectionState._private_channels, and GET /channels/<dm> is
+            # forbidden for bots. So for DMs we must route by user id and let
+            # create_dm() open (and cache) the channel.
+            is_dm = not self._pending_context.guild_id
             target = {
                 "type": "auto",
-                "channel_id": self._pending_context.channel_id,
-                "user_id": self._pending_context.user_id if not self._pending_context.guild_id else None,
+                "channel_id": None if is_dm else self._pending_context.channel_id,
+                "user_id": self._pending_context.user_id if is_dm else None,
             }
             # Auto-Reply wenn Kontext vorhanden
             if not reply_to and self._pending_context.message_id:
@@ -710,17 +807,17 @@ class AutoRouter:
 
         # Channel holen
         try:
-            if target.get("user_id") and not target.get("channel_id"):
-                # DM
-                user = await self.bot.fetch_user(target["user_id"])
-                channel = await user.create_dm()
-            else:
-                channel = self.bot.get_channel(target["channel_id"])
-                if not channel:
-                    channel = await self.bot.fetch_channel(target["channel_id"])
+            channel = await self.resolve_channel(
+                channel_id=target.get("channel_id"),
+                user_id=target.get("user_id"),
+                raw_id=target.get("raw_id"),
+            )
 
             if not channel:
-                return {"success": False, "error": f"Channel not found"}
+                return {
+                    "success": False,
+                    "error": f"Channel not found for target {target}",
+                }
 
             # Reference für Reply
             reference = None
@@ -806,19 +903,8 @@ class AutoRouter:
             return await self._send_text_response(channel, content, reference)
 
     def _parse_address(self, address: str) -> dict:
-        """Parst eine Discord-Adresse zu Routing-Info"""
-        result = {"type": None, "channel_id": None, "user_id": None}
-
-        if address.startswith("discord://dm:"):
-            result["type"] = "dm"
-            result["user_id"] = int(address.split(":")[-1])
-        elif address.startswith("discord://server:"):
-            result["type"] = "channel"
-            parts = address.replace("discord://server:", "").split("/channel:")
-            if len(parts) > 1:
-                result["channel_id"] = int(parts[1])
-
-        return result
+        """Parst eine Discord-Adresse zu Routing-Info (siehe parse_discord_target)."""
+        return parse_discord_target(address)
 
 
 # =============================================================================
@@ -847,6 +933,39 @@ def _resolve_global_file(path: str) -> Optional[Path]:
     except ValueError:
         return None
     return p if p.is_file() else None
+
+
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # Discord hard cap for a plain bot upload
+
+
+def _vfs_extract_file(vfs: Any, path: str) -> Optional[tuple[str, bytes]]:
+    """Pull one file out of an agent VFS as (filename, bytes).
+
+    Shadow/mounted files are read from their disk backing (binary safe);
+    in-memory files fall back to their text content encoded as UTF-8.
+    Returns None when the path is not a file in this VFS.
+    """
+    if vfs is None:
+        return None
+    try:
+        norm = vfs._normalize_path(path)
+        if not vfs._is_file(norm):
+            return None
+        entry = vfs.files.get(norm)
+        name = getattr(entry, "filename", None) or Path(norm).name
+
+        local = getattr(entry, "local_path", None)
+        if local:
+            lp = Path(local)
+            if lp.is_file():
+                return name, lp.read_bytes()
+
+        res = vfs.read(norm, max_chars=MAX_UPLOAD_BYTES)
+        if not res.get("success"):
+            return None
+        return name, (res.get("content") or "").encode("utf-8")
+    except Exception:
+        return None
 
 
 def _global_media_dir(platform: str) -> Path:
@@ -1465,7 +1584,7 @@ class DiscordInterface:
 
                 # Route Response
                 if response:
-                    result = await self.router.route_response(
+                    result = await self._safe_route_response(
                         content=response,
                         as_audio=ctx.wants_audio_response,
                     )
@@ -1529,8 +1648,13 @@ class DiscordInterface:
                 self.host, self.runner_loop, agent_name, query, session_id, "discord"
             ):
                 t = ch.get("type")
-                if t in ("final_answer", "max_iterations"):
+                # paused/cancelled also carry "answer"; "done" carries the
+                # final text under "final_answer". Ignoring them silently
+                # dropped whole runs — Discord stayed mute.
+                if t in ("final_answer", "max_iterations", "paused", "cancelled"):
                     result = ch.get("answer", "") or result
+                elif t == "done":
+                    result = ch.get("final_answer", "") or result
                 elif t == "error":
                     err = ch.get("message") or ch.get("error")
             if err and not result:
@@ -1568,6 +1692,68 @@ class DiscordInterface:
             future = asyncio.run_coroutine_threadsafe(coro_func(), bot_loop)
             return await asyncio.wrap_future(future)
         return await coro_func()
+
+    def _iter_agent_vfs(self):
+        """Yield every VFS the connected agents currently have open, most
+        likely session first (the one the running agent is talking on)."""
+        seen_ids = set()
+        for agent in (self.moderator_agent, self.self_agent):
+            if agent is None:
+                continue
+            sm = getattr(agent, "session_manager", None)
+            if sm is None:
+                continue
+
+            session_ids = []
+            active = getattr(agent, "active_session", None)
+            if active:
+                session_ids.append(active)
+            session_ids.append("discord")
+            try:
+                session_ids.extend(sm.list_sessions())
+            except Exception:
+                pass
+
+            for sid in dict.fromkeys(session_ids):
+                try:
+                    session = sm.get(sid)
+                except Exception:
+                    session = None
+                vfs = getattr(session, "vfs", None) if session else None
+                if vfs is None or id(vfs) in seen_ids:
+                    continue
+                seen_ids.add(id(vfs))
+                yield vfs
+
+    def _resolve_sendable_file(self, path: str) -> tuple[Optional[Any], Optional[str]]:
+        """Turn an agent-supplied path into a discord.File.
+
+        Two sources, in order:
+          1. the shared global store on disk (/global/..., binary safe)
+          2. any open agent VFS (vfs:/..., /work/..., session files)
+        Returns (discord.File, None) or (None, error_message).
+        """
+        raw = str(path or "").strip()
+        if not raw:
+            return None, "no path given"
+
+        safe = _resolve_global_file(raw)
+        if safe is not None:
+            size = safe.stat().st_size
+            if size > MAX_UPLOAD_BYTES:
+                return None, f"file too large for Discord: {size} bytes"
+            return discord.File(str(safe), filename=safe.name), None
+
+        for vfs in self._iter_agent_vfs():
+            found = _vfs_extract_file(vfs, raw)
+            if found is None:
+                continue
+            name, data = found
+            if len(data) > MAX_UPLOAD_BYTES:
+                return None, f"file too large for Discord: {len(data)} bytes"
+            return discord.File(io.BytesIO(data), filename=name), None
+
+        return None, f"file not found in global store or agent VFS: {raw}"
 
     def _handle_admin_command(self, ctx: MessageContext) -> Optional[str]:
         """Parse !agent / !session / !whoami. Returns reply text, or None if not a command."""
@@ -1643,21 +1829,49 @@ class DiscordInterface:
         interface = self  # Closure reference
 
         async def discord_send_file(
-            channel_id: int,
+            target_address: str,
             path: str,
             caption: str = "",
+            channel_id: Optional[int] = None,
         ) -> str:
-            """Send a file to a Discord channel. Only files inside the global
-            store (/global/...) may be sent."""
-            safe = _resolve_global_file(path)
-            if safe is None:
-                return json.dumps({"error": f"file not found or outside global/: {path}"})
+            """
+            Send a file to a Discord address (channel or DM).
+
+            Args:
+                target_address: "discord://dm:<user_id>",
+                    "discord://server:<guild>/channel:<channel>" or a bare id
+                path: file to send — either a path inside the global store
+                    (/global/...) or any path in the agent VFS (vfs:/...)
+                caption: optional message text sent with the file
+                channel_id: deprecated alias for target_address
+
+            Returns:
+                Result JSON with success status
+            """
+            target = parse_discord_target(target_address or channel_id)
+            if not any(
+                target.get(k) for k in ("channel_id", "user_id", "raw_id")
+            ):
+                return json.dumps(
+                    {"error": f"unparsable target: {target_address or channel_id}"}
+                )
+
+            dfile, err = interface._resolve_sendable_file(path)
+            if dfile is None:
+                return json.dumps({"error": err})
+
+            filename = getattr(dfile, "filename", None)
 
             async def _send_on_bot_loop():
-                ch = interface.bot.get_channel(int(channel_id)) \
-                     or await interface.bot.fetch_channel(int(channel_id))
-                msg = await ch.send(content=caption or None, file=discord.File(str(safe)))
-                return {"success": True, "message_id": msg.id, "file": safe.name}
+                ch = await interface.router.resolve_channel(
+                    channel_id=target.get("channel_id"),
+                    user_id=target.get("user_id"),
+                    raw_id=target.get("raw_id"),
+                )
+                if ch is None:
+                    return {"error": f"target not reachable: {target_address}"}
+                msg = await ch.send(content=caption or None, file=dfile)
+                return {"success": True, "message_id": msg.id, "file": filename}
 
             try:
                 result = await interface._run_on_bot_loop(_send_on_bot_loop)
@@ -1720,25 +1934,29 @@ class DiscordInterface:
             return json.dumps(interface.address_book.get_active_conversations())
 
         async def discord_get_channel_history(
-            channel_id: int,
+            channel_id: Any,
             limit: int = 10,
         ) -> str:
             """
-            Get recent message history from a channel.
+            Get recent message history from a channel or DM.
 
             Args:
-                channel_id: Discord channel ID
+                channel_id: Discord channel ID or address
+                    ("discord://dm:<user_id>", "discord://server:.../channel:...")
                 limit: Number of messages (max 50)
 
             Returns:
                 JSON list of recent messages
             """
+            target = parse_discord_target(channel_id)
 
             async def _send_on_bot_loop():
                 try:
-                    channel = interface.bot.get_channel(channel_id)
-                    if not channel:
-                        channel = await interface.bot.fetch_channel(channel_id)
+                    channel = await interface.router.resolve_channel(
+                        channel_id=target.get("channel_id"),
+                        user_id=target.get("user_id"),
+                        raw_id=target.get("raw_id"),
+                    )
 
                     if not channel:
                         return json.dumps({"error": f"Channel {channel_id} not found"})
@@ -1795,7 +2013,13 @@ class DiscordInterface:
         agent.add_tool(
             discord_send_file,
             "discord_send_file",
-            description="Send a file to a Discord channel. Only files inside the global store (/global/...) may be sent. Args: channel_id, path (under global), optional caption.",
+            description=(
+                "Send a file to a Discord channel OR a DM. "
+                "Args: target_address (discord://dm:<user_id>, "
+                "discord://server:<guild>/channel:<channel>, or a bare id), "
+                "path (a file in the global store /global/... or any path in "
+                "your VFS, e.g. vfs:/work/report.md), optional caption."
+            ),
             category=["discord", "communication"],
         )
 

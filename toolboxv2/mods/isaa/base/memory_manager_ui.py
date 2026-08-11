@@ -1151,18 +1151,18 @@ class GraphPanel(_PanelBase):
             viz = MemoryGraphVisualizer(store, max_depth=depth)
 
             if mode == "full":
-                html = viz.generate_full_graph_dashboard()
+                html = viz.to_html(title=f"Graph: {space}")
                 fname = f"memory_graph_{space}_full.html"
             else:
                 entity_id = self._entity_entry.get().strip()
                 if not entity_id:
                     self.app.status("Entity ID fehlt.", error=True)
-                    self._gen_btn.configure(state="normal",
-                                            text="⚙  Graph generieren")
+                    self._gen_btn.configure(state="normal", text="⚙  Graph generieren")
                     return
-                html = viz.generate_entity_network_html(entity_id, depth)
+                # Subgraph über native CTE holen:
+                sub_viz = viz.subgraph(entity_id, depth)
+                html = sub_viz.to_html(title=f"Graph: {entity_id}")
                 fname = f"memory_graph_{space}_{entity_id.replace(':', '_')}.html"
-
             path = filedialog.asksaveasfilename(
                 defaultextension=".html",
                 filetypes=[("HTML", "*.html")],

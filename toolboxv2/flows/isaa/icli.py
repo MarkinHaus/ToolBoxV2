@@ -1453,7 +1453,6 @@ def show_xray_v3(data: dict):
         sys_det["All Rules (Volume)"] +
         bd["History (Perm)"] +
         bd["History (Work)"] +
-        bd["Last Input"] +
         media_tokens
     )
 
@@ -1495,7 +1494,7 @@ def show_xray_v3(data: dict):
     c_print(HTML(""))
 
     # ── ① REAL → was wirklich ans Modell geht ───────────────────────────────
-    c_print(HTML(f"  <style fg='{PTColors.GREEN}'><b>① REAL  →  was wirklich ans Modell geht</b></style>"))
+    c_print(HTML(f"  <style fg='{PTColors.GREEN}'><b>① INFO  →  Uncompressed Working history </b></style>"))
     c_print(HTML(f"  {render_ratio_bar(t_eff, limit, BAR_W)}"))
     c_print(HTML(
         f"  <style fg='{PTColors.BRIGHT_WHITE}'><b>{t_eff:,}</b></style>"
@@ -1504,17 +1503,6 @@ def show_xray_v3(data: dict):
         f"   ·   {limit - t_eff:,} frei ({(limit - t_eff) / limit * 100:.1f}%)</style>"
     ))
     c_print(HTML(""))
-
-    # ── ② MAX → wenn alles geladen wäre (volle History + alle Tools/Skills/Rules)
-    _cap_pct = (max_potential / limit * 100) if limit else 0
-    _cap_col = PTColors.GREEN if _cap_pct < 100 else PTColors.RED
-    c_print(HTML(f"  <style fg='{PTColors.YELLOW}'><b>② MAX   →  wenn alles geladen wäre (volle History + alle Tools/Skills/Rules)</b></style>"))
-    c_print(HTML(f"  {render_ratio_bar(max_potential, limit, BAR_W)}"))
-    c_print(HTML(
-        f"  <style fg='{_cap_col}'><b>{max_potential:,}</b></style>"
-        f"<style fg='{PTColors.GREY}'> / {limit:,} Token"
-        f"   ·   {_cap_pct:.1f}% des Limits</style>"
-    ))
 
     # ── TRIGGER ANZEIGE ──
     c_print(HTML(
@@ -1577,9 +1565,6 @@ def show_xray_v3(data: dict):
     if media_tokens > 0:
         main_row("Multimedia (Vision)", media_tokens, name_color=PTColors.ZEN_GREEN, tok_color=PTColors.ZEN_GREEN,
                  extra=f"({media_count} Bilder geladen)")
-
-    # Last Input
-    main_row("Last Input", bd["Last Input"], name_color=PTColors.ZEN_DIM, tok_color=PTColors.GREY)
 
     print_separator()
 

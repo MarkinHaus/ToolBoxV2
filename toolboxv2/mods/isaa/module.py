@@ -2360,9 +2360,9 @@ class Tools(MainTool):
         self.load_to_mem_sync()
         for name, kb in self.get_memory().memories.items():
             self.print(
-                f"Saving to {name}.html with {len(kb.concept_extractor.concept_graph.concepts)} concepts"
+                f"Saving to {dir_path}/{name}.html with"
             )
-            await kb.vis(output_file=f"{dir_path}/{name}.html")
+            kb.vis(output_file=f"{dir_path}/{name}.html")
         return dir_path
 
 
