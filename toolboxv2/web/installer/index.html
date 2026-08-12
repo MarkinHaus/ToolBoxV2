@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="de" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Installer — ToolBoxV2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --raw-primary: 55% 0.18 230;
+  --raw-success: 65% 0.2 145;
+  --raw-warning: 75% 0.18 85;
+  --raw-error: 55% 0.22 25;
+  --primary: oklch(var(--raw-primary));
+  --success: oklch(var(--raw-success));
+  --warning: oklch(var(--raw-warning));
+  --error: oklch(var(--raw-error));
+  --bg-base: #08080d;
+  --bg-surface: rgba(10, 10, 18, 0.8);
+  --bg-sunken: rgba(0, 0, 0, 0.3);
+  --glass-bg: rgba(255, 255, 255, 0.02);
+  --glass-border: rgba(255, 255, 255, 0.05);
+  --glass-blur: 12px;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --text-main: rgba(255, 255, 255, 0.85);
+  --text-label: rgba(255, 255, 255, 0.4);
+  --text-muted: rgba(255, 255, 255, 0.25);
+  --input-bg: rgba(0, 0, 0, 0.3);
+  --input-border: rgba(255, 255, 255, 0.08);
+  --surface-hover: color-mix(in oklch, var(--primary) 5%, transparent);
+  --surface-active: color-mix(in oklch, var(--primary) 10%, transparent);
+  --surface-badge: color-mix(in oklch, var(--primary) 15%, transparent);
+  --border-active: color-mix(in oklch, var(--primary) 30%, transparent);
+  --highlight-inset: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --shadow-micro: 0 2px 4px rgba(0, 0, 0, 0.5);
+  --font-sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --text-h1: clamp(22px, 2.5vw, 28px);
+  --text-h2: clamp(20px, 2.2vw, 24px);
+  --text-base: 16px;
+  --text-sm: 14px;
+  --text-xs: 11px;
+  --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem;
+  --space-4: 1rem; --space-5: 1.5rem; --space-6: 2rem;
+  --space-8: 3rem; --space-10: 4rem; --space-12: 6rem;
+  --radius-sm: 2px; --radius-md: 6px; --radius-lg: 12px; --radius-full: 9999px;
+  --duration-fast: 150ms; --duration-normal: 250ms; --duration-slow: 400ms;
+  --ease-default: ease; --ease-expand: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  background: var(--bg-base);
+  color: var(--text-main);
+  line-height: 1.6;
+  min-height: 100vh;
+  padding: var(--space-12) var(--space-4) var(--space-8);
+}
+.page-title { text-align: center; margin-block-end: var(--space-8); }
+.page-title .label {
+  font-family: var(--font-mono); font-size: var(--text-xs);
+  text-transform: uppercase; letter-spacing: 2.5px;
+  color: var(--text-label); user-select: none; margin-block-end: var(--space-2);
+}
+.page-title h1 {
+  font-size: var(--text-h1); font-weight: 700;
+  letter-spacing: -0.02em; line-height: 1.2;
+}
+.page-title p { color: rgba(255,255,255,0.7); margin-block-start: var(--space-2); max-inline-size: 50ch; margin-inline: auto; }
+
+/* ── Desktop: side-by-side flex-expand ── */
+.sections {
+  display: flex;
+  gap: var(--space-3);
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.section {
+  flex: 1;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--highlight-inset), var(--shadow-micro);
+  padding: var(--space-6);
+  cursor: pointer;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+  transition: flex var(--duration-slow) var(--ease-expand),
+              border-color var(--duration-normal) var(--ease-default);
+}
+.section:hover, .section.is-expanded {
+  flex: 2.5;
+  border-color: var(--border-active);
+}
+.section-header { flex-shrink: 0; }
+.section-header .icon {
+  width: 48px; height: 48px;
+  border-radius: var(--radius-md);
+  background: var(--surface-badge);
+  display: flex; align-items: center; justify-content: center;
+  margin-block-end: var(--space-4);
+}
+.section-header .icon svg { width: 24px; height: 24px; stroke: var(--primary); fill: none; stroke-width: 2; }
+.section-header .label {
+  font-family: var(--font-mono); font-size: var(--text-xs);
+  text-transform: uppercase; letter-spacing: 2px;
+  color: var(--text-label); margin-block-end: var(--space-1);
+}
+.section-header h2 { font-size: var(--text-h2); font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
+.section-header p { font-size: var(--text-sm); color: var(--text-muted); margin-block-start: var(--space-2); }
+
+/* Desktop: body fades in on expand */
+.section-body {
+  flex: 1;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity var(--duration-slow) var(--ease-default) 100ms,
+              transform var(--duration-slow) var(--ease-default) 100ms;
+  margin-block-start: var(--space-5);
+}
+.section.is-expanded .section-body { opacity: 1; transform: translateY(0); }
+.section-body p { color: rgba(255,255,255,0.7); margin-block-end: var(--space-4); }
+
+/* Buttons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  font-family: var(--font-sans); font-size: var(--text-base); font-weight: 500;
+  line-height: 1.2; border: none; border-radius: var(--radius-md);
+  cursor: pointer; text-decoration: none;
+  transition: transform var(--duration-fast) var(--ease-default),
+              background var(--duration-fast) var(--ease-default),
+              border-color var(--duration-fast) var(--ease-default);
+}
+.btn-primary { color: #000; background: var(--primary); box-shadow: var(--highlight-inset); }
+.btn-primary:hover { background: color-mix(in oklch, var(--primary) 90%, white); transform: translateY(-1px); }
+.btn-secondary { color: var(--text-main); background: var(--glass-bg); border: 1px solid var(--border-subtle); box-shadow: var(--highlight-inset); }
+.btn-secondary:hover { background: var(--surface-hover); border-color: var(--border-active); transform: translateY(-1px); }
+.btn:focus-visible { outline: 1px solid var(--primary); outline-offset: 2px; }
+
+/* Code blocks */
+.code-block {
+  font-family: var(--font-mono); font-size: var(--text-sm);
+  background: var(--input-bg); border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md); padding: var(--space-4);
+  margin-block-end: var(--space-3);
+  color: rgba(255,255,255,0.7);
+  position: relative;
+  overflow-x: auto;
+}
+.code-block .copy-btn {
+  position: absolute; top: var(--space-2); right: var(--space-2);
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text-muted); padding: var(--space-1); border-radius: var(--radius-sm);
+  font-family: var(--font-mono); font-size: var(--text-xs);
+}
+.code-block .copy-btn:hover { color: var(--text-main); background: var(--surface-hover); }
+.code-block .comment { color: var(--text-muted); }
+
+/* Download grid for user section */
+.dl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--space-3); margin-block-end: var(--space-4); }
+.dl-item {
+  padding: var(--space-4);
+  background: var(--input-bg); border: 1px solid var(--input-border);
+  border-radius: var(--radius-md);
+  text-decoration: none; color: var(--text-main);
+  transition: border-color var(--duration-fast) var(--ease-default),
+              background var(--duration-fast) var(--ease-default);
+}
+.dl-item:hover { border-color: var(--border-active); background: var(--surface-hover); transform: translateY(-1px); }
+.dl-item .label { font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 1px; color: var(--text-label); margin-block-end: var(--space-1); }
+.dl-item strong { font-size: var(--text-sm); }
+.dl-loading { text-align: center; padding: var(--space-6); color: var(--text-muted); }
+.dl-error { padding: var(--space-4); border: 1px solid var(--error); border-radius: var(--radius-md); color: var(--error); }
+
+/* ── Mobile: vertical accordion stack ── */
+@media (max-width: 767px) {
+  body { padding: var(--space-8) var(--space-3) var(--space-5); }
+  .sections { flex-direction: column; gap: var(--space-2); }
+  .section {
+    flex: none;
+    min-height: auto;
+    padding: var(--space-4);
+    cursor: pointer;
+  }
+  .section.is-expanded { flex: none; }
+  .section-header { display: flex; align-items: center; gap: var(--space-3); }
+  .section-header .icon { width: 36px; height: 36px; margin-block-end: 0; flex-shrink: 0; }
+  .section-header .icon svg { width: 18px; height: 18px; }
+  .section-header h2 { font-size: 17px; }
+  .section-header p { font-size: var(--text-xs); margin-block-start: 0; }
+  .section-header .label { margin-block-end: 0; }
+  /* Accordion body: max-height transition instead of flex */
+  .section-body {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    transform: none;
+    margin-block-start: 0;
+    transition: max-height var(--duration-slow) var(--ease-expand),
+                opacity var(--duration-normal) var(--ease-default);
+  }
+  .section.is-expanded .section-body {
+    max-height: 1000px;
+    opacity: 1;
+    margin-block-start: var(--space-4);
+  }
+  .page-title h1 { font-size: 19px; }
+  .page-title p { font-size: var(--text-sm); }
+  .btn { width: 100%; max-width: 280px; }
+  .dl-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 380px) {
+  .section-header h2 { font-size: 15px; }
+  .section-header .label { display: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="page-title">
+  <div class="label">ToolBoxV2</div>
+  <h1>Installer</h1>
+  <p>Drei Wege, je nach Bedarf. Wählen Sie Ihren Pfad.</p>
+</div>
+
+<div class="sections" id="sections">
+
+  <!-- USER: Grafischer Installer + GitHub Downloads -->
+  <div class="section" data-section="user">
+    <div class="section-header">
+      <div class="icon">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>
+      </div>
+      <div class="label">Endnutzer</div>
+      <h2>Einfach installieren</h2>
+      <p>Grafischer Installer — kein Code, keine Konsole</p>
+    </div>
+    <div class="section-body">
+      <p id="user-intro">Laden Sie den grafischen Installer herunter. ToolBoxV2 wird automatisch konfiguriert und ist sofort einsatzbereit.</p>
+      <div id="download-area"><div class="dl-loading">Lade Release-Informationen…</div></div>
+      <div style="display: flex; gap: var(--space-3); flex-wrap: wrap; margin-block-start: var(--space-4);">
+        <a class="btn btn-primary" href="/installer/wizard.html">Grafischer Installer</a>
+        <a class="btn btn-secondary" href="/docs/quickstart">Anleitung</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- COMPANY: CLI / Docker -->
+  <div class="section" data-section="company">
+    <div class="section-header">
+      <div class="icon">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      </div>
+      <div class="label">Unternehmen</div>
+      <h2>Server &amp; Docker</h2>
+      <p>CLI-Installation für verteilte Systeme</p>
+    </div>
+    <div class="section-body">
+      <p>Installieren Sie ToolBoxV2 via Einzeiler-Skript oder Docker. Konfiguration über YAML für automatisierte Deployments.</p>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
+        <span class="comment"># Linux / macOS</span><br>
+        curl -fsSL https://get.simplecore.app | bash
+      </div>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
+        <span class="comment"># Windows PowerShell</span><br>
+        iwr -useb https://get.simplecore.app/ps | iex
+      </div>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
+        <span class="comment"># Docker</span><br>
+        docker pull ghcr.io/markinhaus/toolboxv2:latest<br>
+        docker run -d -v ./data:/data ghcr.io/markinhaus/toolboxv2
+      </div>
+      <div style="display: flex; gap: var(--space-3); flex-wrap: wrap;">
+        <a class="btn btn-secondary" href="/docs/deployment">Deployment Guide</a>
+        <a class="btn btn-secondary" href="/docs/docker">Docker Docs</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- DEV: Source / pip -->
+  <div class="section" data-section="dev">
+    <div class="section-header">
+      <div class="icon">
+        <svg viewBox="0 0 24 24"><polyline points="8 9 3 14 8 19"/><polyline points="16 9 21 14 16 19"/><line x1="14" y1="4" x2="10" y2="20"/></svg>
+      </div>
+      <div class="label">Entwickler</div>
+      <h2>Source &amp; pip</h2>
+      <p>Vollständige Kontrolle — aus dem Quellcode</p>
+    </div>
+    <div class="section-body">
+      <p>Installieren Sie ToolBoxV2 als Python-Paket oder klonen Sie das Repository.</p>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
+        <span class="comment"># pip install (empfohlen)</span><br>
+        pip install toolboxv2[all]
+      </div>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
+        <span class="comment"># uv (schneller)</span><br>
+        uv tool install toolboxv2[all]
+      </div>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
+        <span class="comment"># Development aus Git</span><br>
+        git clone https://github.com/MarkinHaus/ToolBoxV2.git<br>
+        cd ToolBoxV2<br>
+        pip install -e ".[all]"
+      </div>
+      <div style="display: flex; gap: var(--space-3); flex-wrap: wrap;">
+        <a class="btn btn-secondary" href="/docs/dev">Entwickler-Doku</a>
+        <a class="btn btn-secondary" href="https://github.com/MarkinHaus/ToolBoxV2">GitHub</a>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── GitHub API integration (from web/core0/installer.js) ──
+const GITHUB_REPO = 'MarkinHaus/ToolBoxV2';
+const GITHUB_API = 'https://api.github.com/repos/' + GITHUB_REPO;
+
+// Asset patterns per platform (from old installer.js)
+const ASSET_PATTERNS = {
+  'Windows': [/simple-core_.*_x64-setup\.exe$/, /simple-core_.*\.msi$/, /toolbox-windows.*\.exe$/],
+  'MacOS-ARM': [/simple-core_.*_aarch64\.dmg$/, /simple-core_.*arm64\.dmg$/, /toolbox-macos.*arm/],
+  'MacOS-Intel': [/simple-core_.*_x64\.dmg$/, /toolbox-macos.*x64/],
+  'Linux': [/simple-core_.*\.AppImage$/, /toolbox-linux.*/]
+};
+
+function detectOS() {
+  const ua = navigator.userAgent.toLowerCase();
+  const plat = (navigator.platform || '').toLowerCase();
+  if (/windows|win32|win64|wow64/.test(ua)) return 'Windows';
+  if (/macintosh|macintel|macppc/.test(ua) || plat.includes('mac')) {
+    if (plat.includes('arm') || ua.includes('arm64') || ua.includes('aarch64')) return 'MacOS-ARM';
+    return 'MacOS-Intel';
+  }
+  if (/android/.test(ua)) return 'Android';
+  if (/iphone|ipad|ipod/.test(ua)) return 'iOS';
+  if (/linux/.test(plat) || /linux/.test(ua)) return 'Linux';
+  return null;
+}
+
+function formatSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(1) + ' MB';
+}
+
+function findAssets(assets, osKey) {
+  const patterns = ASSET_PATTERNS[osKey];
+  if (!patterns) return [];
+  const matches = [];
+  for (const p of patterns) {
+    for (const a of assets) { if (p.test(a.name)) matches.push(a); }
+  }
+  return [...new Map(matches.map(a => [a.id, a])).values()];
+}
+
+async function loadDownloads() {
+  const area = document.getElementById('download-area');
+  const detected = detectOS();
+  try {
+    const resp = await fetch(GITHUB_API + '/releases');
+    if (!resp.ok) throw new Error('GitHub API: ' + resp.status);
+    const releases = await resp.json();
+    if (!releases || releases.length === 0) throw new Error('Keine Releases gefunden.');
+
+    // Find app release (tag contains 'app') or latest
+    let appRelease = releases.find(r => r.tag_name.toLowerCase().includes('app'));
+    if (!appRelease) appRelease = releases[0];
+    const assets = appRelease.assets || [];
+
+    let html = '';
+    let gridItems = [];
+
+    // Show detected OS download first
+    if (detected && ASSET_PATTERNS[detected]) {
+      const matched = findAssets(assets, detected);
+      if (matched.length > 0) {
+        const a = matched[0];
+        gridItems.push({
+          href: a.browser_download_url,
+          label: detected,
+          text: a.name.replace(/^simple-core_/, '').replace(/^toolbox-/, ''),
+          size: formatSize(a.size)
+        });
+      }
+    }
+
+    // Show all desktop platforms
+    for (const [osKey, _] of Object.entries(ASSET_PATTERNS)) {
+      if (osKey === detected) continue;
+      const matched = findAssets(assets, osKey);
+      if (matched.length > 0) {
+        const a = matched[0];
+        gridItems.push({
+          href: a.browser_download_url,
+          label: osKey,
+          text: a.name.replace(/^simple-core_/, '').replace(/^toolbox-/, ''),
+          size: formatSize(a.size)
+        });
+      }
+    }
+
+    if (gridItems.length > 0) {
+      html = '<div class="dl-grid">';
+      for (const item of gridItems) {
+        html += '<a class="dl-item" href="' + item.href + '" download>'
+          + '<div class="label">' + item.label + '</div>'
+          + '<strong>' + item.text + '</strong>'
+          + (item.size ? '<small style="color: var(--text-muted);">' + item.size + '</small>' : '')
+          + '</a>';
+      }
+      html += '</div>';
+    } else {
+      html = '<p style="color: var(--text-muted);">Keine Downloads im aktuellen Release gefunden.</p>';
+    }
+
+    // Release info
+    html += '<div style="margin-block-start: var(--space-3); font-size: var(--text-xs); color: var(--text-muted);">'
+      + 'Release: <a href="' + appRelease.html_url + '" target="_blank" style="color: var(--primary); text-decoration: none;">'
+      + (appRelease.name || appRelease.tag_name) + '</a> — '
+      + new Date(appRelease.published_at).toLocaleDateString('de-DE')
+      + '</div>';
+
+    // Update intro text with detected OS
+    if (detected) {
+      document.getElementById('user-intro').textContent =
+        'Ihr System wurde als ' + detected + ' erkannt. Download unten:';
+    }
+
+    area.innerHTML = html;
+  } catch (err) {
+    area.innerHTML = '<div class="dl-error">'
+      + '<strong>Fehler:</strong> ' + err.message + '<br>'
+      + '<a href="https://github.com/' + GITHUB_REPO + '/releases" target="_blank" '
+      + 'style="color: var(--primary); text-decoration: none;">Releases manuell ansehen</a>'
+      + '</div>';
+  }
+}
+
+// ── Section expand/collapse (desktop hover + mobile tap accordion) ──
+const sections = document.querySelectorAll('.section');
+let expanded = null;
+
+function expandSection(section) {
+  sections.forEach(s => s.classList.remove('is-expanded'));
+  if (section) { section.classList.add('is-expanded'); expanded = section; }
+  else { expanded = null; }
+}
+
+sections.forEach(section => {
+  // Click handler (mobile + desktop fallback)
+  section.addEventListener('click', (e) => {
+    if (e.target.closest('a, button, .code-block')) return;
+    if (expanded === section) expandSection(null);
+    else expandSection(section);
+  });
+  // Hover handler (desktop only)
+  section.addEventListener('mouseenter', () => {
+    if (window.matchMedia('(hover: hover) and (min-width: 768px)').matches) {
+      expandSection(section);
+    }
+  });
+});
+
+// Copy code helper
+function copyCode(btn) {
+  const text = btn.parentElement.innerText.replace('Kopieren', '').trim();
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '\u2713';
+    setTimeout(() => { btn.textContent = 'Kopieren'; }, 1500);
+  });
+}
+
+// Auto-expand first section on load
+if (sections.length > 0) expandSection(sections[0]);
+
+// Load GitHub downloads
+loadDownloads();
+</script>
+</body>
+</html>

@@ -1,6 +1,6 @@
-<!-- Refactored Installer.html (TBJS Style Guide Applied) -->
+<!-- Installer.html — Updated with 3-Section Accordion (TBJS Sub-Page) -->
 <!DOCTYPE html>
-<html lang="de" data-theme="light">
+<html lang="de" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,113 +9,466 @@
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet">
 
     <style>
-        /* PAGE WRAPPER */
+        /* ── 3-Section Accordion Layout (TBJS native variables) ── */
         .installer-wrapper {
-            max-width: 900px;
+            max-width: 1100px;
             margin-inline: auto;
             padding: var(--space-6) var(--space-4);
         }
 
-        /* CARD */
-        #installer-container {
-            background: var(--bg-surface);
-            border: var(--border-width) solid var(--border-subtle);
-            border-radius: var(--radius-lg);
-            padding: var(--space-6);
-            box-shadow: var(--highlight-subtle), var(--shadow-md);
+        .page-header {
+            text-align: center;
+            margin-block-end: var(--space-8);
+        }
+        .page-header .label {
+            font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+            font-size: var(--text-xs, 11px);
+            text-transform: uppercase;
+            letter-spacing: 2.5px;
+            color: var(--text-label, var(--text-muted));
+            margin-block-end: var(--space-2);
+        }
+        .page-header h1 {
+            font-size: var(--text-h1, clamp(22px, 2.5vw, 28px));
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            line-height: 1.2;
+            color: var(--text-main, var(--text-primary));
+        }
+        .page-header p {
+            color: var(--text-muted, rgba(255,255,255,0.5));
+            margin-block-start: var(--space-2);
+            max-inline-size: 50ch;
+            margin-inline: auto;
+            font-size: var(--text-sm, 14px);
         }
 
-        /* SELECT */
+        /* Sections container */
+        .install-sections {
+            display: flex;
+            gap: var(--space-3);
+        }
+
+        /* Each section card */
+        .install-section {
+            flex: 1;
+            background: var(--bg-surface);
+            border: var(--border-width, 1px) solid var(--border-subtle);
+            border-radius: var(--radius-lg, 12px);
+            padding: var(--space-6);
+            cursor: pointer;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            min-height: 280px;
+            transition: flex var(--duration-slow, 400ms) cubic-bezier(0.25, 0.46, 0.45, 0.94),
+                        border-color var(--duration-normal, 250ms) ease;
+        }
+        .install-section:hover,
+        .install-section.is-expanded {
+            flex: 2.5;
+            border-color: var(--interactive, var(--primary, oklch(55% 0.18 230)));
+        }
+
+        /* Section header (always visible) */
+        .section-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: var(--radius-md, 6px);
+            background: color-mix(in oklch, var(--interactive, var(--primary, oklch(55% 0.18 230))) 15%, transparent);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-block-end: var(--space-4);
+        }
+        .section-icon .material-symbols-outlined {
+            font-size: 24px;
+            color: var(--interactive, var(--primary, oklch(55% 0.18 230)));
+        }
+        .section-label {
+            font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+            font-size: var(--text-xs, 11px);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: var(--text-label, var(--text-muted));
+            margin-block-end: var(--space-1);
+        }
+        .section-title {
+            font-size: var(--text-h2, clamp(20px, 2.2vw, 24px));
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            line-height: 1.2;
+            color: var(--text-main, var(--text-primary));
+        }
+        .section-subtitle {
+            font-size: var(--text-sm, 14px);
+            color: var(--text-muted, rgba(255,255,255,0.5));
+            margin-block-start: var(--space-2);
+        }
+
+        /* Section body (hidden until expanded) */
+        .section-body {
+            flex: 1;
+            opacity: 0;
+            transform: translateY(8px);
+            transition: opacity var(--duration-slow, 400ms) ease 100ms,
+                        transform var(--duration-slow, 400ms) ease 100ms;
+            margin-block-start: var(--space-5);
+        }
+        .install-section.is-expanded .section-body {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .section-body p {
+            color: var(--text-secondary, rgba(255,255,255,0.7));
+            margin-block-end: var(--space-4);
+            font-size: var(--text-sm, 14px);
+            line-height: 1.6;
+        }
+
+        /* Download grid (User section) */
+        .dl-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: var(--space-3);
+            margin-block-end: var(--space-4);
+        }
+        .dl-item {
+            display: block;
+            padding: var(--space-4);
+            background: var(--input-bg, rgba(0,0,0,0.3));
+            border: var(--border-width, 1px) solid var(--input-border, rgba(255,255,255,0.08));
+            border-radius: var(--radius-md, 6px);
+            text-decoration: none;
+            color: var(--text-main, var(--text-primary));
+            transition: border-color var(--duration-fast, 150ms) ease,
+                        background var(--duration-fast, 150ms) ease,
+                        transform var(--duration-fast, 150ms) ease;
+        }
+        .dl-item:hover {
+            border-color: var(--interactive, var(--primary));
+            background: color-mix(in oklch, var(--interactive, var(--primary)) 5%, transparent);
+            transform: translateY(-1px);
+        }
+        .dl-item .dl-label {
+            font-family: var(--font-mono, monospace);
+            font-size: var(--text-xs, 11px);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-label, var(--text-muted));
+            margin-block-end: var(--space-1);
+        }
+        .dl-item strong { font-size: var(--text-sm, 14px); }
+        .dl-item small { color: var(--text-muted); font-size: var(--text-xs, 11px); }
+        .dl-loading {
+            text-align: center;
+            padding: var(--space-6);
+            color: var(--text-muted);
+        }
+        .dl-error {
+            padding: var(--space-4);
+            border: 1px solid var(--error, #ef4444);
+            border-radius: var(--radius-md, 6px);
+            color: var(--error, #ef4444);
+            font-size: var(--text-sm, 14px);
+        }
+
+        /* Code blocks (Company/Dev sections) */
+        .code-block {
+            font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+            font-size: var(--text-sm, 14px);
+            background: var(--input-bg, rgba(0,0,0,0.3));
+            border: var(--border-width, 1px) solid var(--border-subtle, rgba(255,255,255,0.08));
+            border-radius: var(--radius-md, 6px);
+            padding: var(--space-4);
+            margin-block-end: var(--space-3);
+            color: var(--text-secondary, rgba(255,255,255,0.7));
+            position: relative;
+            overflow-x: auto;
+        }
+        .code-block .copy-btn {
+            position: absolute;
+            top: var(--space-2);
+            right: var(--space-2);
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            color: var(--text-muted);
+            padding: var(--space-1);
+            border-radius: var(--radius-sm, 2px);
+            font-family: var(--font-mono, monospace);
+            font-size: var(--text-xs, 11px);
+        }
+        .code-block .copy-btn:hover {
+            color: var(--text-main);
+            background: color-mix(in oklch, var(--interactive, var(--primary)) 5%, transparent);
+        }
+        .code-block .comment { color: var(--text-muted); }
+
+        /* Buttons */
+        .btn-primary, .btn-secondary {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-2);
+            padding: var(--space-3) var(--space-5);
+            font-family: var(--font-sans, sans-serif);
+            font-size: var(--text-base, 16px);
+            font-weight: 500;
+            line-height: 1.2;
+            border: none;
+            border-radius: var(--radius-md, 6px);
+            cursor: pointer;
+            text-decoration: none;
+            transition: transform var(--duration-fast, 150ms) ease,
+                        background var(--duration-fast, 150ms) ease,
+                        border-color var(--duration-fast, 150ms) ease;
+        }
+        .btn-primary {
+            color: var(--text-inverse, #000);
+            background: var(--interactive, var(--primary, oklch(55% 0.18 230)));
+        }
+        .btn-primary:hover {
+            background: color-mix(in oklch, var(--interactive, var(--primary)) 90%, white);
+            transform: translateY(-1px);
+        }
+        .btn-secondary {
+            color: var(--text-main, var(--text-primary));
+            background: var(--bg-surface, rgba(255,255,255,0.02));
+            border: var(--border-width, 1px) solid var(--border-subtle, rgba(255,255,255,0.08));
+        }
+        .btn-secondary:hover {
+            border-color: var(--interactive, var(--primary));
+            background: color-mix(in oklch, var(--interactive, var(--primary)) 5%, transparent);
+            transform: translateY(-1px);
+        }
+        .btn-row {
+            display: flex;
+            gap: var(--space-3);
+            flex-wrap: wrap;
+        }
+
+        /* ── Mobile: vertical accordion ── */
+        @media (max-width: 767px) {
+            .install-sections {
+                flex-direction: column;
+                gap: var(--space-2);
+            }
+            .install-section {
+                flex: none;
+                min-height: auto;
+                padding: var(--space-4);
+            }
+            .install-section.is-expanded { flex: none; }
+            .section-header {
+                display: flex;
+                align-items: center;
+                gap: var(--space-3);
+            }
+            .section-icon {
+                width: 36px; height: 36px;
+                margin-block-end: 0;
+                flex-shrink: 0;
+            }
+            .section-icon .material-symbols-outlined { font-size: 18px; }
+            .section-title { font-size: 17px; }
+            .section-subtitle { font-size: var(--text-xs, 11px); margin-block-start: 0; }
+            .section-label { margin-block-end: 0; }
+            .section-body {
+                max-height: 0;
+                opacity: 0;
+                overflow: hidden;
+                transform: none;
+                margin-block-start: 0;
+                transition: max-height var(--duration-slow, 400ms) cubic-bezier(0.25,0.46,0.45,0.94),
+                            opacity var(--duration-normal, 250ms) ease;
+            }
+            .install-section.is-expanded .section-body {
+                max-height: 1000px;
+                opacity: 1;
+                margin-block-start: var(--space-4);
+            }
+            .page-header h1 { font-size: 19px; }
+            .btn-primary, .btn-secondary {
+                width: 100%;
+                max-width: 280px;
+            }
+            .dl-grid { grid-template-columns: 1fr; }
+        }
+
+        @media (max-width: 380px) {
+            .section-title { font-size: 15px; }
+            .section-label { display: none; }
+        }
+
+        /* Legacy compat — old IDs still referenced by installer.js */
         #os-selection {
             width: 100%;
             padding: var(--space-3) var(--space-4);
-            border-radius: var(--radius-md);
+            border-radius: var(--radius-md, 6px);
             background: var(--input-bg);
-            border: var(--border-width) solid var(--input-border);
-            color: var(--text-primary);
-            font-size: var(--text-base);
+            border: var(--border-width, 1px) solid var(--input-border);
+            color: var(--text-main, var(--text-primary));
+            font-size: var(--text-base, 16px);
+            margin-block-end: var(--space-3);
         }
-
         #os-selection:focus {
             outline: none;
-            border-color: var(--input-focus);
-            box-shadow: 0 0 0 3px color-mix(in srgb, var(--interactive) 25%, transparent);
+            border-color: var(--input-focus, var(--interactive));
         }
-
-        /* TEXT */
         #os-info {
-            font-size: var(--text-sm);
-            color: var(--text-secondary);
-            margin-bottom: var(--space-3);
+            font-size: var(--text-sm, 14px);
+            color: var(--text-secondary, var(--text-muted));
+            margin-block-end: var(--space-3);
         }
-
-        /* LINKS */
-        a {
-            color: var(--interactive);
-            text-decoration: none;
-        }
-
-        a:hover {
-            text-decoration: underline;
-        }
-
-        /* LIST */
-        #auto-download-options ul {
-            list-style: none;
-            padding: 0;
-            margin-top: var(--space-4);
-        }
-
-        #auto-download-options li {
-            margin-bottom: var(--space-2);
-        }
-
-        /* BUTTON LINKS */
-        #auto-download-options a {
-            display: inline-block;
-            padding: var(--space-3) var(--space-5);
-            background: var(--interactive);
-            color: var(--text-inverse);
-            border-radius: var(--radius-md);
-            font-size: var(--text-sm);
-            transition: var(--duration-fast) var(--ease-default);
-        }
-
-        #auto-download-options a:hover {
-            background: var(--interactive-hover);
-        }
-
-        small {
-            color: var(--text-muted);
-            font-size: var(--text-xs);
-        }
+        a { color: var(--interactive, var(--primary)); text-decoration: none; }
+        a:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
 
 <div class="installer-wrapper fade-class">
-    <div id="installer-container">
-        <h1 class="text-2xl" style="margin-bottom: var(--space-4);">ToolBoxV2 Installer</h1>
+    <div class="page-header">
+        <div class="label">ToolBoxV2</div>
+        <h1>Installer</h1>
+        <p>Drei Wege, je nach Bedarf. Wählen Sie Ihren Pfad.</p>
+    </div>
 
-        <select id="os-selection"></select>
+    <div class="install-sections" id="install-sections">
 
-        <p id="os-info">Erkennung Ihres Betriebssystems...</p>
-
-        <div id="auto-download-options">
-            <p>Lade Installer-Optionen...</p>
+        <!-- SECTION 1: USER — Downloads via GitHub API (installer.js) -->
+        <div class="install-section is-expanded" data-section="user">
+            <div class="section-header">
+                <div class="section-icon">
+                    <span class="material-symbols-outlined">person</span>
+                </div>
+                <div class="section-label">Endnutzer</div>
+                <div class="section-title">Einfach installieren</div>
+                <div class="section-subtitle">Grafischer Installer — kein Code</div>
+            </div>
+            <div class="section-body">
+                <p id="os-info">Erkennung Ihres Betriebssystems...</p>
+                <select id="os-selection"></select>
+                <div id="auto-download-options">
+                    <div class="dl-loading">Lade Installer-Optionen...</div>
+                </div>
+                <div class="btn-row" style="margin-block-start: var(--space-4);">
+                    <a class="btn-primary" href="/installer/wizard.html">Grafischer Installer</a>
+                    <a class="btn-secondary" href="/docs/quickstart">Anleitung</a>
+                </div>
+            </div>
         </div>
 
-        <p style="margin-top: var(--space-6);">
-            <a href="https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/LICENSE" target="_blank">LICENSE</a>
-        </p>
+        <!-- SECTION 2: COMPANY — CLI / Docker -->
+        <div class="install-section" data-section="company">
+            <div class="section-header">
+                <div class="section-icon">
+                    <span class="material-symbols-outlined">domain</span>
+                </div>
+                <div class="section-label">Unternehmen</div>
+                <div class="section-title">Server &amp; Docker</div>
+                <div class="section-subtitle">CLI-Installation für verteilte Systeme</div>
+            </div>
+            <div class="section-body">
+                <p>Installieren Sie ToolBoxV2 via Einzeiler-Skript oder Docker.</p>
+                <div class="code-block">
+                    <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
+                    <span class="comment"># Linux / macOS</span><br>
+                    curl -fsSL https://get.simplecore.app | bash
+                </div>
+                <div class="code-block">
+                    <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
+                    <span class="comment"># Windows PowerShell</span><br>
+                    iwr -useb https://get.simplecore.app/ps | iex
+                </div>
+                <div class="code-block">
+                    <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
+                    <span class="comment"># Docker</span><br>
+                    docker pull ghcr.io/markinhaus/toolboxv2:latest<br>
+                    docker run -d -v ./data:/data ghcr.io/markinhaus/toolboxv2
+                </div>
+                <div class="btn-row">
+                    <a class="btn-secondary" href="/docs/deployment">Deployment Guide</a>
+                    <a class="btn-secondary" href="/docs/docker">Docker Docs</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 3: DEV — Source / pip -->
+        <div class="install-section" data-section="dev">
+            <div class="section-header">
+                <div class="section-icon">
+                    <span class="material-symbols-outlined">code</span>
+                </div>
+                <div class="section-label">Entwickler</div>
+                <div class="section-title">Source &amp; pip</div>
+                <div class="section-subtitle">Vollständige Kontrolle aus dem Quellcode</div>
+            </div>
+            <div class="section-body">
+                <p>Python-Paket oder Git-Repository. Zugriff auf Core API und alle Module.</p>
+                <div class="code-block">
+                    <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
+                    <span class="comment"># pip install (empfohlen)</span><br>
+                    pip install toolboxv2[all]
+                </div>
+                <div class="code-block">
+                    <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
+                    <span class="comment"># uv (schneller)</span><br>
+                    uv tool install toolboxv2[all]
+                </div>
+                <div class="code-block">
+                    <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
+                    <span class="comment"># Development aus Git</span><br>
+                    git clone https://github.com/MarkinHaus/ToolBoxV2.git<br>
+                    cd ToolBoxV2<br>
+                    pip install -e ".[all]"
+                </div>
+                <div class="btn-row">
+                    <a class="btn-secondary" href="/docs/dev">Entwickler-Doku</a>
+                    <a class="btn-secondary" href="https://github.com/MarkinHaus/ToolBoxV2">GitHub</a>
+                </div>
+            </div>
+        </div>
+
     </div>
+
+    <p style="margin-top: var(--space-6); text-align: center;">
+        <a href="https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/LICENSE" target="_blank">LICENSE</a>
+    </p>
 </div>
+
 <script src="/web/core0/installer.js" defer></script>
 <script src="/web/scripts/infos.js" defer></script>
+<script>
+// ── Section accordion logic ──
+document.querySelectorAll('.install-section').forEach(section => {
+    section.addEventListener('click', function(e) {
+        if (e.target.closest('a, button, select, .code-block')) return;
+        const isExpanded = this.classList.contains('is-expanded');
+        document.querySelectorAll('.install-section').forEach(s => s.classList.remove('is-expanded'));
+        if (!isExpanded) this.classList.add('is-expanded');
+    });
+    section.addEventListener('mouseenter', function() {
+        if (window.matchMedia('(hover: hover) and (min-width: 768px)').matches) {
+            document.querySelectorAll('.install-section').forEach(s => s.classList.remove('is-expanded'));
+            this.classList.add('is-expanded');
+        }
+    });
+});
+
+// Copy helper
+function copyCode(btn) {
+    var text = btn.parentElement.innerText.replace('Kopieren', '').trim();
+    navigator.clipboard.writeText(text).then(function() {
+        btn.textContent = '\u2713';
+        setTimeout(function() { btn.textContent = 'Kopieren'; }, 1500);
+    });
+}
+</script>
 
 </body>
 </html>

@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="de" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ToolBoxV2 Installer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ── TBJS Glass v3.0 — Installer Wizard ── */
+:root {
+  --raw-primary: 55% 0.18 230;
+  --raw-success: 65% 0.2 145;
+  --raw-warning: 75% 0.18 85;
+  --raw-error: 55% 0.22 25;
+  --raw-info: 60% 0.15 230;
+  --primary: oklch(var(--raw-primary));
+  --success: oklch(var(--raw-success));
+  --warning: oklch(var(--raw-warning));
+  --error: oklch(var(--raw-error));
+  --bg-base: #08080d;
+  --bg-surface: rgba(10, 10, 18, 0.8);
+  --bg-elevated: rgba(15, 15, 25, 0.9);
+  --bg-sunken: rgba(0, 0, 0, 0.3);
+  --glass-bg: rgba(255, 255, 255, 0.02);
+  --glass-border: rgba(255, 255, 255, 0.05);
+  --glass-blur: 12px;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --text-main: rgba(255, 255, 255, 0.85);
+  --text-label: rgba(255, 255, 255, 0.4);
+  --text-muted: rgba(255, 255, 255, 0.25);
+  --input-bg: rgba(0, 0, 0, 0.3);
+  --input-border: rgba(255, 255, 255, 0.08);
+  --input-focus: var(--primary);
+  --surface-hover: color-mix(in oklch, var(--primary) 5%, transparent);
+  --surface-active: color-mix(in oklch, var(--primary) 10%, transparent);
+  --surface-badge: color-mix(in oklch, var(--primary) 15%, transparent);
+  --border-active: color-mix(in oklch, var(--primary) 30%, transparent);
+  --highlight-inset: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --shadow-micro: 0 2px 4px rgba(0, 0, 0, 0.5);
+  --font-sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+  --text-h1: clamp(22px, 2.5vw, 28px);
+  --text-h2: clamp(20px, 2.2vw, 24px);
+  --text-base: 16px;
+  --text-sm: 14px;
+  --text-xs: 11px;
+  --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem;
+  --space-4: 1rem; --space-5: 1.5rem; --space-6: 2rem;
+  --space-8: 3rem; --space-10: 4rem; --space-12: 6rem;
+  --radius-sm: 2px; --radius-md: 6px; --radius-lg: 12px; --radius-full: 9999px;
+  --duration-fast: 150ms; --duration-normal: 250ms; --ease-default: ease;
+  --z-base: 0; --z-raised: 10; --z-overlay: 1000;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  background: var(--bg-base);
+  color: var(--text-main);
+  line-height: 1.6;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.wizard {
+  width: 90%;
+  max-width: 560px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--highlight-inset), var(--shadow-micro);
+  padding: var(--space-6);
+  min-height: 420px;
+  display: flex;
+  flex-direction: column;
+}
+.wizard-header { margin-block-end: var(--space-5); }
+.wizard-header h1 {
+  font-size: var(--text-h1);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+.wizard-header .label {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 2.5px;
+  color: var(--text-label);
+  user-select: none;
+  margin-block-end: var(--space-2);
+}
+.step-indicator {
+  display: flex;
+  gap: var(--space-2);
+  margin-block-end: var(--space-5);
+}
+.step-dot {
+  height: 3px;
+  flex: 1;
+  background: var(--border-subtle);
+  border-radius: var(--radius-full);
+  transition: background var(--duration-fast) var(--ease-default);
+}
+.step-dot.is-active { background: var(--primary); }
+.step-dot.is-done { background: color-mix(in oklch, var(--primary) 50%, transparent); }
+.step { flex: 1; display: none; flex-direction: column; }
+.step.is-visible { display: flex; }
+.step h2 {
+  font-size: var(--text-h2);
+  font-weight: 700;
+  margin-block-end: var(--space-3);
+  letter-spacing: -0.02em;
+}
+.step p { color: rgba(255,255,255,0.7); margin-block-end: var(--space-4); max-inline-size: 65ch; }
+.info-row {
+  display: flex;
+  gap: var(--space-4);
+  margin-block-end: var(--space-4);
+}
+.info-item { flex: 1; }
+.info-item .label {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-label);
+  margin-block-end: var(--space-1);
+}
+.info-item .value {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-main);
+}
+.mode-grid { display: flex; flex-direction: column; gap: var(--space-3); margin-block-end: var(--space-4); }
+.mode-option {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-default),
+              background var(--duration-fast) var(--ease-default);
+}
+.mode-option:hover { border-color: var(--border-active); background: var(--surface-hover); }
+.mode-option.is-selected { border-color: var(--primary); background: var(--surface-active); }
+.mode-option input { appearance: none; width: 18px; height: 18px; border: 2px solid var(--input-border); border-radius: var(--radius-full); flex-shrink: 0; }
+.mode-option.is-selected input { background: var(--primary); border-color: var(--primary); box-shadow: inset 0 0 0 3px var(--bg-base); }
+.mode-text { flex: 1; }
+.mode-text strong { display: block; font-size: var(--text-base); font-weight: 600; }
+.mode-text small { display: block; font-size: var(--text-sm); color: var(--text-muted); }
+.module-list { display: flex; flex-direction: column; gap: var(--space-2); margin-block-end: var(--space-4); }
+.module-item {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+}
+.module-item input { appearance: none; width: 18px; height: 18px; border: 2px solid var(--input-border); border-radius: var(--radius-sm); flex-shrink: 0; cursor: pointer; }
+.module-item input:checked { background: var(--primary); border-color: var(--primary); }
+.module-item label { font-size: var(--text-sm); cursor: pointer; flex: 1; }
+.module-item .label { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-label); text-transform: uppercase; letter-spacing: 1px; }
+input[type="text"] {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  color: var(--text-main);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-md);
+  margin-block-end: var(--space-4);
+}
+input[type="text"]:focus { outline: none; border-color: var(--input-focus); background: color-mix(in oklch, var(--input-focus) 5%, var(--input-bg)); }
+.progress-track {
+  height: 4px;
+  background: var(--bg-sunken);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  margin-block-end: var(--space-4);
+}
+.progress-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: var(--radius-full);
+  transition: width var(--duration-normal) var(--ease-default);
+}
+.log-output {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  max-height: 200px;
+  overflow-y: auto;
+  color: rgba(255,255,255,0.6);
+  line-height: 1.4;
+}
+.log-line { margin-block-end: var(--space-1); }
+.log-line.is-error { color: var(--error); }
+.log-line.is-success { color: var(--success); }
+.wizard-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-block-start: var(--space-5);
+  padding-block-start: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  font-weight: 500;
+  line-height: 1.2;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: transform var(--duration-fast) var(--ease-default),
+              background var(--duration-fast) var(--ease-default),
+              border-color var(--duration-fast) var(--ease-default);
+}
+.btn-primary { color: #000; background: var(--primary); box-shadow: var(--highlight-inset); }
+.btn-primary:hover { background: color-mix(in oklch, var(--primary) 90%, white); transform: translateY(-1px); }
+.btn-primary:active { transform: translateY(0); }
+.btn-primary:disabled { opacity: 0.4; cursor: default; transform: none; }
+.btn-secondary { color: var(--text-main); background: var(--glass-bg); border: 1px solid var(--border-subtle); box-shadow: var(--highlight-inset); }
+.btn-secondary:hover { background: var(--surface-hover); border-color: var(--border-active); transform: translateY(-1px); }
+.btn:focus-visible { outline: 1px solid var(--primary); outline-offset: 2px; }
+.status-dot { width: 10px; height: 10px; border-radius: var(--radius-full); display: inline-block; }
+.status-dot.is-online { background: var(--success); }
+.status-dot.is-offline { background: var(--error); }
+.status-dot.is-pending { background: var(--warning); }
+@media (max-width: 767px) {
+  .wizard { width: 95%; padding: var(--space-5) var(--space-3); }
+  .btn { width: 100%; max-width: 280px; }
+}
+</style>
+</head>
+<body>
+<div class="wizard">
+  <div class="wizard-header">
+    <div class="label">ToolBoxV2 Setup</div>
+    <h1>Installer</h1>
+  </div>
+  <div class="step-indicator" id="step-indicator">
+    <div class="step-dot is-active"></div>
+    <div class="step-dot"></div>
+    <div class="step-dot"></div>
+    <div class="step-dot"></div>
+    <div class="step-dot"></div>
+  </div>
+
+  <!-- Step 1: Welcome + Platform Detection -->
+  <div class="step is-visible" id="step-1">
+    <h2>Willkommen</h2>
+    <p>ToolBoxV2 wird auf Ihrem System installiert. Die Installation erfolgt in wenigen Schritten.</p>
+    <div class="info-row">
+      <div class="info-item">
+        <div class="label">Betriebssystem</div>
+        <div class="value" id="os-info">Erkennung…</div>
+      </div>
+      <div class="info-item">
+        <div class="label">Architektur</div>
+        <div class="value" id="arch-info">—</div>
+      </div>
+    </div>
+    <div class="info-row">
+      <div class="info-item">
+        <div class="label">Installer Version</div>
+        <div class="value">1.0.0</div>
+      </div>
+      <div class="info-item">
+        <div class="label">Status</div>
+        <div class="value"><span class="status-dot is-pending" id="net-status"></span> Netzwerk prüfen</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 2: Mode + Modules -->
+  <div class="step" id="step-2">
+    <h2>Konfiguration</h2>
+    <p>Wählen Sie den Installationstyp und optionale Module.</p>
+    <div class="mode-grid">
+      <div class="mode-option is-selected" data-mode="native">
+        <input type="radio" name="mode" value="native" checked>
+        <div class="mode-text">
+          <strong>Standard (Empfohlen)</strong>
+          <small>Vorkompilierte Binary — kein Python erforderlich</small>
+        </div>
+      </div>
+      <div class="mode-option" data-mode="source">
+        <input type="radio" name="mode" value="source">
+        <div class="mode-text">
+          <strong>Entwicklung</strong>
+          <small>Vollständiger Quellcode via pip install</small>
+        </div>
+      </div>
+    </div>
+    <div class="label" style="margin-block-end: var(--space-2);">Optionale Module</div>
+    <div class="module-list">
+      <div class="module-item">
+        <input type="checkbox" id="mod-web" value="web" checked>
+        <label for="mod-web">Web Worker <span class="label" style="margin-left: 8px;">HTTP / WebSocket</span></label>
+      </div>
+      <div class="module-item">
+        <input type="checkbox" id="mod-isaa" value="isaa">
+        <label for="mod-isaa">ISAA <span class="label" style="margin-left: 8px;">KI-Agenten-Framework</span></label>
+      </div>
+      <div class="module-item">
+        <input type="checkbox" id="mod-cloudm" value="cloudm">
+        <label for="mod-cloudm">CloudM <span class="label" style="margin-left: 8px;">Cloud-Synchronisation</span></label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 3: Path -->
+  <div class="step" id="step-3">
+    <h2>Installationspfad</h2>
+    <p>Wählen Sie das Verzeichnis für die Installation.</p>
+    <input type="text" id="install-path" value="" placeholder="Installationsverzeichnis…">
+    <div class="info-row">
+      <div class="info-item">
+        <div class="label">Speicherbedarf</div>
+        <div class="value">~300 MB</div>
+      </div>
+      <div class="info-item">
+        <div class="label">Freier Speicher</div>
+        <div class="value" id="disk-space">Prüfung…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 4: Install Progress -->
+  <div class="step" id="step-4">
+    <h2>Installation</h2>
+    <p>ToolBoxV2 wird installiert. Bitte warten…</p>
+    <div class="progress-track">
+      <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+    </div>
+    <div class="label" id="progress-label" style="margin-block-end: var(--space-3);">Initialisiere…</div>
+    <div class="log-output" id="log-output"></div>
+  </div>
+
+  <!-- Step 5: Summary -->
+  <div class="step" id="step-5">
+    <h2>Installation abgeschlossen</h2>
+    <p>ToolBoxV2 wurde erfolgreich installiert und ist nun systemweit verfügbar.</p>
+    <div class="info-row">
+      <div class="info-item">
+        <div class="label">Version</div>
+        <div class="value" id="summary-version">—</div>
+      </div>
+      <div class="info-item">
+        <div class="label">Pfad</div>
+        <div class="value" id="summary-path">—</div>
+      </div>
+    </div>
+    <div class="info-row">
+      <div class="info-item">
+        <div class="label">Globaler Zugriff</div>
+        <div class="value"><span class="status-dot is-online"></span> tb Befehl verfügbar</div>
+      </div>
+    </div>
+    <div style="margin-block-start: var(--space-4); padding: var(--space-4); background: var(--surface-badge); border-radius: var(--radius-md); border: 1px solid var(--border-active);">
+      <div class="label" style="margin-block-end: var(--space-2);">Nächste Schritte</div>
+      <div style="font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text-main);">
+        <div>$ tb -v</div>
+        <div>$ tb status</div>
+        <div>$ tb gui</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wizard-footer">
+    <button class="btn btn-secondary" id="btn-back" style="visibility: hidden;">Zurück</button>
+    <button class="btn btn-primary" id="btn-next">Weiter</button>
+  </div>
+</div>
+
+<script>
+// ponytail: Minimal wizard logic — Tauri invoke calls replaced with stubs for standalone preview.
+// Wire to Tauri commands when integrating: invoke('detect_platform'), invoke('run_install', {config}), etc.
+const STEPS = 5;
+let currentStep = 1;
+const btnBack = document.getElementById('btn-back');
+const btnNext = document.getElementById('btn-next');
+const dots = document.querySelectorAll('.step-dot');
+
+function showStep(n) {
+  document.querySelectorAll('.step').forEach(s => s.classList.remove('is-visible'));
+  document.getElementById('step-' + n).classList.add('is-visible');
+  dots.forEach((d, i) => {
+    d.classList.remove('is-active', 'is-done');
+    if (i < n - 1) d.classList.add('is-done');
+    if (i === n - 1) d.classList.add('is-active');
+  });
+  btnBack.style.visibility = n > 1 && n < STEPS ? 'visible' : 'hidden';
+  if (n === 1) { btnBack.style.visibility = 'hidden'; btnNext.textContent = 'Starten'; }
+  else if (n === STEPS) { btnNext.textContent = 'Fertig'; }
+  else if (n === 4) { btnNext.textContent = 'Warten…'; btnNext.disabled = true; runInstall(); }
+  else { btnNext.textContent = 'Weiter'; }
+  currentStep = n;
+}
+
+btnNext.addEventListener('click', () => {
+  if (currentStep < STEPS) showStep(currentStep + 1);
+  else window.close();
+});
+btnBack.addEventListener('click', () => { if (currentStep > 1) showStep(currentStep - 1); });
+
+// Mode selection
+document.querySelectorAll('.mode-option').forEach(opt => {
+  opt.addEventListener('click', () => {
+    document.querySelectorAll('.mode-option').forEach(o => { o.classList.remove('is-selected'); o.querySelector('input').checked = false; });
+    opt.classList.add('is-selected');
+    opt.querySelector('input').checked = true;
+  });
+});
+
+// Mock platform detection
+function detectPlatform() {
+  const ua = navigator.userAgent;
+  let os = 'Linux', arch = 'x86_64';
+  if (ua.includes('Win')) os = 'Windows';
+  else if (ua.includes('Mac')) os = 'macOS';
+  document.getElementById('os-info').textContent = os;
+  document.getElementById('arch-info').textContent = arch;
+  const defaultPath = os === 'Windows' ? 'C:\\Users\\' + 'User' + '\\ToolBoxV2'
+    : os === 'macOS' ? '/Applications/ToolBoxV2' : '/opt/toolboxv2';
+  document.getElementById('install-path').value = defaultPath;
+  document.getElementById('disk-space').textContent = 'ausreichend';
+  document.getElementById('net-status').className = 'status-dot is-online';
+}
+
+// Mock install progress
+function runInstall() {
+  const phases = [
+    { pct: 10, msg: 'Lade Installer-Skript…' },
+    { pct: 25, msg: 'Konfiguration validiert' },
+    { pct: 40, msg: 'Lade ToolBoxV2 Core herunter…' },
+    { pct: 60, msg: 'Entpacke Module…' },
+    { pct: 75, msg: 'Schreibe Manifest…' },
+    { pct: 90, msg: 'Richte globalen Zugriff ein (tb access)…' },
+    { pct: 100, msg: 'Installation abgeschlossen' },
+  ];
+  let i = 0;
+  const fill = document.getElementById('progress-fill');
+  const label = document.getElementById('progress-label');
+  const log = document.getElementById('log-output');
+  const interval = setInterval(() => {
+    if (i >= phases.length) {
+      clearInterval(interval);
+      document.getElementById('summary-version').textContent = '0.1.28';
+      document.getElementById('summary-path').textContent = document.getElementById('install-path').value;
+      btnNext.disabled = false;
+      btnNext.textContent = 'Fertig';
+      showStep(5);
+      return;
+    }
+    const p = phases[i];
+    fill.style.width = p.pct + '%';
+    label.textContent = p.msg;
+    const line = document.createElement('div');
+    line.className = 'log-line' + (p.pct === 100 ? ' is-success' : '');
+    line.textContent = '[' + new Date().toISOString().substr(11, 8) + '] ' + p.msg;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+    i++;
+  }, 600);
+}
+
+detectPlatform();
+</script>
+</body>
+</html>
