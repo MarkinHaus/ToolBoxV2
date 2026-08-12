@@ -223,14 +223,42 @@ class TestCredentialVending(unittest.TestCase):
         with self.assertRaises(ValueError):
             vend_user_credentials_for_user("markin", {})
 
-    def test_vend_credentials_for_share_fallback(self):
-        """vend_credentials_for_share returns fallback creds when CredentialBroker import fails."""
-        from toolboxv2.mods.CloudM.LiveSync.minio_helper import vend_credentials_for_share
+    def test_no_share_credential_vending_exists(self):
+        """
+        Share members must never be handed S3 credentials.
 
-        env = {"endpoint": "localhost:9000", "access_key": "admin", "secret_key": "secret", "secure": False}
+        The old vend_credentials_for_share() either returned keys that were
+        never registered with MinIO, or fell back to the root credentials.
+        Both are gone; presigned URLs replaced it.
+        """
+        from toolboxv2.mods.CloudM.LiveSync import minio_helper
 
-        # Simulate ImportError for CredentialBroker
-        with patch.dict("sys.modules", {"toolboxv2.mods.CloudM.auth.minio_policy": None}):
-            creds = vend_credentials_for_share("share123", env)
-            self.assertFalse(creds["policy_applied"])
-            self.assertEqual(creds["endpoint"], "localhost:9000")
+        self.assertFalse(hasattr(minio_helper, "vend_credentials_for_share"))
+
+    def test_presign_helpers_sign_one_object(self):
+        """presign_get/put delegate to MinIO for exactly the given key."""
+        from datetime import timedelta
+        from toolboxv2.mods.CloudM.LiveSync.minio_helper import presign_get, presign_put
+
+        client = MagicMock()
+        client.presigned_get_object.return_value = "https://s3/get"
+        client.presigned_put_object.return_value = "https://s3/put"
+
+        self.assertEqual(presign_get(client, "b", "share/a.md.enc", 60), "https://s3/get")
+        client.presigned_get_object.assert_called_once_with(
+            "b", "share/a.md.enc", expires=timedelta(seconds=60))
+
+        self.assertEqual(presign_put(client, "b", "share/a.md.enc", 60), "https://s3/put")
+        client.presigned_put_object.assert_called_once_with(
+            "b", "share/a.md.enc", expires=timedelta(seconds=60))
+
+    def test_http_upload_rejects_error_status(self):
+        """A failed presigned PUT must raise, not pass silently."""
+        import urllib.error
+        from toolboxv2.mods.CloudM.LiveSync.minio_helper import http_upload, TransferError
+
+        with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError(
+                "https://s3/put", 403, "Forbidden", {}, None)):
+            with self.assertRaises(TransferError) as ctx:
+                http_upload("https://s3/put", b"data")
+        self.assertEqual(ctx.exception.status, 403)

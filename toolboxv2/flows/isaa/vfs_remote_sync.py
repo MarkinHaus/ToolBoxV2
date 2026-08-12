@@ -119,25 +119,36 @@ async def _disconnect(app, vfs_path):
     return Result.ok(info=f"disconnected {vfs_path}")
 
 
+_MARKS = {"live": "●", "connecting": "◐", "auth_failed": "✗", "stopped": "○"}
+
+
 def _status(app):
     shares = _load(app)
     mgr = getattr(app, "_vfs_sync_mgr", None)
-    live = mgr.list() if mgr else {}
+    states = mgr.status() if mgr else {}
     rows = []
     for s in shares:
         p = s["vfs_path"]
+        st = states.get(p, {})
+        state = st.get("status", "stopped")
         rows.append({
             "vfs_path": p,
             "local_dir": s["local_dir"],
             "on_disk": os.path.isdir(s["local_dir"]),
-            "live": p in live,
+            "live": state == "live",
+            "status": state,
+            "detail": st.get("detail", ""),
             "readonly": s.get("readonly", False),
         })
     print(f"[vfs_remote_sync] {len(rows)} share(s):")
     for r in rows:
-        flag = "●" if r["live"] else ("○" if r["on_disk"] else "✗")
-        print(f"  {flag} {r['vfs_path']:<20} ← {r['local_dir']}"
-              + ("  [ro]" if r["readonly"] else ""))
+        flag = _MARKS.get(r["status"], "○") if r["on_disk"] else "✗"
+        line = f"  {flag} {r['vfs_path']:<20} ← {r['local_dir']}"
+        if r["readonly"]:
+            line += "  [ro]"
+        if r["status"] != "live":
+            line += f"  [{r['status']}{': ' + r['detail'] if r['detail'] else ''}]"
+        print(line)
     return Result.ok(data=rows)
 
 
@@ -157,7 +168,17 @@ async def _serve(app):
             print(f"[vfs_remote_sync] serving {s['vfs_path']} ← {s['local_dir']}")
         except Exception as e:
             print(f"[vfs_remote_sync] connect failed {s['vfs_path']}: {e}")
-    print(f"[vfs_remote_sync] mini-service up — {len(mgr.list())} folder(s) live. Ctrl-C to stop.")
+    # connect() returns before the server answered; give the handshake a
+    # moment so the line below states facts rather than hopes.
+    await asyncio.sleep(3)
+    states = mgr.status()
+    live = [p for p, v in states.items() if v["status"] == "live"]
+    failed = [f"{p} ({v['detail'] or v['status']})"
+              for p, v in states.items() if v["status"] == "auth_failed"]
+    print(f"[vfs_remote_sync] mini-service up — {len(live)} of {len(states)} "
+          f"folder(s) live. Ctrl-C to stop.")
+    for entry in failed:
+        print(f"[vfs_remote_sync] REJECTED {entry}")
     try:
         while True:
             await asyncio.sleep(3600)

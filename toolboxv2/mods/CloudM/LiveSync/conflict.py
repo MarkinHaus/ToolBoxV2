@@ -2,19 +2,32 @@
 LiveSync Conflict Resolution
 =============================
 
-Strategies by file type:
-    .md   → merge markers (Git-style), both versions preserved
-    binary → latest-wins, loser backed up as .conflict.{checksum}.ext
+One strategy for every file type: the server version wins on disk, and the
+local version is kept next to it as
 
-Safety invariant: BEFORE any overwrite, create a .backup file.
-Deleted files go to .sync-trash/ (never permanently deleted by sync).
+    <name>.conflict.<device_id>.<timestamp>.<ext>
 
-Every conflict is logged + broadcast — never silent.
+Nothing is merged and nothing is thrown away. That is deliberate — it is the
+only rule that works identically for Markdown, source code, PDFs, images and
+spreadsheets, and it never produces a file the owning application cannot open.
+Git-style merge markers were the old plan for .md; they turn a conflicted
+Markdown file into something no editor renders, and they have no counterpart
+for a .docx, so both nodes would have to special-case file types forever.
+
+Conflict copies never sync (protocol.should_ignore skips them): they are one
+node's answer to a collision, and pushing them would hand every peer a file it
+never made.
+
+Safety invariants:
+    - BEFORE any overwrite, create a backup (see create_backup)
+    - deleted files go to .sync-trash/, never straight to /dev/null
+    - every conflict is logged and broadcast — never silent
 """
 
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import time
 from datetime import datetime, timezone
@@ -36,39 +49,101 @@ def detect_conflict(local_checksum: str, remote_checksum: str) -> bool:
     return local_checksum != remote_checksum
 
 
-# ── Markdown Merge ──
+# ── Conflict copies (all file types) ──
 
-def resolve_md_conflict(
-    local_content: str,
-    remote_content: str,
-    local_client: str,
-    remote_client: str,
-    local_timestamp: float,
-    remote_timestamp: float,
+_UNSAFE_DEVICE_CHARS = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def sanitize_device_id(device_id: str) -> str:
+    """
+    Reduce a device id to something safe for a filename.
+
+    Hostnames carry dots and can carry worse; a device id ends up inside a
+    path, so anything but letters, digits, dash and underscore is folded to a
+    dash. An empty result becomes "unknown" rather than a filename that starts
+    with a stray dot.
+    """
+    cleaned = _UNSAFE_DEVICE_CHARS.sub("-", (device_id or "").strip()).strip("-")
+    return cleaned[:40] or "unknown"
+
+
+def _full_suffix(name: str) -> str:
+    """
+    The complete extension, including compound ones.
+
+    Path.suffix returns ".gz" for "backup.tar.gz", which would rename the file
+    to "backup.tar.conflict.<...>.gz" and break the pairing. The known
+    extension table has the compound forms, so ask it first.
+    """
+    from .protocol import _EXT_MAP
+
+    lowered = name.lower()
+    best = ""
+    for ext in _EXT_MAP:
+        if lowered.endswith(ext) and len(ext) > len(best):
+            best = ext
+    if best:
+        return name[-len(best):]
+    return Path(name).suffix
+
+
+def make_conflict_name(
+    rel_path: str, device_id: str, timestamp: Optional[float] = None
 ) -> str:
     """
-    Merge two conflicting .md versions using Git-style conflict markers.
+    Build the conflict-copy path for any file type.
 
-    Both versions are preserved — the user resolves manually.
+    "notes.md" on device "laptop" → "notes.conflict.laptop.20260811T142530Z.md"
+    "report.pdf"                  → "report.conflict.laptop.20260811T142530Z.pdf"
+    "Makefile"                    → "Makefile.conflict.laptop.20260811T142530Z"
+
+    The extension is preserved so the file still opens in the application that
+    owns it, and the timestamp is UTC and sortable so several conflicts on one
+    file never collide.
     """
-    local_time = _format_ts(local_timestamp)
-    remote_time = _format_ts(remote_timestamp)
+    ts = timestamp if timestamp and timestamp > 0 else time.time()
+    stamp = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    device = sanitize_device_id(device_id)
 
-    return (
-        f"<<<<<<< LOCAL ({local_client} @ {local_time})\n"
-        f"{local_content}\n"
-        f"=======\n"
-        f"{remote_content}\n"
-        f">>>>>>> REMOTE ({remote_client} @ {remote_time})\n"
-    )
+    path = Path(rel_path)
+    suffix = _full_suffix(path.name)
+    if suffix:
+        stem = path.name[: -len(suffix)]
+        marker = f"{stem}.conflict.{device}.{stamp}{suffix}"
+    else:
+        marker = f"{path.name}.conflict.{device}.{stamp}"
+    return str(path.with_name(marker)).replace("\\", "/")
 
 
-def _format_ts(ts: float) -> str:
-    """Format a Unix timestamp as HH:MM:SS for merge markers."""
-    if ts <= 0:
-        return "unknown"
-    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-    return dt.strftime("%H:%M:%S")
+def save_conflict_copy(
+    vault_path: str,
+    rel_path: str,
+    device_id: str,
+    timestamp: Optional[float] = None,
+) -> Optional[str]:
+    """
+    Move the local version aside before the remote version lands.
+
+    Moved, not copied: the caller is about to overwrite the file, and a move
+    guarantees the local bytes exist exactly once rather than briefly twice on
+    a full disk.
+
+    Returns:
+        Absolute path of the conflict copy, or None if the file was gone.
+    """
+    src = Path(vault_path) / rel_path
+    if not src.exists():
+        return None
+
+    dst = Path(vault_path) / make_conflict_name(rel_path, device_id, timestamp)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dst))
+    return str(dst)
+
+
+def is_conflict_copy(rel_path: str) -> bool:
+    """True if this path is a conflict copy produced by save_conflict_copy."""
+    return ".conflict." in Path(rel_path).name
 
 
 # ── Binary Latest-Wins ──
@@ -78,12 +153,13 @@ def resolve_binary_conflict(
     remote_meta: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
-    Resolve binary file conflict: latest mtime wins.
+    Decide which version goes on disk under the original name: latest mtime.
+
+    The loser is not discarded — the caller keeps it via save_conflict_copy.
+    On a tie the remote wins, so every node reaches the same answer.
 
     Returns:
         (winner_meta, loser_meta)
-
-    On tie: remote wins (deterministic).
     """
     local_mtime = local_meta.get("mtime", 0.0)
     remote_mtime = remote_meta.get("mtime", 0.0)
@@ -110,19 +186,6 @@ def create_backup(file_path: str) -> Optional[str]:
     backup_path = file_path + ".backup"
     shutil.copy2(file_path, backup_path)
     return backup_path
-
-
-def make_conflict_backup_name(rel_path: str, checksum: str) -> str:
-    """
-    Generate a conflict backup filename.
-
-    Example: "notes.md" + checksum "aabb" → "notes.conflict.aabb.md"
-    """
-    p = Path(rel_path)
-    if p.suffix:
-        return str(p.with_suffix(f".conflict.{checksum}{p.suffix}"))
-    else:
-        return f"{rel_path}.conflict.{checksum}"
 
 
 # ── Sync Trash (Scenario S6) ──

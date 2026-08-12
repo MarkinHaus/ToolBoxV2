@@ -31,6 +31,7 @@ import io
 import json
 import os
 import pickle
+import re
 import sys
 import textwrap
 import threading
@@ -305,8 +306,8 @@ class LiveSession:
         persist: bool = True,
     ):
         self.agent = agent
-        self.agent_name = _agent_name(agent)
-        self.session_id = session_id or "default"
+        self.agent_name = _safe_path_component(_agent_name(agent))
+        self.session_id = _safe_path_component(session_id or "default")
         self.persist = persist
 
         if privileged is None:
@@ -758,6 +759,16 @@ def _safe_mod(name: str) -> str:
     if not name or name[0].isdigit():
         name = f"h_{name}"
     return name
+
+
+_WIN_ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _safe_path_component(name: str) -> str:
+    """Sanitize a string for use as a filesystem path component (cross-platform)."""
+    name = (name or "default").strip()
+    name = _WIN_ILLEGAL.sub("_", name)
+    return name or "default"
 
 
 def _format_syntax_error(code: str, e: SyntaxError) -> str:

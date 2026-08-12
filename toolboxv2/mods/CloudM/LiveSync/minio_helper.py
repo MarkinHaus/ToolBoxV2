@@ -11,9 +11,11 @@ Bucket layout:
         └── .meta/
             └── {rel_path}.json     ← metadata (checksum, mtime, source_client)
 
-CredentialBroker integration:
-    Uses toolboxv2.mods.CloudM.auth.minio_policy.CredentialBroker
-    to mint scoped per-client MinIO service accounts.
+Access model:
+    The SERVER holds the MinIO credentials. Clients never do. Every client
+    transfer runs against a short-lived presigned URL that the server issues
+    for exactly one object (see presign_get / presign_put) and that the client
+    fetches over plain HTTP (http_download / http_upload).
 """
 
 from __future__ import annotations
@@ -21,6 +23,9 @@ from __future__ import annotations
 import io
 import json
 import logging
+import urllib.error
+import urllib.request
+from datetime import timedelta
 from typing import Any, Dict, Optional, Tuple
 
 try:
@@ -236,6 +241,118 @@ def list_remote_files(
     return result
 
 
+# ── Presigned URLs (server issues, client consumes) ──
+
+def presign_get(
+    client: "Minio", bucket: str, key: str, ttl_seconds: int = 900
+) -> str:
+    """
+    Presigned download URL for exactly one object.
+
+    Args:
+        client: MinIO client holding the server credentials
+        bucket: bucket name
+        key: object key
+        ttl_seconds: how long the URL stays valid
+
+    Returns:
+        Absolute HTTP(S) URL usable without any credentials.
+    """
+    return client.presigned_get_object(
+        bucket, key, expires=timedelta(seconds=ttl_seconds)
+    )
+
+
+def presign_put(
+    client: "Minio", bucket: str, key: str, ttl_seconds: int = 900
+) -> str:
+    """
+    Presigned upload URL for exactly one object.
+
+    Args:
+        client: MinIO client holding the server credentials
+        bucket: bucket name
+        key: object key
+        ttl_seconds: how long the URL stays valid
+
+    Returns:
+        Absolute HTTP(S) URL usable without any credentials.
+    """
+    return client.presigned_put_object(
+        bucket, key, expires=timedelta(seconds=ttl_seconds)
+    )
+
+
+def object_exists(client: "Minio", bucket: str, key: str) -> bool:
+    """True if the object is present in the bucket."""
+    try:
+        client.stat_object(bucket, key)
+        return True
+    except Exception:
+        return False
+
+
+# ── Credential-free HTTP transfer (client side) ──
+
+class TransferError(RuntimeError):
+    """A presigned transfer failed. Carries the HTTP status when known."""
+
+    def __init__(self, message: str, status: Optional[int] = None):
+        super().__init__(message)
+        self.status = status
+
+
+def http_download(url: str, timeout: float = 120.0) -> bytes:
+    """
+    Download an object through a presigned URL.
+
+    Blocking on purpose - call it from a worker thread
+    (``asyncio.to_thread``) so the event loop stays free.
+
+    Raises:
+        TransferError: on any HTTP or transport failure.
+    """
+    req = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        raise TransferError(
+            f"download failed: HTTP {exc.code} {exc.reason}", exc.code
+        ) from exc
+    except Exception as exc:
+        raise TransferError(f"download failed: {exc}") from exc
+
+
+def http_upload(url: str, data: bytes, timeout: float = 120.0) -> None:
+    """
+    Upload an object through a presigned URL.
+
+    Blocking on purpose - call it from a worker thread
+    (``asyncio.to_thread``) so the event loop stays free.
+
+    Raises:
+        TransferError: on any HTTP or transport failure.
+    """
+    req = urllib.request.Request(
+        url, data=data, method="PUT",
+        headers={"Content-Length": str(len(data)),
+                 "Content-Type": "application/octet-stream"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status = resp.status
+    except urllib.error.HTTPError as exc:
+        raise TransferError(
+            f"upload failed: HTTP {exc.code} {exc.reason}", exc.code
+        ) from exc
+    except Exception as exc:
+        raise TransferError(f"upload failed: {exc}") from exc
+
+    if status not in (200, 201, 204):
+        raise TransferError(f"upload failed: unexpected HTTP {status}", status)
+
+
 # ── Healthcheck ──
 
 def healthcheck(client: "Minio") -> Tuple[bool, str]:
@@ -258,9 +375,13 @@ def vend_user_credentials_for_user(user_id: str, env_config: dict) -> Dict[str, 
     """
     Mint scoped MinIO credentials for a user using CredentialBroker.
 
-    Mirrors ``vend_credentials_for_share`` but uses the user-scoped policy
-    (``tb-users-private/{user_id}/*`` + RO on ``tb-users-public/*``).
-    See ``toolboxv2.mods.CloudM.auth.minio_policy.CredentialBroker``.
+    Uses the user-scoped policy (``tb-users-private/{user_id}/*`` + RO on
+    ``tb-users-public/*``). See
+    ``toolboxv2.mods.CloudM.auth.minio_policy.CredentialBroker``.
+
+    This is the dashboard path for a user's OWN storage - unrelated to
+    LiveSync shares, which use presigned URLs and hand out no credentials.
+    It has no admin fallback: a broker failure raises.
 
     Args:
         user_id: the user identifier
@@ -300,54 +421,3 @@ def vend_user_credentials_for_user(user_id: str, env_config: dict) -> Dict[str, 
         extra={"audit_action": "CREDENTIAL_VEND", "user_id": user_id, "scoped": True}
     )
     return creds
-
-
-def vend_credentials_for_share(share_id: str, env_config: dict) -> Dict[str, Any]:
-    """
-    Mint scoped MinIO credentials for a share using CredentialBroker.
-
-    Falls back to admin credentials if broker is unavailable
-    (with a warning — client will have broader access).
-
-    Args:
-        share_id: the share identifier
-        env_config: dict from load_env_config() with endpoint, access_key, secret_key, secure
-
-    Returns:
-        Credential dict: {endpoint, access_key, secret_key, secure, bucket, prefix, ...}
-    """
-    try:
-        from toolboxv2.mods.CloudM.auth.minio_policy import (
-            CredentialBroker,
-            MinIOPolicyConfig,
-        )
-
-        config = MinIOPolicyConfig(
-            endpoint=env_config["endpoint"],
-            access_key=env_config["access_key"],
-            secret_key=env_config["secret_key"],
-            secure=env_config.get("secure", False),
-        )
-        broker = CredentialBroker(config)
-        creds = broker.vend_share_credentials(share_id)
-        logger.info(
-            f"Minted scoped credentials for share {share_id}",
-            extra={"audit_action": "CREDENTIAL_VEND", "share_id": share_id, "scoped": True}
-        )
-        return creds
-    except Exception as exc:
-        # Fallback: return admin credentials when CredentialBroker is unavailable
-        logger.warning(
-            f"CredentialBroker unavailable ({exc}), falling back to admin creds for share {share_id}",
-            extra={"audit_action": "CREDENTIAL_VEND_FALLBACK", "share_id": share_id, "scoped": False}
-        )
-        return {
-            "endpoint": env_config["endpoint"],
-            "access_key": env_config["access_key"],
-            "secret_key": env_config["secret_key"],
-            "secure": env_config.get("secure", False),
-            "bucket": env_config.get("bucket", "tb-shared"),
-            "prefix": share_id,
-            "policy_applied": False,
-        }
-

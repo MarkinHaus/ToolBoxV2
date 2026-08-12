@@ -5,14 +5,18 @@ Runs on each device (Desktop, Termux, Laptop).
 
 Responsibilities:
   - WS client with auto-reconnect (exponential backoff)
-  - Watchdog → debounced batch → encrypt → upload to MinIO → WS notify
-  - WS notification → download from MinIO → decrypt → atomic write
+  - Watchdog → debounced batch → encrypt → upload → WS notify
+  - WS notification → download → decrypt → atomic write
   - Reconnect catchup: compare server checksums, pull missing
-  - Offline buffer: queue changes while disconnected, push on reconnect
+    (changes made while offline are picked up by this catchup, not by a
+    separate buffer)
+
+The client holds NO object-storage credentials. Every transfer runs against a
+short-lived presigned URL that the server issues for exactly one object.
 
 Data path:
-  Upload:  local file → zlib+AES → MinIO (direct) → WS notification (metadata only)
-  Download: WS notification → MinIO (direct) → AES+zlib → local file
+  Upload:   local file → zlib+AES → request PUT url → HTTP PUT → WS notify
+  Download: WS notify → request GET url → HTTP GET → AES+zlib → local file
 
 Run standalone:
     python -m toolboxv2.mods.CloudM.LiveSync.client --token <base64> --vault /path
@@ -22,7 +26,9 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
+import uuid
 import os
 import time
 from pathlib import Path
@@ -37,10 +43,10 @@ from .crypto import (
 )
 from .index import LocalIndex
 from .minio_helper import (
-    create_minio_client, make_object_key, upload_bytes, upload_metadata,
+    make_object_key, http_download, http_upload, TransferError,
 )
 from .conflict import (
-    create_backup, move_to_sync_trash, detect_conflict,
+    create_backup, move_to_sync_trash, detect_conflict, save_conflict_copy,
 )
 
 try:
@@ -154,6 +160,10 @@ class ClientWatchdogHandler(FileSystemEventHandler):
                 pass
 
 
+class AuthenticationError(Exception):
+    """The server rejected our share token. Reconnecting will not help."""
+
+
 # ── SyncClient ──
 
 class SyncClient:
@@ -174,12 +184,35 @@ class SyncClient:
         db_path = self.vault / ".livesync_client.db"
         self.index = LocalIndex(str(db_path))
 
-        # MinIO client (set after auth)
-        self._minio = None
+        # Presigned-URL plumbing. req_id → Future resolved by the recv loop.
+        self._url_ttl: int = 900
+        self._pending_url_requests: Dict[str, asyncio.Future] = {}
+
+        # Background tasks spawned from the recv loop (downloads). Kept in a
+        # set so they are not garbage collected mid-flight and can be
+        # cancelled on shutdown.
+        self._bg_tasks: set = set()
+
+        # One lock per path: two downloads of the same file must not
+        # interleave their atomic writes.
+        self._path_locks: Dict[str, asyncio.Lock] = {}
+
+        # {rel_path: {checksums already parked as a conflict copy}}. The
+        # server broadcasts its verdict to every client, so the same collision
+        # arrives more than once; without this each copy would be written again.
+        self._preserved: Dict[str, set] = {}
+
+        # Paths the server has declared collided, plus ones our own catchup
+        # found edited on both sides. Needed because an upload writes our
+        # checksum into the index, so a moment later the index no longer shows
+        # that this file was edited here — and the incoming winner would
+        # overwrite it as if we were merely one revision behind.
+        self._contested: set = set()
 
         # WebSocket
         self._ws = None
         self._running = False
+        self._cleaned = False
         self._reconnect_attempt = 0
 
         # Watchdog
@@ -187,18 +220,122 @@ class SyncClient:
         self._debounce = DebounceBatch(delay=config.debounce_seconds)
         self._observer = None
 
-        # Offline buffer: changes made while disconnected
-        self._offline_buffer: List[Tuple[str, str]] = []  # [(event_type, rel_path), ...]
-
         # Concurrency limiter
         self._transfer_sem = asyncio.Semaphore(config.max_concurrent_transfers)
 
-        # Suppress watchdog events for files we're currently writing
-        self._writing_paths: set = set()
+        # Suppress watchdog events caused by our own writes.
+        # {rel_path: unix_ts until which self-inflicted events are ignored}
+        self._writing_until: Dict[str, float] = {}
 
         # Optional VFS-bridge hook: callback(event_type:str, payload:dict)
         # fired after a remote change is applied locally. Set by VFSSyncAdapter.
         self.on_remote_change = None
+
+        # Optional status hook: callback(status:str, detail:str) with status in
+        # {"connecting", "live", "auth_failed", "stopped"}. Set by
+        # VFSSyncAdapter so callers can tell a live share from a dead one.
+        self.on_status_change = None
+        self.status: str = "connecting"
+
+    # ── Status ──
+
+    def _set_status(self, status: str, detail: str = "") -> None:
+        """Record the connection state and notify the optional hook."""
+        self.status = status
+        if self.on_status_change:
+            try:
+                self.on_status_change(status, detail)
+            except Exception as e:
+                logger.error(f"[LiveSync] on_status_change hook error: {e}")
+
+    @property
+    def device_id(self) -> str:
+        """Stable name of this machine, used in conflict-copy filenames."""
+        return node_
+
+    async def _preserve_local_version(
+        self, rel_path: str, reason: str, checksum: str = ""
+    ) -> Optional[str]:
+        """
+        Move the local version aside so the remote one can land.
+
+        Same rule for every file type: nothing is merged, nothing is lost. The
+        copy is suppressed from the watcher because we created it ourselves,
+        and should_ignore keeps it from ever syncing.
+
+        checksum: content hash of the local version. Passing it makes the call
+        idempotent — the same bytes are never parked twice, no matter how many
+        conflict broadcasts arrive for one collision.
+        """
+        if checksum:
+            done = self._preserved.setdefault(rel_path, set())
+            if checksum in done:
+                return None
+            done.add(checksum)
+
+        self._suppress(rel_path)
+        try:
+            saved = await asyncio.to_thread(
+                save_conflict_copy, str(self.vault), rel_path, self.device_id)
+        except Exception as e:
+            logger.error(f"[LiveSync] Could not preserve local {rel_path}: {e}")
+            return None
+
+        if saved:
+            name = Path(saved).name
+            self._suppress(str(Path(saved).relative_to(self.vault)).replace("\\", "/"))
+            logger.warning(
+                f"[LiveSync] Conflict on {rel_path} ({reason}) — "
+                f"local version kept as {name}")
+            await self.index.log_sync_event(rel_path, "conflict", "", self.device_id)
+        return saved
+
+    # ── Concurrency helpers ──
+
+    def _path_lock(self, rel_path: str) -> asyncio.Lock:
+        """Return (and memoize) the per-path serialization lock."""
+        lock = self._path_locks.get(rel_path)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._path_locks[rel_path] = lock
+        return lock
+
+    def _spawn(self, coro) -> None:
+        """Run a coroutine detached from the receive loop."""
+        task = asyncio.create_task(coro)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
+    # ── Self-write suppression ──
+
+    def _suppress(self, *rel_paths: str) -> None:
+        """
+        Mark paths as "we are about to touch this ourselves".
+
+        The window must outlive the debounce delay: a watchdog event is only
+        evaluated when the debounce batch is flushed, which happens at least
+        ``debounce_seconds`` after the event was recorded. A window shorter
+        than that expires before the event is ever looked at.
+        """
+        until = time.time() + max(3.0, self.config.debounce_seconds * 3)
+        for rel_path in rel_paths:
+            self._writing_until[rel_path] = until
+
+    def _is_suppressed(self, rel_path: str) -> bool:
+        """True while a path is inside its self-write window."""
+        until = self._writing_until.get(rel_path)
+        if until is None:
+            return False
+        if time.time() >= until:
+            del self._writing_until[rel_path]
+            return False
+        return True
+
+    def _prune_suppressions(self) -> None:
+        """Drop expired suppression entries so the map cannot grow forever."""
+        now = time.time()
+        for rel_path in [p for p, t in self._writing_until.items() if now >= t]:
+            del self._writing_until[rel_path]
 
     # ── Lifecycle ──
 
@@ -218,10 +355,14 @@ class SyncClient:
         while self._running:
             try:
                 await self._connect_and_sync()
+            except AuthenticationError as e:
+                # The server rejected our token. Retrying cannot fix that.
+                logger.error(f"[LiveSync] Authentication failed: {e}")
+                self._set_status("auth_failed", str(e))
+                self._running = False
             except Exception as e:
                 logger.error(f"[LiveSync] Connection error: {e}")
-                if "Invalid" in str(e):
-                    self._running = False
+                self._set_status("connecting", str(e))
 
             if not self._running:
                 break
@@ -240,10 +381,29 @@ class SyncClient:
         await self._cleanup()
 
     async def stop(self):
-        """Graceful shutdown."""
+        """
+        Graceful shutdown.
+
+        Tears down here rather than leaving it to run(): callers cancel the
+        run() task right after this, and a cancelled task never reaches its
+        own cleanup. That leaked the watchdog observer and the aiosqlite
+        worker — both non-daemon threads — on every disconnect.
+        """
         self._running = False
+        await self._cleanup()
 
     async def _cleanup(self):
+        if self._cleaned:
+            return
+        self._cleaned = True
+        for task in list(self._bg_tasks):
+            task.cancel()
+        for task in list(self._bg_tasks):
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._fail_pending_urls("client stopped")
         if self._observer:
             self._observer.stop()
             self._observer.join()
@@ -253,6 +413,8 @@ class SyncClient:
             except Exception:
                 pass
         await self.index.close()
+        if self.status != "auth_failed":
+            self._set_status("stopped")
         logger.info("[LiveSync] Client stopped")
 
     # ── Connection ──
@@ -276,7 +438,8 @@ class SyncClient:
             msg = SyncMessage.from_json(raw)
 
             if msg.type == MsgType.ERROR:
-                raise ConnectionError(f"Auth failed: {msg.payload.get('message')}")
+                raise AuthenticationError(
+                    f"Auth failed: {msg.payload.get('message')}")
             if msg.type != MsgType.AUTH_SUCCESS:
                 raise ConnectionError(f"Unexpected response: {msg.type}")
 
@@ -285,34 +448,28 @@ class SyncClient:
             # every 1.0s forever: "attempt 1" loop.)
             self._reconnect_attempt = 0
 
-            # Extract MinIO credentials
-            minio_creds = msg.payload.get("minio_credentials", {})
-            if minio_creds.get("endpoint"):
-                self._minio = create_minio_client(minio_creds)
-            else:
-                logger.warning("[LiveSync] No MinIO credentials received, using config")
-                self._minio = create_minio_client({
-                    "endpoint": self.config.minio_endpoint,
-                    "access_key": minio_creds.get("access_key", ""),
-                    "secret_key": minio_creds.get("secret_key", ""),
-                    "secure": minio_creds.get("secure", False),
-                })
-
+            self._url_ttl = int(msg.payload.get("url_ttl", 900) or 900)
             server_checksums = msg.payload.get("checksums", {})
-            logger.info(f"[LiveSync] Authenticated. Server has {len(server_checksums)} files")
+            logger.info(
+                f"[LiveSync] Authenticated. Server has {len(server_checksums)} files")
+            self._set_status("live")
 
-            # Catchup: compare server state with local
-            await self._catchup_sync(server_checksums)
+            # The receive loop must run BEFORE the catchup: catchup asks the
+            # server for presigned URLs and the answers arrive on this loop.
+            recv_task = asyncio.create_task(self._ws_recv_loop(ws))
+            try:
+                await self._catchup_sync(server_checksums)
+                await self._event_loop(ws, recv_task)
+            finally:
+                recv_task.cancel()
+                try:
+                    await recv_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                self._fail_pending_urls("connection closed")
 
-            # Flush offline buffer
-            await self._flush_offline_buffer()
-
-            # Main event loop
-            await self._event_loop(ws)
-
-    async def _event_loop(self, ws):
+    async def _event_loop(self, ws, recv_task):
         """Process WS messages and local watchdog events concurrently."""
-        recv_task = asyncio.create_task(self._ws_recv_loop(ws))
         watch_task = asyncio.create_task(self._watch_loop())
         ping_task = asyncio.create_task(self._ping_loop(ws))
 
@@ -325,35 +482,97 @@ class SyncClient:
                 if task.exception():
                     raise task.exception()
         finally:
-            for task in [recv_task, watch_task, ping_task]:
+            for task in [watch_task, ping_task]:
                 task.cancel()
                 try:
                     await task
                 except (asyncio.CancelledError, Exception):
                     pass
 
+    # ── Presigned URLs ──
+
+    def _fail_pending_urls(self, reason: str) -> None:
+        """Reject every in-flight URL request so no caller hangs."""
+        for req_id, fut in list(self._pending_url_requests.items()):
+            if not fut.done():
+                fut.set_exception(TransferError(f"url request aborted: {reason}"))
+            self._pending_url_requests.pop(req_id, None)
+
+    async def _request_urls(self, op: str, paths: List[str]) -> Dict[str, Dict[str, str]]:
+        """
+        Ask the server for presigned URLs.
+
+        Args:
+            op: "get" for downloads, "put" for uploads
+            paths: relative paths inside the vault
+
+        Returns:
+            {rel_path: {"file": url, "meta": url}} — "meta" only for op "put".
+            Paths the server refused or has no object for are absent.
+
+        Raises:
+            TransferError: no connection, timeout, or a server-side error.
+        """
+        if not paths:
+            return {}
+        if not self._ws:
+            raise TransferError("no server connection for URL request")
+
+        req_id = uuid.uuid4().hex[:12]
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._pending_url_requests[req_id] = fut
+        try:
+            await self._ws.send(
+                SyncMessage.request_urls(req_id, op, list(paths)).to_json())
+            payload = await asyncio.wait_for(fut, timeout=60)
+        except asyncio.TimeoutError as exc:
+            raise TransferError(f"URL request timed out ({op}, {len(paths)} paths)") from exc
+        finally:
+            self._pending_url_requests.pop(req_id, None)
+
+        if payload.get("error"):
+            raise TransferError(f"server refused URL request: {payload['error']}")
+
+        missing = payload.get("missing") or []
+        if missing:
+            logger.warning(
+                f"[LiveSync] No {op} URL for {len(missing)} path(s): "
+                f"{', '.join(missing[:5])}")
+        return payload.get("urls") or {}
+
     # ── WS Receive Loop ──
 
     async def _ws_recv_loop(self, ws):
         """Listen for server messages."""
-        async for raw in ws:
-            try:
-                msg = SyncMessage.from_json(raw)
-                await self._handle_server_message(msg)
-            except Exception as e:
-                logger.error(f"[LiveSync] Message handling error: {e}")
+        try:
+            async for raw in ws:
+                try:
+                    msg = SyncMessage.from_json(raw)
+                    await self._handle_server_message(msg)
+                except Exception as e:
+                    logger.error(f"[LiveSync] Message handling error: {e}")
+        finally:
+            self._fail_pending_urls("receive loop ended")
 
     async def _handle_server_message(self, msg: SyncMessage):
         """Route incoming server message."""
         if msg.type == MsgType.PONG:
             return
 
+        elif msg.type == MsgType.URLS_GRANTED:
+            fut = self._pending_url_requests.get(msg.payload.get("req_id", ""))
+            if fut is not None and not fut.done():
+                fut.set_result(msg.payload)
+            return
+
         elif msg.type == MsgType.FILE_CHANGED:
             p = msg.payload
-            await self._download_file(
+            # Detached: the download needs presigned URLs, whose answer
+            # arrives on THIS loop. Awaiting it here would deadlock.
+            self._spawn(self._download_file(
                 p["path"], p["minio_key"],
                 expected_checksum=p.get("checksum"),
-            )
+            ))
 
         elif msg.type == MsgType.FILE_DELETED:
             await self._handle_remote_delete(msg.payload["path"])
@@ -367,14 +586,23 @@ class SyncClient:
         elif msg.type == MsgType.CONFLICT:
             p = msg.payload
             logger.warning(
-                f"[LiveSync] Conflict on {p['path']}: {p.get('resolution', 'unknown')} — {p.get('message', '')}"
+                f"[LiveSync] Conflict on {p['path']}: "
+                f"{p.get('resolution', 'unknown')} — {p.get('message', '')}"
             )
             await self.index.log_sync_event(
                 p["path"], "conflict", p.get("remote_checksum", ""), "server",
             )
+            # The server only raises this for a real collision, so act on it:
+            # mark the path so the winning version — which arrives right after
+            # as a normal file_changed — parks our copy instead of erasing it.
+            # No download from here: remote_checksum names the winner, but the
+            # bytes are fetched by that file_changed, and doing it twice raced
+            # with itself.
+            await self.index.set_sync_state(p["path"], "conflict")
+            self._contested.add(p["path"])
 
         elif msg.type == MsgType.FULL_STATE_READY:
-            await self._handle_full_state(msg.payload)
+            self._spawn(self._handle_full_state(msg.payload))
 
         elif msg.type == MsgType.ACK:
             pass  # logged on upload side already
@@ -419,13 +647,15 @@ class SyncClient:
                 try:
                     event = self._watch_queue.get_nowait()
                     if event[0] == "renamed":
-                        # Handle renames immediately (no debounce)
+                        # Handle renames immediately (no debounce). A rename we
+                        # performed ourselves (remote rename applied locally)
+                        # must not be echoed back to the server.
+                        if self._is_suppressed(event[1]) or self._is_suppressed(event[2]):
+                            continue
                         await self._handle_local_rename(event[1], event[2])
                     else:
                         event_type, rel_path = event
-                        # Skip files we're currently writing (download in progress)
-                        if rel_path not in self._writing_paths:
-                            self._debounce.add(rel_path, event_type)
+                        self._debounce.add(rel_path, event_type)
                 except asyncio.QueueEmpty:
                     break
 
@@ -435,19 +665,35 @@ class SyncClient:
                 for rel_path, event_type in batch.items():
                     try:
                         if event_type == "deleted":
+                            # A "deleted" event inside our own write window is
+                            # self-inflicted (atomic replace, trash move) and
+                            # must never become a delete broadcast.
+                            if self._is_suppressed(rel_path):
+                                continue
                             await self._handle_local_delete(rel_path)
                         else:
+                            # created/modified are safe to re-evaluate: the
+                            # checksum guard in _upload_file turns a
+                            # self-inflicted event into a no-op.
                             await self._upload_file(rel_path)
                     except Exception as e:
                         logger.error(f"[LiveSync] Batch process error {rel_path}: {e}")
 
+            self._prune_suppressions()
             await asyncio.sleep(0.2)
 
     # ── Upload ──
 
-    async def _upload_file(self, rel_path: str):
+    async def _upload_file(
+        self, rel_path: str, urls: Optional[Dict[str, str]] = None
+    ):
         """
-        Upload a local file: read → checksum check → encrypt → MinIO → WS notify.
+        Upload a local file: checksum check → encrypt → presigned PUT → notify.
+
+        Args:
+            rel_path: path relative to the vault root
+            urls: pre-fetched {"file": url, "meta": url} from a batch request;
+                requested on demand when omitted.
         """
         full = self.vault / rel_path
         if not full.exists():
@@ -456,7 +702,7 @@ class SyncClient:
             logger.warning(f"[LiveSync] File too large, skipping: {rel_path}")
             return
 
-        async with self._transfer_sem:
+        async with self._transfer_sem, self._path_lock(rel_path):
             try:
                 # Checksum first — skip if unchanged
                 checksum = compute_checksum_file(str(full))
@@ -464,24 +710,32 @@ class SyncClient:
                 if existing and existing["checksum"] == checksum:
                     return  # No actual change
 
+                # What we were in sync with before this edit. The server needs
+                # it to tell a normal next revision from a real collision.
+                base_checksum = (existing or {}).get("checksum", "")
+
                 # Encrypt
                 encrypted = encrypt_file(str(full), self.config.encryption_key)
-
-                # Upload to MinIO
                 minio_key = make_object_key(self.config.prefix, rel_path)
-                bucket = self.config.bucket
 
-                if self._minio:
-                    upload_bytes(self._minio, bucket, minio_key, encrypted)
+                if not urls:
+                    granted = await self._request_urls("put", [rel_path])
+                    urls = granted.get(rel_path)
+                if not urls or not urls.get("file"):
+                    raise TransferError(f"no upload URL granted for {rel_path}")
 
-                    # Upload metadata
-                    upload_metadata(self._minio, bucket, self.config.prefix, rel_path, {
+                await asyncio.to_thread(http_upload, urls["file"], encrypted)
+
+                if urls.get("meta"):
+                    stat_now = full.stat()
+                    meta = json.dumps({
                         "checksum": checksum,
-                        "mtime": full.stat().st_mtime,
-                        "size": full.stat().st_size,
+                        "mtime": stat_now.st_mtime,
+                        "size": stat_now.st_size,
                         "source_client": f"{node_}",
                         "file_type": classify_file(rel_path).value,
-                    })
+                    }).encode("utf-8")
+                    await asyncio.to_thread(http_upload, urls["meta"], meta)
 
                 # Update index
                 stat = full.stat()
@@ -495,6 +749,7 @@ class SyncClient:
                     await self._ws.send(SyncMessage.file_changed(
                         rel_path, checksum, minio_key,
                         file_type=classify_file(rel_path).value,
+                        base_checksum=base_checksum,
                     ).to_json())
 
                 await self.index.log_sync_event(rel_path, "upload", checksum)
@@ -512,13 +767,21 @@ class SyncClient:
         minio_key: str,
         expected_checksum: Optional[str] = None,
         retries: int = 3,
+        url: Optional[str] = None,
     ):
         """
-        Download from MinIO → decrypt → verify checksum → atomic write.
+        Presigned GET → decrypt → verify checksum → atomic write.
 
-        Scenario S4: partial download → .sync-tmp stays, retry on reconnect.
+        Args:
+            rel_path: path relative to the vault root
+            minio_key: object key, recorded in the index
+            expected_checksum: plaintext checksum announced by the server
+            retries: attempts before giving up
+            url: pre-fetched download URL from a batch request; requested on
+                demand when omitted, and re-requested on every retry because a
+                presigned URL can expire mid-flight.
         """
-        async with self._transfer_sem:
+        async with self._transfer_sem, self._path_lock(rel_path):
             full = self.vault / rel_path
 
             for attempt in range(retries):
@@ -527,18 +790,15 @@ class SyncClient:
                     if full.exists():
                         create_backup(str(full))
 
-                    # Download
-                    if not self._minio:
-                        logger.error(f"[LiveSync] No MinIO client for download: {rel_path}")
-                        await self.index.set_sync_state(rel_path, "pending_download")
-                        return
+                    if not url:
+                        granted = await self._request_urls("get", [rel_path])
+                        entry = granted.get(rel_path)
+                        if not entry or not entry.get("file"):
+                            raise TransferError(
+                                f"no download URL granted for {rel_path}")
+                        url = entry["file"]
 
-                    resp = self._minio.get_object(self.config.bucket, minio_key)
-                    try:
-                        encrypted = resp.read()
-                    finally:
-                        resp.close()
-                        resp.release_conn()
+                    encrypted = await asyncio.to_thread(http_download, url)
 
                     # Decrypt
                     data = decrypt_bytes(encrypted, self.config.encryption_key)
@@ -551,6 +811,7 @@ class SyncClient:
                                 f"[LiveSync] Checksum mismatch {rel_path} "
                                 f"(got {actual_cs}, expected {expected_checksum}), retry {attempt + 1}"
                             )
+                            url = None
                             continue
                         else:
                             logger.error(
@@ -560,20 +821,63 @@ class SyncClient:
                             await self.index.set_sync_state(rel_path, "conflict")
                             return
 
-                    # Atomic write (suppress watchdog for this path)
-                    self._writing_paths.add(rel_path)
+                    # Never overwrite bytes that exist nowhere else.
+                    #
+                    # Two conditions, and both are needed. Different from the
+                    # incoming version alone is not a conflict — that is the
+                    # ordinary case of being one revision behind, and treating
+                    # it as one would file a conflict copy on every update.
+                    # It is a conflict only when the file on disk also differs
+                    # from the index, because the index holds the version we
+                    # last agreed on with the server: a third, unsynced state
+                    # means somebody edited here. A path the server has already
+                    # declared contested counts too — by then our own upload
+                    # has written our checksum into the index, so the index
+                    # alone can no longer tell the two cases apart.
+                    #
+                    # Checked at this point rather than before the download:
+                    # the incoming version is decrypted and checksum-verified
+                    # by now, so the replacement is certain to happen. Moving
+                    # the file aside any earlier left the original name empty
+                    # whenever a download went on to fail.
+                    if full.exists():
+                        try:
+                            local_cs = await asyncio.to_thread(
+                                compute_checksum_file, str(full))
+                            indexed = await self.index.get_file(rel_path)
+                            indexed_cs = (indexed or {}).get("checksum", "")
+                            contested = rel_path in self._contested
+                            if detect_conflict(local_cs, actual_cs) and (
+                                    contested
+                                    or detect_conflict(local_cs, indexed_cs)):
+                                await self._preserve_local_version(
+                                    rel_path,
+                                    "collided with server version" if contested
+                                    else "unsynced local changes",
+                                    checksum=local_cs)
+                            self._contested.discard(rel_path)
+                        except Exception as e:
+                            logger.error(
+                                f"[LiveSync] Conflict check failed {rel_path}: {e}")
+
+                    # Atomic write. os.replace() overwrites in place — no
+                    # unlink first, so the watchdog never sees a "deleted"
+                    # event for a file we are only updating.
+                    self._suppress(rel_path)
+                    full.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = full.with_suffix(full.suffix + ".sync-tmp")
                     try:
-                        full.parent.mkdir(parents=True, exist_ok=True)
-                        tmp = full.with_suffix(full.suffix + ".sync-tmp")
                         with open(tmp, "wb") as f:
                             f.write(data)
-                        if full.exists():
-                            full.unlink()
-                        os.rename(tmp, full)
-                    finally:
-                        # Small delay so watchdog event for our write gets suppressed
-                        await asyncio.sleep(0.1)
-                        self._writing_paths.discard(rel_path)
+                            f.flush()
+                            os.fsync(f.fileno())
+                        os.replace(tmp, full)
+                    except BaseException:
+                        try:
+                            tmp.unlink()
+                        except OSError:
+                            pass
+                        raise
 
                     # Update index
                     stat = full.stat()
@@ -586,6 +890,7 @@ class SyncClient:
                     return  # success
 
                 except Exception as e:
+                    url = None  # force a fresh URL on the next attempt
                     if attempt < retries - 1:
                         logger.warning(
                             f"[LiveSync] Download error {rel_path} (attempt {attempt + 1}): {e}"
@@ -606,6 +911,10 @@ class SyncClient:
         """
         full = self.vault / rel_path
         if full.exists():
+            # The move makes the source vanish, which the watchdog reports as a
+            # local deletion. Without suppression that bounces straight back to
+            # the server as a second delete.
+            self._suppress(rel_path)
             move_to_sync_trash(str(self.vault), rel_path)
             logger.info(f"[LiveSync] File deleted remotely: {rel_path} → moved to .sync-trash/")
 
@@ -614,6 +923,14 @@ class SyncClient:
 
     async def _handle_local_delete(self, rel_path: str):
         """Handle local file deletion → notify server."""
+        # Reality check before destroying remote state: a delete broadcast for
+        # a file that is still on disk is always wrong.
+        if (self.vault / rel_path).exists():
+            logger.debug(
+                f"[LiveSync] Ignoring stale delete event, file still present: {rel_path}"
+            )
+            return
+
         await self.index.delete_file(rel_path)
         if self._ws:
             await self._ws.send(SyncMessage.file_deleted(rel_path).to_json())
@@ -628,8 +945,11 @@ class SyncClient:
         new_full = self.vault / new_path
 
         if old_full.exists():
+            # Our own rename produces a watchdog "renamed" event plus a
+            # "deleted" for the old path — neither may be echoed back.
+            self._suppress(old_path, new_path)
             new_full.parent.mkdir(parents=True, exist_ok=True)
-            os.rename(old_full, new_full)
+            os.replace(old_full, new_full)
 
         await self.index.delete_file(old_path)
         if new_full.exists():
@@ -674,14 +994,32 @@ class SyncClient:
                 f"{len(to_upload)} to upload"
             )
 
-        # Downloads first (server is source of truth on reconnect)
-        for rel_path, minio_key in to_download:
-            cs = server_checksums.get(rel_path)
-            await self._download_file(rel_path, minio_key, expected_checksum=cs)
+        # Downloads first (server is source of truth on reconnect).
+        # One batched URL request instead of one round trip per file.
+        if to_download:
+            try:
+                get_urls = await self._request_urls(
+                    "get", [rel for rel, _ in to_download])
+            except TransferError as e:
+                logger.error(f"[LiveSync] Catchup URL batch failed: {e}")
+                get_urls = {}
+            for rel_path, minio_key in to_download:
+                entry = get_urls.get(rel_path) or {}
+                await self._download_file(
+                    rel_path, minio_key,
+                    expected_checksum=server_checksums.get(rel_path),
+                    url=entry.get("file") or None,
+                )
 
         # Then uploads (local changes made while offline)
-        for rel_path in to_upload:
-            await self._upload_file(rel_path)
+        if to_upload:
+            try:
+                put_urls = await self._request_urls("put", list(to_upload))
+            except TransferError as e:
+                logger.error(f"[LiveSync] Catchup URL batch failed: {e}")
+                put_urls = {}
+            for rel_path in to_upload:
+                await self._upload_file(rel_path, urls=put_urls.get(rel_path))
 
         if to_download or to_upload:
             total = len(to_download) + len(to_upload)
@@ -692,6 +1030,16 @@ class SyncClient:
     ) -> Tuple[List[Tuple[str, str]], List[str]]:
         """
         Compute what needs to be downloaded vs uploaded.
+
+        Three cases per path, decided against the INDEX rather than against
+        the server alone. The index records the state we last had in sync, so
+        it is what tells a stale local file apart from a locally edited one:
+
+          - on disk == index, differs from server → we are behind, download
+          - on disk != index, differs from server → we edited while offline.
+            Upload ours and keep the server's version as a conflict copy;
+            never overwrite the local edit silently.
+          - not on the server at all → upload
 
         Returns:
             (to_download: [(rel_path, minio_key)], to_upload: [rel_path])
@@ -716,12 +1064,31 @@ class SyncClient:
                 except Exception:
                     pass
 
-        # Files on server we don't have (or differ)
+        # Files on server we don't have (or that differ)
         for rel_path, server_cs in server_checksums.items():
-            local_cs = local_fs_files.get(rel_path) or local_checksums.get(rel_path)
-            if not local_cs or local_cs != server_cs:
-                minio_key = make_object_key(self.config.prefix, rel_path)
-                to_download.append((rel_path, minio_key))
+            disk_cs = local_fs_files.get(rel_path)
+            indexed_cs = local_checksums.get(rel_path)
+            local_cs = disk_cs or indexed_cs
+
+            if local_cs == server_cs:
+                continue
+
+            locally_edited = bool(disk_cs and indexed_cs and disk_cs != indexed_cs)
+            if locally_edited:
+                # Both sides moved since we last agreed. Push our version and
+                # let the server rule on it; whichever side loses ends up as a
+                # conflict copy through the normal download path, so there is
+                # exactly one place that resolves collisions.
+                logger.warning(
+                    f"[LiveSync] Offline edit collides with server version: "
+                    f"{rel_path}")
+                await self.index.set_sync_state(rel_path, "conflict")
+                self._contested.add(rel_path)
+                to_upload.append(rel_path)
+                continue
+
+            minio_key = make_object_key(self.config.prefix, rel_path)
+            to_download.append((rel_path, minio_key))
 
         # Files we have locally that server doesn't
         for rel_path, local_cs in local_fs_files.items():
@@ -736,19 +1103,15 @@ class SyncClient:
         """Handle full_state_ready: download gzipped index from MinIO."""
         minio_key = payload.get("minio_key", "")
         file_count = payload.get("file_count", 0)
+        url = payload.get("url", "")
 
-        if not self._minio or not minio_key:
-            logger.error("[LiveSync] Cannot download full state: no MinIO or key")
+        if not url:
+            logger.error("[LiveSync] Cannot download full state: no URL from server")
             return
 
         try:
             logger.info(f"[LiveSync] Downloading full state: {file_count} files")
-            resp = self._minio.get_object(self.config.bucket, minio_key)
-            try:
-                data = resp.read()
-            finally:
-                resp.close()
-                resp.release_conn()
+            data = await asyncio.to_thread(http_download, url)
 
             await self.index.import_gzipped(data)
             checksums = await self.index.get_all_checksums()
@@ -763,33 +1126,24 @@ class SyncClient:
 
             logger.info(f"[LiveSync] Full state: {len(missing)} files to download")
 
-            for rel_path, mk, cs in missing:
-                await self._download_file(rel_path, mk, expected_checksum=cs)
+            if missing:
+                try:
+                    get_urls = await self._request_urls(
+                        "get", [rel for rel, _, _ in missing])
+                except TransferError as e:
+                    logger.error(f"[LiveSync] Full state URL batch failed: {e}")
+                    get_urls = {}
+                for rel_path, mk, cs in missing:
+                    entry = get_urls.get(rel_path) or {}
+                    await self._download_file(
+                        rel_path, mk, expected_checksum=cs,
+                        url=entry.get("file") or None,
+                    )
 
             logger.info(f"[LiveSync] Full state sync complete")
 
         except Exception as e:
             logger.error(f"[LiveSync] Full state download failed: {e}")
-
-    # ── Offline Buffer ──
-
-    async def _flush_offline_buffer(self):
-        """Push any changes made while disconnected."""
-        if not self._offline_buffer:
-            return
-
-        logger.info(f"[LiveSync] Flushing {len(self._offline_buffer)} offline changes")
-        buf = list(self._offline_buffer)
-        self._offline_buffer.clear()
-
-        for event_type, rel_path in buf:
-            try:
-                if event_type == "deleted":
-                    await self._handle_local_delete(rel_path)
-                else:
-                    await self._upload_file(rel_path)
-            except Exception as e:
-                logger.error(f"[LiveSync] Offline flush error {rel_path}: {e}")
 
 
 # ── Standalone entry point ──

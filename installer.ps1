@@ -17,6 +17,10 @@ param(
     [string]$Path       = "",
     [string]$Config     = "",
     [string]$Branch     = "master",
+    [string]$Source     = "",          # github | registry
+    [string]$Version    = "",          # nightly | latest | x.x.x
+    [switch]$JsonOutput,
+    [switch]$DryRun,
     [switch]$Uninstall,
     [switch]$Update,
     [switch]$Help
@@ -55,6 +59,15 @@ function Warn  { param($m) Write-Host "[!] $m" -ForegroundColor Yellow }
 function Fail  { param($m) Write-Host "[✗] $m" -ForegroundColor Red; exit 1 }
 function Ask   { param($m) Write-Host "[?] $m" -ForegroundColor Magenta -NoNewline }
 function Step  { param($m) Write-Host "`n── $m ──────────────────────────────────" -ForegroundColor Blue }
+function JLog  { param($phase, $step, $status, $msg, $pct = 0)
+    if ($JsonOutput) {
+        $ts = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+        $obj = [ordered]@{ ts=$ts; phase=$phase; step=$step; status=$status; msg=$msg; pct=$pct }; Write-Output ($obj | ConvertTo-Json -Compress)
+    }
+}
+function DryRun { if ($DryRun) { Warn "[dry-run] $args"; return $true } else { return $false } }
+$SOURCE_FROM = $SourceSource
+$SOURCE_FROM = $SourceVersion
 
 # ── Global State ─────────────────────────────────────────────
 $ARCH             = if ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -eq "Arm64") { "arm64" } else { "x86_64" }
@@ -416,23 +429,44 @@ function Phase-Install {
 function Get-VersionAndUrl {
     $platform = "windows"
     $archTag  = if ($ARCH -eq "x86_64") { "x64" } else { "arm64" }
+    $fname    = "toolbox-$platform-$archTag.exe"
 
-    if ($REGISTRY_REACHABLE) {
+    # Source priority: -Source flag > registry (if reachable) > github
+    $useGithub = $false
+    if ($SOURCE_FROM -eq "github") { $useGithub = $true }
+    if (-not $SOURCE_FROM -and -not $REGISTRY_REACHABLE) { $useGithub = $true }
+
+    # Registry path
+    if (-not $useGithub -and $REGISTRY_REACHABLE) {
         try {
-            $resp = Invoke-RestMethod "$REGISTRY_API/artifacts/$TB_ARTIFACT_NAME/latest?platform=$platform&architecture=$ARCH" -ErrorAction Stop
+            $verPath = "/artifacts/$TB_ARTIFACT_NAME/latest"
+            if ($TB_VERSION_TARGET -and $TB_VERSION_TARGET -ne "latest") { $verPath = "/artifacts/$TB_ARTIFACT_NAME/$TB_VERSION_TARGET" }
+            $resp = Invoke-RestMethod "$REGISTRY_API$verPath?platform=$platform&architecture=$ARCH" -ErrorAction Stop
             if ($resp.url) { return @{ Version=$resp.version; Url=$resp.url; Checksum=$resp.checksum } }
-        } catch {}
+        } catch { Warn "Registry lookup failed - falling back to GitHub" }
     }
 
-    # GitHub fallback
-    Info "Using GitHub Releases..."
-    $rel   = Invoke-RestMethod "https://api.github.com/repos/$GITHUB_REPO/releases/latest"
-    $tag   = $rel.tag_name
-    $fname = "toolbox-windows-$archTag.exe"
-    $url   = "https://github.com/$GITHUB_REPO/releases/download/$tag/$fname"
+    # GitHub path: nightly tag or latest release
+    JLog "install" "resolve" "running" "Resolving version from GitHub" 10
+    $tag = ""
+    if ($TB_VERSION_TARGET -eq "nightly") {
+        try {
+            $rel = Invoke-RestMethod "https://api.github.com/repos/$GITHUB_REPO/releases/tags/nightly" -ErrorAction Stop
+            $tag = $rel.tag_name
+        } catch {}
+    } elseif (-not $TB_VERSION_TARGET -or $TB_VERSION_TARGET -eq "latest") {
+        try {
+            $rel = Invoke-RestMethod "https://api.github.com/repos/$GITHUB_REPO/releases/latest" -ErrorAction Stop
+            $tag = $rel.tag_name
+        } catch {}
+    } else {
+        $tag = $TB_VERSION_TARGET
+    }
+    if (-not $tag) { Fail "Could not determine release tag for version=$TB_VERSION_TARGET" }
+    $url = "https://github.com/$GITHUB_REPO/releases/download/$tag/$fname"
+    JLog "install" "resolve" "done" "Resolved: v$tag" 20
     return @{ Version=($tag -replace "^v",""); Url=$url; Checksum="" }
 }
-
 function Install-Native {
     Info "Fetching latest binary..."
     $info = Get-VersionAndUrl
@@ -731,6 +765,20 @@ switch ($ACTION) {
             Phase-Install
         }
         Phase-WriteManifests $tbVersion
+
+        # Phase 5: tb access
+        $tbBin = "$INSTALL_PATH\bin\tb.exe"
+        if ((Test-Path $tbBin) -and -not (DryRun "tb access")) {
+            JLog "install" "access" "running" "Setting up tb global access" 95
+            try {
+                & $tbBin access 2>`$null
+                JLog "install" "access" "done" "tb accessible globally" 100
+            } catch {
+                Warn "tb access command failed - PATH fallback active"
+                JLog "install" "access" "done" "tb accessible via PATH" 100
+            }
+        }
+
         Print-Summary $tbVersion
     }
     "update"    { Phase-Discovery; Action-Update }

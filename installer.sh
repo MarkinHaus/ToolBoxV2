@@ -45,7 +45,23 @@ fi
 log()   { echo -e "${G}[✓]${NC} $*"; }
 info()  { echo -e "${B}[→]${NC} $*"; }
 warn()  { echo -e "${Y}[!]${NC} $*"; }
-fail()  { echo -e "${R}[✗]${NC} $*" >&2; exit 1; }
+jlog() {
+  local phase="$1" step="$2" status="$3" msg="$4" pct="${5:-0}"
+  printf '{"ts":"%s","phase":"%s","step":"%s","status":"%s","msg":"%s","pct":%s}\n' \
+    "$(date -u +%FT%TZ)" "$phase" "$step" "$status" "$msg" "$pct"
+}
+dry() { [[ "$DRY_RUN" == "1" ]] && { warn "[dry-run] $*"; return 0; } || return 1; }
+
+# suppress human output when JSON mode active
+if [[ "${JSON_OUTPUT:-0}" == "1" ]]; then
+  log()   { :; }
+  info()  { :; }
+  warn()  { jlog "warn" "" "warn" "$*"; }
+  fail()  { jlog "error" "" "fail" "$*"; exit 1; }
+  step()  { :; }
+else
+  fail()  { echo -e "${R}[✗]${NC} $*" >&2; exit 1; }
+fi
 ask()   { echo -e "${C}[?]${NC} $*"; }
 step()  { echo -e "\n${BOLD}${B}── $* ${NC}${D}──────────────────────────────────────${NC}"; }
 
@@ -73,6 +89,9 @@ ACTION="install" # install | update | uninstall
 
 # ── Args ─────────────────────────────────────────────────────
 CONFIG_FILE=""
+JSON_OUTPUT=0
+DRY_RUN=0
+TB_VERSION_TARGET=""
 for arg in "$@"; do
   case $arg in
     --uninstall)           ACTION="uninstall" ;;
@@ -82,13 +101,21 @@ for arg in "$@"; do
     --mode=*)              INSTALL_MODE="${arg#*=}" ;;
     --mode)                shift; INSTALL_MODE="$1" ;;
     --path=*)              INSTALL_PATH="${arg#*=}" ;;
+    --json-output)         JSON_OUTPUT=1 ;;
+    --dry-run)             DRY_RUN=1 ;;
+    --source=*)            SOURCE_FROM="${arg#*=}" ;;
+    --version=*)           TB_VERSION_TARGET="${arg#*=}" ;;
     --help|-h)
       echo "Usage: bash installer.sh [options]"
-      echo "  --config <file>   Load install config from YAML"
-      echo "  --mode <mode>     native | uv | docker | source"
-      echo "  --path <dir>      Custom install directory"
-      echo "  --update          Update existing installation"
-      echo "  --uninstall       Remove ToolBoxV2"
+      echo "  --config <file>     Load install config from YAML"
+      echo "  --mode <mode>       native | uv | docker | source"
+      echo "  --path <dir>        Custom install directory"
+      echo "  --source <src>      github | registry (default: registry, fallback github)"
+      echo "  --version <ver>     nightly | latest | x.x.x (default: latest)"
+      echo "  --json-output       Machine-readable JSON-Lines output for GUI integration"
+      echo "  --dry-run           Validate config and phases without installing"
+      echo "  --update            Update existing installation"
+      echo "  --uninstall         Remove ToolBoxV2"
       exit 0 ;;
   esac
 done
@@ -519,34 +546,50 @@ phase_install() {
 }
 
 _get_version_and_url() {
-  # Returns: "VERSION URL CHECKSUM" — Registry first, GitHub fallback
+  # Returns: "VERSION URL CHECKSUM" — respects --source and --version flags
   local platform="$OS"
   local arch_tag
   [ "$ARCH" = "x86_64" ] && arch_tag="x64" || arch_tag="arm64"
+  local fname="toolbox-${platform}-${arch_tag}"
+  [ "$OS" = "windows" ] && fname="${fname}.exe"
 
-  if $REGISTRY_REACHABLE; then
+  # Source priority: --source flag > registry (if reachable) > github
+  local use_github=false
+  [ "$SOURCE_FROM" = "github" ] && use_github=true
+  [ -z "$SOURCE_FROM" ] && ! $REGISTRY_REACHABLE && use_github=true
+
+  # Registry path
+  if ! $use_github && $REGISTRY_REACHABLE; then
     local resp
-    resp=$(registry_get "/artifacts/${TB_ARTIFACT_NAME}/latest?platform=${platform}&architecture=${ARCH}" || true)
+    local ver_path="/artifacts/${TB_ARTIFACT_NAME}/latest"
+    [ "$TB_VERSION_TARGET" != "latest" ] && [ -n "$TB_VERSION_TARGET" ] && ver_path="/artifacts/${TB_ARTIFACT_NAME}/${TB_VERSION_TARGET}"
+    resp=$(registry_get "${ver_path}?platform=${platform}&architecture=${ARCH}" || true)
     if [ -n "$resp" ]; then
       local version url checksum
       version=$(echo "$resp" | grep -o '"version":"[^"]*"' | head -1 | cut -d'"' -f4)
       checksum=$(echo "$resp" | grep -o '"checksum":"[^"]*"' | head -1 | cut -d'"' -f4)
-      # Get signed download URL
-      local dl_resp
-      dl_resp=$(registry_get "/artifacts/${TB_ARTIFACT_NAME}/latest?platform=${platform}&architecture=${ARCH}" || true)
-      url=$(echo "$dl_resp" | grep -o '"url":"[^"]*"' | head -1 | cut -d'"' -f4)
+      url=$(echo "$resp" | grep -o '"url":"[^"]*"' | head -1 | cut -d'"' -f4)
       [ -n "$url" ] && { echo "$version $url $checksum"; return; }
     fi
+    warn "Registry lookup failed — falling back to GitHub"
   fi
 
-  # GitHub Releases fallback
-  info "Using GitHub Releases..."
-  local tag
-  tag=$(download "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" /tmp/tb_release.json 2>/dev/null; \
-        grep -o '"tag_name":"[^"]*"' /tmp/tb_release.json | head -1 | cut -d'"' -f4)
-  local fname="toolbox-${platform}-${arch_tag}"
-  [ "$OS" = "windows" ] && fname="${fname}.exe"
+  # GitHub path: nightly tag or latest release
+  jlog install resolve running "Resolving version from GitHub" 10
+  local tag=""
+  if [ "$TB_VERSION_TARGET" = "nightly" ]; then
+    download "https://api.github.com/repos/${GITHUB_REPO}/releases/tags/nightly" /tmp/tb_release.json 2>/dev/null
+    tag=$(grep -o '"tag_name":"[^"]*"' /tmp/tb_release.json 2>/dev/null | head -1 | cut -d'"' -f4)
+  elif [ -z "$TB_VERSION_TARGET" ] || [ "$TB_VERSION_TARGET" = "latest" ]; then
+    download "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" /tmp/tb_release.json 2>/dev/null
+    tag=$(grep -o '"tag_name":"[^"]*"' /tmp/tb_release.json 2>/dev/null | head -1 | cut -d'"' -f4)
+  else
+    tag="$TB_VERSION_TARGET"
+  fi
+  [ -z "$tag" ] && fail "Could not determine release tag for version=$TB_VERSION_TARGET"
+
   local url="https://github.com/${GITHUB_REPO}/releases/download/${tag}/${fname}"
+  jlog install resolve done "Resolved: v${tag}" 20
   echo "${tag#v} $url "
 }
 
@@ -940,6 +983,20 @@ main() {
       fi
 
       phase_write_manifests "$tb_version"
+
+      # Phase 5: tb access — make tb globally available
+      local tb_bin="${INSTALL_PATH}/bin/tb"
+      if [ -f "$tb_bin" ] && ! dry "tb access"; then
+        jlog install access running "Setting up tb global access" 95
+        if "$tb_bin" access 2>/dev/null; then
+          jlog install access done "tb accessible globally" 100
+        else
+          # Fallback: symlink already created in _install_native
+          warn "tb access command failed — symlink fallback active"
+          jlog install access done "tb accessible via symlink" 100
+        fi
+      fi
+
       print_summary "$tb_version"
       ;;
     update)

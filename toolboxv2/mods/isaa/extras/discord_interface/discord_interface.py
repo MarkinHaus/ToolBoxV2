@@ -1560,7 +1560,7 @@ class DiscordInterface:
                     import io
                     from pathlib import Path as _P
                     wav = _P(audio_atts[0].path).read_bytes()
-                    sid = f"discord_{ctx.source_address.replace('://', '_').replace('/', '_')}"
+                    sid = f"discord_{ctx.source_address.replace('://', '_').replace('/', '_').replace(':', '_')}"
                     audio_out, text_out = await omni.handle_audio_file(wav, session_id=sid)
                     if audio_out:
                         await message.channel.send(
@@ -1610,7 +1610,8 @@ class DiscordInterface:
 
     def _isolated_session_id(self, ctx: MessageContext) -> str:
         """Per-source isolated session id (DM vs channel auto-separated)."""
-        return f"discord_{ctx.source_address.replace('://', '_').replace('/', '_')}"
+        raw = ctx.source_address.replace('://', '_').replace('/', '_').replace(':', '_')
+        return f"discord_{raw}"
 
     def _resolve_route(self, ctx: MessageContext):
         """Pick (agent, agent_name, session_id) for this message based on admin prefs.

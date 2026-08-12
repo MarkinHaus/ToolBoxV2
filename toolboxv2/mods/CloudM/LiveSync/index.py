@@ -117,11 +117,27 @@ class LocalIndex:
         await db.commit()
 
     async def set_sync_state(self, rel_path: str, state: str) -> None:
-        """Update sync state for a file."""
+        """
+        Record the sync state, creating the row if it does not exist yet.
+
+        This used to be a bare UPDATE, which is a silent no-op for a file that
+        was never indexed — exactly the case that matters, because the states
+        worth recording (pending_upload, pending_download, conflict) all happen
+        when the first transfer failed. Those files then had no state at all,
+        so nothing ever retried them.
+        """
         db = self._check_open()
+        now = time.time()
         await db.execute(
-            "UPDATE files SET sync_state = ?, updated_at = ? WHERE rel_path = ?",
-            (state, time.time(), rel_path),
+            """
+            INSERT INTO files
+                (rel_path, mtime, size, checksum, sync_state, remote_key, updated_at)
+            VALUES (?, 0, 0, '', ?, '', ?)
+            ON CONFLICT(rel_path) DO UPDATE SET
+                sync_state = excluded.sync_state,
+                updated_at = excluded.updated_at
+            """,
+            (rel_path, state, now),
         )
         await db.commit()
 

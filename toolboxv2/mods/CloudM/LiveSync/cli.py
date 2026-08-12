@@ -21,11 +21,13 @@ from typing import Callable, List, Optional, Tuple
 
 from . import (
     create_share,
+    get_share,
     get_sync_log,
     get_sync_status,
     join_share,
     list_shares,
     restart_sync,
+    save_share,
     start_sync,
     stop_share,
     stop_sync,
@@ -220,8 +222,18 @@ async def action_create() -> None:
         await pause()
         return
 
+    mode = await select_menu(
+        "Role of THIS node",
+        [
+            ("relay", "relay    — broker only, folder here stays empty"),
+            ("replica", "replica  — this node also keeps a copy of the folder"),
+        ],
+    )
+    if mode is None:
+        return
+
     w(f"\n{D}creating share…{RST}\n")
-    res = await asyncio.to_thread(create_share, vault, host, port)
+    res = await asyncio.to_thread(create_share, vault, host, port, mode)
     if not res.get("ok"):
         w(f"{RED}error: {res.get('error')}{RST}\n")
         await pause()
@@ -229,6 +241,7 @@ async def action_create() -> None:
 
     w(f"\n{GRN}✓ Share created{RST}\n")
     w(f"  share_id: {B}{res['share_id']}{RST}\n")
+    w(f"  mode:     {B}{res.get('mode', mode)}{RST}\n")
     w(f"\n{CYN}Token (distribute to peers):{RST}\n\n")
     w(f"{res['token']}\n\n")
     w(f"{D}copy this token — peers use it to join{RST}\n")
@@ -259,16 +272,22 @@ async def action_join() -> None:
 
 async def action_share_detail(share_id: str) -> None:
     while True:
+        record = await asyncio.to_thread(get_share, share_id) or {}
+        current = record.get("mode", "relay")
         choice = await select_menu(
-            f"Share: {share_id}",
+            f"Share: {share_id}   [{current}]",
             [
                 ("log", "view sync log"),
+                ("mode", f"switch mode (now: {current})"),
                 ("stop", "stop & deregister"),
                 ("back", "back"),
             ],
         )
         if choice in (None, "back"):
             return
+        if choice == "mode":
+            await action_share_mode(share_id, record)
+            continue
         if choice == "log":
             res = await asyncio.to_thread(get_sync_log, share_id, "", 30)
             w(CLR)
@@ -293,6 +312,44 @@ async def action_share_detail(share_id: str) -> None:
                 return
 
 
+async def action_share_mode(share_id: str, record: dict) -> None:
+    """
+    Switch a hosted share between relay and replica.
+
+    replica needs the share token, which lives in the encrypted share store —
+    a share that was only joined (not hosted here) has no server to restart.
+    """
+    if not record:
+        w(f"{RED}share {share_id} not found in the store{RST}\n")
+        await pause()
+        return
+
+    current = record.get("mode", "relay")
+    target = "replica" if current == "relay" else "relay"
+    explain = (
+        "this node will also keep its own copy of the folder"
+        if target == "replica"
+        else "this node will only broker — the folder here stays empty"
+    )
+    w(CLR)
+    w(f"{B}── Share mode ──{RST}\n\n")
+    w(f"  {share_id}: {current} → {B}{target}{RST}\n")
+    w(f"  {D}{explain}{RST}\n")
+    if not await confirm(f"Switch to {target} and restart the server?"):
+        return
+
+    port = record.get("ws_port", 8765)
+    await asyncio.to_thread(
+        save_share, record["share_id"], record["vault_path"], record["token"],
+        target, port,
+    )
+    res = await asyncio.to_thread(
+        restart_sync, record["vault_path"], record["share_id"], port, target)
+    col = GRN if res.get("ok") else RED
+    w(f"{col}{res}{RST}\n")
+    await pause()
+
+
 async def action_manage_shares() -> None:
     while True:
         shares = await asyncio.to_thread(list_shares)
@@ -306,7 +363,8 @@ async def action_manage_shares() -> None:
         for s in shares:
             sid = s.get("share_id", "?")
             vp = s.get("vault_path", "?")
-            items.append((sid, f"{sid}   {D}{vp}{RST}"))
+            md = s.get("mode", "relay")
+            items.append((sid, f"{sid}  [{md}]   {D}{vp}{RST}"))
         items.append(("__back__", f"{D}← back{RST}"))
         choice = await select_menu("Manage shares", items)
         if choice in (None, "__back__"):
@@ -339,7 +397,9 @@ async def action_server_control() -> None:
             vault = await prompt("Vault path", default_vault)
             port_s = await prompt("WS port", "8765")
             port = int(port_s) if port_s.isdigit() else 8765
-            res = await asyncio.to_thread(start_sync, vault, "default", port)
+            share_id = shares[0]["share_id"] if shares else "default"
+            mode = shares[0].get("mode", "relay") if shares else "relay"
+            res = await asyncio.to_thread(start_sync, vault, share_id, port, mode)
             col = GRN if res.get("ok") else RED
             w(f"{col}{res}{RST}\n")
             await pause()
@@ -350,8 +410,11 @@ async def action_server_control() -> None:
             await pause()
         elif choice == "restart":
             shares = await asyncio.to_thread(list_shares)
-            vault = shares[0]["vault_path"] if shares else os.path.expanduser("~/vault")
-            res = await asyncio.to_thread(restart_sync, vault, "default", 8765)
+            first = shares[0] if shares else {}
+            vault = first.get("vault_path", os.path.expanduser("~/vault"))
+            res = await asyncio.to_thread(
+                restart_sync, vault, first.get("share_id", "default"),
+                first.get("ws_port", 8765), first.get("mode", "relay"))
             col = GRN if res.get("ok") else RED
             w(f"{col}{res}{RST}\n")
             await pause()
@@ -368,7 +431,8 @@ async def action_status() -> None:
     shares = status.get("shares", [])
     w(f"  shares:  {len(shares)}\n\n")
     for s in shares:
-        w(f"    • {B}{s.get('share_id')}{RST}  {D}{s.get('vault_path')}{RST}\n")
+        w(f"    • {B}{s.get('share_id')}{RST}  [{s.get('mode', 'relay')}]"
+          f"  :{s.get('ws_port', '?')}  {D}{s.get('vault_path')}{RST}\n")
     await pause()
 
 

@@ -340,6 +340,7 @@ class SyncServer:
                 await self._process_file_changed(
                     client_id, p["path"], p["checksum"],
                     p["minio_key"], p.get("file_type", "other"),
+                    p.get("base_checksum", None),
                 )
 
             elif msg.type == MsgType.FILE_DELETED:
@@ -386,33 +387,35 @@ class SyncServer:
         checksum: str,
         minio_key: str,
         file_type: str,
+        base_checksum: str = "",
     ):
         """Process file_changed from a client."""
-        # Conflict check
-        has_conflict = await self._check_conflict(path, checksum)
+        has_conflict = await self._check_conflict(path, base_checksum)
 
         if has_conflict:
             existing = await self.index.get_file(path)
             server_checksum = existing["checksum"] if existing else ""
 
             logger.warning(
-                f"[LiveSync] Conflict detected: {path} "
-                f"(server={server_checksum}, client {client_id}={checksum})"
+                f"[LiveSync] Conflict detected: {path} — {client_id} edited from "
+                f"base {base_checksum or '(none)'} but we hold {server_checksum}"
             )
 
-            ft = classify_file(path)
-            if ft == FileType.TEXT and path.endswith(".md"):
-                resolution = "merge_markers"
-            else:
-                resolution = "latest_wins"
-
-            # Notify ALL clients
+            # The uploaded version becomes the object in storage, so it is the
+            # one every client must end up with. Both checksums are named
+            # explicitly: the loser so a client can recognise its own copy, the
+            # winner so it knows what is coming.
             conflict_msg = SyncMessage.conflict(
                 path=path,
                 local_checksum=server_checksum,
                 remote_checksum=checksum,
-                resolution=resolution,
-                message=f"Conflict on {path}: server={server_checksum}, {client_id}={checksum}",
+                resolution="keep_both",
+                winner=client_id,
+                message=(
+                    f"Conflict on {path}: {server_checksum} was replaced by "
+                    f"{checksum} from {client_id}; the older version is kept "
+                    "locally as a conflict copy"
+                ),
             )
             await self._broadcast(conflict_msg)
             await self.index.log_sync_event(path, "conflict", checksum, client_id)
@@ -480,12 +483,31 @@ class SyncServer:
         await self._broadcast(msg, skip_client=client_id)
         logger.info(f"[LiveSync] File renamed: {old_path} → {new_path} by {client_id}")
 
-    async def _check_conflict(self, path: str, incoming_checksum: str) -> bool:
-        """Check if incoming change conflicts with server state."""
+    async def _check_conflict(self, path: str, base_checksum: str) -> bool:
+        """
+        True only for a genuine collision: two clients edited the same base.
+
+        Compared against the sender's BASE version — the one it had in sync
+        with us before its edit — not against the new checksum it is sending.
+        Comparing the new checksum marked every single update as a conflict,
+        since a new revision differs from the previous one by definition. That
+        made the conflict broadcast pure noise and, worse, taught clients to
+        ignore it.
+
+        A sender with no base ("I think this file is new") conflicts if we
+        already hold a version. A sender whose base matches ours is simply the
+        next revision.
+
+        Legacy clients that send no base_checksum at all cannot be judged this
+        way; they are treated as non-conflicting rather than as always
+        conflicting.
+        """
         existing = await self.index.get_file(path)
-        if not existing:
-            return False  # New file
-        return detect_conflict(existing["checksum"], incoming_checksum)
+        if not existing or not existing["checksum"]:
+            return False  # we hold nothing, nothing to collide with
+        if base_checksum is None:
+            return False
+        return detect_conflict(existing["checksum"], base_checksum) or not base_checksum
 
     # ── Broadcast ──
 

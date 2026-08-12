@@ -46,7 +46,7 @@ def main():
     token = create_share_token(
         share_id=share_id, encryption_key=enc_key,
         minio_endpoint=env["endpoint"], ws_endpoint=ws_endpoint,
-        bucket=env.get("bucket", "livesync"),
+        bucket=env.get("bucket") or "tb-shared",
     )
 
     bar = "=" * 66
@@ -54,7 +54,7 @@ def main():
     print(f"  VFS share ready — folder: {args.folder}")
     print(f"  share_id : {share_id}")
     print(f"  ws       : {ws_endpoint}")
-    print(f"  minio    : {env['endpoint']}  bucket={env.get('bucket', 'livesync')}")
+    print(f"  minio    : {env['endpoint']}  bucket={env.get('bucket') or 'tb-shared'}")
     print(bar)
     print("  TOKEN (distribute to nodes):")
     print(f"  {token}")

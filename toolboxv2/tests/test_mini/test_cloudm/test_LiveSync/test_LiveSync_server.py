@@ -128,6 +128,61 @@ class TestSyncServer(unittest.TestCase):
         run(server.index.close())
 
 
+class TestConflictDetection(unittest.TestCase):
+    """
+    A conflict is two clients editing from the same base — not simply a new
+    revision. The old check compared the INCOMING checksum against the stored
+    one, which differ on every ordinary update, so every update was reported
+    as a conflict.
+    """
+
+    def setUp(self):
+        self.vault = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.vault, ignore_errors=True)
+
+    def _server(self):
+        from toolboxv2.mods.CloudM.LiveSync.server import SyncServer
+        srv = SyncServer(self.vault, "s1", {
+            "endpoint": "127.0.0.1:9000", "access_key": "x",
+            "secret_key": "y", "secure": False, "bucket": "tb-shared"})
+        run(srv.index.init())
+        return srv
+
+    def test_sequential_update_is_not_a_conflict(self):
+        srv = self._server()
+        run(srv.index.upsert_file("a.md", 1.0, 3, "v1", "synced", "k"))
+        # client had v1 and now sends v2 — the normal case
+        self.assertFalse(run(srv._check_conflict("a.md", "v1")))
+        run(srv.index.close())
+
+    def test_divergent_base_is_a_conflict(self):
+        srv = self._server()
+        run(srv.index.upsert_file("a.md", 1.0, 3, "v2_from_b", "synced", "k"))
+        # client edited from v1 while B already pushed v2
+        self.assertTrue(run(srv._check_conflict("a.md", "v1")))
+        run(srv.index.close())
+
+    def test_new_file_is_not_a_conflict(self):
+        srv = self._server()
+        self.assertFalse(run(srv._check_conflict("new.md", "")))
+        run(srv.index.close())
+
+    def test_claiming_new_when_we_hold_a_version_is_a_conflict(self):
+        srv = self._server()
+        run(srv.index.upsert_file("a.md", 1.0, 3, "v1", "synced", "k"))
+        self.assertTrue(run(srv._check_conflict("a.md", "")))
+        run(srv.index.close())
+
+    def test_legacy_client_without_base_is_not_flagged(self):
+        """A client that sends no base at all cannot be judged, not always."""
+        srv = self._server()
+        run(srv.index.upsert_file("a.md", 1.0, 3, "v1", "synced", "k"))
+        self.assertFalse(run(srv._check_conflict("a.md", None)))
+        run(srv.index.close())
+
+
 class TestServerModes(unittest.TestCase):
     """
     The server never touches share content itself.

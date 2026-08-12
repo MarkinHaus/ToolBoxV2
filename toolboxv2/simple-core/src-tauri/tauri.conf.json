@@ -45,7 +45,8 @@
     "resources": [
       "setup.html",
       "starting.html",
-      "hud.html"
+      "hud.html",
+      "installer.html"
     ],
     "externalBin": [
       "binaries/tb-worker"

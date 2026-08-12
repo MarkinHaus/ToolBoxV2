@@ -1,5 +1,6 @@
 """Tests for conflict.py — conflict detection + resolution."""
 import os
+import shutil
 import tempfile
 import unittest
 
@@ -20,26 +21,92 @@ class TestDetectConflict(unittest.TestCase):
         self.assertFalse(detect_conflict("aabb", ""))
 
 
-class TestResolveMdConflict(unittest.TestCase):
-    def test_merge_markers_present(self):
-        from toolboxv2.mods.CloudM.LiveSync.conflict import resolve_md_conflict
-        local = "# Title\nHallo Welt"
-        remote = "# Title\nHallo!"
-        merged = resolve_md_conflict(
-            local, remote, "desktop-markin", "handy", 1713379200.0, 1713379201.5
-        )
-        self.assertIn("<<<<<<< LOCAL", merged)
-        self.assertIn("=======", merged)
-        self.assertIn(">>>>>>> REMOTE", merged)
-        self.assertIn("Hallo Welt", merged)
-        self.assertIn("Hallo!", merged)
-        self.assertIn("desktop-markin", merged)
-        self.assertIn("handy", merged)
+class TestConflictCopies(unittest.TestCase):
+    """
+    One rule for every file type: the loser is kept beside the winner as
+    <name>.conflict.<device>.<timestamp>.<ext>. No merge markers — they turn a
+    conflicted .md into something no editor renders and have no counterpart
+    for a .docx.
+    """
 
-    def test_merge_returns_string(self):
-        from toolboxv2.mods.CloudM.LiveSync.conflict import resolve_md_conflict
-        result = resolve_md_conflict("a", "b", "c1", "c2", 0.0, 0.0)
-        self.assertIsInstance(result, str)
+    def test_name_keeps_extension(self):
+        from toolboxv2.mods.CloudM.LiveSync.conflict import make_conflict_name
+        for rel, ext in (
+            ("notes.md", ".md"), ("script.py", ".py"), ("report.pdf", ".pdf"),
+            ("photo.png", ".png"), ("data.json", ".json"),
+            ("sheet.xlsx", ".xlsx"), ("clip.mp4", ".mp4"),
+        ):
+            name = make_conflict_name(rel, "laptop", 1713379200.0)
+            self.assertTrue(name.endswith(ext), f"{rel} -> {name}")
+            self.assertIn(".conflict.laptop.", name)
+
+    def test_name_keeps_compound_extension(self):
+        """Path.suffix alone would produce backup.tar.conflict.<...>.gz."""
+        from toolboxv2.mods.CloudM.LiveSync.conflict import make_conflict_name
+        name = make_conflict_name("backup.tar.gz", "laptop", 1713379200.0)
+        self.assertTrue(name.endswith(".tar.gz"), name)
+
+    def test_name_without_extension(self):
+        from toolboxv2.mods.CloudM.LiveSync.conflict import make_conflict_name
+        name = make_conflict_name("Makefile", "laptop", 1713379200.0)
+        self.assertTrue(name.startswith("Makefile.conflict.laptop."), name)
+
+    def test_name_stays_in_subdirectory(self):
+        from toolboxv2.mods.CloudM.LiveSync.conflict import make_conflict_name
+        name = make_conflict_name("sub/deep/notes.md", "laptop", 1713379200.0)
+        self.assertTrue(name.startswith("sub/deep/"), name)
+
+    def test_device_id_sanitised(self):
+        from toolboxv2.mods.CloudM.LiveSync.conflict import make_conflict_name
+        name = make_conflict_name("a.md", "my.laptop/../etc", 1713379200.0)
+        self.assertNotIn("/", name.split(".conflict.")[1])
+        self.assertNotIn("..", name)
+
+    def test_two_conflicts_do_not_collide(self):
+        from toolboxv2.mods.CloudM.LiveSync.conflict import make_conflict_name
+        a = make_conflict_name("a.md", "laptop", 1713379200.0)
+        b = make_conflict_name("a.md", "laptop", 1713379260.0)
+        self.assertNotEqual(a, b)
+
+    def test_conflict_copies_never_sync(self):
+        from toolboxv2.mods.CloudM.LiveSync.conflict import make_conflict_name
+        from toolboxv2.mods.CloudM.LiveSync.protocol import should_ignore
+        for rel in ("notes.md", "sub/report.pdf", "Makefile"):
+            self.assertTrue(should_ignore(make_conflict_name(rel, "laptop")))
+
+    def test_save_conflict_copy_moves_the_file(self):
+        from toolboxv2.mods.CloudM.LiveSync.conflict import save_conflict_copy
+        vault = tempfile.mkdtemp()
+        src = os.path.join(vault, "notes.md")
+        with open(src, "w") as f:
+            f.write("local version")
+
+        saved = save_conflict_copy(vault, "notes.md", "laptop")
+        self.assertIsNotNone(saved)
+        self.assertFalse(os.path.exists(src))
+        with open(saved) as f:
+            self.assertEqual(f.read(), "local version")
+        shutil.rmtree(vault, ignore_errors=True)
+
+    def test_save_conflict_copy_binary_roundtrip(self):
+        """Binary content must survive byte for byte."""
+        from toolboxv2.mods.CloudM.LiveSync.conflict import save_conflict_copy
+        vault = tempfile.mkdtemp()
+        payload = bytes(range(256)) * 8
+        src = os.path.join(vault, "image.png")
+        with open(src, "wb") as f:
+            f.write(payload)
+
+        saved = save_conflict_copy(vault, "image.png", "laptop")
+        with open(saved, "rb") as f:
+            self.assertEqual(f.read(), payload)
+        shutil.rmtree(vault, ignore_errors=True)
+
+    def test_save_conflict_copy_missing_file(self):
+        from toolboxv2.mods.CloudM.LiveSync.conflict import save_conflict_copy
+        vault = tempfile.mkdtemp()
+        self.assertIsNone(save_conflict_copy(vault, "nope.md", "laptop"))
+        shutil.rmtree(vault, ignore_errors=True)
 
 
 class TestResolveBinaryConflict(unittest.TestCase):
@@ -88,15 +155,18 @@ class TestBackupFile(unittest.TestCase):
         result = create_backup("/nonexistent/path/file.md")
         self.assertIsNone(result)
 
-    def test_conflict_backup_path(self):
-        from toolboxv2.mods.CloudM.LiveSync.conflict import make_conflict_backup_name
-        name = make_conflict_backup_name(os.path.join("sub","notes.md"), "aabb1122")
-        self.assertEqual(name, os.path.join("sub","notes.conflict.aabb1122.md"))
+    def test_backup_preserves_binary_content(self):
+        from toolboxv2.mods.CloudM.LiveSync.conflict import create_backup
+        tmpdir = tempfile.mkdtemp()
+        path = os.path.join(tmpdir, "doc.pdf")
+        payload = b"%PDF-1.7\n" + bytes(range(256))
+        with open(path, "wb") as f:
+            f.write(payload)
 
-    def test_conflict_backup_path_no_ext(self):
-        from toolboxv2.mods.CloudM.LiveSync.conflict import make_conflict_backup_name
-        name = make_conflict_backup_name("README", "ccdd")
-        self.assertEqual(name, "README.conflict.ccdd")
+        backup = create_backup(path)
+        with open(backup, "rb") as f:
+            self.assertEqual(f.read(), payload)
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 class TestMoveToSyncTrash(unittest.TestCase):

@@ -53,13 +53,22 @@ class VFSSyncAdapter:
         self.auto_sync = auto_sync
 
         if sync_config is None:
-            sync_config = ShareToken.decode(token).to_sync_config(local_dir)
+            # raw_token MUST be passed through: the client cannot re-sign the
+            # token, and without it the AUTH message carries no token at all,
+            # so the server rejects every connect.
+            sync_config = ShareToken.decode(token).to_sync_config(
+                local_dir, raw_token=token)
         self.config = sync_config
         self.share_id = self.config.share_id
 
         self._client: Optional[SyncClient] = None
         self._task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+        # "connecting" until the server accepted our token, then "live".
+        # "auth_failed" is terminal — the token is wrong, not the network.
+        self.status: str = "stopped"
+        self.status_detail: str = ""
 
     # ── lifecycle ──
 
@@ -77,10 +86,26 @@ class VFSSyncAdapter:
             except Exception as e:
                 logger.error(f"[VFSSync] mount failed {self.vfs_path}: {e}")
 
+        self.status = "connecting"
+        self.status_detail = ""
         self._client = SyncClient(self.config)
         self._client.on_remote_change = self._on_remote_change
+        self._client.on_status_change = self._on_status_change
         self._task = asyncio.create_task(self._client.run())
         logger.info(f"[VFSSync] started {self.vfs_path} ← share {self.share_id}")
+
+    @property
+    def is_live(self) -> bool:
+        """True only once the server has accepted the token."""
+        return self.status == "live"
+
+    def _on_status_change(self, status: str, detail: str = ""):
+        """Track the client's connection state for status reporting."""
+        self.status = status
+        self.status_detail = detail
+        if status == "auth_failed":
+            logger.error(
+                f"[VFSSync] {self.vfs_path}: share token rejected — {detail}")
 
     async def stop(self):
         """Stop the sync client and unmount the VFS overlay."""
@@ -92,6 +117,7 @@ class VFSSyncAdapter:
                 await self._task
             except (asyncio.CancelledError, Exception):
                 pass
+        self.status = "stopped"
         if self.vfs is not None:
             try:
                 unmount = getattr(self.vfs, "unmount", None)
@@ -157,8 +183,29 @@ class VFSSyncManager:
         return True
 
     def list(self) -> Dict[str, str]:
-        """{vfs_path: share_id} for all active folders."""
-        return {p: a.share_id for p, a in self._adapters.items()}
+        """
+        {vfs_path: share_id} for folders that are actually syncing.
+
+        Only shares whose token the server accepted appear here. A registered
+        but unauthenticated share is not "live" and must not be reported as
+        such — use :meth:`status` to see those.
+        """
+        return {p: a.share_id for p, a in self._adapters.items() if a.is_live}
+
+    def status(self) -> Dict[str, Dict[str, str]]:
+        """
+        {vfs_path: {share_id, status, detail, local_dir}} for every adapter,
+        live or not. status is one of connecting / live / auth_failed / stopped.
+        """
+        return {
+            p: {
+                "share_id": a.share_id,
+                "status": a.status,
+                "detail": a.status_detail,
+                "local_dir": a.local_dir,
+            }
+            for p, a in self._adapters.items()
+        }
 
     async def stop_all(self):
         for path in list(self._adapters):

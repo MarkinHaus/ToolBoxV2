@@ -3772,12 +3772,17 @@ F6 during execution       - Move agent to background
 /vfs mounts              - List active mounts
 /vfs dirty               - Show modified files
 /vfs rm/remove           - Remove Folder or File
-/vfs share create <local_dir> [ws_port]
+/vfs share create <local_dir> [ws_port] [--replica]
                          - Set up a share on this server node \u2192 token
+                           default relay: this node only brokers, folder stays empty
+                           --replica: this node also keeps a copy of the folder
 /vfs share connect <vfs_path> <local_dir> --token <t> [--readonly]
                          - Live-sync a folder across machines
 /vfs share disconnect <vfs_path>  - Stop a live cross-machine share
-/vfs share list          - List live cross-machine shares
+/vfs share list          - List cross-machine shares with live status
+/vfs share shares        - Shares hosted by this node (id, mode, port)
+/vfs share mode <share_id> <relay|replica>
+                         - Switch an existing share and restart its server
     """,
 
     # System Files (Read‑Only)
@@ -4662,8 +4667,20 @@ class ISAA_Host:
                                   token=sh["token"], readonly=sh.get("readonly", False))
             except Exception as e:
                 print_status(f"VFS share autostart failed {sh.get('vfs_path')}: {e}", "warning")
-        if mgr.list():
-            print_status(f"VFS shares live: {', '.join(mgr.list())}", "success")
+        # connect() returns before the server has answered, so report the real
+        # per-share state instead of claiming everything is live.
+        states = mgr.status()
+        if states:
+            live = [p for p, v in states.items() if v["status"] == "live"]
+            pending = [p for p, v in states.items() if v["status"] == "connecting"]
+            failed = [f"{p} ({v['detail'] or v['status']})"
+                      for p, v in states.items() if v["status"] == "auth_failed"]
+            if live:
+                print_status(f"VFS shares live: {', '.join(live)}", "success")
+            if pending:
+                print_status(f"VFS shares connecting: {', '.join(pending)}", "info")
+            if failed:
+                print_status(f"VFS shares rejected: {', '.join(failed)}", "error")
 
     def get_rate_limiter_config(self) -> dict:
         """Get the global rate limiter configuration."""
@@ -10104,6 +10121,9 @@ class ISAA_Host:
                 sub = args[1].lower() if len(args) > 1 else ""
                 rest = args[2:]
                 readonly = "--readonly" in rest
+                # relay (default): this node only brokers the share.
+                # replica: it also carries its own copy of the folder.
+                share_mode = "replica" if "--replica" in rest else "relay"
                 token, pos, i = "", [], 0
                 while i < len(rest):
                     a = rest[i]
@@ -10116,18 +10136,75 @@ class ISAA_Host:
                 if sub == "create":
                     # Server-side: provision a share for a folder, print the token.
                     if not pos:
-                        print_status("Usage: /vfs share create <local_dir> [ws_port]", "warning")
+                        print_status(
+                            "Usage: /vfs share create <local_dir> [ws_port] [--replica]",
+                            "warning")
                         return
                     from toolboxv2.mods.CloudM.LiveSync import create_share
                     ws_port = int(pos[1]) if len(pos) > 1 and pos[1].isdigit() else 8765
-                    res = create_share(pos[0], ws_port=ws_port)
+                    res = create_share(pos[0], ws_port=ws_port, mode=share_mode)
                     if res.get("ok"):
-                        print_status(f"Share created: {res['share_id']} (server :{ws_port})", "success")
+                        print_status(
+                            f"Share created: {res['share_id']} "
+                            f"(server :{ws_port}, mode {res.get('mode', share_mode)})",
+                            "success")
+                        if share_mode == "replica":
+                            print_status(
+                                "This node keeps its own copy of the folder.", "info")
+                        else:
+                            print_status(
+                                "Relay only \u2014 this node brokers, the folder stays "
+                                "empty. Use --replica to keep a copy here.", "info")
                         print_box_header("Share token \u2014 distribute to nodes", "\U0001f511")
                         print_box_content(res["token"], "")
                         print_box_footer()
                     else:
                         print_status(f"Create failed: {res.get('error')}", "error")
+                    return
+
+                if sub == "mode":
+                    # Switch an existing hosted share between relay and replica.
+                    if len(pos) < 2 or pos[1] not in ("relay", "replica"):
+                        print_status(
+                            "Usage: /vfs share mode <share_id> <relay|replica>", "warning")
+                        return
+                    from toolboxv2.mods.CloudM.LiveSync import (
+                        get_share, restart_sync, save_share)
+                    record = get_share(pos[0])
+                    if not record:
+                        print_status(f"Unknown share: {pos[0]}", "error")
+                        return
+                    new_mode = pos[1]
+                    save_share(
+                        record["share_id"], record["vault_path"], record["token"],
+                        mode=new_mode, ws_port=record.get("ws_port", 8765),
+                    )
+                    res = restart_sync(
+                        record["vault_path"], record["share_id"],
+                        record.get("ws_port", 8765), mode=new_mode,
+                    )
+                    if res.get("ok"):
+                        print_status(
+                            f"Share {pos[0]} now running as {new_mode}", "success")
+                    else:
+                        print_status(f"Restart failed: {res.get('error')}", "error")
+                    return
+
+                if sub == "shares":
+                    # Shares this node HOSTS (server side) - not the mounts below.
+                    from toolboxv2.mods.CloudM.LiveSync import get_sync_status
+                    status = get_sync_status()
+                    print_box_header("Hosted Shares", "\U0001f5c4")
+                    for rec in status.get("shares", []):
+                        print_box_content(
+                            f"{rec['share_id']}  [{rec.get('mode', 'relay')}]  "
+                            f":{rec.get('ws_port', '?')}  \u2190 {rec['vault_path']}", "")
+                    if not status.get("shares"):
+                        print_box_content("(none)", "")
+                    print_box_content(
+                        f"server: {'running' if status['running'] else 'stopped'}"
+                        + (f" (pid {status['pid']})" if status.get("pid") else ""), "dim")
+                    print_box_footer()
                     return
 
                 from toolboxv2.mods.CloudM.LiveSync.vfs_adapter import VFSSyncManager
@@ -10153,18 +10230,26 @@ class ISAA_Host:
                     self._save_vfs_shares([x for x in self._load_vfs_shares() if x.get("vfs_path") != pos[0]])
                     print_status(f"{'Disconnected' if ok else 'Removed'}: {pos[0]}", "success")
                 elif sub == "list":
-                    live = mgr.list()
+                    states = mgr.status()
                     saved = self._load_vfs_shares()
+                    marks = {"live": "\u25cf", "connecting": "\u25d0",
+                             "auth_failed": "\u2717", "stopped": "\u25cb"}
                     print_box_header("VFS Shares", "\U0001f517")
                     for sh in saved:
                         vp = sh["vfs_path"]
-                        flag = "\u25cf" if vp in live else "\u25cb"
-                        print_box_content(f"{flag} {vp} \u2190 {sh['local_dir']}", "")
+                        st = states.get(vp, {}).get("status", "stopped")
+                        mark = marks.get(st, "\u25cb")
+                        line = f"{mark} {vp} \u2190 {sh['local_dir']}"
+                        if st != "live":
+                            line += f"  [{st}]"
+                        print_box_content(line, "")
                     if not saved:
                         print_box_content("(none saved)", "")
                     print_box_footer()
                 else:
-                    print_status("Usage: /vfs share <create|connect|disconnect|list>", "warning")
+                    print_status(
+                        "Usage: /vfs share "
+                        "<create|connect|disconnect|list|mode|shares>", "warning")
 
             # /vfs <path> - show file content or directory listing
             else:

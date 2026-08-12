@@ -153,36 +153,36 @@ class TestGenerateShareToken(unittest.TestCase):
         mock_start.assert_not_called()
 
 
-class TestGetShareCredentials(unittest.TestCase):
+class TestNoShareCredentialEndpoint(unittest.TestCase):
+    """
+    Share membership must not grant object-storage credentials.
 
-    def test_success(self):
-        from toolboxv2.mods.CloudM.LiveSync import tb_get_share_credentials
-        creds = {
-            "endpoint": "localhost:9000",
-            "access_key": "sa-share",
-            "secret_key": "secret",
-            "secure": False,
-            "bucket": "livesync",
-            "prefix": "share123",
-            "policy_applied": True,
-        }
-        with patch("toolboxv2.mods.CloudM.LiveSync.minio_helper.vend_credentials_for_share",
-                   return_value=creds) as mock_vend:
-            result = tb_get_share_credentials(
-                app=None, request=_make_request(), share_id="share123"
-            )
-        rd = result.as_dict()
-        self.assertEqual(rd["error"], "none")
-        self.assertEqual(rd["result"]["data"], creds)
-        mock_vend.assert_called_once()
-        self.assertEqual(mock_vend.call_args[0][0], "share123")
+    tb_get_share_credentials handed every share member MinIO keys - in
+    practice the server's root keys, with read/delete access to every other
+    share and bucket. The endpoint is gone; clients get presigned per-object
+    URLs from the sync server instead.
+    """
 
-    def test_missing_share_id(self):
-        from toolboxv2.mods.CloudM.LiveSync import tb_get_share_credentials
-        result = tb_get_share_credentials(app=None, request=_make_request(), share_id="")
-        rd = result.as_dict()
-        self.assertNotEqual(rd["error"], "none")
-        self.assertIn("share_id required", str(rd["result"]["data"]))
+    def test_endpoint_is_gone(self):
+        import toolboxv2.mods.CloudM.LiveSync as livesync
+
+        self.assertFalse(hasattr(livesync, "tb_get_share_credentials"))
+
+    def test_share_token_carries_no_s3_credentials(self):
+        from toolboxv2.mods.CloudM.LiveSync import create_share_token
+
+        token = create_share_token(
+            share_id="share123",
+            encryption_key="c29tZWtleQ==",
+            minio_endpoint="localhost:9000",
+            ws_endpoint="ws://localhost:8765",
+        )
+        import base64, json
+        payload_b64 = token[3:].split(".", 1)[0]
+        payload = json.loads(base64.urlsafe_b64decode(
+            payload_b64 + "=" * (-len(payload_b64) % 4)))
+        for field in ("access_key", "secret_key", "akid", "sk"):
+            self.assertNotIn(field, payload)
 
 
 if __name__ == "__main__":

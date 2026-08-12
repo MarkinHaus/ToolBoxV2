@@ -144,19 +144,29 @@ class TestSyncClient(unittest.TestCase):
         run(client.index.close())
 
     def test_upload_pipeline(self):
-        """Test the upload path: read → checksum → encrypt → upload → notify."""
+        """Upload path: checksum → encrypt → presigned PUT → notify."""
         with open(os.path.join(self.vault, "test.md"), "w") as f:
             f.write("hello world")
 
         client = self._make_client()
         run(client.index.init())
-        client._minio = MagicMock()
         client._ws = AsyncMock()
 
-        run(client._upload_file("test.md"))
+        uploads = []
+        with patch.object(client, "_request_urls", new=AsyncMock(return_value={
+            "test.md": {"file": "https://s3/put/file", "meta": "https://s3/put/meta"},
+        })) as mock_urls, patch(
+            "toolboxv2.mods.CloudM.LiveSync.client.http_upload",
+            side_effect=lambda url, data, *a, **k: uploads.append((url, data)),
+        ):
+            run(client._upload_file("test.md"))
 
-        # MinIO put_object called twice (file + metadata)
-        self.assertEqual(client._minio.put_object.call_count, 2)
+        # One presigned PUT for the object, one for its metadata sidecar
+        self.assertEqual([u for u, _ in uploads],
+                         ["https://s3/put/file", "https://s3/put/meta"])
+        mock_urls.assert_awaited_once_with("put", ["test.md"])
+        # The uploaded payload is ciphertext, never the plaintext
+        self.assertNotIn(b"hello world", uploads[0][1])
         # WS notification sent
         client._ws.send.assert_called_once()
 
@@ -173,16 +183,18 @@ class TestSyncClient(unittest.TestCase):
         client = self._make_client()
         run(client.index.init())
 
-        # Mock MinIO download
         original = b"# Remote content\n"
         encrypted = encrypt_bytes(original, client.config.encryption_key)
 
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = encrypted
-        client._minio = MagicMock()
-        client._minio.get_object.return_value = mock_resp
+        with patch.object(client, "_request_urls", new=AsyncMock(return_value={
+            "remote.md": {"file": "https://s3/get/remote"},
+        })), patch(
+            "toolboxv2.mods.CloudM.LiveSync.client.http_download",
+            return_value=encrypted,
+        ) as mock_get:
+            run(client._download_file("remote.md", "test-share/remote.md.enc"))
 
-        run(client._download_file("remote.md", "test-share/remote.md.enc"))
+        mock_get.assert_called_once_with("https://s3/get/remote")
 
         # File written
         local = os.path.join(self.vault, "remote.md")
@@ -210,14 +222,51 @@ class TestSyncClient(unittest.TestCase):
         encrypted = encrypt_bytes(original, client.config.encryption_key)
         expected_cs = compute_checksum(original)
 
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = encrypted
-        client._minio = MagicMock()
-        client._minio.get_object.return_value = mock_resp
-
-        run(client._download_file("file.md", "test-share/file.md.enc", expected_checksum=expected_cs))
+        with patch.object(client, "_request_urls", new=AsyncMock(return_value={
+            "file.md": {"file": "https://s3/get/file"},
+        })), patch(
+            "toolboxv2.mods.CloudM.LiveSync.client.http_download",
+            return_value=encrypted,
+        ):
+            run(client._download_file(
+                "file.md", "test-share/file.md.enc", expected_checksum=expected_cs))
 
         self.assertTrue(os.path.exists(os.path.join(self.vault, "file.md")))
+        run(client.index.close())
+
+    def test_download_uses_supplied_url_without_asking(self):
+        """A batched catchup URL must be used as-is — no extra round trip."""
+        from toolboxv2.mods.CloudM.LiveSync.crypto import encrypt_bytes
+
+        client = self._make_client()
+        run(client.index.init())
+        encrypted = encrypt_bytes(b"batched", client.config.encryption_key)
+
+        with patch.object(client, "_request_urls", new=AsyncMock()) as mock_urls, \
+                patch("toolboxv2.mods.CloudM.LiveSync.client.http_download",
+                      return_value=encrypted) as mock_get:
+            run(client._download_file(
+                "b.md", "test-share/b.md.enc", url="https://s3/batched"))
+
+        mock_urls.assert_not_awaited()
+        mock_get.assert_called_once_with("https://s3/batched")
+        run(client.index.close())
+
+    def test_upload_without_url_grant_marks_pending(self):
+        """No URL granted → nothing uploaded, state recorded, no WS notify."""
+        with open(os.path.join(self.vault, "x.md"), "w") as f:
+            f.write("data")
+
+        client = self._make_client()
+        run(client.index.init())
+        client._ws = AsyncMock()
+
+        with patch.object(client, "_request_urls", new=AsyncMock(return_value={})), \
+                patch("toolboxv2.mods.CloudM.LiveSync.client.http_upload") as mock_put:
+            run(client._upload_file("x.md"))
+
+        mock_put.assert_not_called()
+        client._ws.send.assert_not_called()
         run(client.index.close())
 
     def test_handle_file_deleted_moves_to_trash(self):
