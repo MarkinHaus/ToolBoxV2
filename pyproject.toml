@@ -193,7 +193,7 @@ isaa = [
     "faiss-cpu>=1.12.0",
     "beautifulsoup4>=4.14.3",
     "pillow>=12.1.1",
-    "fitz>=0.0.1.dev2",
+    # "fitz>=0.0.1.dev2",
     "croniter",
 ]
 
