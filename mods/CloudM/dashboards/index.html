@@ -3199,15 +3199,15 @@
 <h4 id="minio-credential-management">MinIO Credential Management<a class="headerlink" href="#minio-credential-management" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>GET   /CloudM.AdminDashboard/get_minio_users_admin            → All users with MinIO credentials
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>POST  /CloudM.AdminDashboard/ensure_minio_credentials_admin   → Provision MinIO creds for user
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>POST  /CloudM.AdminDashboard/rotate_minio_credentials_admin   → Rotate user&#39;s MinIO credentials
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>POST  /CloudM.AdminDashboard/revoke_minio_credentials_admin   → Revoke user&#39;s MinIO credentials
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>POST  /CloudM.AdminDashboard/rotate_minio_credentials_admin   → Rotate user's MinIO credentials
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>POST  /CloudM.AdminDashboard/revoke_minio_credentials_admin   → Revoke user's MinIO credentials
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>GET   /CloudM.AdminDashboard/list_spps_admin                  → List SPPs (Service Principal Policies)
 </code></pre></div>
 <h3 id="admin-check">Admin Check<a class="headerlink" href="#admin-check" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Admin = level -1 OR username &quot;root&quot; or &quot;loot&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Admin = level -1 OR username "root" or "loot"</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">admin</span> <span class="o">=</span> <span class="k">await</span> <span class="n">_is_admin</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">request</span><span class="p">)</span>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">if</span> <span class="ow">not</span> <span class="n">admin</span><span class="p">:</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">html</span><span class="p">(</span><span class="s2">&quot;&lt;h1&gt;Access Denied&lt;/h1&gt;&quot;</span><span class="p">,</span> <span class="n">status</span><span class="o">=</span><span class="mi">403</span><span class="p">)</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="k">return</span> <span class="n">Result</span><span class="o">.</span><span class="n">html</span><span class="p">(</span><span class="s2">"&lt;h1&gt;Access Denied&lt;/h1&gt;"</span><span class="p">,</span> <span class="n">status</span><span class="o">=</span><span class="mi">403</span><span class="p">)</span>
 </code></pre></div>
 <hr />
 <h2 id="user-dashboard">User Dashboard<a class="headerlink" href="#user-dashboard" title="Permanent link">&para;</a></h2>
@@ -3222,7 +3222,7 @@
 </code></pre></div>
 <h4 id="module-instances">Module Instances<a class="headerlink" href="#module-instances" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>GET   /CloudM.UserDashboard/get_all_available_modules  → All installable modules
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>GET   /CloudM.UserDashboard/get_my_active_instances    → User&#39;s currently active instances
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>GET   /CloudM.UserDashboard/get_my_active_instances    → User's currently active instances
 <a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>POST  /CloudM.UserDashboard/add_module_to_instance     → Add module to active instance
 <a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>POST  /CloudM.UserDashboard/remove_module_from_instance → Remove module from instance
 <a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>POST  /CloudM.UserDashboard/add_module_to_saved        → Save module to favorites
@@ -3230,7 +3230,7 @@
 <a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>GET   /CloudM.UserDashboard/get_all_mod_data           → All module data for current user
 </code></pre></div>
 <h4 id="file-storage">File Storage<a class="headerlink" href="#file-storage" title="Permanent link">&para;</a></h4>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>GET   /CloudM.UserDashboard/list_user_files      → List user&#39;s stored files
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>GET   /CloudM.UserDashboard/list_user_files      → List user's stored files
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>POST  /CloudM.UserDashboard/upload_user_file     → Upload file (multipart)
 <a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>GET   /CloudM.UserDashboard/download_user_file   → Download file by path
 <a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>POST  /CloudM.UserDashboard/delete_user_file     → Delete file by path
@@ -3260,7 +3260,7 @@ Shared routing layer that dispatches to Admin or User dashboard based on session
 </code></pre></div>
 <h3 id="event-system">Event System<a class="headerlink" href="#event-system" title="Permanent link">&para;</a></h3>
 <p><code>handle_dashboard_event</code> accepts a JSON body with an <code>event</code> field and optional <code>payload</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="p">{</span><span class="nt">&quot;event&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;load_module&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;payload&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;module_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;MyMod&quot;</span><span class="p">}}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="p">{</span><span class="nt">"event"</span><span class="p">:</span><span class="w"> </span><span class="s2">"load_module"</span><span class="p">,</span><span class="w"> </span><span class="nt">"payload"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"module_name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"MyMod"</span><span class="p">}}</span>
 </code></pre></div>
 <p>Supported events:</p>
 <table>

@@ -3292,9 +3292,9 @@
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>4. Client A: Checksum prüfen — skip wenn Index-Match
 <a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>5. Client A: zlib compress → AES-256-GCM encrypt
 <a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>6. Client A: Upload zu MinIO (direkt, nicht durch Server)
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>7. Client A: WS → Server: {type: &quot;file_changed&quot;, path, checksum, minio_key}
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>7. Client A: WS → Server: {type: "file_changed", path, checksum, minio_key}
 <a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>8. Server:   Index updaten, Konflikt prüfen
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>9. Server:   Broadcast an Client B: {type: &quot;file_changed&quot;, ..., source_client: &quot;A&quot;}
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>9. Server:   Broadcast an Client B: {type: "file_changed", ..., source_client: "A"}
 <a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>10. Client B: Download von MinIO → decrypt → decompress
 <a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>11. Client B: Checksum verifizieren
 <a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>12. Client B: Atomic write (.sync-tmp → rename)
@@ -3304,10 +3304,10 @@
 <h2 id="websocket-protokoll">WebSocket-Protokoll<a class="headerlink" href="#websocket-protokoll" title="Permanent link">&para;</a></h2>
 <p>Alle Messages folgen dem Envelope-Format:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;file_changed&quot;</span><span class="p">,</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">&quot;payload&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="err">...</span><span class="w"> </span><span class="p">},</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">&quot;timestamp&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1713379200.0</span><span class="p">,</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">&quot;msg_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;a1b2c3d4e5f6&quot;</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"file_changed"</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">"payload"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="err">...</span><span class="w"> </span><span class="p">},</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">"timestamp"</span><span class="p">:</span><span class="w"> </span><span class="mf">1713379200.0</span><span class="p">,</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">"msg_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"a1b2c3d4e5f6"</span>
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">}</span>
 </code></pre></div>
 <h3 id="message-types">Message-Types<a class="headerlink" href="#message-types" title="Permanent link">&para;</a></h3>
@@ -3401,9 +3401,9 @@
 <a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>        └── index.db.gz            ← Full-State Export (Szenario S5)
 </code></pre></div>
 <p>Key-Helpers in <code>minio_helper.py</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">make_object_key</span><span class="p">(</span><span class="s2">&quot;share1&quot;</span><span class="p">,</span> <span class="s2">&quot;sub/notes.md&quot;</span><span class="p">)</span>  <span class="err">→</span> <span class="s2">&quot;share1/sub/notes.md.enc&quot;</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">make_meta_key</span><span class="p">(</span><span class="s2">&quot;share1&quot;</span><span class="p">,</span> <span class="s2">&quot;sub/notes.md&quot;</span><span class="p">)</span>    <span class="err">→</span> <span class="s2">&quot;share1/.meta/sub/notes.md.json&quot;</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">rel_path_from_object_key</span><span class="p">(</span><span class="s2">&quot;share1&quot;</span><span class="p">,</span> <span class="s2">&quot;share1/sub/notes.md.enc&quot;</span><span class="p">)</span> <span class="err">→</span> <span class="s2">&quot;sub/notes.md&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">make_object_key</span><span class="p">(</span><span class="s2">"share1"</span><span class="p">,</span> <span class="s2">"sub/notes.md"</span><span class="p">)</span>  <span class="err">→</span> <span class="s2">"share1/sub/notes.md.enc"</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">make_meta_key</span><span class="p">(</span><span class="s2">"share1"</span><span class="p">,</span> <span class="s2">"sub/notes.md"</span><span class="p">)</span>    <span class="err">→</span> <span class="s2">"share1/.meta/sub/notes.md.json"</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">rel_path_from_object_key</span><span class="p">(</span><span class="s2">"share1"</span><span class="p">,</span> <span class="s2">"share1/sub/notes.md.enc"</span><span class="p">)</span> <span class="err">→</span> <span class="s2">"sub/notes.md"</span>
 </code></pre></div>
 <hr />
 <h2 id="credential-flow">Credential-Flow<a class="headerlink" href="#credential-flow" title="Permanent link">&para;</a></h2>
@@ -3426,7 +3426,7 @@
 <a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">    </span><span class="n">mtime</span><span class="w">       </span><span class="nb">REAL</span><span class="p">,</span>
 <a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">    </span><span class="k">size</span><span class="w">        </span><span class="nb">INTEGER</span><span class="p">,</span>
 <a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">    </span><span class="n">checksum</span><span class="w">    </span><span class="nb">TEXT</span><span class="p">,</span><span class="w">           </span><span class="c1">-- SHA-256, erste 16 Hex-Zeichen</span>
-<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">    </span><span class="n">sync_state</span><span class="w">  </span><span class="nb">TEXT</span><span class="p">,</span><span class="w">           </span><span class="c1">-- &#39;synced&#39;, &#39;pending_upload&#39;, &#39;pending_download&#39;, &#39;conflict&#39;</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">    </span><span class="n">sync_state</span><span class="w">  </span><span class="nb">TEXT</span><span class="p">,</span><span class="w">           </span><span class="c1">-- 'synced', 'pending_upload', 'pending_download', 'conflict'</span>
 <a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">    </span><span class="n">remote_key</span><span class="w">  </span><span class="nb">TEXT</span><span class="p">,</span>
 <a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">    </span><span class="n">updated_at</span><span class="w">  </span><span class="nb">REAL</span>
 <a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="p">);</span>
@@ -3435,7 +3435,7 @@
 <a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">sync_log</span><span class="w"> </span><span class="p">(</span>
 <a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="w">    </span><span class="n">id</span><span class="w">          </span><span class="nb">INTEGER</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="n">AUTOINCREMENT</span><span class="p">,</span>
 <a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a><span class="w">    </span><span class="n">rel_path</span><span class="w">    </span><span class="nb">TEXT</span><span class="p">,</span>
-<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a><span class="w">    </span><span class="n">action</span><span class="w">      </span><span class="nb">TEXT</span><span class="p">,</span><span class="w">           </span><span class="c1">-- &#39;upload&#39;, &#39;download&#39;, &#39;conflict&#39;, &#39;delete&#39;</span>
+<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a><span class="w">    </span><span class="n">action</span><span class="w">      </span><span class="nb">TEXT</span><span class="p">,</span><span class="w">           </span><span class="c1">-- 'upload', 'download', 'conflict', 'delete'</span>
 <a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a><span class="w">    </span><span class="n">checksum</span><span class="w">    </span><span class="nb">TEXT</span><span class="p">,</span>
 <a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a><span class="w">    </span><span class="k">timestamp</span><span class="w">   </span><span class="nb">REAL</span><span class="p">,</span>
 <a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a><span class="w">    </span><span class="n">client_id</span><span class="w">   </span><span class="nb">TEXT</span>
@@ -3455,7 +3455,7 @@
 <a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">on_modified</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">event</span><span class="p">):</span>
 <a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>        <span class="c1"># Thread-safe! Kein create_task!</span>
 <a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">loop</span><span class="o">.</span><span class="n">call_soon_threadsafe</span><span class="p">(</span>
-<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">queue</span><span class="o">.</span><span class="n">put_nowait</span><span class="p">,</span> <span class="p">(</span><span class="s2">&quot;modified&quot;</span><span class="p">,</span> <span class="n">rel_path</span><span class="p">)</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">queue</span><span class="o">.</span><span class="n">put_nowait</span><span class="p">,</span> <span class="p">(</span><span class="s2">"modified"</span><span class="p">,</span> <span class="n">rel_path</span><span class="p">)</span>
 <a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>        <span class="p">)</span>
 </code></pre></div>
 <p>Hauptschleife draint die Queue → DebounceBatch (2s sammeln, dedup) → Batch-Prozess.</p>
@@ -3466,8 +3466,8 @@
 <a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>2. Ja: Server-Checksum == Client-Checksum? → Ja: kein Konflikt
 <a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>3. Nein: KONFLIKT erkannt
 <a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>4. FileType prüfen:
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>   - .md → resolution = &quot;merge_markers&quot;
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>   - Alles andere → resolution = &quot;latest_wins&quot;
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>   - .md → resolution = "merge_markers"
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>   - Alles andere → resolution = "latest_wins"
 <a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>5. Conflict-Notification an ALLE Clients
 <a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>6. sync_log Eintrag
 <a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>7. Index trotzdem updaten (latest writer wins am Index)

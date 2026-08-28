@@ -3523,10 +3523,10 @@
 <h2 id="token-structure">Token Structure<a class="headerlink" href="#token-structure" title="Permanent link">&para;</a></h2>
 <p>All tokens are HS256 JWTs signed with <code>CLOUDM_JWT_SECRET</code>.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">&quot;sub&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;user_id&gt;&quot;</span><span class="p">,</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">&quot;jti&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;unique_token_id&gt;&quot;</span><span class="p">,</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">&quot;provider&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;discord|google|passkey|magic_link&quot;</span><span class="p">,</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="nt">&quot;exp&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1234567890</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">"sub"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;user_id&gt;"</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">"jti"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;unique_token_id&gt;"</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">"provider"</span><span class="p">:</span><span class="w"> </span><span class="s2">"discord|google|passkey|magic_link"</span><span class="p">,</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="nt">"exp"</span><span class="p">:</span><span class="w"> </span><span class="mi">1234567890</span>
 <a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="p">}</span>
 </code></pre></div>
 <table>
@@ -3559,7 +3559,7 @@
 <a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="nv">CLOUDM_BASE_URL</span><span class="o">=</span>https://yourdomain.com<span class="w">     </span><span class="c1"># For OAuth callbacks</span>
 </code></pre></div>
 <h3 id="authconfigpy-constants"><code>auth/config.py</code> Constants<a class="headerlink" href="#authconfigpy-constants" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">JWT_ALGORITHM</span>        <span class="o">=</span> <span class="s2">&quot;HS256&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">JWT_ALGORITHM</span>        <span class="o">=</span> <span class="s2">"HS256"</span>
 <a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">ACCESS_TOKEN_EXPIRY</span>  <span class="o">=</span> <span class="mi">900</span>        <span class="c1"># 15 min</span>
 <a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">REFRESH_TOKEN_EXPIRY</span> <span class="o">=</span> <span class="mi">604800</span>     <span class="c1"># 7 days</span>
 <a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="n">STATE_EXPIRY</span>         <span class="o">=</span> <span class="mi">600</span>        <span class="c1"># 10 min (OAuth CSRF)</span>
@@ -3573,19 +3573,19 @@
 <a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
 <a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">payload</span> <span class="o">=</span> <span class="n">_validate_jwt</span><span class="p">(</span><span class="n">token</span><span class="p">)</span>
 <a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="k">if</span> <span class="n">payload</span><span class="p">:</span>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="n">user_id</span> <span class="o">=</span> <span class="n">payload</span><span class="p">[</span><span class="s2">&quot;sub&quot;</span><span class="p">]</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="n">user_id</span> <span class="o">=</span> <span class="n">payload</span><span class="p">[</span><span class="s2">"sub"</span><span class="p">]</span>
 </code></pre></div>
 <h3 id="getcreate-user">Get/Create User<a class="headerlink" href="#getcreate-user" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.CloudM.Auth</span><span class="w"> </span><span class="kn">import</span> <span class="n">_load_user</span><span class="p">,</span> <span class="n">_create_or_update_user</span>
 <a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
 <a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">user</span> <span class="o">=</span> <span class="n">_load_user</span><span class="p">(</span><span class="n">user_id</span><span class="p">)</span>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">user</span> <span class="o">=</span> <span class="n">_create_or_update_user</span><span class="p">(</span><span class="n">provider</span><span class="o">=</span><span class="s2">&quot;discord&quot;</span><span class="p">,</span> <span class="n">provider_id</span><span class="o">=</span><span class="s2">&quot;123&quot;</span><span class="p">,</span> <span class="n">email</span><span class="o">=</span><span class="s2">&quot;user@example.com&quot;</span><span class="p">)</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">user</span> <span class="o">=</span> <span class="n">_create_or_update_user</span><span class="p">(</span><span class="n">provider</span><span class="o">=</span><span class="s2">"discord"</span><span class="p">,</span> <span class="n">provider_id</span><span class="o">=</span><span class="s2">"123"</span><span class="p">,</span> <span class="n">email</span><span class="o">=</span><span class="s2">"user@example.com"</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="generate-tokens">Generate Tokens<a class="headerlink" href="#generate-tokens" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.CloudM.Auth</span><span class="w"> </span><span class="kn">import</span> <span class="n">_generate_tokens</span>
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">tokens</span> <span class="o">=</span> <span class="n">_generate_tokens</span><span class="p">(</span><span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;abc&quot;</span><span class="p">,</span> <span class="n">provider</span><span class="o">=</span><span class="s2">&quot;google&quot;</span><span class="p">)</span>
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># tokens = {&quot;access_token&quot;: &quot;...&quot;, &quot;refresh_token&quot;: &quot;...&quot;}</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">tokens</span> <span class="o">=</span> <span class="n">_generate_tokens</span><span class="p">(</span><span class="n">user_id</span><span class="o">=</span><span class="s2">"abc"</span><span class="p">,</span> <span class="n">provider</span><span class="o">=</span><span class="s2">"google"</span><span class="p">)</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># tokens = {"access_token": "...", "refresh_token": "..."}</span>
 </code></pre></div>
 <h2 id="migration-clerk-cloudmauth">Migration: Clerk → CloudM.Auth<a class="headerlink" href="#migration-clerk-cloudmauth" title="Permanent link">&para;</a></h2>
 <p>CloudM.Auth replaced Clerk as of 2026-02-25. The migration is <strong>complete and production-ready</strong>.</p>

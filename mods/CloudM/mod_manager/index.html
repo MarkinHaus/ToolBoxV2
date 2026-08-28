@@ -3228,7 +3228,7 @@
 </code></pre></div>
 <h3 id="list-search">List / Search<a class="headerlink" href="#list-search" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>tb<span class="w"> </span>-c<span class="w"> </span>CloudM<span class="w"> </span>ModManager<span class="w"> </span>list<span class="w">                  </span><span class="c1"># Installed packages</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>tb<span class="w"> </span>-c<span class="w"> </span>CloudM<span class="w"> </span>ModManager<span class="w"> </span>search<span class="w"> </span><span class="s2">&quot;calendar&quot;</span><span class="w">     </span><span class="c1"># Search registry</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>tb<span class="w"> </span>-c<span class="w"> </span>CloudM<span class="w"> </span>ModManager<span class="w"> </span>search<span class="w"> </span><span class="s2">"calendar"</span><span class="w">     </span><span class="c1"># Search registry</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>tb<span class="w"> </span>-c<span class="w"> </span>CloudM<span class="w"> </span>ModManager<span class="w"> </span>info<span class="w"> </span>my-mod<span class="w">           </span><span class="c1"># Package details</span>
 </code></pre></div>
 <h2 id="registry-integration">Registry Integration<a class="headerlink" href="#registry-integration" title="Permanent link">&para;</a></h2>
@@ -3245,8 +3245,8 @@
 </code></pre></div>
 <h2 id="snapshot-system">Snapshot System<a class="headerlink" href="#snapshot-system" title="Permanent link">&para;</a></h2>
 <p>Each installed mod has a version snapshot stored via <code>find_highest_zip_version</code>. Used for rollback and integrity checks.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">snapshot</span> <span class="o">=</span> <span class="n">cloudm_instance</span><span class="o">.</span><span class="n">get_mod_snapshot</span><span class="p">(</span><span class="s2">&quot;my-mod&quot;</span><span class="p">)</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="c1"># Returns: &quot;1.2.0&quot; or None</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">snapshot</span> <span class="o">=</span> <span class="n">cloudm_instance</span><span class="o">.</span><span class="n">get_mod_snapshot</span><span class="p">(</span><span class="s2">"my-mod"</span><span class="p">)</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="c1"># Returns: "1.2.0" or None</span>
 </code></pre></div>
 <h2 id="publisher-verification">Publisher Verification<a class="headerlink" href="#publisher-verification" title="Permanent link">&para;</a></h2>
 <p>Package publishers can be verified against the registry. Unverified publishers trigger a warning during install. Admin-only publishers require elevated session permissions.</p>

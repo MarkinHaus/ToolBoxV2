@@ -3378,16 +3378,16 @@
 </code></pre></div>
 <p>Ausgabe:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>{
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  &quot;ok&quot;: true,
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  &quot;share_id&quot;: &quot;a1b2c3d4&quot;,
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  &quot;token&quot;: &quot;eyJ2IjogMSwg...&quot;,
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  &quot;info&quot;: &quot;Share created. Distribute token to join.&quot;
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  "ok": true,
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  "share_id": "a1b2c3d4",
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  "token": "eyJ2IjogMSwg...",
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  "info": "Share created. Distribute token to join."
 <a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>}
 </code></pre></div>
 <p>Den <strong>Token</strong> kopieren — das ist dein Zugangsschlüssel.</p>
 <h3 id="2-client-verbinden-desktoplaptop">2. Client verbinden (Desktop/Laptop)<a class="headerlink" href="#2-client-verbinden-desktoplaptop" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>python<span class="w"> </span>-m<span class="w"> </span>toolboxv2.mods.CloudM.LiveSync.client<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--token<span class="w"> </span><span class="s2">&quot;eyJ2IjogMSwg...&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--token<span class="w"> </span><span class="s2">"eyJ2IjogMSwg..."</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--vault<span class="w"> </span>/home/markin/obsidian-vault
 </code></pre></div>
 <p>LiveSync erstellt den Ordner falls nötig, lädt alle Dateien herunter und hält ab dann alles synchron.</p>
@@ -3397,7 +3397,7 @@
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>pip<span class="w"> </span>install<span class="w"> </span>websockets<span class="w"> </span>watchdog<span class="w"> </span>minio<span class="w"> </span>cryptography<span class="w"> </span>aiosqlite<span class="w"> </span>pydantic
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
 <a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>python<span class="w"> </span>-m<span class="w"> </span>toolboxv2.mods.CloudM.LiveSync.client<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span>--token<span class="w"> </span><span class="s2">&quot;eyJ2IjogMSwg...&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span>--token<span class="w"> </span><span class="s2">"eyJ2IjogMSwg..."</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">  </span>--vault<span class="w"> </span>/data/data/com.termux/files/home/obsidian
 </code></pre></div>
 <p>Danach die Obsidian-App auf den gleichen Ordner zeigen lassen.</p>

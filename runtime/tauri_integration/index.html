@@ -3233,7 +3233,7 @@
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># Start both HTTP and WS workers</span>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">result</span> <span class="o">=</span> <span class="n">tauri_start_workers</span><span class="p">()</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># {&quot;status&quot;: &quot;ok&quot;, &quot;http_url&quot;: &quot;http://...&quot;, &quot;ws_url&quot;: &quot;ws://...&quot;}</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># {"status": "ok", "http_url": "http://...", "ws_url": "ws://..."}</span>
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="c1"># Check current status</span>
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="n">status</span> <span class="o">=</span> <span class="n">tauri_get_status</span><span class="p">()</span>
@@ -3249,21 +3249,21 @@
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">tauri_get_status</span><span class="p">,</span>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="p">)</span>
 <a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">tauri_start_workers</span><span class="p">()</span>  <span class="c1"># Returns {&quot;status&quot;: &quot;ok&quot;, &quot;http_url&quot;: ..., &quot;ws_url&quot;: ...}</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">tauri_start_workers</span><span class="p">()</span>  <span class="c1"># Returns {"status": "ok", "http_url": ..., "ws_url": ...}</span>
 <a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">status</span> <span class="o">=</span> <span class="n">tauri_get_status</span><span class="p">()</span>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="c1"># {&quot;running&quot;: True, &quot;http_url&quot;: &quot;http://0.0.0.0:5000&quot;, &quot;ws_url&quot;: &quot;ws://0.0.0.0:5001&quot;, &quot;ws_enabled&quot;: True}</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="c1"># {"running": True, "http_url": "http://0.0.0.0:5000", "ws_url": "ws://0.0.0.0:5001", "ws_enabled": True}</span>
 <a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>
-<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">tauri_stop_workers</span><span class="p">()</span>  <span class="c1"># Returns {&quot;status&quot;: &quot;ok&quot;}</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">tauri_stop_workers</span><span class="p">()</span>  <span class="c1"># Returns {"status": "ok"}</span>
 </code></pre></div>
 <h3 id="direct-ipc-module-calls">Direct IPC Module Calls<a class="headerlink" href="#direct-ipc-module-calls" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.workers.tauri_integration</span><span class="w"> </span><span class="kn">import</span> <span class="n">tauri_call_module</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">result</span> <span class="o">=</span> <span class="n">tauri_call_module</span><span class="p">(</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">module</span><span class="o">=</span><span class="s2">&quot;example_module&quot;</span><span class="p">,</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">function</span><span class="o">=</span><span class="s2">&quot;some_function&quot;</span><span class="p">,</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">args</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;key&quot;</span><span class="p">:</span> <span class="s2">&quot;value&quot;</span><span class="p">},</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">module</span><span class="o">=</span><span class="s2">"example_module"</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">function</span><span class="o">=</span><span class="s2">"some_function"</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">args</span><span class="o">=</span><span class="p">{</span><span class="s2">"key"</span><span class="p">:</span> <span class="s2">"value"</span><span class="p">},</span>
 <a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="p">)</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="c1"># {&quot;status&quot;: &quot;ok&quot;, &quot;data&quot;: ...}</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="c1"># {"status": "ok", "data": ...}</span>
 </code></pre></div>
 <h3 id="standalone-sidecar-execution">Standalone Sidecar Execution<a class="headerlink" href="#standalone-sidecar-execution" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>tb-worker<span class="w"> </span>--http-port<span class="w"> </span><span class="m">5000</span><span class="w"> </span>--ws-port<span class="w"> </span><span class="m">5001</span><span class="w"> </span>--mode<span class="w"> </span>tauri<span class="w"> </span>--verbose

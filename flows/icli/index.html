@@ -4036,25 +4036,25 @@ wird automatisch als Eingabe übernommen.</p>
 <hr />
 <h2 id="bind-teach-agent-koordination">Bind &amp; Teach — Agent-Koordination<a class="headerlink" href="#bind-teach-agent-koordination" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>/bind<span class="w"> </span>self<span class="w"> </span>analyst<span class="w">             </span><span class="c1"># Self Agent delegiert an Analyst</span>
-<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>/teach<span class="w"> </span>analyst<span class="w"> </span>code_review<span class="w">     </span><span class="c1"># Skill &quot;code_review&quot; auf Analyst übertragen</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>/teach<span class="w"> </span>analyst<span class="w"> </span>code_review<span class="w">     </span><span class="c1"># Skill "code_review" auf Analyst übertragen</span>
 <a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>/context<span class="w"> </span>stats<span class="w">                 </span><span class="c1"># Context-Fenster-Auslastung anzeigen</span>
 </code></pre></div>
 <hr />
 <h2 id="single-run-modus-non-interaktiv">Single-Run Modus (Non-Interaktiv)<a class="headerlink" href="#single-run-modus-non-interaktiv" title="Permanent link">&para;</a></h2>
 <p>Für Scripts und CI:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="c1"># Einmalige Anfrage, dann Exit</span>
-<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>tb<span class="w"> </span>icli<span class="w"> </span><span class="s2">&quot;Analysiere ./src und liste alle public APIs&quot;</span><span class="w"> </span>--agent<span class="w"> </span>self
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>tb<span class="w"> </span>icli<span class="w"> </span><span class="s2">"Analysiere ./src und liste alle public APIs"</span><span class="w"> </span>--agent<span class="w"> </span>self
 <a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a>
 <a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="c1"># Mit spezifischem Modell</span>
-<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a>tb<span class="w"> </span>icli<span class="w"> </span><span class="s2">&quot;Refaktoriere main.py&quot;</span><span class="w"> </span>--agent<span class="w"> </span>self<span class="w"> </span>--model<span class="w"> </span>gemini-3-flash
+<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a>tb<span class="w"> </span>icli<span class="w"> </span><span class="s2">"Refaktoriere main.py"</span><span class="w"> </span>--agent<span class="w"> </span>self<span class="w"> </span>--model<span class="w"> </span>gemini-3-flash
 <a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a>
 <a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a><span class="c1"># Mit Feature</span>
-<a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a>tb<span class="w"> </span>icli<span class="w"> </span><span class="s2">&quot;Lese die README und erstelle eine Zusammenfassung&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a>tb<span class="w"> </span>icli<span class="w"> </span><span class="s2">"Lese die README und erstelle eine Zusammenfassung"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a><span class="w">  </span>--feature<span class="w"> </span>docs<span class="w"> </span>--session<span class="w"> </span>analysis_run_1
 <a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a>
 <a id="__codelineno-24-11" name="__codelineno-24-11" href="#__codelineno-24-11"></a><span class="c1"># Mit MCP</span>
-<a id="__codelineno-24-12" name="__codelineno-24-12" href="#__codelineno-24-12"></a>tb<span class="w"> </span>icli<span class="w"> </span><span class="s2">&quot;Liste alle Dateien&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-24-13" name="__codelineno-24-13" href="#__codelineno-24-13"></a><span class="w">  </span>--mcp<span class="w"> </span><span class="s1">&#39;{&quot;name&quot;: &quot;fs&quot;, &quot;command&quot;: &quot;npx&quot;, &quot;args&quot;: [&quot;@mcp/fs&quot;]}&#39;</span>
+<a id="__codelineno-24-12" name="__codelineno-24-12" href="#__codelineno-24-12"></a>tb<span class="w"> </span>icli<span class="w"> </span><span class="s2">"Liste alle Dateien"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-24-13" name="__codelineno-24-13" href="#__codelineno-24-13"></a><span class="w">  </span>--mcp<span class="w"> </span><span class="s1">'{"name": "fs", "command": "npx", "args": ["@mcp/fs"]}'</span>
 </code></pre></div>
 <p><code>--remember &lt;session_id&gt;</code> speichert die History. Ohne <code>--remember</code> wird
 sie nach dem Run gelöscht.</p>
@@ -4064,10 +4064,10 @@ sie nach dem Run gelöscht.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>1. /vfs mount ./mein-projekt /proj
 <a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>2. /feature enable coder
 <a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>3. /feature enable docs
-<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a>4. &quot;Erstelle einen Plan für das Refactoring von /proj/src&quot;
+<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a>4. "Erstelle einen Plan für das Refactoring von /proj/src"
 <a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a>   → Agent plant, legt Plan in VFS ab
 <a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a>5. F6 → Fokus auf Plan-Task
-<a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a>6. Wenn done: &quot;Führe den Plan aus, beginne mit Schritt 1&quot;
+<a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a>6. Wenn done: "Führe den Plan aus, beginne mit Schritt 1"
 <a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a>   → Agent startet, spawnt Sub-Agents für Teilaufgaben
 <a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a>7. F2 → Sub-Agents im Overlay beobachten
 <a id="__codelineno-25-10" name="__codelineno-25-10" href="#__codelineno-25-10"></a>8. Wenn fertig: /vfs sync /proj
@@ -4075,11 +4075,11 @@ sie nach dem Run gelöscht.</p>
 <h3 id="parallele-analyse-mehrerer-codebasen">Parallele Analyse mehrerer Codebasen<a class="headerlink" href="#parallele-analyse-mehrerer-codebasen" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>1. /vfs mount ./projekt-a /a
 <a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>2. /vfs mount ./projekt-b /b
-<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>3. &quot;Analysiere /a und erstelle Bericht&quot; → Task A startet
+<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>3. "Analysiere /a und erstelle Bericht" → Task A startet
 <a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a>4. F6 zum Defokussieren
 <a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a>5. /agent spawn analyst_b fallback_analyst
 <a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a>6. /agent switch analyst_b
-<a id="__codelineno-26-7" name="__codelineno-26-7" href="#__codelineno-26-7"></a>7. &quot;Analysiere /b und erstelle Bericht&quot; → Task B startet parallel
+<a id="__codelineno-26-7" name="__codelineno-26-7" href="#__codelineno-26-7"></a>7. "Analysiere /b und erstelle Bericht" → Task B startet parallel
 <a id="__codelineno-26-8" name="__codelineno-26-8" href="#__codelineno-26-8"></a>8. F7 → zwischen Tasks wechseln
 <a id="__codelineno-26-9" name="__codelineno-26-9" href="#__codelineno-26-9"></a>9. F2 → beide im Overlay vergleichen
 </code></pre></div>

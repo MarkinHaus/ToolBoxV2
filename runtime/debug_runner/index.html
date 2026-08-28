@@ -3161,7 +3161,7 @@
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.workers.debug_runner</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_debug_server</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">run_debug_server</span><span class="p">(</span><span class="s2">&quot;./dist&quot;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">5000</span><span class="p">)</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">run_debug_server</span><span class="p">(</span><span class="s2">"./dist"</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">5000</span><span class="p">)</span>
 </code></pre></div>
 <p>Requires <code>a2wsgi</code> and <code>uvicorn</code> (<code>pip install a2wsgi uvicorn</code>).</p>
 <h2 id="usage-guide">Usage Guide<a class="headerlink" href="#usage-guide" title="Permanent link">&para;</a></h2>
@@ -3169,7 +3169,7 @@
 <p>Run the debug server against a built frontend distribution:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.utils.workers.debug_runner</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_debug_server</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">run_debug_server</span><span class="p">(</span><span class="n">dist_path</span><span class="o">=</span><span class="s2">&quot;/path/to/frontend/dist&quot;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">5000</span><span class="p">)</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">run_debug_server</span><span class="p">(</span><span class="n">dist_path</span><span class="o">=</span><span class="s2">"/path/to/frontend/dist"</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">5000</span><span class="p">)</span>
 </code></pre></div>
 <p>This starts:
 1. A <strong>ZMQ event broker</strong> in a background thread.
@@ -3177,7 +3177,7 @@
 3. A <strong>uvicorn</strong> HTTP server on the given <code>port</code>, serving the frontend and proxying API requests.</p>
 <h3 id="advanced-usage">Advanced Usage<a class="headerlink" href="#advanced-usage" title="Permanent link">&para;</a></h3>
 <p>Control which subsystems start via environment variables:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nv">TB_WS_ENABLED</span><span class="o">=</span><span class="nb">false</span><span class="w"> </span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;from toolboxv2.utils.workers.debug_runner import run_debug_server; run_debug_server(&#39;./dist&#39;, 5000)&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nv">TB_WS_ENABLED</span><span class="o">=</span><span class="nb">false</span><span class="w"> </span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"from toolboxv2.utils.workers.debug_runner import run_debug_server; run_debug_server('./dist', 5000)"</span>
 </code></pre></div>
 <p>This disables the WS worker — only the ZMQ broker and HTTP server start.</p>
 <h2 id="how-it-works">How It Works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
