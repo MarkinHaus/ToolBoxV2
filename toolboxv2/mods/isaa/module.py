@@ -2454,13 +2454,14 @@ except:
 
 
 class ShellSession:
-    def __init__(self):
+    def __init__(self, label: str = "A"):
         self.id = str(uuid.uuid4())
         self.system = platform.system()
         self.is_windows = self.system == "Windows"
         self.created_at = time.time()
         self.job_handle = None
         self.pgid = None
+        self.label = label
         shell_exe, _ = detect_shell()
 
         # Environment mit UTF-8 Support
@@ -2872,7 +2873,7 @@ def shell_tool_function(
         session = None
         msg_info = "Session reset"
     if session is None:
-        session = ShellSession()
+        session = ShellSession(label=label)
         _session_store[label] = session
         msg_info = locals().get("msg_info") or "New session started"
     else:
