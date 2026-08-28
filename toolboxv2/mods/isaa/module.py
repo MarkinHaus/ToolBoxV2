@@ -2403,18 +2403,72 @@ def is_admin() -> bool:
 # SHELL SESSION KLASSE
 # =============================================================================
 
+try:
+    import ctypes
+    from ctypes import wintypes
+    import os
+    import signal
+    import psutil
+    import re
+
+    HARNESS_PID = os.getpid()
+    HARNESS_PPID = os.getppid()
+
+    # --- Windows Job Object C-Structs (Keine externen pywin32-Deps nötig) ---
+    if platform.system() == "Windows":
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [("ReadOperationCount", ctypes.c_uint64),
+                        ("WriteOperationCount", ctypes.c_uint64),
+                        ("OtherOperationCount", ctypes.c_uint64),
+                        ("ReadTransferCount", ctypes.c_uint64),
+                        ("WriteTransferCount", ctypes.c_uint64),
+                        ("OtherTransferCount", ctypes.c_uint64)]
+
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64),
+                        ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD),
+                        ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t),
+                        ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t),
+                        ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                        ("IoInfo", IO_COUNTERS),
+                        ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryLimit", ctypes.c_size_t),
+                        ("PeakJobMemoryLimit", ctypes.c_size_t)]
+
+
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+        JobObjectExtendedLimitInformation = 9
+except:
+    pass
+
+
 
 class ShellSession:
     def __init__(self):
         self.id = str(uuid.uuid4())
         self.system = platform.system()
         self.is_windows = self.system == "Windows"
-
+        self.created_at = time.time()
+        self.job_handle = None
+        self.pgid = None
         shell_exe, _ = detect_shell()
 
         # Environment mit UTF-8 Support
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
+        # Crash-Recovery Marker
+        env["__TB_SESSION_ID__"] = self.id
+        env["__TB_SESSION_LABEL__"] = self.label
 
         # PowerShell/CMD ohne zusätzliche Parameter starten
         start_args = [shell_exe]
@@ -2441,8 +2495,25 @@ class ShellSession:
             env=env,
             shell=False,
             # Windows-spezifisch: Verhindert Popup-Fenster
+            start_new_session=(not self.is_windows),
             creationflags=subprocess.CREATE_NO_WINDOW if self.is_windows else 0,
         )
+
+        # Windows: Prozess an Job-Object binden (KILL_ON_JOB_CLOSE)
+        if self.is_windows:
+            k32 = ctypes.windll.kernel32
+            self.job_handle = k32.CreateJobObjectW(None, None)
+            info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            k32.SetInformationJobObject(
+                self.job_handle,
+                JobObjectExtendedLimitInformation,
+                ctypes.byref(info),
+                ctypes.sizeof(info)
+            )
+            k32.AssignProcessToJobObject(self.job_handle, wintypes.HANDLE(int(self.process._handle)))
+        else:
+            self.pgid = os.getpgid(self.process.pid)
 
         self.out_queue = queue.Queue()
         self.err_queue = queue.Queue()
@@ -2579,13 +2650,29 @@ class ShellSession:
         return data.decode("latin-1", errors="replace")
 
     def terminate(self):
-        if self.process:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
+        """Beendet den gesamten Prozessbaum atomar (Sub-Kinder inklusive)."""
         self.active = False
+        if self.is_windows and self.job_handle:
+            # Terminiert alle Kind- und Enkelprozesse sofort via Kernel
+            ctypes.windll.kernel32.TerminateJobObject(self.job_handle, 1)
+            ctypes.windll.kernel32.CloseHandle(self.job_handle)
+            self.job_handle = None
+        elif self.pgid and not self.is_windows:
+            try:
+                os.killpg(self.pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+        # Lokalen Shell-Prozess schließen
+        if self.process:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=0.5)
+            except Exception:
+                try:
+                    self.process.kill()
+                except Exception:
+                    pass
 
 
 # =============================================================================
@@ -2595,6 +2682,19 @@ class ShellSession:
 
 SHELL_SESSION_LABELS = ("A", "B", "C")
 
+# Regex-Guardrail: Blockiert typische Kill-Kommandos als UX-Leitsystem (Word-Boundaries)
+DANGEROUS_KILL_PATTERN = re.compile(
+    r"\b(kill|pkill|killall|taskkill|tskill)\b|Stop-Process|\bGet-Process\b.*\|\s*Stop-Process",
+    re.IGNORECASE
+)
+
+def _get_protected_pids() -> set:
+    """Gibt alle PIDs zurück, die unter keinen Umständen gekillt werden dürfen."""
+    pids = {HARNESS_PID, HARNESS_PPID}
+    for session in _session_store.values():
+        if session.process and session.process.poll() is None:
+            pids.add(session.process.pid)
+    return pids
 
 def shell_tool_function(
     command: Optional[str] = None,
@@ -2615,13 +2715,31 @@ def shell_tool_function(
     - Late output capture: if a command keeps running, its further output is
       collected and returned on your NEXT call to the SAME session (poll by
       calling with session_id only, no command)
-    - new_session=True on a label RESETS that session (kill + fresh shell)
+    - Kernel-level tree containment: each session runs in an isolated process
+      group / job object ensuring child processes are cleanly manageable
     - Pipes, operators, backslash paths, $env vars, interactive input
-    - special commands: list-sessions, cleanup-sessions
+
+    Special Meta-Commands (pass as `command`):
+    - 'list-sessions': View status of all active sessions ('A', 'B', 'C').
+    - 'cleanup-sessions': Terminate and wipe all sessions.
+    - 'reset-session [LABEL]': Hard-kills a hanging session and all its child
+      processes immediately, respawning a clean shell in-place on that label
+      (e.g., 'reset-session' for current session, or 'reset-session A').
+    - 'list-processes': Lists all active sub-processes spawned across your
+      sessions (returns PID, name, cmdline, status).
+    - 'kill-process <PID>': Safely terminates a specific process and its entire
+      subtree (e.g., 'kill-process 1234').
+
+    PROCESS TERMINATION RULES:
+    - DO NOT execute raw OS kill commands (`pkill`, `kill`, `taskkill`, `killall`,
+      `Stop-Process`) in shell scripts — they are strictly blocked to protect
+      the Agent Harness from accidental self-termination.
+    - To stop a background task/server: Call 'list-processes' -> 'kill-process <PID>'.
+    - If a session is completely hung or unresponsive: Call 'reset-session'.
 
     Args:
-        command: Shell command (may be multiline). None = poll the session
-                 for new output.
+        command: Shell command (may be multiline) or a Special Meta-Command.
+                 None = poll the session for new output.
         session_id: 'A' | 'B' | 'C' (max 3 sessions, default 'A')
         user_input: Send raw input to a running/interactive process
         new_session: Reset this label's session before executing
@@ -2636,6 +2754,106 @@ def shell_tool_function(
         return list_sessions()
     if command == "cleanup-sessions":
         return cleanup_sessions()
+
+    # In-Place Reset der Session (z.B. "reset-session" oder "reset-session A")
+    if command.startswith("reset-session"):
+        parts = command.split()
+        target_label = parts[1].upper() if len(parts) > 1 else label
+        old_session = _session_store.pop(target_label, None)
+        if old_session:
+            old_session.terminate()
+
+        # Instant-Respawn auf demselben Label
+        new_sess = ShellSession(label=target_label)
+        _session_store[target_label] = new_sess
+        return json.dumps({
+            "success": True,
+            "session_id": target_label,
+            "info": f"Session '{target_label}' and all spawned subprocesses were forcibly terminated. A fresh shell is ready.",
+            "status": "ready"
+        }, ensure_ascii=False, indent=2)
+
+    # Prozesse auflisten, die von den Sessions gestartet wurden
+    if command == "list-processes":
+        protected = _get_protected_pids()
+        processes = []
+        for s_label, sess in _session_store.items():
+            if not sess.process or sess.process.poll() is not None:
+                continue
+            try:
+                parent = psutil.Process(sess.process.pid)
+                for child in parent.children(recursive=True):
+                    if child.pid in protected:
+                        continue
+                    try:
+                        processes.append({
+                            "session": s_label,
+                            "pid": child.pid,
+                            "name": child.name(),
+                            "cmdline": " ".join(child.cmdline()),
+                            "create_time": child.create_time(),
+                            "status": child.status()
+                        })
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
+        return json.dumps({"success": True, "processes": processes}, ensure_ascii=False, indent=2)
+
+    # Gezielter und sicherer Kill mit TOCTOU-Schutz
+    if command.startswith("kill-process"):
+        parts = command.split()
+        if len(parts) < 2 or not parts[1].isdigit():
+            return json.dumps({"success": False, "error": "Usage: kill-process <PID>"}, ensure_ascii=False)
+
+        target_pid = int(parts[1])
+        protected = _get_protected_pids()
+
+        if target_pid in protected:
+            return json.dumps({
+                "success": False,
+                "error": "PROTECTED_PROCESS",
+                "stderr": f"PID {target_pid} belongs to the Agent Harness or active shell infrastructure and cannot be killed."
+            }, ensure_ascii=False)
+
+        try:
+            target_proc = psutil.Process(target_pid)
+            # TOCTOU-Guard: Nur Prozesse killen, die nach dem Session-Start erzeugt wurden
+            target_children = target_proc.children(recursive=True)
+            for sub in target_children:
+                try:
+                    sub.kill()
+                except psutil.NoSuchProcess:
+                    pass
+            target_proc.kill()
+
+            return json.dumps({
+                "success": True,
+                "info": f"Process {target_pid} and all sub-children were terminated."
+            }, ensure_ascii=False)
+        except psutil.NoSuchProcess:
+            return json.dumps(
+                {"success": False, "error": "PROCESS_NOT_FOUND", "stderr": f"PID {target_pid} does not exist."},
+                ensure_ascii=False)
+
+    # -------------------------------------------------------------------------
+    # 2. UX-GUARDRAIL (Blockiert rohe Kill-Befehle im Skript)
+    # -------------------------------------------------------------------------
+    if DANGEROUS_KILL_PATTERN.search(command):
+        return json.dumps({
+            "success": False,
+            "error": "RAW_KILL_FORBIDDEN",
+            "stderr": (
+                "Direct process killing via shell commands is blocked to protect the Agent Harness. "
+                "Use 'list-processes' to view running tasks, 'kill-process <PID>' to terminate a specific process, "
+                "or 'reset-session' if the session is completely hanging."
+            )
+        }, ensure_ascii=False, indent=2)
+
+    # -------------------------------------------------------------------------
+    # 3. REGULÄRE AUSFÜHRUNG
+    # -------------------------------------------------------------------------
 
     label = (session_id or "A").strip().upper()
     if label not in SHELL_SESSION_LABELS:
