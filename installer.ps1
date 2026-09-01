@@ -1,7 +1,7 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 
 # ============================================================
-# ToolBoxV2 Installer v1.0.0 — Windows (PowerShell 5+)
+# ToolBoxV2 Installer v1.0.1 — Windows (PowerShell 5+)
 # https://github.com/MarkinHaus/ToolBoxV2
 #
 # Usage:
@@ -43,7 +43,7 @@ Write-Host "********************************************************************
 Write-Host "Zero the Hero - ToolBoxV2 Core Installer" -ForegroundColor Cyan
 
 # ── Constants ────────────────────────────────────────────────
-$INSTALLER_VERSION    = "1.0.0"
+$INSTALLER_VERSION    = "1.0.1"
 $TB_ARTIFACT_NAME     = "ToolBoxV2"
 $REGISTRY_API         = "https://registry.simplecore.app/api/v1"
 $GITHUB_REPO          = "MarkinHaus/ToolBoxV2"
@@ -52,7 +52,10 @@ $MIN_DISK_MB          = 300
 $FEATURES_IMMUTABLE   = "mini core"
 $FEATURES_OPTIONAL    = @("cli","web","desktop","isaa","exotic")
 
-# ── Colors ───────────────────────────────────────────────────
+# ── Colors / Logging ─────────────────────────────────────────
+# NOTE: all human + JSON log output goes through Write-Host (information
+# stream), so stdout stays clean for piped/JSON consumers — parity with the
+# >&2 redirects fixed in installer.sh (fd2707bb).
 function Log   { param($m) Write-Host "[✓] $m" -ForegroundColor Green }
 function Info  { param($m) Write-Host "[→] $m" -ForegroundColor Cyan }
 function Warn  { param($m) Write-Host "[!] $m" -ForegroundColor Yellow }
@@ -62,18 +65,17 @@ function Step  { param($m) Write-Host "`n── $m ─────────�
 function JLog  { param($phase, $step, $status, $msg, $pct = 0)
     if ($JsonOutput) {
         $ts = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-        $obj = [ordered]@{ ts=$ts; phase=$phase; step=$step; status=$status; msg=$msg; pct=$pct }; Write-Output ($obj | ConvertTo-Json -Compress)
+        $obj = [ordered]@{ ts=$ts; phase=$phase; step=$step; status=$status; msg=$msg; pct=$pct }; Write-Host ($obj | ConvertTo-Json -Compress)
     }
 }
 function DryRun { if ($DryRun) { Warn "[dry-run] $args"; return $true } else { return $false } }
-$SOURCE_FROM = $SourceSource
-$SOURCE_FROM = $SourceVersion
 
 # ── Global State ─────────────────────────────────────────────
 $ARCH             = if ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -eq "Arm64") { "arm64" } else { "x86_64" }
 $INSTALL_MODE     = $Mode
 $SOURCE_FROM      = "git"
 $SOURCE_BRANCH    = $Branch
+$TB_VERSION_TARGET = $Version
 $INSTALL_PATH     = $Path
 $ENVIRONMENT      = "development"
 $INSTANCE_ID      = "tbv2_main"
@@ -99,6 +101,10 @@ Usage: .\installer.ps1 [options]
   -Path <dir>       Custom install directory
   -Config <file>    Load install config from YAML
   -Branch <branch>  Git branch (source mode only, default: master)
+  -Source <src>     github | registry (source mode)
+  -Version <ver>    nightly | latest | x.x.x
+  -JsonOutput       Emit JSON progress lines
+  -DryRun           Show actions without executing
   -Update           Update existing installation
   -Uninstall        Remove ToolBoxV2
 "@
@@ -147,7 +153,7 @@ function Prompt-Default {
 function Check-DiskSpace {
     param([string]$DirPath)
     $drive = [System.IO.Path]::GetPathRoot($DirPath)
-    $disk = Get-PSDrive -Name ($drive.TrimEnd(":\")) -ErrorAction SilentlyContinue
+    $disk = Get-PSDrive -Name ($drive.TrimEnd(":\\")) -ErrorAction SilentlyContinue
     if ($disk -and ($disk.Free / 1MB) -lt $MIN_DISK_MB) {
         Fail "Not enough disk space (need ${MIN_DISK_MB}MB)"
     }
@@ -238,6 +244,7 @@ function Phase-Config {
         Info "Loading config: $Config"
         if (-not $INSTALL_MODE)  { $script:INSTALL_MODE  = Get-YamlField $Config "install_mode" "" }
         if (-not $INSTALL_PATH)  { $script:INSTALL_PATH  = Get-YamlField $Config "install_path" "" }
+        if (-not $TB_VERSION_TARGET) { $script:TB_VERSION_TARGET = Get-YamlField $Config "tb_version" "" }
         $script:SOURCE_FROM   = Get-YamlField $Config "source_from"   "git"
         $script:SOURCE_BRANCH = Get-YamlField $Config "source_branch" "master"
         $script:ENVIRONMENT   = Get-YamlField $Config "environment"   "development"
@@ -248,65 +255,6 @@ function Phase-Config {
         $script:OPT_MINIO     = (Get-YamlField $Config "optional.minio"           "false") -eq "true"
         $script:OPT_REGISTRY  = (Get-YamlField $Config "optional.registry"        "false") -eq "true"
     }
-
-    # Install mode
-    if (-not $INSTALL_MODE) {
-        Write-Host ""
-        Write-Host "  Select install mode:"
-        Write-Host "  1) native   — Single binary, no Python required (recommended)"
-        Write-Host "  2) uv       — Python package via uv tool"
-        Write-Host "  3) docker   — Containerized, isolated"
-        Write-Host "  4) source   — Full source from Git or Registry"
-        Ask "Mode [1-4] (default: 1) : "
-        $choice = Read-Host
-        $script:INSTALL_MODE = switch ($choice) {
-            "2" { "uv" }; "3" { "docker" }; "4" { "source" }; default { "native" }
-        }
-    }
-
-    if ($INSTALL_MODE -eq "source" -and -not $SOURCE_FROM) {
-        Write-Host "  1) git      — Clone from GitHub"
-        Write-Host "  2) registry — Download release tarball"
-        Ask "Source [1-2] (default: 1) : "
-        $sc = Read-Host
-        $script:SOURCE_FROM = if ($sc -eq "2") { "registry" } else { "git" }
-    }
-
-    # Features
-    Write-Host ""
-    Write-Host "  Included (always): mini core"
-    $selFeatures = $FEATURES
-    foreach ($feat in $FEATURES_OPTIONAL) {
-        $currently = if ($selFeatures -match "\b${feat}\b") { "yes" } else { "no" }
-        $def = if ($currently -eq "yes") { "y" } else { "n" }
-        if (Confirm-User "  Enable ${feat}? [currently: $currently]" $def) {
-            if ($selFeatures -notmatch "\b${feat}\b") { $selFeatures += " $feat" }
-        } else {
-            $selFeatures = ($selFeatures -split " " | Where-Object { $_ -ne $feat }) -join " "
-        }
-    }
-    $script:FEATURES = $selFeatures.Trim()
-
-    $script:ENVIRONMENT = Prompt-Default "Environment (development|production|staging)" $ENVIRONMENT
-
-    if (-not $INSTALL_PATH) {
-        $default = Get-DefaultPath
-        Ask "Custom install path? Leave empty for default ($default) : "
-        $cp = Read-Host
-        $script:INSTALL_PATH = if ($cp) { $cp } else { $default }
-    }
-
-    Log "Mode: $INSTALL_MODE$(if ($SOURCE_FROM) { " ($SOURCE_FROM)" })"
-    Log "Path: $INSTALL_PATH"
-    Log "Env:  $ENVIRONMENT"
-    Log "Features: $FEATURES_IMMUTABLE $FEATURES"
-}
-
-# ============================================================
-# PHASE 2 — PRE-FLIGHT
-# ============================================================
-function Phase-Preflight {
-    Step "Phase 2 — Pre-flight Checks"
 
     # 1. Install path
     Info "Checking install path: $INSTALL_PATH"
@@ -410,6 +358,70 @@ function Install-Optional {
 }
 
 # ============================================================
+# PHASE 2 — PRE-FLIGHT (placeholder — checks live in Phase-Config)
+# ============================================================
+function Phase-Preflight {
+    Step "Phase 2 — Pre-flight Checks"
+}
+
+# ============================================================
+# USER PROMPTS (mode / source / features / path)
+# ============================================================
+function Invoke-InteractiveConfig {
+    # Install mode
+    if (-not $INSTALL_MODE) {
+        Write-Host ""
+        Write-Host "  Select install mode:"
+        Write-Host "  1) native   — Single binary, no Python required (recommended)"
+        Write-Host "  2) uv       — Python package via uv tool"
+        Write-Host "  3) docker   — Containerized, isolated"
+        Write-Host "  4) source   — Full source from Git or Registry"
+        Ask "Mode [1-4] (default: 1) : "
+        $choice = Read-Host
+        $script:INSTALL_MODE = switch ($choice) {
+            "2" { "uv" }; "3" { "docker" }; "4" { "source" }; default { "native" }
+        }
+    }
+
+    if ($INSTALL_MODE -eq "source" -and -not $SOURCE_FROM) {
+        Write-Host "  1) git      — Clone from GitHub"
+        Write-Host "  2) registry — Download release tarball"
+        Ask "Source [1-2] (default: 1) : "
+        $sc = Read-Host
+        $script:SOURCE_FROM = if ($sc -eq "2") { "registry" } else { "git" }
+    }
+
+    # Features
+    Write-Host ""
+    Write-Host "  Included (always): mini core"
+    $selFeatures = $FEATURES
+    foreach ($feat in $FEATURES_OPTIONAL) {
+        $currently = if ($selFeatures -match "\b${feat}\b") { "yes" } else { "no" }
+        $def = if ($currently -eq "yes") { "y" } else { "n" }
+        if (Confirm-User "  Enable ${feat}? [currently: $currently]" $def) {
+            if ($selFeatures -notmatch "\b${feat}\b") { $selFeatures += " $feat" }
+        } else {
+            $selFeatures = ($selFeatures -split " " | Where-Object { $_ -ne $feat }) -join " "
+        }
+    }
+    $script:FEATURES = $selFeatures.Trim()
+
+    $script:ENVIRONMENT = Prompt-Default "Environment (development|production|staging)" $ENVIRONMENT
+
+    if (-not $INSTALL_PATH) {
+        $default = Get-DefaultPath
+        Ask "Custom install path? Leave empty for default ($default) : "
+        $cp = Read-Host
+        $script:INSTALL_PATH = if ($cp) { $cp } else { $default }
+    }
+
+    Log "Mode: $INSTALL_MODE$(if ($SOURCE_FROM) { " ($SOURCE_FROM)" })"
+    Log "Path: $INSTALL_PATH"
+    Log "Env:  $ENVIRONMENT"
+    Log "Features: $FEATURES_IMMUTABLE $FEATURES"
+}
+
+# ============================================================
 # PHASE 3 — INSTALL
 # ============================================================
 function Phase-Install {
@@ -446,7 +458,8 @@ function Get-VersionAndUrl {
         } catch { Warn "Registry lookup failed - falling back to GitHub" }
     }
 
-    # GitHub path: nightly tag or latest release
+    # GitHub path: nightly tag or latest release (graceful — no hard exit,
+    # caller decides; parity with installer.sh fd2707bb)
     JLog "install" "resolve" "running" "Resolving version from GitHub" 10
     $tag = ""
     if ($TB_VERSION_TARGET -eq "nightly") {
@@ -462,11 +475,25 @@ function Get-VersionAndUrl {
     } else {
         $tag = $TB_VERSION_TARGET
     }
-    if (-not $tag) { Fail "Could not determine release tag for version=$TB_VERSION_TARGET" }
+    if (-not $tag) {
+        JLog "install" "resolve" "error" "Could not determine release tag (version=$TB_VERSION_TARGET)" 10
+        return @{ Version=""; Url=""; Checksum="" }
+    }
     $url = "https://github.com/$GITHUB_REPO/releases/download/$tag/$fname"
     JLog "install" "resolve" "done" "Resolved: v$tag" 20
     return @{ Version=($tag -replace "^v",""); Url=$url; Checksum="" }
 }
+
+function Add-BinToPath {
+    param([string]$BinDir)
+    $currentPath = [System.Environment]::GetEnvironmentVariable("PATH", "User")
+    if ($currentPath -notlike "*$BinDir*") {
+        [System.Environment]::SetEnvironmentVariable("PATH", "$BinDir;$currentPath", "User")
+        $env:PATH = "$BinDir;$env:PATH"
+        Log "Added $BinDir to user PATH"
+    }
+}
+
 function Install-Native {
     Info "Fetching latest binary..."
     $info = Get-VersionAndUrl
@@ -481,14 +508,25 @@ function Install-Native {
         Log "Checksum verified"
     }
 
-    # Add to PATH via user environment
-    $currentPath = [System.Environment]::GetEnvironmentVariable("PATH", "User")
-    $binDir = "$INSTALL_PATH\bin"
-    if ($currentPath -notlike "*$binDir*") {
-        [System.Environment]::SetEnvironmentVariable("PATH", "$binDir;$currentPath", "User")
-        $env:PATH = "$binDir;$env:PATH"
-        Log "Added $binDir to user PATH"
+    # Binary smoke test — catch corrupt/incompatible downloads early
+    # (parity: GLIBC guard in installer.sh fd2707bb)
+    $probe = $null
+    try { $probe = (& $dest --version 2>&1 | Out-String).Trim() } catch { $probe = $null }
+    if (-not $probe) {
+        Warn "Binary smoke test failed — download may be corrupt or blocked"
+        $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
+        if ($uvCmd) {
+            Warn "Falling back to uv mode"
+            Remove-Item $dest -Force -ErrorAction SilentlyContinue
+            $script:INSTALL_MODE = "uv"
+            $script:RUNTIME      = "uv"
+            $script:UV_BIN       = $uvCmd.Source
+            return Install-Uv
+        }
+        Fail "Binary not runnable and no uv available. Run with -Mode uv."
     }
+
+    Add-BinToPath "$INSTALL_PATH\bin"
 
     Log "Binary installed: $dest"
     return $info.Version
@@ -498,10 +536,21 @@ function Install-Uv {
     Info "Installing via uv tool..."
     $extras = ($FEATURES -split " " | Where-Object { $_ -notmatch "^(core|mini)$" }) -join ","
     $pkg = if ($extras) { "ToolBoxV2[$extras]" } else { "ToolBoxV2" }
+
+    # Pin uv tool dirs to install path (parity: installer.sh fd2707bb)
+    $env:UV_TOOL_DIR     = "$INSTALL_PATH\uv-tools"
+    $env:UV_TOOL_BIN_DIR = "$INSTALL_PATH\bin"
+    New-Item -ItemType Directory -Path $env:UV_TOOL_DIR, $env:UV_TOOL_BIN_DIR -Force | Out-Null
     & $UV_BIN tool install $pkg --force
-    Log "Installed: $pkg"
-    $ver = (& tb --version 2>$null) -replace "[^\d\.]","" | Select-Object -First 1
-    return if ($ver) { $ver } else { "unknown" }
+    if ($LASTEXITCODE -ne 0) { Fail "uv tool install failed (pkg=$pkg)" }
+    Log "Installed: $pkg via uv"
+
+    Add-BinToPath "$INSTALL_PATH\bin"
+
+    $ver = (& "$INSTALL_PATH\bin\tb.exe" --version 2>$null) -replace "[^\d\.]","" | Select-Object -First 1
+    $result = "unknown"
+    if ($ver) { $result = $ver }
+    return $result
 }
 
 function Install-Venv {
@@ -561,13 +610,16 @@ function Install-Source {
         "@echo off`ncd /d `"$srcDir`" && `"$UV_BIN`" run tb %*" | Set-Content "$INSTALL_PATH\bin\tb.cmd"
     } else {
         & $PYTHON_BIN -m venv "$srcDir\.venv"
-        & "$srcDir\.venv\Scripts\pip.exe" install -e ".[$(($FEATURES -replace ' ',','))]" -q
+        $featCsv = ($FEATURES -split " ") -join ","
+        & "$srcDir\.venv\Scripts\pip.exe" install -e ".[$featCsv]" -q
         "@echo off`n`"$srcDir\.venv\Scripts\tb.exe`" %*" | Set-Content "$INSTALL_PATH\bin\tb.cmd"
     }
     Pop-Location
 
     $ver = (& "$INSTALL_PATH\bin\tb.cmd" --version 2>$null) -replace "[^\d\.]","" | Select-Object -First 1
-    return if ($ver) { $ver } else { "dev" }
+    $result = "dev"
+    if ($ver) { $result = $ver }
+    return $result
 }
 
 # ============================================================
@@ -757,6 +809,7 @@ Write-Host ""
 switch ($ACTION) {
     "install" {
         Phase-Discovery
+        Invoke-InteractiveConfig
         Phase-Config
         Phase-Preflight
         $tbVersion = if ($INSTALL_MODE -eq "uv" -and $RUNTIME -eq "venv") {
@@ -771,7 +824,7 @@ switch ($ACTION) {
         if ((Test-Path $tbBin) -and -not (DryRun "tb access")) {
             JLog "install" "access" "running" "Setting up tb global access" 95
             try {
-                & $tbBin access 2>`$null
+                & $tbBin access 2>$null
                 JLog "install" "access" "done" "tb accessible globally" 100
             } catch {
                 Warn "tb access command failed - PATH fallback active"
@@ -781,6 +834,6 @@ switch ($ACTION) {
 
         Print-Summary $tbVersion
     }
-    "update"    { Phase-Discovery; Action-Update }
+    "update"    { Phase-Discovery; Phase-Config; Action-Update }
     "uninstall" { Phase-Discovery; Action-Uninstall }
 }

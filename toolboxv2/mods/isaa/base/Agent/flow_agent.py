@@ -69,9 +69,7 @@ except ImportError:
         pass
 
 try:
-    #from mcp.server.fastmcp import FastMCP
-    class FastMCP:
-        pass
+    from mcp.server.fastmcp import FastMCP
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
@@ -4474,7 +4472,7 @@ class FlowAgent:
         if self.a2a_server:
             await self.a2a_server.close()
         if self.mcp_server:
-            await self.mcp_server.close()
+            await self.mcp_server.close() # not found ...
         logger.info(f"FlowAgent '{self.amd.name}' closed")
 
     # =========================================================================
