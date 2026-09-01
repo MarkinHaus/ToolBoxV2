@@ -58,7 +58,7 @@ curl -fsSL https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/mas
 ### Windows
 
 ```powershell
-irm "https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.ps1" | tee tbInstaller.ps1 | % { & ([scriptblock]::Create($_)) }
+irm "https://raw.githubusercontent.com/MarkinHaus/ToolBoxV2/refs/heads/master/installer.ps1" | Out-File tbInstaller.ps1; & .\tbInstaller.ps1
 ```
 
 ### pip

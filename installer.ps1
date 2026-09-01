@@ -96,7 +96,7 @@ if ($Uninstall) { $ACTION = "uninstall" }
 if ($Update)    { $ACTION = "update" }
 if ($Help) {
     Write-Host @"
-Usage: .\installer.ps1 [options]
+Usage: .\tbInstaller.ps1 [options]
   -Mode <mode>      native | uv | docker | source
   -Path <dir>       Custom install directory
   -Config <file>    Load install config from YAML
