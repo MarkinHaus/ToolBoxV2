@@ -1518,7 +1518,7 @@ setInterval(()=>{ if(Object.keys(STATE.agents).length) renderSidebar(); }, 5000)
 # WSGI / Standalone
 # =============================================================================
 
-async def main(host="127.0.0.1", port=7000, wit_static=True):
+async def main(host="127.0.0.1", port=7100, wit_static=True):
     print("\nRoutes:")
     for r in app.list_routes():
         print(f"  {r['method'].ljust(6)} {r['path']}")

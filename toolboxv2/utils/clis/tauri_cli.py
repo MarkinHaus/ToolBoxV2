@@ -543,7 +543,7 @@ def update_app(source: str = "auto") -> bool:
     print_status(f"Updated to v{latest}!", "success")
     return True
 
-def _fallback_to_local_ui(http_port: int = 5000) -> None:
+def _fallback_to_local_ui(http_port: int = 8467) -> None:
     """When the Tauri binary is unavailable, serve the local web UI (browser +
     tray) instead of dead-ending. Falls through to CLI if waitress is missing.
     """
@@ -556,8 +556,8 @@ def _fallback_to_local_ui(http_port: int = 5000) -> None:
         print_status(f"Local UI fallback failed: {e}", "error")
 
 
-def run_app(with_worker: bool = True, http_port: int = 5000,
-            ws_port: int = 5001, no_ws: bool = False,
+def run_app(with_worker: bool = True, http_port: int = 8467,
+            ws_port: int = 8468, no_ws: bool = False,
             download_if_missing: bool = True) -> None:
     """Run the Tauri app (download if needed)."""
     print_box_header("Starting SimpleCore Desktop App", "🚀")
@@ -947,7 +947,7 @@ def build_tauri_app(project_root: Path, target: Optional[str] = None,
         return False
 
 
-def run_worker_debug(project_root: Path, http_port: int = 5000, ws_port: int = 5001,
+def run_worker_debug(project_root: Path, http_port: int = 8467, ws_port: int = 8468,
                      no_ws: bool = False, verbose: bool = True) -> subprocess.Popen:
     """Start worker in debug mode (directly, without PyInstaller build).
 
@@ -981,7 +981,7 @@ def run_worker_debug(project_root: Path, http_port: int = 5000, ws_port: int = 5
 
 def run_dev_server(project_root: Path, no_worker: bool = False,
                    worker_only: bool = False,
-                   http_port: int = 5000, ws_port: int = 5001,
+                   http_port: int = 8467, ws_port: int = 8468,
                    no_ws: bool = False) -> None:
     """Start Tauri development server with debug options.
 
@@ -1083,10 +1083,10 @@ Examples:
     run_parser = subparsers.add_parser("run", help="Run the desktop app (download if needed)")
     run_parser.add_argument("--no-worker", action="store_true",
                             help="Don't start local worker (use remote API)")
-    run_parser.add_argument("--http-port", type=int, default=5000,
-                            help="HTTP worker port (default: 5000)")
-    run_parser.add_argument("--ws-port", type=int, default=5001,
-                            help="WebSocket worker port (default: 5001)")
+    run_parser.add_argument("--http-port", type=int, default=8467,
+                            help="HTTP worker port (default: 8467)")
+    run_parser.add_argument("--ws-port", type=int, default=8468,
+                            help="WebSocket worker port (default: 8468)")
     run_parser.add_argument("--no-ws", action="store_true",
                             help="Disable WebSocket server")
     run_parser.add_argument("--no-download", action="store_true",
@@ -1149,10 +1149,10 @@ Examples:
                             help="Don't start Python worker (use remote API)")
     dev_parser.add_argument("--worker-only", action="store_true",
                             help="Only start Python worker (no Tauri app)")
-    dev_parser.add_argument("--http-port", type=int, default=5000,
-                            help="HTTP worker port (default: 5000)")
-    dev_parser.add_argument("--ws-port", type=int, default=5001,
-                            help="WebSocket worker port (default: 5001)")
+    dev_parser.add_argument("--http-port", type=int, default=8467,
+                            help="HTTP worker port (default: 8467)")
+    dev_parser.add_argument("--ws-port", type=int, default=8468,
+                            help="WebSocket worker port (default: 8468)")
     dev_parser.add_argument("--no-ws", action="store_true",
                             help="Disable WebSocket server (HTTP only)")
 
@@ -1219,8 +1219,8 @@ def main():
         # Run the app by default (download if needed)
         run_app(
             with_worker=True,
-            http_port=5000,
-            ws_port=5001,
+            http_port=8467,
+            ws_port=8468,
             no_ws=False,
             download_if_missing=True
         )

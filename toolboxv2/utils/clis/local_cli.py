@@ -356,7 +356,7 @@ async def _add_custom_service():
         print_status(f"Service '{name}' already exists", "error"); return
 
     c_print(f"  {Colors.DIM}You define the tb command. Enter the part after 'tb' — "
-            f"e.g. 'run my-flow' or 'api start --port 9000'.{Colors.RESET}")
+            f"e.g. 'run my-flow' or 'api start --port 9010'.{Colors.RESET}")
     raw = _prompt("tb").strip()
     if not raw:
         print_status("Command required", "error"); return
@@ -554,7 +554,7 @@ async def root_menu(sess: CLISession):
         elif choice == "web":
             import webbrowser
             # TODO encur local ui is running and get the current port- rework local ui
-            port = os.getenv("TB_HTTP_PORT", "8080")
+            port = os.getenv("TB_LOCAL_UI_PORT", "8467")
             webbrowser.open(f"http://127.0.0.1:{port}/")
             print_status("Opened in browser", "success")
             await asyncio.sleep(0.6)

@@ -29,8 +29,8 @@ if TYPE_CHECKING:
 class WebDisplayConfig:
     """Configuration for web app display"""
     host: str = "localhost"
-    proxy_port_start: int = 9000
-    proxy_port_end: int = 9100
+    proxy_port_start: int = 9200
+    proxy_port_end: int = 9300
     session_timeout_minutes: int = 60
     max_sessions: int = 10
     enable_auth: bool = False  # For local dev, no auth needed

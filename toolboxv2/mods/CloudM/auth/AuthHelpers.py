@@ -106,7 +106,7 @@ async def get_magic_link_email(app: App, username=None):
         db_helper_save_user(app, asdict(user))
 
     invitation = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
-    res = send_magic_link_email(app, user.email, os.getenv("APP_BASE_URL", "http://localhost:8080")+f"/web/assets/m_log_in.html?key={quote(invitation)}&name={user.name}", user.name)
+    res = send_magic_link_email(app, user.email, os.getenv("APP_BASE_URL", "http://localhost:8467")+f"/web/assets/m_log_in.html?key={quote(invitation)}&name={user.name}", user.name)
     return res
 
 

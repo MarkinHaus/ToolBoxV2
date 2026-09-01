@@ -236,7 +236,7 @@ Worker manager configuration.
 | Field | Type | Default |
 |-------|------|---------|
 | `web_ui_host` | `str` | `"127.0.0.1"` |
-| `web_ui_port` | `int` | `9005` |
+| `web_ui_port` | `int` | `9010` |
 | `control_socket` | `str` | `""` |
 | `pid_file` | `str` | `""` |
 | `log_file` | `str` | `""` |

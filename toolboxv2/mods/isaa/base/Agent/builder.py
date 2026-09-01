@@ -76,7 +76,7 @@ class A2AConfig(BaseModel):
 
     enabled: bool = False
     host: str = "0.0.0.0"
-    port: int = 5000
+    port: int = 5001
     agent_name: Optional[str] = None
     agent_description: Optional[str] = None
     agent_version: str = "1.0.0"
@@ -581,7 +581,7 @@ class FlowAgentBuilder:
     def enable_a2a_server(
         self,
         host: str = "0.0.0.0",
-        port: int = 5000,
+        port: int = 5001,
         agent_name: str = None,
         agent_description: str = None,
     ) -> "FlowAgentBuilder":

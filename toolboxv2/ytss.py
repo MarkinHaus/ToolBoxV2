@@ -61,7 +61,7 @@ except ImportError:
 DB_PATH      = os.environ.get("YTS_DB",      "streams.db")
 MEDIA_DIR    = Path(os.environ.get("YTS_MEDIA", "media"))
 HOST         = os.environ.get("YTS_HOST",    "0.0.0.0")
-PORT         = int(os.environ.get("YTS_PORT", "8080"))
+PORT         = int(os.environ.get("YTS_PORT", "8090"))
 # Set via env: export YTS_API_KEY=your-secret
 _ENV_API_KEY = os.environ.get("YTS_API_KEY", "admin-secret-change-me")
 
@@ -2686,14 +2686,14 @@ SETUP_GUIDE = """
    YTS_DB=streams.db           # SQLite database path
    YTS_MEDIA=media             # upload directory
    YTS_HOST=0.0.0.0            # bind host
-   YTS_PORT=8080               # bind port
+   YTS_PORT=8090               # bind port
 
 3. RUN THE SERVER
    ─────────────────
    python yt_stream_service.py
 
-   Admin panel: http://localhost:8080
-   API base:    http://localhost:8080/api
+   Admin panel: http://localhost:8090
+   API base:    http://localhost:8090/api
 
 4. GET YOUR YOUTUBE STREAM KEY
    ─────────────────────────────
@@ -2705,7 +2705,7 @@ SETUP_GUIDE = """
 5. CREATE A STREAM (UI or API)
    ─────────────────────────────
    UI:   Click "+ NEW STREAM" on the admin panel
-   API:  curl -X POST http://localhost:8080/api/streams \\
+   API:  curl -X POST http://localhost:8090/api/streams \\
               -H "X-API-Key: admin-secret-change-me" \\
               -H "Content-Type: application/json" \\
               -d '{"name":"My Stream","stream_key":"xxxx","mode":"file"}'
@@ -2719,7 +2719,7 @@ SETUP_GUIDE = """
           ffmpeg -i input.mp4 -f h264 pipe:1 | \\
             curl -X POST -T - \\
               -H "X-API-Key: admin-secret-change-me" \\
-              http://localhost:8080/api/streams/<id>/push
+              http://localhost:8090/api/streams/<id>/push
 
 7. PRODUCTION NOTES
    ─────────────────
@@ -2759,7 +2759,7 @@ class _WSGIClient:
             "wsgi.run_once": False,
             "SERVER_NAME": "localhost",
             "SERVER_PORT": "8080",
-            "HTTP_HOST": "localhost:8080",
+            "HTTP_HOST": "localhost:8090",
         }
         for k, v in headers.items():
             key = "HTTP_" + k.upper().replace("-", "_")

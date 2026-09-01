@@ -39,7 +39,7 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", 465))  # 465 for SSL, 587 for STARTTLS
 
 # App specific details from environment variables
 APP_NAME = os.getenv("APP_NAME", "SimpleCore")
-APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:5000")  # Your application's base URL
+APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8467")  # Your application's base URL
 SENDER_EMAIL_ADDRESS = os.getenv("SENDER_EMAIL", GMAIL_EMAIL)  # Email address to send from
 
 # Visuals (optional, provide fallback)

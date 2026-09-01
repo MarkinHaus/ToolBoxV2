@@ -51,7 +51,7 @@ _REQUIRED_DEFAULTS: dict[str, str] = {
     "TB_ENV": "development",
     "IS_OFFLINE_DB": "true",
     "DB_MODE_KEY": "LC",
-    "APP_BASE_URL": "http://localhost:8000",
+    "APP_BASE_URL": "http://localhost:8467",
 
 }
 
@@ -248,7 +248,7 @@ def _start_tray(app, url: str) -> bool:
         return False
 
 
-def _serve_local_ui(host: str = "127.0.0.1", port: int = 5000) -> bool:
+def _serve_local_ui(host: str = "127.0.0.1", port: int = 8467) -> bool:
     """Serve the local web UI (FastTB) on a loopback port. Blocks. Returns
     False immediately if its deps are missing so the caller can fall through.
     """
@@ -273,7 +273,7 @@ def _serve_local_ui(host: str = "127.0.0.1", port: int = 5000) -> bool:
 
 
 def launch_ui(app, prefer: str = "auto", host: str = "127.0.0.1",
-              port: int = 5000) -> str:
+              port: int = 8467) -> str:
     """headless=False entry: route the user into a usable UI with a fallback
     chain. Returns which surface was launched.
 

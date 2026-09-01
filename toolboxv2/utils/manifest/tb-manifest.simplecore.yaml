@@ -121,7 +121,7 @@ services:
   manager:
     web_ui_enabled: true
     web_ui_host: "127.0.0.1"  # Manager-UI NUR lokal erreichbar (nicht über Nginx exposed)
-    web_ui_port: 9000
+    web_ui_port: 9010
     health_check_interval: 10
     restart_delay: 2
     max_restart_attempts: 5

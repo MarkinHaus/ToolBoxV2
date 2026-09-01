@@ -175,7 +175,7 @@ class MCPConfig:
     # Transport
     server_mode: ServerMode = ServerMode.STDIO
     http_host: str = "127.0.0.1"  # Secure default (not 0.0.0.0)
-    http_port: int = 8765
+    http_port: int = 8791
 
     # Security
     api_keys_file: str = "MCPConfig/mcp_api_keys.json"

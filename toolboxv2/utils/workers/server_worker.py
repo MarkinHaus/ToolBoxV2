@@ -2071,7 +2071,7 @@ class HTTPWorker:
             elif isinstance(body, dict):
                 body_bytes = json.dumps(body).encode("utf-8")
 
-        base_port = int(getattr(self.config.manager, "web_ui_port", 9005))
+        base_port = int(getattr(self.config.manager, "web_ui_port", 9010))
         mgr_host = getattr(self.config.manager, "web_ui_host", "127.0.0.1") or "127.0.0.1"
         # Force IPv4 numeric host on Windows (localhost resolves to ::1 there)
         if mgr_host in ("localhost", ""):

@@ -80,6 +80,8 @@ def menu_select(options, title: str = None, *, start: int = 0, hint: str = None)
     norm = [o if isinstance(o, tuple) else (o, str(o)) for o in options]
     if not norm:
         return None
+    if not sys.stdin.isatty():
+        return None  # non-interactive: no menu possible
     idx = max(0, min(start, len(norm) - 1))
 
     if title:
@@ -102,6 +104,8 @@ def menu_select(options, title: str = None, *, start: int = 0, hint: str = None)
         try:
             key = read_key()
         except KeyboardInterrupt:
+            return None
+        except (OSError, ValueError):  # termios.error subclasses OSError
             return None
         if key in ("up", "w", "W"):
             idx = (idx - 1) % len(norm)

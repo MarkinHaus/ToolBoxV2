@@ -175,7 +175,7 @@ class NginxConfig:
 class ManagerConfig:
     """Worker manager configuration."""
     web_ui_host: str = "127.0.0.1"
-    web_ui_port: int = 9005
+    web_ui_port: int = 9010
     control_socket: str = ""
     pid_file: str = ""
     log_file: str = ""
@@ -185,7 +185,7 @@ class ManagerConfig:
     rolling_update_delay: int = 5
     live_dashboard_key: str = ""  # /live dashboard auth key; empty disables route
     live_ui_host: str = "127.0.0.1"
-    live_ui_port: int = 5000  # dedicated port for the '/' live-UI owner
+    live_ui_port: int = 8467  # dedicated port for the '/' live-UI owner
     live_ui_replicas: int = 2  # 1 owner + (n-1) standby for failover
 
 
@@ -528,7 +528,7 @@ nginx:
 manager:
   web_ui_enabled: true
   web_ui_host: "127.0.0.1"
-  web_ui_port: 9000
+  web_ui_port: 9010
   control_socket: "${TB_DATA_DIR:~/.toolboxv2}/manager.sock"
   pid_file: "${TB_DATA_DIR:~/.toolboxv2}/manager.pid"
   log_file: "${TB_DATA_DIR:~/.toolboxv2}/logs/manager.log"

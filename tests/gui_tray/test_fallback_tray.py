@@ -38,7 +38,7 @@ def fake_pystray(monkeypatch):
 
 def test_tray_base_url_default(fallback_tray, monkeypatch):
     monkeypatch.delenv("TB_TRAY_URL", raising=False)
-    assert fallback_tray.tray_base_url() == "http://127.0.0.1:5000"
+    assert fallback_tray.tray_base_url() == "http://127.0.0.1:8467"
 
 
 def test_tray_base_url_aus_env_ohne_slash(fallback_tray, monkeypatch):

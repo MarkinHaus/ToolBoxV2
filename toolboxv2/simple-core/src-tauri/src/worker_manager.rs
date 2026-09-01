@@ -16,8 +16,8 @@ use tauri::AppHandle;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri_plugin_shell::process::CommandChild;
 
-const DEFAULT_HTTP_PORT: u16 = 5000;
-const DEFAULT_WS_PORT: u16 = 5001;
+const DEFAULT_HTTP_PORT: u16 = 8467;
+const DEFAULT_WS_PORT: u16 = 8468;
 const REMOTE_API_URL: &str = "https://simplecore.app";
 const REMOTE_WS_URL: &str = "wss://simplecore.app";
 
@@ -25,7 +25,7 @@ const DEFAULT_LOCAL_UI_HOST: &str = "127.0.0.1";
 
 /// Endpoint file written by Python (`utils/workers/fast/endpoint.py`) whenever a
 /// worker binds the local UI. Reading it here is what keeps the Rust shell on
-/// the same port as the manifest instead of a hardcoded 5000.
+/// the same port as the manifest instead of a hardcoded 8467.
 fn endpoint_file() -> Option<std::path::PathBuf> {
     dirs::data_dir().map(|p| p.join("toolboxv2").join("local_ui.json"))
 }

@@ -3490,7 +3490,7 @@ OBS_SOURCE = "isaa_obs"
 OBS_MODULE = "toolboxv2.mods.isaa.extras.live_obs_server"
 
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = int(os.getenv("TB_HTTP_PORT", "5000"))
+DEFAULT_PORT = int(os.getenv("TB_LOCAL_UI_PORT", "8467"))
 
 
 @export(mod_name=Name, name="ui")

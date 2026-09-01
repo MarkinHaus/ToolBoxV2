@@ -262,7 +262,7 @@ def start(pidname, args, filename):
     # ponytail: In Nuitka standalone/onefile, sys.executable IS the compiled binary.
     # Skip python/pythonw swap — spawn self directly without "-m toolboxv2".
     try:
-        __compiled__
+        # __compiled__
         p = run_executable_in_background(sys.executable, sub_args)
         pid = p.pid
         with open(filename, "w", encoding="utf8") as f:
@@ -1493,6 +1493,10 @@ async def setup_app(ov_name=None, App=TbApp):
         os.remove(app_data_folder)
 
     if args.test:
+        _reg_dir = tb_root_dir.parent / "tb-registry"
+        if not _reg_dir.is_dir():
+            print(f"tb --test needs the tb-registry checkout at {_reg_dir} (dev layout; not bundled in wheel installs)")
+            exit(1)
         get_app().logger.info(f"Testing in {tb_root_dir}")
         args_ = [w for w in args.kwargs[0].values()]
         if args.name == "test":
@@ -2146,9 +2150,15 @@ def runner_setup():
         from toolboxv2.utils.clis.cli_printing import Style
         print(Style.GREY("─" * 25))
         sys.argv = ["workers", "status"]
-        cli_worker_manager()
+        if callable(cli_worker_manager):
+            cli_worker_manager()
+        else:
+            print("workers: n/a (web feature disabled)")
         sys.argv = ["p2p", "status"]
-        cli_tcm_runner()
+        if callable(cli_tcm_runner):
+            cli_tcm_runner()
+        else:
+            print("p2p: n/a")
 
     async def cli_web_login():
         """Enhanced CLI web login entry point with modern visual feedback"""

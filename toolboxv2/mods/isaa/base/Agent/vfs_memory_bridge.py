@@ -38,6 +38,20 @@ _SKIP_PREFIXES = ("/shared",)
 GLOBAL_PREFIX = "/global"
 GLOBAL_INDEX_SPACE = "VFSIndex/global"
 _SKIP_FILENAMES = {"vfs_guide.md", "active_rules.md"}
+# memfix: .memory/* holds archived tool outputs (shell/think dumps) - indexing
+# them poisons recall and balloons VFSIndex/global. Excluded at any depth.
+_GLOBAL_SKIP_SEGMENTS = ("/.memory/",)
+
+
+def _global_path_eligible(rel: str) -> bool:
+    """True if a /global-relative path should be memory-indexed.
+
+    Gates BOTH indexing paths (live on_change + index_global_memory bulk scan).
+    Excludes system/noise trees like .memory at any depth; normal knowledge
+    content stays eligible.
+    """
+    norm = "/" + rel.replace("\\", "/")
+    return not any(seg in norm for seg in _GLOBAL_SKIP_SEGMENTS)
 _CHUNK_SIZE = 1400
 _CHUNK_OVERLAP = 120
 _MAX_CHUNKS_PER_FILE = 24
@@ -304,6 +318,8 @@ class VFSMemoryIndexer:
         # /global IS a mount + shared store — but explicitly wanted in memory.
         # Allow it before the mount/shared checks below would reject it.
         if path.startswith(GLOBAL_PREFIX):
+            if not _global_path_eligible(path[len(GLOBAL_PREFIX):]):
+                return False
             f = self.vfs.files.get(path)
             if f is not None and getattr(f, "filename", "") in _SKIP_FILENAMES:
                 return False
@@ -498,29 +514,21 @@ class VFSMemoryIndexer:
     def _load_indexed_hashes(self, space: str | None = None) -> dict[str, str]:
         """Read already-indexed vfs sources + hashes from the store (cheap SQL).
 
-        Guard: if FAISS is empty for this space (e.g. after restart where
-        vectors.faiss was never saved), the SQLite hashes are stale — the
-        content is in SQLite but the vectors are gone. Returning empty forces
-        a full re-index, repopulating FAISS.
+        Embedding BLOBs in SQLite are the source of truth (Option C): rows
+        without a BLOB (embedding IS NULL, e.g. migrated legacy entries) are
+        not considered indexed, so backfill re-embeds exactly the files whose
+        vectors are missing. An empty FAISS RAM index is irrelevant - it is
+        rebuilt from the BLOBs on load.
         """
         out: dict[str, str] = {}
         store = self._store(space)
         if store is None:
             return out
-        # Guard: empty FAISS → stale hashes → force re-index
-        try:
-            if store._faiss.index.ntotal == 0:
-                logger.info(
-                    f"[VFSMemoryIndexer] FAISS empty for {space or self.space} "
-                    f"— forcing full re-index (hashes in SQLite are stale)"
-                )
-                return out
-        except Exception:
-            pass
         try:
             rows = store._exec(
                 "SELECT meta_source, meta_custom FROM entries "
-                "WHERE space = ? AND is_active = 1 AND meta_source LIKE 'vfs:%'",
+                "WHERE space = ? AND is_active = 1 AND meta_source LIKE 'vfs:%' "
+                "AND embedding IS NOT NULL",
                 (store.space,),
             ).fetchall()
             for row in rows:
@@ -594,18 +602,14 @@ class VFSMemoryIndexer:
 def _global_hash_current(store, source: str, h: str) -> bool:
     """True if the store already holds ACTIVE entries for source with this hash.
 
-    Guard: if FAISS is empty the SQLite hashes are stale (vectors lost on
-    restart).  Returning False forces a re-index, repopulating FAISS.
+    Since we store embeddings in SQLite BLOBs, we no longer force a re-index
+    if FAISS is empty (it will be rebuilt from SQLite on load).
     """
-    try:
-        if store._faiss.index.ntotal == 0:
-            return False
-    except Exception:
-        pass
     try:
         rows = store._exec(
             "SELECT meta_custom FROM entries "
-            "WHERE space = ? AND is_active = 1 AND meta_source = ? LIMIT 1",
+            "WHERE space = ? AND is_active = 1 AND meta_source = ? "
+            "AND embedding IS NOT NULL LIMIT 1",
             (store.space, source),
         ).fetchall()
         for row in rows:
@@ -634,7 +638,7 @@ async def index_global_memory(memory, only_new: bool = True,
     gvfs = get_global_vfs()
     root = Path(gvfs.data_dir)
     stats = {"scanned": 0, "indexed": 0, "skipped_unchanged": 0,
-             "skipped_binary": 0, "errors": []}
+             "skipped_binary": 0, "skipped_excluded": 0, "errors": []}
 
     try:
         memory._get_or_create_store(memory._sanitize_name(GLOBAL_INDEX_SPACE))
@@ -656,6 +660,10 @@ async def index_global_memory(memory, only_new: bool = True,
             rel = fp.relative_to(root).as_posix()
             vpath = f"{GLOBAL_PREFIX}/{rel}"
             stats["scanned"] += 1
+            if not _global_path_eligible(rel):
+                stats["skipped_excluded"] += 1
+                done += 1
+                continue
             try:
                 raw = fp.read_bytes()
                 if b"\x00" in raw[:1024]:

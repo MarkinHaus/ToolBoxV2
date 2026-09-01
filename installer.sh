@@ -42,13 +42,13 @@ else
   R='' G='' Y='' B='' C='' D='' BOLD='' NC=''
 fi
 
-log()   { echo -e "${G}[✓]${NC} $*"; }
-info()  { echo -e "${B}[→]${NC} $*"; }
-warn()  { echo -e "${Y}[!]${NC} $*"; }
+log()   { echo -e "${G}[✓]${NC} $*" >&2; }
+info()  { echo -e "${B}[→]${NC} $*" >&2; }
+warn()  { echo -e "${Y}[!]${NC} $*" >&2; }
 jlog() {
   local phase="$1" step="$2" status="$3" msg="$4" pct="${5:-0}"
   printf '{"ts":"%s","phase":"%s","step":"%s","status":"%s","msg":"%s","pct":%s}\n' \
-    "$(date -u +%FT%TZ)" "$phase" "$step" "$status" "$msg" "$pct"
+    "$(date -u +%FT%TZ)" "$phase" "$step" "$status" "$msg" "$pct" >&2
 }
 dry() { [[ "$DRY_RUN" == "1" ]] && { warn "[dry-run] $*"; return 0; } || return 1; }
 
@@ -62,8 +62,8 @@ if [[ "${JSON_OUTPUT:-0}" == "1" ]]; then
 else
   fail()  { echo -e "${R}[✗]${NC} $*" >&2; exit 1; }
 fi
-ask()   { echo -e "${C}[?]${NC} $*"; }
-step()  { echo -e "\n${BOLD}${B}── $* ${NC}${D}──────────────────────────────────────${NC}"; }
+ask()   { echo -e "${C}[?]${NC} $*" >&2; }
+step()  { echo -e "\n${BOLD}${B}── $* ${NC}${D}──────────────────────────────────────${NC}" >&2; }
 
 # ── Global State ─────────────────────────────────────────────
 OS=""           # linux | macos | windows
@@ -160,7 +160,7 @@ confirm() {
   local prompt
   [ "$default" = "y" ] && prompt="[Y/n]" || prompt="[y/N]"
   ask "${msg} ${prompt}: "
-  read -r reply
+  if ! read -r reply; then reply=""; fi
   reply="${reply:-$default}"
   [[ "$reply" =~ ^[Yy] ]]
 }
@@ -168,7 +168,7 @@ confirm() {
 prompt_with_default() {
   local msg="$1" default="$2"
   ask "${msg} (default: ${C}${default}${NC}): "
-  read -r reply
+  if ! read -r reply; then reply=""; fi
   echo "${reply:-$default}"
 }
 
@@ -566,27 +566,29 @@ _get_version_and_url() {
     resp=$(registry_get "${ver_path}?platform=${platform}&architecture=${ARCH}" || true)
     if [ -n "$resp" ]; then
       local version url checksum
-      version=$(echo "$resp" | grep -o '"version":"[^"]*"' | head -1 | cut -d'"' -f4)
-      checksum=$(echo "$resp" | grep -o '"checksum":"[^"]*"' | head -1 | cut -d'"' -f4)
-      url=$(echo "$resp" | grep -o '"url":"[^"]*"' | head -1 | cut -d'"' -f4)
+      version=$(echo "$resp" | grep -oE '"version"[: ]*"[^"]*"' | head -1 | cut -d'"' -f4)
+      checksum=$(echo "$resp" | grep -oE '"checksum"[: ]*"[^"]*"' | head -1 | cut -d'"' -f4)
+      url=$(echo "$resp" | grep -oE '"url"[: ]*"[^"]*"' | head -1 | cut -d'"' -f4)
       [ -n "$url" ] && { echo "$version $url $checksum"; return; }
     fi
     warn "Registry lookup failed — falling back to GitHub"
   fi
 
   # GitHub path: nightly tag or latest release
-  jlog install resolve running "Resolving version from GitHub" 10
   local tag=""
   if [ "$TB_VERSION_TARGET" = "nightly" ]; then
     download "https://api.github.com/repos/${GITHUB_REPO}/releases/tags/nightly" /tmp/tb_release.json 2>/dev/null
-    tag=$(grep -o '"tag_name":"[^"]*"' /tmp/tb_release.json 2>/dev/null | head -1 | cut -d'"' -f4)
+    tag=$(grep -oE '"tag_name"[: ]*"[^"]*"' /tmp/tb_release.json 2>/dev/null | head -1 | cut -d'"' -f4)
   elif [ -z "$TB_VERSION_TARGET" ] || [ "$TB_VERSION_TARGET" = "latest" ]; then
     download "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" /tmp/tb_release.json 2>/dev/null
-    tag=$(grep -o '"tag_name":"[^"]*"' /tmp/tb_release.json 2>/dev/null | head -1 | cut -d'"' -f4)
+    tag=$(grep -oE '"tag_name"[: ]*"[^"]*"' /tmp/tb_release.json 2>/dev/null | head -1 | cut -d'"' -f4)
   else
     tag="$TB_VERSION_TARGET"
   fi
-  [ -z "$tag" ] && fail "Could not determine release tag for version=$TB_VERSION_TARGET"
+  if [ -z "$tag" ]; then
+    jlog install resolve error "Could not determine release tag (version=${TB_VERSION_TARGET:-latest})" 10
+    return 1
+  fi
 
   local url="https://github.com/${GITHUB_REPO}/releases/download/${tag}/${fname}"
   jlog install resolve done "Resolved: v${tag}" 20
@@ -611,6 +613,25 @@ _install_native() {
     log "Checksum verified"
   fi
 
+  # GLIBC compatibility guard — execute once; catches bundled libs too (onefile)
+  local probe
+  probe=$("$bin_dest" --version 2>&1 | head -5 || true)
+  if echo "$probe" | grep -q 'GLIBC_2\.'; then
+    local need_glibc
+    need_glibc=$(echo "$probe" | grep -oE 'GLIBC_2\.[0-9]+' | sort -Vu | tail -1)
+    warn "Binary requires ${need_glibc} — this system's libc is older"
+    if command -v uv &>/dev/null; then
+      warn "Falling back to uv mode (Python-based, no GLIBC requirement)"
+      rm -f "$bin_dest"
+      INSTALL_MODE="uv"
+      RUNTIME="uv"
+      UV_BIN=$(command -v uv)
+      _install_uv
+      return
+    fi
+    fail "System libc too old. Run with --mode uv or update your OS."
+  fi
+
   # Symlink to system bin
   local sys_bin
   sys_bin=$(bin_dir)
@@ -630,8 +651,13 @@ _install_uv() {
   extras=$(echo "$FEATURES" | tr ' ' '\n' | grep -v -E '^(core|mini)$' | sed '/^$/d' | paste -sd',' -)
   [ -n "$extras" ] && pkg="ToolBoxV2[${extras}]"
 
-  "$UV_BIN" tool install "$pkg" --force
-  log "Installed: ${pkg}"
+  export UV_TOOL_DIR="${INSTALL_PATH}/uv-tools"
+  export UV_TOOL_BIN_DIR="${INSTALL_PATH}/bin"
+  mkdir -p "$UV_TOOL_DIR" "$UV_TOOL_BIN_DIR"
+  if ! "$UV_BIN" tool install "$pkg" --force; then
+    fail "uv tool install failed (pkg=${pkg})"
+  fi
+  log "Installed: ${pkg} via uv"
 
   # _install_uv extras already sanitized above
 

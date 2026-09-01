@@ -27,7 +27,7 @@ cloudm:
 
         # OAuth callback URL
         # Must match exactly in Discord Application settings
-        redirect_uri: "${DISCORD_REDIRECT_URI:http://localhost:8000/auth/discord/callback}"
+        redirect_uri: "${DISCORD_REDIRECT_URI:http://localhost:8467/auth/discord/callback}"
 
         # OAuth scopes
         scopes: "identify email"
@@ -48,7 +48,7 @@ cloudm:
 
         # OAuth callback URL
         # Must match exactly in Google Cloud Console
-        redirect_uri: "${GOOGLE_REDIRECT_URI:http://localhost:8000/auth/google/callback}"
+        redirect_uri: "${GOOGLE_REDIRECT_URI:http://localhost:8467/auth/google/callback}"
 
         # OAuth scopes
         scopes: "openid profile email"
@@ -71,7 +71,7 @@ cloudm:
         rp_name: "${PASSKEY_RP_NAME:ToolBoxV2}"
 
         # Relying Party origin
-        rp_origin: "${PASSKEY_ORIGIN:http://localhost:8000}"
+        rp_origin: "${PASSKEY_ORIGIN:http://localhost:8467}"
 
         # Passkey timeout in milliseconds
         timeout: 60000
@@ -89,7 +89,7 @@ cloudm:
       #   enabled: false
       #   client_id: "${GITHUB_CLIENT_ID:}"
       #   client_secret: "${GITHUB_CLIENT_SECRET:}"
-      #   redirect_uri: "${GITHUB_REDIRECT_URI:http://localhost:8000/auth/github/callback}"
+      #   redirect_uri: "${GITHUB_REDIRECT_URI:http://localhost:8467/auth/github/callback}"
 
     # JWT Token Configuration
     jwt:
@@ -174,7 +174,7 @@ cloudm:
 #
 # # Application
 # TB_ENV=development
-# APP_BASE_URL=http://localhost:8000
+# APP_BASE_URL=http://localhost:8467
 # APP_BASE_URL_PROD=https://simplecore.app
 #
 # # JWT & Session Secrets (REQUIRED!)
@@ -184,14 +184,14 @@ cloudm:
 # # Discord OAuth
 # DISCORD_CLIENT_ID=your_discord_client_id
 # DISCORD_CLIENT_SECRET=your_discord_client_secret
-# DISCORD_REDIRECT_URI=http://localhost:8000/auth/discord/callback
+# DISCORD_REDIRECT_URI=http://localhost:8467/auth/discord/callback
 #
 # # Google OAuth
 # GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
 # GOOGLE_CLIENT_SECRET=your_google_client_secret
-# GOOGLE_REDIRECT_URI=http://localhost:8000/auth/google/callback
+# GOOGLE_REDIRECT_URI=http://localhost:8467/auth/google/callback
 #
 # # Passkeys
 # PASSKEY_RP_ID=localhost
 # PASSKEY_RP_NAME=ToolBoxV2
-# PASSKEY_ORIGIN=http://localhost:8000
+# PASSKEY_ORIGIN=http://localhost:8467

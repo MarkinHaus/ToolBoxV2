@@ -299,7 +299,7 @@ async def register_initial_loot_user(app: App, email: str = None, user_name: str
 
     if auth_configured:
         # Custom auth is configured - direct to web registration
-        base_url = os.getenv('APP_BASE_URL', 'http://localhost:8080')
+        base_url = os.getenv('APP_BASE_URL', 'http://localhost:8467')
         signup_url = f"{base_url}/web/assets/signup.html"
 
         print("\n" + "=" * 60)
@@ -341,7 +341,7 @@ def create_magic_log_in(app: App, username: str):
         return Result.default_internal_error("Invalid user or db connection")
 
     key = "01#" + Code.one_way_hash(user.user_pass_sync, "CM", "get_magic_link_email")
-    url = f"{os.getenv('APP_BASE_URL', 'http://localhost:8080')}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
+    url = f"{os.getenv('APP_BASE_URL', 'http://localhost:8467')}/web/assets/m_log_in.html?key={quote(key)}&name={user.name}"
 
     try:
         from ...utils.extras.qr import print_qrcode_to_console

@@ -198,7 +198,7 @@ class ZMQConfig(BaseModel):
 class ManagerConfig(BaseModel):
     """Worker manager configuration."""
     web_ui_host: str = Field(default="127.0.0.1")
-    web_ui_port: int = Field(default=9000)
+    web_ui_port: int = Field(default=9010)
     health_check_interval: int = Field(default=10)
     restart_delay: int = Field(default=2)
     max_restart_attempts: int = Field(default=5)
@@ -214,7 +214,7 @@ class ManagerConfig(BaseModel):
     # toolboxv2/utils/workers/fast/endpoint.py. Was 8700 here while every other
     # layer defaulted to 5000; unified so an unconfigured install still agrees
     # with itself.
-    live_ui_port: int = Field(default=5000)
+    live_ui_port: int = Field(default=8467)
     live_ui_replicas: int = Field(default=2)  # 1 owner + (n-1) standby for failover
 
 
@@ -762,6 +762,21 @@ class IsaaEngineConfig(BaseModel):
         description="Anzahl dynamischer Tool-Slots pro Lauf. Env: MAX_DYNAMIC_TOOLS",
     )
 
+    adviser_mode: str = Field(
+        default="default",
+        description="Adviser-Modus: default|allways|of. Env: ADVISER_MODE",
+    )
+
+
+class IsaaWebConfig(BaseModel):
+    """ISAA web automation configuration."""
+    enabled: bool = Field(default=False)
+    headless: bool = Field(default=True)
+    single_site: Optional[str] = Field(default=None)
+    trusted_sites: List[str] = Field(default_factory=list)
+    engine: Literal["playwright", "mcp"] = Field(default="playwright")
+    mcp_server: str = Field(default="chrome-devtools")
+
 
 class IsaaConfig(BaseModel):
     """ISAA self-agent configuration (only loaded when isaa is installed)."""
@@ -772,6 +787,7 @@ class IsaaConfig(BaseModel):
     code_executor: IsaaCodeExecutorConfig = Field(default_factory=IsaaCodeExecutorConfig)
     mcp: IsaaMCPConfig = Field(default_factory=IsaaMCPConfig)
     a2a: IsaaA2AConfig = Field(default_factory=IsaaA2AConfig)
+    web: IsaaWebConfig = Field(default_factory=IsaaWebConfig)
     ocr: IsaaOCRConfig = Field(default_factory=IsaaOCRConfig)
     engine: IsaaEngineConfig = Field(default_factory=IsaaEngineConfig)
     observability: IsaaObservabilityConfig = Field(default_factory=IsaaObservabilityConfig)

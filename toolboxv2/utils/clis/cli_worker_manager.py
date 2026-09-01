@@ -1330,7 +1330,7 @@ class WorkerManager:
             # One-Port-Collective: every live-ui replica MUST target the same port.
             # Force the canonical live_ui_port even if a caller (e.g. restart) hands
             # in a drifted port — otherwise a replica "moves" and the collective breaks.
-        canonical = getattr(self.config.manager, "live_ui_port", 5000)
+        canonical = getattr(self.config.manager, "live_ui_port", 8467)
         if port is not None and port != canonical:
             logger.warning(f"Live-UI: requested port {port} != collective {canonical} — forcing {canonical}")
         port = canonical
@@ -2041,7 +2041,7 @@ tb workers debug             Startet Debug-Server auf dist/"""
             sys.exit(1)
 
         api_host = getattr(config.manager, "web_ui_host", "127.0.0.1")
-        api_port = getattr(config.manager, "web_ui_port", 9005)
+        api_port = getattr(config.manager, "web_ui_port", 9010)
         bound_port_ref = [api_port]
 
         Thread(

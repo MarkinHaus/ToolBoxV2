@@ -20,7 +20,7 @@ import sys
 import time
 import urllib.request
 
-DEFAULT_TRAY_URL = "http://127.0.0.1:5000"
+DEFAULT_TRAY_URL = "http://127.0.0.1:8467"
 _TRAY_STATE_TIMEOUT = 1.5
 
 log = logging.getLogger("toolboxv2.fallback_tray")
@@ -128,18 +128,75 @@ def create_gear_icon():
 # Menu actions
 # --------------------------------------------------------------------------- #
 
-def open_dashboard(icon=None, item=None) -> None:
-    """Open the live UI in the default browser."""
-    import webbrowser
-
-    url = tray_base_url()
+def _tauri_app_available() -> bool:
+    """True if a Tauri app binary is installed (top tray action prefers it)."""
     try:
-        from toolboxv2 import get_app
+        from toolboxv2.utils.clis.tauri_cli import get_installed_app_path
+        return get_installed_app_path() is not None
+    except Exception as exc:  # noqa: BLE001 - tray must never die on lookup
+        log.debug("tauri app lookup failed: %s", exc)
+        return False
 
-        manager = get_app().manifest.services.manager
-        url = f"http://{manager.live_ui_host}:{manager.live_ui_port}"
-    except Exception as exc:  # noqa: BLE001 - manifest is optional here
-        log.debug("no manifest live-ui config, using tray base url: %s", exc)
+
+def _launch_tauri_app() -> None:
+    from toolboxv2.utils.clis.tauri_cli import get_installed_app_path
+
+    app_path = get_installed_app_path()
+    if not app_path:
+        return
+    try:
+        import subprocess as _sp
+
+        if sys.platform == "win32":
+            _sp.Popen([str(app_path)], creationflags=_sp.DETACHED_PROCESS)
+        else:
+            _sp.Popen([str(app_path)], start_new_session=True)
+        log.info("launched tauri app: %s", app_path)
+    except Exception as exc:  # noqa: BLE001
+        log.error("tauri launch failed: %s", exc)
+
+
+def _local_ui_alive(timeout: float = 1.5) -> bool:
+    """Probe the local UI /health endpoint."""
+    try:
+        with urllib.request.urlopen(
+            f"{tray_base_url()}/health", timeout=timeout
+        ) as response:
+            return response.status == 200
+    except Exception:  # noqa: BLE001 - any transport error == not alive
+        return False
+
+
+def _start_local_ui() -> None:
+    """Spawn the worker stack (owns the live UI) detached; non-blocking."""
+    try:
+        subprocess.Popen(
+            [sys.executable, "-m", "toolboxv2", "workers", "start"],
+            start_new_session=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.error("could not start local ui workers: %s", exc)
+
+
+def open_dashboard(icon=None, item=None) -> None:
+    """Top tray action: Tauri app if installed, else start local UI + browser."""
+    import time as _time
+    import webbrowser
+    from toolboxv2.utils.workers.fast.endpoint import local_ui_url
+
+    if _tauri_app_available():
+        _launch_tauri_app()
+        return
+
+    url = local_ui_url()
+    if not _local_ui_alive():
+        _start_local_ui()
+        # wait up to ~15s for the live UI to come up before opening browser
+        for _ in range(30):
+            if _local_ui_alive(timeout=0.5):
+                break
+            _time.sleep(0.5)
+    log.debug("Opening dashboard: %s", url)
     webbrowser.open(url)
 
 

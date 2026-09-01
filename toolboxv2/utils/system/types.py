@@ -607,7 +607,7 @@ class AppArgs:
     remove = None
     update = None
     name = 'main'
-    port = 5000
+    port = 8467
     host = '0.0.0.0'
     load_all_mod_in_files = False
     mods_folder = 'toolboxv2.mods.'

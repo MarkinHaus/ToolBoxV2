@@ -330,6 +330,14 @@ class ConfigConverter:
                 "agent_version": "1.0.0",
                 "expose_tools_as_skills": True,
             },
+            "web": {
+                "enable_web": isaa.web.enabled,
+                "web_headless": isaa.web.headless,
+                "web_single_site": isaa.web.single_site,
+                "web_trusted_sites": isaa.web.trusted_sites,
+                "web_engine": isaa.web.engine,
+                "web_mcp_server": isaa.web.mcp_server,
+            },
             "checkpoint": {
                 "enabled": agent.checkpoint.enabled,
                 "interval_seconds": agent.checkpoint.interval_seconds,

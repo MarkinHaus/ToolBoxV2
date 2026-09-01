@@ -202,8 +202,8 @@ class MinIOCLIManager:
             name="default",
             mode="desktop",
             data_dir=default_data_dir,
-            port=9000,
-            console_port=9001,
+            port=9050,
+            console_port=9051,
         )
         self._save_config()
 

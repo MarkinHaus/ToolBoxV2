@@ -4432,7 +4432,7 @@ class FlowAgent:
         async def agent_run(query: str, session_id: str = "mcp_session") -> str:
             return await self.a_run(query, session_id=session_id)
 
-    def setup_a2a_server(self, host: str = "0.0.0.0", port: int = 5000):
+    def setup_a2a_server(self, host: str = "0.0.0.0", port: int = 5001):
         try:
             A2A_AVAILABLE = False
             if os.getenv("A2A_AVAILABLE", "false") == "true":

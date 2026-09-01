@@ -28,7 +28,7 @@ def print_banner():
     print(banner, file=sys.stderr)
 
 
-def print_config_example(api_key: str, host: str = "127.0.0.1", port: int = 8765):
+def print_config_example(api_key: str, host: str = "127.0.0.1", port: int = 8791):
     """Print configuration examples."""
     stdio_config = {
         "mcpServers": {
@@ -257,7 +257,7 @@ Examples:
         help="HTTP server host (default: 127.0.0.1 for security)",
     )
     parser.add_argument(
-        "--port", type=int, default=8765, help="HTTP server port (default: 8765)"
+        "--port", type=int, default=8791, help="HTTP server port (default: 8791)"
     )
     parser.add_argument(
         "--no-auth",

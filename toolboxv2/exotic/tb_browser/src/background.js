@@ -5,7 +5,7 @@ import { PromptEngine } from './prompts/prompt_engine.js';
 
 class ToolBoxBackground {
     constructor() {
-        this.apiBase = 'http://localhost:8080';
+        this.apiBase = 'http://localhost:8467';
         this.isConnected = false;
         this.activeTab = null;
         this.gestureHistory = [];
@@ -45,12 +45,13 @@ class ToolBoxBackground {
 
                 switch (settings.backend) {
                     case 'local':
-                        this.apiBase = 'http://localhost:8080';
+                        this.apiBase = 'http://localhost:8467';
                         this.useNative = false;
                         break;
                     case 'tauri':
                         // Tauri worker läuft auf Port 5000 (kein dist, kein web-login)
-                        this.apiBase = 'http://localhost:5000';
+                        // Tauri worker / Local UI auf Port 8467 (kein dist, kein web-login)
+                        this.apiBase = 'http://localhost:8467';
                         this.useNative = false;
                         break;
                     case 'native':
@@ -64,11 +65,11 @@ class ToolBoxBackground {
                         this.useNative = false;
                         break;
                     case 'custom':
-                        this.apiBase = settings.customBackendUrl || 'http://localhost:8080';
+                        this.apiBase = settings.customBackendUrl || 'http://localhost:8467';
                         this.useNative = false;
                         break;
                     default:
-                        this.apiBase = 'http://localhost:8080';
+                        this.apiBase = 'http://localhost:8467';
                         this.useNative = false;
                 }
 
@@ -191,9 +192,9 @@ class ToolBoxBackground {
     // ─── Tauri Worker Auto-Detection ─────────────────────────────────────────
 
     async detectTauriWorker() {
-        // Prüft ob ein Tauri-Worker auf Port 5000 läuft
+        // Prüft ob ein Tauri-Worker auf Port 8467 läuft
         try {
-            const resp = await fetch('http://localhost:5000/health', { signal: AbortSignal.timeout(800) });
+            const resp = await fetch('http://localhost:8467/health', { signal: AbortSignal.timeout(800) });
             return resp.ok;
         } catch {
             return false;
@@ -671,7 +672,7 @@ class ToolBoxBackground {
                     await this.storeAuthCredentials(
                         nativeResp.username,
                         jwtResp.jwt || '',
-                        effectiveBackend === 'tauri' ? 'http://localhost:5000' : null
+                        effectiveBackend === 'tauri' ? 'http://localhost:8467' : null
                     );
                     return { success: true, username: nativeResp.username, message: 'CLI session loaded' };
                 }
@@ -685,9 +686,9 @@ class ToolBoxBackground {
             };
         }
 
-        // Standard Web-Login (local 8080 oder remote)
+        // Standard Web-Login (local 8467 oder remote)
         let loginBase = this.apiBase;
-        if (backend === 'local') loginBase = 'http://localhost:8080';
+        if (backend === 'local') loginBase = 'http://localhost:8467';
         else if (backend === 'remote') loginBase = 'https://simplecore.app';
 
         const sessionId = this.generateSessionId();
@@ -743,8 +744,8 @@ class ToolBoxBackground {
 
         let backend = 'local';
         if (baseUrl?.includes('simplecore.app')) backend = 'remote';
-        else if (baseUrl === 'http://localhost:5000') backend = 'tauri';
-        else if (baseUrl && baseUrl !== 'http://localhost:8080') backend = 'custom';
+        else if (baseUrl === 'http://localhost:8467') backend = 'tauri';
+        else if (baseUrl && baseUrl !== 'http://localhost:8467') backend = 'custom';
 
         const stored = await chrome.storage.sync.get(['toolboxSettings']);
         const settings = stored.toolboxSettings || {};

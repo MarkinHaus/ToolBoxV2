@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import concurrent.futures
 import contextvars
 import inspect
 import io
@@ -168,6 +169,43 @@ def _safe_sig(fn) -> str:
         return "(...)"
 
 
+def _cell_needs_event_loop(tree) -> bool:
+    """True, wenn die Zelle top-level await / async constructs nutzt.
+
+    Async-Zellen müssen im Haupt-Loop laufen (alter Pfad). Sync-Zellen laufen
+    im Worker-Thread und sind damit hart per Timeout abbrechbar.
+    """
+    for node in ast.walk(tree):
+        if isinstance(
+            node, (ast.Await, ast.AsyncFor, ast.AsyncWith, ast.AsyncFunctionDef)
+        ):
+            return True
+    return False
+
+
+def _eval_cell_in_thread(co, user_ns: dict):
+    """Startet eval eines SYNC-Cells in einem daemon-Thread.
+
+    Liefert ein concurrent.futures.Future — der Aufrufer wrappt es mit
+    asyncio.wrap_future und setzt asyncio.wait_for darauf. Bei Timeout
+    wird nur das await abgebrochen; der daemon-Thread bleibt als Zombie
+    zurück (kein Kill von laufendem Python-Code möglich), blockiert aber
+    weder den Event-Loop noch den Prozess-Exit.
+    """
+    fut: concurrent.futures.Future = concurrent.futures.Future()
+
+    def _runner():
+        try:
+            ret = eval(co, user_ns)  # noqa: S307 - deliberate
+        except BaseException as e:  # noqa: BLE001 - forwarded via Future
+            fut.set_exception(e)
+        else:
+            fut.set_result(ret)
+
+    threading.Thread(target=_runner, daemon=True, name="live-cell-sync").start()
+    return fut
+
+
 def _run_coro_blocking(coro, timeout: float | None = None):
     box: dict[str, Any] = {}
 
@@ -232,13 +270,14 @@ class ModProxy:
 # CELL COMPILATION / EXECUTION
 # =============================================================================
 
-def compile_cell(code: str) -> tuple[Any, bool]:
+def compile_cell(code: str) -> tuple[Any, bool, ast.Module]:
     """Compile a notebook cell.
 
-    Returns ``(code_object, captures_result)``. The last bare expression is
-    rewritten into an assignment to ``__cell_result__`` so falsy values
+    Returns ``(code_object, captures_result, tree)``. The last bare expression
+    is rewritten into an assignment to ``__cell_result__`` so falsy values
     (``0``, ``""``, ``False``, ``[]``) survive — the old path coerced them to
-    the literal string ``"stdout"``.
+    the literal string ``"stdout"``. The AST tree is returned so callers can
+    inspect the cell (e.g. async-detection) without re-parsing.
     """
     if "\n" not in code and "\\n" in code:
         code = code.replace("\\n", "\n")
@@ -256,7 +295,7 @@ def compile_cell(code: str) -> tuple[Any, bool]:
         captures = True
 
     co = compile(tree, "<cell>", "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT)
-    return co, captures
+    return co, captures, tree
 
 
 @dataclass
@@ -466,7 +505,7 @@ class LiveSession:
         before = set(self.user_ns)
 
         try:
-            co, captures = compile_cell(code)
+            co, captures, tree = compile_cell(code)
         except SyntaxError as e:
             res = CellResult(
                 success=False,
@@ -492,9 +531,19 @@ class LiveSession:
                 except Exception:
                     pass
                 try:
-                    ret = eval(co, self.user_ns)  # noqa: S307 - deliberate
-                    if inspect.isawaitable(ret):
-                        await asyncio.wait_for(ret, timeout=timeout)
+                    if _cell_needs_event_loop(tree):
+                        # Async-Zelle: alter Pfad, eval im Haupt-Loop + wait_for
+                        ret = eval(co, self.user_ns)  # noqa: S307 - deliberate
+                        if inspect.isawaitable(ret):
+                            await asyncio.wait_for(ret, timeout=timeout)
+                    else:
+                        # Sync-Zelle: daemon-Thread, hart per Timeout abbrechbar
+                        ret = await asyncio.wait_for(
+                            asyncio.wrap_future(
+                                _eval_cell_in_thread(co, self.user_ns)
+                            ),
+                            timeout=timeout,
+                        )
                     if captures:
                         result = self.user_ns.pop(_RESULT_KEY, _NO_RESULT)
                 except asyncio.TimeoutError:

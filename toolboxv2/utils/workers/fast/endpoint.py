@@ -7,11 +7,11 @@ ONE canonical answer to "on which host:port does the local UI live?".
 Before this module the answer was spread over five places that had drifted
 apart:
 
-    tb-manifest.yaml  services.manager.live_ui_port   (schema default 8700)
-    workers/config.py ManagerConfig.live_ui_port      (default 5000)
-    tauri_integration DEFAULT_PORT / TB_HTTP_PORT     (default 5000)
-    simple-core worker_manager.rs DEFAULT_HTTP_PORT   (const 5000)
-    simple-core lib.rs                                (hardcoded 127.0.0.1:5000)
+    tb-manifest.yaml  services.manager.live_ui_port   (schema default 8467)
+    workers/config.py ManagerConfig.live_ui_port      (default 8467)
+    tauri_integration DEFAULT_PORT / TB_LOCAL_UI_PORT (default 8467)
+    simple-core worker_manager.rs DEFAULT_HTTP_PORT   (const 8467)
+    simple-core lib.rs                                (hardcoded 127.0.0.1:8467)
 
 Everything that needs the local UI (tray icon, Tauri app, first-run redirect,
 the browser fallback) now asks `resolve_local_ui_endpoint()` instead, and the
@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 DEFAULT_LOCAL_UI_HOST = "127.0.0.1"
-DEFAULT_LOCAL_UI_PORT = 5000
+DEFAULT_LOCAL_UI_PORT = 8467
 
 ENDPOINT_FILENAME = "local_ui.json"
 

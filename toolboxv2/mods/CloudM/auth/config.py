@@ -37,7 +37,7 @@ def get_jwt_secret() -> str:
 def get_base_url() -> str:
     if is_production():
         return os.getenv("APP_BASE_URL_PROD", "https://simplecore.app")
-    return os.getenv("APP_BASE_URL", "http://localhost:8000")
+    return os.getenv("APP_BASE_URL", "http://localhost:8467")
 
 
 def get_discord_config() -> dict:

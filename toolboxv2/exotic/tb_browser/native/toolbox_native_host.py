@@ -242,7 +242,7 @@ async def handle_tauri_check(app, payload: Dict) -> Dict:
     Wird von background.js DETECT_TAURI Nachricht aufgerufen.
     """
     import urllib.request
-    port = payload.get("port", 5000)
+    port = payload.get("port", 8467)
     try:
         req = urllib.request.Request(
             f"http://localhost:{port}/health",
