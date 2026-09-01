@@ -2392,7 +2392,11 @@ class App(AppType, metaclass=Singleton):
         if self._web_context is None:
             try:
                 print(os.path.join(self.data_dir.split(".data")[0],"dist","helper.html"), self.data_dir)
-                self._web_context = open(os.path.join(self.data_dir.split(".data")[0],"dist","helper.html"), encoding="utf-8").read()
+                from toolboxv2.utils.workers.fast.endpoint import dist_dir
+                helper_file = dist_dir()
+                if helper_file is None or not (helper_file/ "helper.html").exists():
+                    raise FileNotFoundError(f"Helper file not found: {helper_file/ 'helper.html'}")
+                self._web_context = (helper_file/ "helper.html").read_text(encoding='utf-8') # open(os.path.join(self.data_dir.split(".data")[0],"dist","helper.html"), encoding="utf-8").read()
             except Exception as e:
                 self.logger.error(f"Could not load web context: {e}")
                 self._web_context = "<div><h1>Web Context not found</h1></div>"

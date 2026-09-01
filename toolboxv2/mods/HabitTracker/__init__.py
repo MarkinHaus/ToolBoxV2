@@ -46,12 +46,17 @@ def init(app=None):
     app.run_any(("CloudM", "add_ui"),
                 name=Name,
                 title="HabitTracker",
-                path=f"/api/{Name}/app",
+                path=f"/api/{Name}/open_app",
                 description="HabitTracker"
                 )
 
 @export(name="app", mod_name=Name, version=version, api=True)
 async def app(app):
+    """App-UI ausliefern (einzelnes HTML mit inline JS/CSS)."""
+    return _load_asset("app")
+
+@export(name="open_app", mod_name=Name, version=version, api=True)
+async def open_app(app):
     """App-UI ausliefern (einzelnes HTML mit inline JS/CSS)."""
     return _load_asset("app")
 
