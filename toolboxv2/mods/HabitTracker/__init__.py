@@ -51,13 +51,13 @@ def init(app=None):
                 )
 
 @export(name="app", mod_name=Name, version=version, api=True)
-async def app(app, request):
+async def app(app):
     """App-UI ausliefern (einzelnes HTML mit inline JS/CSS)."""
     return _load_asset("app")
 
 
 @export(name="asset", mod_name=Name, version=version, api=True)
-async def asset(app, request, file: str = "sw.js"):
+async def asset(app, file: str = "sw.js"):
     """Statische Zusatz-Dateien (sw.js, manifest, icons) fuer Standalone-Betrieb."""
     return _load_asset(file)
 
