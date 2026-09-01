@@ -36,7 +36,7 @@ def _load_asset(asset: str) -> Result:
         return Result.default_internal_error(info=f"asset missing: {filename}")
     # text as text (no download semantics), binary for icons
     if ctype.startswith(("text/", "application/javascript", "application/manifest")):
-        return Result.text(data.decode("utf-8"), content_type=ctype)
+        return Result.html(data.decode("utf-8"))
     return Result.binary(data=data, content_type=ctype)
 
 @export(mod_name=Name, name="init", initial=True)
