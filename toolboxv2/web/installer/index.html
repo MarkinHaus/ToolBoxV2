@@ -1,24 +1,33 @@
 <!DOCTYPE html>
-<html lang="de" data-theme="dark">
+<html lang="de">
 <head>
+<script>/* Theme-Init: konsistent mit tbjs ThemeManager */
+(function(){var t=null;try{t=localStorage.getItem("tbjs_theme_preference");}catch(e){}
+if(t==="system"||!t){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches)?"light":"dark";}
+var d=document.documentElement;d.setAttribute("data-theme",t);
+d.classList.remove("light","dark");d.classList.add(t);})();
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Installer — ToolBoxV2</title>
+<title>ToolBoxV2 Installer</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
+/* ── TBJS Glass v3.0 — Installer Wizard ── */
 :root {
   --raw-primary: 55% 0.18 230;
   --raw-success: 65% 0.2 145;
   --raw-warning: 75% 0.18 85;
   --raw-error: 55% 0.22 25;
+  --raw-info: 60% 0.15 230;
   --primary: oklch(var(--raw-primary));
   --success: oklch(var(--raw-success));
   --warning: oklch(var(--raw-warning));
   --error: oklch(var(--raw-error));
   --bg-base: #08080d;
   --bg-surface: rgba(10, 10, 18, 0.8);
+  --bg-elevated: rgba(15, 15, 25, 0.9);
   --bg-sunken: rgba(0, 0, 0, 0.3);
   --glass-bg: rgba(255, 255, 255, 0.02);
   --glass-border: rgba(255, 255, 255, 0.05);
@@ -29,6 +38,7 @@
   --text-muted: rgba(255, 255, 255, 0.25);
   --input-bg: rgba(0, 0, 0, 0.3);
   --input-border: rgba(255, 255, 255, 0.08);
+  --input-focus: var(--primary);
   --surface-hover: color-mix(in oklch, var(--primary) 5%, transparent);
   --surface-active: color-mix(in oklch, var(--primary) 10%, transparent);
   --surface-badge: color-mix(in oklch, var(--primary) 15%, transparent);
@@ -36,7 +46,7 @@
   --highlight-inset: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   --shadow-micro: 0 2px 4px rgba(0, 0, 0, 0.5);
   --font-sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Consolas, monospace;
   --text-h1: clamp(22px, 2.5vw, 28px);
   --text-h2: clamp(20px, 2.2vw, 24px);
   --text-base: 16px;
@@ -46,8 +56,8 @@
   --space-4: 1rem; --space-5: 1.5rem; --space-6: 2rem;
   --space-8: 3rem; --space-10: 4rem; --space-12: 6rem;
   --radius-sm: 2px; --radius-md: 6px; --radius-lg: 12px; --radius-full: 9999px;
-  --duration-fast: 150ms; --duration-normal: 250ms; --duration-slow: 400ms;
-  --ease-default: ease; --ease-expand: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --duration-fast: 150ms; --duration-normal: 250ms; --ease-default: ease;
+  --z-base: 0; --z-raised: 10; --z-overlay: 1000;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -57,440 +67,564 @@ body {
   color: var(--text-main);
   line-height: 1.6;
   min-height: 100vh;
-  padding: var(--space-12) var(--space-4) var(--space-8);
-}
-.page-title { text-align: center; margin-block-end: var(--space-8); }
-.page-title .label {
-  font-family: var(--font-mono); font-size: var(--text-xs);
-  text-transform: uppercase; letter-spacing: 2.5px;
-  color: var(--text-label); user-select: none; margin-block-end: var(--space-2);
-}
-.page-title h1 {
-  font-size: var(--text-h1); font-weight: 700;
-  letter-spacing: -0.02em; line-height: 1.2;
-}
-.page-title p { color: rgba(255,255,255,0.7); margin-block-start: var(--space-2); max-inline-size: 50ch; margin-inline: auto; }
-
-/* ── Desktop: side-by-side flex-expand ── */
-.sections {
   display: flex;
-  gap: var(--space-3);
-  max-width: 1100px;
-  margin: 0 auto;
+  align-items: center;
+  justify-content: center;
 }
-.section {
-  flex: 1;
+.wizard {
+  width: 90%;
+  max-width: 560px;
   background: var(--glass-bg);
   backdrop-filter: blur(var(--glass-blur));
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--highlight-inset), var(--shadow-micro);
   padding: var(--space-6);
-  cursor: pointer;
-  overflow: hidden;
+  min-height: 420px;
   display: flex;
   flex-direction: column;
-  min-height: 320px;
-  transition: flex var(--duration-slow) var(--ease-expand),
-              border-color var(--duration-normal) var(--ease-default);
 }
-.section:hover, .section.is-expanded {
-  flex: 2.5;
-  border-color: var(--border-active);
+.wizard-header { margin-block-end: var(--space-5); }
+.wizard-header h1 {
+  font-size: var(--text-h1);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }
-.section-header { flex-shrink: 0; }
-.section-header .icon {
-  width: 48px; height: 48px;
-  border-radius: var(--radius-md);
-  background: var(--surface-badge);
-  display: flex; align-items: center; justify-content: center;
+.wizard-header .label {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 2.5px;
+  color: var(--text-label);
+  user-select: none;
+  margin-block-end: var(--space-2);
+}
+.step-indicator {
+  display: flex;
+  gap: var(--space-2);
+  margin-block-end: var(--space-5);
+}
+.step-dot {
+  height: 3px;
+  flex: 1;
+  background: var(--border-subtle);
+  border-radius: var(--radius-full);
+  transition: background var(--duration-fast) var(--ease-default);
+}
+.step-dot.is-active { background: var(--primary); }
+.step-dot.is-done { background: color-mix(in oklch, var(--primary) 50%, transparent); }
+.step { flex: 1; display: none; flex-direction: column; }
+.step.is-visible { display: flex; }
+.step h2 {
+  font-size: var(--text-h2);
+  font-weight: 700;
+  margin-block-end: var(--space-3);
+  letter-spacing: -0.02em;
+}
+.step p { color: rgba(255,255,255,0.7); margin-block-end: var(--space-4); max-inline-size: 65ch; }
+.info-row {
+  display: flex;
+  gap: var(--space-4);
   margin-block-end: var(--space-4);
 }
-.section-header .icon svg { width: 24px; height: 24px; stroke: var(--primary); fill: none; stroke-width: 2; }
-.section-header .label {
-  font-family: var(--font-mono); font-size: var(--text-xs);
-  text-transform: uppercase; letter-spacing: 2px;
-  color: var(--text-label); margin-block-end: var(--space-1);
+.info-item { flex: 1; }
+.info-item .label {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-label);
+  margin-block-end: var(--space-1);
 }
-.section-header h2 { font-size: var(--text-h2); font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
-.section-header p { font-size: var(--text-sm); color: var(--text-muted); margin-block-start: var(--space-2); }
-
-/* Desktop: body fades in on expand */
-.section-body {
-  flex: 1;
-  opacity: 0;
-  transform: translateY(8px);
-  transition: opacity var(--duration-slow) var(--ease-default) 100ms,
-              transform var(--duration-slow) var(--ease-default) 100ms;
+.info-item .value {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-main);
+}
+.mode-grid { display: flex; flex-direction: column; gap: var(--space-3); margin-block-end: var(--space-4); }
+.mode-option {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-default),
+              background var(--duration-fast) var(--ease-default);
+}
+.mode-option:hover { border-color: var(--border-active); background: var(--surface-hover); }
+.mode-option.is-selected { border-color: var(--primary); background: var(--surface-active); }
+.mode-option input { appearance: none; width: 18px; height: 18px; border: 2px solid var(--input-border); border-radius: var(--radius-full); flex-shrink: 0; }
+.mode-option.is-selected input { background: var(--primary); border-color: var(--primary); box-shadow: inset 0 0 0 3px var(--bg-base); }
+.mode-text { flex: 1; }
+.mode-text strong { display: block; font-size: var(--text-base); font-weight: 600; }
+.mode-text small { display: block; font-size: var(--text-sm); color: var(--text-muted); }
+.module-list { display: flex; flex-direction: column; gap: var(--space-2); margin-block-end: var(--space-4); }
+.module-item {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+}
+.module-item input { appearance: none; width: 18px; height: 18px; border: 2px solid var(--input-border); border-radius: var(--radius-sm); flex-shrink: 0; cursor: pointer; }
+.module-item input:checked { background: var(--primary); border-color: var(--primary); }
+.module-item label { font-size: var(--text-sm); cursor: pointer; flex: 1; }
+.module-item .label { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-label); text-transform: uppercase; letter-spacing: 1px; }
+input[type="text"] {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  color: var(--text-main);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-md);
+  margin-block-end: var(--space-4);
+}
+input[type="text"]:focus { outline: none; border-color: var(--input-focus); background: color-mix(in oklch, var(--input-focus) 5%, var(--input-bg)); }
+.progress-track {
+  height: 4px;
+  background: var(--bg-sunken);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  margin-block-end: var(--space-4);
+}
+.progress-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: var(--radius-full);
+  transition: width var(--duration-normal) var(--ease-default);
+}
+.log-output {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  max-height: 200px;
+  overflow-y: auto;
+  color: rgba(255,255,255,0.6);
+  line-height: 1.4;
+}
+.log-line { margin-block-end: var(--space-1); }
+.log-line.is-error { color: var(--error); }
+.log-line.is-success { color: var(--success); }
+.wizard-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-block-start: var(--space-5);
+  padding-block-start: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
 }
-.section.is-expanded .section-body { opacity: 1; transform: translateY(0); }
-.section-body p { color: rgba(255,255,255,0.7); margin-block-end: var(--space-4); }
-
-/* Buttons */
 .btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
   padding: var(--space-3) var(--space-5);
-  font-family: var(--font-sans); font-size: var(--text-base); font-weight: 500;
-  line-height: 1.2; border: none; border-radius: var(--radius-md);
-  cursor: pointer; text-decoration: none;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  font-weight: 500;
+  line-height: 1.2;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
   transition: transform var(--duration-fast) var(--ease-default),
               background var(--duration-fast) var(--ease-default),
               border-color var(--duration-fast) var(--ease-default);
 }
 .btn-primary { color: #000; background: var(--primary); box-shadow: var(--highlight-inset); }
 .btn-primary:hover { background: color-mix(in oklch, var(--primary) 90%, white); transform: translateY(-1px); }
+.btn-primary:active { transform: translateY(0); }
+.btn-primary:disabled { opacity: 0.4; cursor: default; transform: none; }
 .btn-secondary { color: var(--text-main); background: var(--glass-bg); border: 1px solid var(--border-subtle); box-shadow: var(--highlight-inset); }
 .btn-secondary:hover { background: var(--surface-hover); border-color: var(--border-active); transform: translateY(-1px); }
 .btn:focus-visible { outline: 1px solid var(--primary); outline-offset: 2px; }
-
-/* Code blocks */
-.code-block {
-  font-family: var(--font-mono); font-size: var(--text-sm);
-  background: var(--input-bg); border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md); padding: var(--space-4);
-  margin-block-end: var(--space-3);
-  color: rgba(255,255,255,0.7);
-  position: relative;
-  overflow-x: auto;
-}
-.code-block .copy-btn {
-  position: absolute; top: var(--space-2); right: var(--space-2);
-  background: transparent; border: none; cursor: pointer;
-  color: var(--text-muted); padding: var(--space-1); border-radius: var(--radius-sm);
-  font-family: var(--font-mono); font-size: var(--text-xs);
-}
-.code-block .copy-btn:hover { color: var(--text-main); background: var(--surface-hover); }
-.code-block .comment { color: var(--text-muted); }
-
-/* Download grid for user section */
-.dl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--space-3); margin-block-end: var(--space-4); }
-.dl-item {
-  padding: var(--space-4);
-  background: var(--input-bg); border: 1px solid var(--input-border);
-  border-radius: var(--radius-md);
-  text-decoration: none; color: var(--text-main);
-  transition: border-color var(--duration-fast) var(--ease-default),
-              background var(--duration-fast) var(--ease-default);
-}
-.dl-item:hover { border-color: var(--border-active); background: var(--surface-hover); transform: translateY(-1px); }
-.dl-item .label { font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 1px; color: var(--text-label); margin-block-end: var(--space-1); }
-.dl-item strong { font-size: var(--text-sm); }
-.dl-loading { text-align: center; padding: var(--space-6); color: var(--text-muted); }
-.dl-error { padding: var(--space-4); border: 1px solid var(--error); border-radius: var(--radius-md); color: var(--error); }
-
-/* ── Mobile: vertical accordion stack ── */
+.status-dot { width: 10px; height: 10px; border-radius: var(--radius-full); display: inline-block; }
+.status-dot.is-online { background: var(--success); }
+.status-dot.is-offline { background: var(--error); }
+.status-dot.is-pending { background: var(--warning); }
 @media (max-width: 767px) {
-  body { padding: var(--space-8) var(--space-3) var(--space-5); }
-  .sections { flex-direction: column; gap: var(--space-2); }
-  .section {
-    flex: none;
-    min-height: auto;
-    padding: var(--space-4);
-    cursor: pointer;
-  }
-  .section.is-expanded { flex: none; }
-  .section-header { display: flex; align-items: center; gap: var(--space-3); }
-  .section-header .icon { width: 36px; height: 36px; margin-block-end: 0; flex-shrink: 0; }
-  .section-header .icon svg { width: 18px; height: 18px; }
-  .section-header h2 { font-size: 17px; }
-  .section-header p { font-size: var(--text-xs); margin-block-start: 0; }
-  .section-header .label { margin-block-end: 0; }
-  /* Accordion body: max-height transition instead of flex */
-  .section-body {
-    max-height: 0;
-    opacity: 0;
-    overflow: hidden;
-    transform: none;
-    margin-block-start: 0;
-    transition: max-height var(--duration-slow) var(--ease-expand),
-                opacity var(--duration-normal) var(--ease-default);
-  }
-  .section.is-expanded .section-body {
-    max-height: 1000px;
-    opacity: 1;
-    margin-block-start: var(--space-4);
-  }
-  .page-title h1 { font-size: 19px; }
-  .page-title p { font-size: var(--text-sm); }
+  .wizard { width: 95%; padding: var(--space-5) var(--space-3); }
   .btn { width: 100%; max-width: 280px; }
-  .dl-grid { grid-template-columns: 1fr; }
-}
-
-@media (max-width: 380px) {
-  .section-header h2 { font-size: 15px; }
-  .section-header .label { display: none; }
 }
 </style>
 </head>
 <body>
+<div class="wizard">
+  <div class="wizard-header">
+    <div class="label">ToolBoxV2 Setup</div>
+    <h1>Installer</h1>
+  </div>
+  <div class="step-indicator" id="step-indicator">
+    <div class="step-dot is-active"></div>
+    <div class="step-dot"></div>
+    <div class="step-dot"></div>
+    <div class="step-dot"></div>
+    <div class="step-dot"></div>
+  </div>
 
-<div class="page-title">
-  <div class="label">ToolBoxV2</div>
-  <h1>Installer</h1>
-  <p>Drei Wege, je nach Bedarf. Wählen Sie Ihren Pfad.</p>
-</div>
-
-<div class="sections" id="sections">
-
-  <!-- USER: Grafischer Installer + GitHub Downloads -->
-  <div class="section" data-section="user">
-    <div class="section-header">
-      <div class="icon">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>
+  <!-- Step 1: Welcome + Platform Detection -->
+  <div class="step is-visible" id="step-1">
+    <h2>Willkommen</h2>
+    <p>ToolBoxV2 wird auf Ihrem System installiert. Die Installation erfolgt in wenigen Schritten.</p>
+    <div class="info-row">
+      <div class="info-item">
+        <div class="label">Betriebssystem</div>
+        <div class="value" id="os-info">Erkennung…</div>
       </div>
-      <div class="label">Endnutzer</div>
-      <h2>Einfach installieren</h2>
-      <p>Grafischer Installer — kein Code, keine Konsole</p>
+      <div class="info-item">
+        <div class="label">Architektur</div>
+        <div class="value" id="arch-info">—</div>
+      </div>
     </div>
-    <div class="section-body">
-      <p id="user-intro">Laden Sie den grafischen Installer herunter. ToolBoxV2 wird automatisch konfiguriert und ist sofort einsatzbereit.</p>
-      <div id="download-area"><div class="dl-loading">Lade Release-Informationen…</div></div>
-      <div style="display: flex; gap: var(--space-3); flex-wrap: wrap; margin-block-start: var(--space-4);">
-        <a class="btn btn-primary" href="/installer/wizard.html">Grafischer Installer</a>
-        <a class="btn btn-secondary" href="/docs/quickstart">Anleitung</a>
+    <div class="info-row">
+      <div class="info-item">
+        <div class="label">Installer Version</div>
+        <div class="value">1.0.0</div>
+      </div>
+      <div class="info-item">
+        <div class="label">Status</div>
+        <div class="value"><span class="status-dot is-pending" id="net-status"></span> Netzwerk prüfen</div>
       </div>
     </div>
   </div>
 
-  <!-- COMPANY: CLI / Docker -->
-  <div class="section" data-section="company">
-    <div class="section-header">
-      <div class="icon">
-        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+  <!-- Step 2: Mode + Modules -->
+  <div class="step" id="step-2">
+    <h2>Konfiguration</h2>
+    <p>Wählen Sie den Installationstyp und optionale Module.</p>
+    <div class="mode-grid">
+      <div class="mode-option is-selected" data-mode="native">
+        <input type="radio" name="mode" value="native" checked>
+        <div class="mode-text">
+          <strong>Standard (Empfohlen)</strong>
+          <small>Vorkompilierte Binary — kein Python erforderlich</small>
+        </div>
       </div>
-      <div class="label">Unternehmen</div>
-      <h2>Server &amp; Docker</h2>
-      <p>CLI-Installation für verteilte Systeme</p>
-    </div>
-    <div class="section-body">
-      <p>Installieren Sie ToolBoxV2 via Einzeiler-Skript oder Docker. Konfiguration über YAML für automatisierte Deployments.</p>
-      <div class="code-block">
-        <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
-        <span class="comment"># Linux / macOS</span><br>
-        curl -fsSL https://get.simplecore.app | bash
-      </div>
-      <div class="code-block">
-        <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
-        <span class="comment"># Windows PowerShell</span><br>
-        iwr -useb https://get.simplecore.app/ps | iex
-      </div>
-      <div class="code-block">
-        <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
-        <span class="comment"># Docker</span><br>
-        docker pull ghcr.io/markinhaus/toolboxv2:latest<br>
-        docker run -d -v ./data:/data ghcr.io/markinhaus/toolboxv2
-      </div>
-      <div style="display: flex; gap: var(--space-3); flex-wrap: wrap;">
-        <a class="btn btn-secondary" href="/docs/deployment">Deployment Guide</a>
-        <a class="btn btn-secondary" href="/docs/docker">Docker Docs</a>
+      <div class="mode-option" data-mode="source">
+        <input type="radio" name="mode" value="source">
+        <div class="mode-text">
+          <strong>Entwicklung</strong>
+          <small>Vollständiger Quellcode via pip install</small>
+        </div>
       </div>
     </div>
-  </div>
-
-  <!-- DEV: Source / pip -->
-  <div class="section" data-section="dev">
-    <div class="section-header">
-      <div class="icon">
-        <svg viewBox="0 0 24 24"><polyline points="8 9 3 14 8 19"/><polyline points="16 9 21 14 16 19"/><line x1="14" y1="4" x2="10" y2="20"/></svg>
+    <div class="label" style="margin-block-end: var(--space-2);">Optionale Module</div>
+    <div class="module-list">
+      <div class="module-item">
+        <input type="checkbox" id="mod-web" value="web" checked>
+        <label for="mod-web">Web Worker <span class="label" style="margin-left: 8px;">HTTP / WebSocket</span></label>
       </div>
-      <div class="label">Entwickler</div>
-      <h2>Source &amp; pip</h2>
-      <p>Vollständige Kontrolle — aus dem Quellcode</p>
-    </div>
-    <div class="section-body">
-      <p>Installieren Sie ToolBoxV2 als Python-Paket oder klonen Sie das Repository.</p>
-      <div class="code-block">
-        <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
-        <span class="comment"># pip install (empfohlen)</span><br>
-        pip install toolboxv2[all]
+      <div class="module-item">
+        <input type="checkbox" id="mod-isaa" value="isaa">
+        <label for="mod-isaa">ISAA <span class="label" style="margin-left: 8px;">KI-Agenten-Framework</span></label>
       </div>
-      <div class="code-block">
-        <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
-        <span class="comment"># uv (schneller)</span><br>
-        uv tool install toolboxv2[all]
-      </div>
-      <div class="code-block">
-        <button class="copy-btn" onclick="copyCode(this)">Kopieren</button>
-        <span class="comment"># Development aus Git</span><br>
-        git clone https://github.com/MarkinHaus/ToolBoxV2.git<br>
-        cd ToolBoxV2<br>
-        pip install -e ".[all]"
-      </div>
-      <div style="display: flex; gap: var(--space-3); flex-wrap: wrap;">
-        <a class="btn btn-secondary" href="/docs/dev">Entwickler-Doku</a>
-        <a class="btn btn-secondary" href="https://github.com/MarkinHaus/ToolBoxV2">GitHub</a>
+      <div class="module-item">
+        <input type="checkbox" id="mod-cloudm" value="cloudm">
+        <label for="mod-cloudm">CloudM <span class="label" style="margin-left: 8px;">Cloud-Synchronisation</span></label>
       </div>
     </div>
   </div>
 
+  <!-- Step 3: Path -->
+  <div class="step" id="step-3">
+    <h2>Installationspfad</h2>
+    <p>Wählen Sie das Verzeichnis für die Installation.</p>
+    <input type="text" id="install-path" value="" placeholder="Installationsverzeichnis…">
+    <div class="info-row">
+      <div class="info-item">
+        <div class="label">Speicherbedarf</div>
+        <div class="value">~300 MB</div>
+      </div>
+      <div class="info-item">
+        <div class="label">Freier Speicher</div>
+        <div class="value" id="disk-space">Prüfung…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 4: Install Progress -->
+  <div class="step" id="step-4">
+    <h2>Installation</h2>
+    <p>ToolBoxV2 wird installiert. Bitte warten…</p>
+    <div class="progress-track">
+      <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+    </div>
+    <div class="label" id="progress-label" style="margin-block-end: var(--space-3);">Initialisiere…</div>
+    <div class="log-output" id="log-output"></div>
+  </div>
+
+  <!-- Step 5: Summary -->
+  <div class="step" id="step-5">
+    <h2>Installation abgeschlossen</h2>
+    <p>ToolBoxV2 wurde erfolgreich installiert und ist nun systemweit verfügbar.</p>
+    <div class="info-row">
+      <div class="info-item">
+        <div class="label">Version</div>
+        <div class="value" id="summary-version">—</div>
+      </div>
+      <div class="info-item">
+        <div class="label">Pfad</div>
+        <div class="value" id="summary-path">—</div>
+      </div>
+    </div>
+    <div class="info-row">
+      <div class="info-item">
+        <div class="label">Globaler Zugriff</div>
+        <div class="value"><span class="status-dot is-online"></span> tb Befehl verfügbar</div>
+      </div>
+    </div>
+    <div style="margin-block-start: var(--space-4); padding: var(--space-4); background: var(--surface-badge); border-radius: var(--radius-md); border: 1px solid var(--border-active);">
+      <div class="label" style="margin-block-end: var(--space-2);">Nächste Schritte</div>
+      <div style="font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text-main);">
+        <div>$ tb -v</div>
+        <div>$ tb status</div>
+        <div>$ tb gui</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wizard-footer">
+    <button class="btn btn-secondary" id="btn-back" style="visibility: hidden;">Zurück</button>
+    <button class="btn btn-primary" id="btn-next">Weiter</button>
+  </div>
 </div>
 
 <script>
-// ── GitHub API integration (from web/core0/installer.js) ──
-const GITHUB_REPO = 'MarkinHaus/ToolBoxV2';
-const GITHUB_API = 'https://api.github.com/repos/' + GITHUB_REPO;
-
-// Asset patterns per platform (from old installer.js)
-const ASSET_PATTERNS = {
-  'Windows': [/simple-core_.*_x64-setup\.exe$/, /simple-core_.*\.msi$/, /toolbox-windows.*\.exe$/],
-  'MacOS-ARM': [/simple-core_.*_aarch64\.dmg$/, /simple-core_.*arm64\.dmg$/, /toolbox-macos.*arm/],
-  'MacOS-Intel': [/simple-core_.*_x64\.dmg$/, /toolbox-macos.*x64/],
-  'Linux': [/simple-core_.*\.AppImage$/, /toolbox-linux.*/]
-};
-
-function detectOS() {
-  const ua = navigator.userAgent.toLowerCase();
-  const plat = (navigator.platform || '').toLowerCase();
-  if (/windows|win32|win64|wow64/.test(ua)) return 'Windows';
-  if (/macintosh|macintel|macppc/.test(ua) || plat.includes('mac')) {
-    if (plat.includes('arm') || ua.includes('arm64') || ua.includes('aarch64')) return 'MacOS-ARM';
-    return 'MacOS-Intel';
-  }
-  if (/android/.test(ua)) return 'Android';
-  if (/iphone|ipad|ipod/.test(ua)) return 'iOS';
-  if (/linux/.test(plat) || /linux/.test(ua)) return 'Linux';
-  return null;
-}
-
-function formatSize(b) {
-  if (b < 1024) return b + ' B';
-  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
-  return (b / 1048576).toFixed(1) + ' MB';
-}
-
-function findAssets(assets, osKey) {
-  const patterns = ASSET_PATTERNS[osKey];
-  if (!patterns) return [];
-  const matches = [];
-  for (const p of patterns) {
-    for (const a of assets) { if (p.test(a.name)) matches.push(a); }
-  }
-  return [...new Map(matches.map(a => [a.id, a])).values()];
-}
-
-async function loadDownloads() {
-  const area = document.getElementById('download-area');
-  const detected = detectOS();
+// Wizard logic — consumes local_ui /api/wizard endpoints (degrades to standalone preview if 8467 offline).
+const API_BASE = 'http://127.0.0.1:8467';
+async function apiCall(endpoint, method = 'GET', body = null) {
   try {
-    const resp = await fetch(GITHUB_API + '/releases');
-    if (!resp.ok) throw new Error('GitHub API: ' + resp.status);
-    const releases = await resp.json();
-    if (!releases || releases.length === 0) throw new Error('Keine Releases gefunden.');
-
-    // Find app release (tag contains 'app') or latest
-    let appRelease = releases.find(r => r.tag_name.toLowerCase().includes('app'));
-    if (!appRelease) appRelease = releases[0];
-    const assets = appRelease.assets || [];
-
-    let html = '';
-    let gridItems = [];
-
-    // Show detected OS download first
-    if (detected && ASSET_PATTERNS[detected]) {
-      const matched = findAssets(assets, detected);
-      if (matched.length > 0) {
-        const a = matched[0];
-        gridItems.push({
-          href: a.browser_download_url,
-          label: detected,
-          text: a.name.replace(/^simple-core_/, '').replace(/^toolbox-/, ''),
-          size: formatSize(a.size)
-        });
-      }
-    }
-
-    // Show all desktop platforms
-    for (const [osKey, _] of Object.entries(ASSET_PATTERNS)) {
-      if (osKey === detected) continue;
-      const matched = findAssets(assets, osKey);
-      if (matched.length > 0) {
-        const a = matched[0];
-        gridItems.push({
-          href: a.browser_download_url,
-          label: osKey,
-          text: a.name.replace(/^simple-core_/, '').replace(/^toolbox-/, ''),
-          size: formatSize(a.size)
-        });
-      }
-    }
-
-    if (gridItems.length > 0) {
-      html = '<div class="dl-grid">';
-      for (const item of gridItems) {
-        html += '<a class="dl-item" href="' + item.href + '" download>'
-          + '<div class="label">' + item.label + '</div>'
-          + '<strong>' + item.text + '</strong>'
-          + (item.size ? '<small style="color: var(--text-muted);">' + item.size + '</small>' : '')
-          + '</a>';
-      }
-      html += '</div>';
-    } else {
-      html = '<p style="color: var(--text-muted);">Keine Downloads im aktuellen Release gefunden.</p>';
-    }
-
-    // Release info
-    html += '<div style="margin-block-start: var(--space-3); font-size: var(--text-xs); color: var(--text-muted);">'
-      + 'Release: <a href="' + appRelease.html_url + '" target="_blank" style="color: var(--primary); text-decoration: none;">'
-      + (appRelease.name || appRelease.tag_name) + '</a> — '
-      + new Date(appRelease.published_at).toLocaleDateString('de-DE')
-      + '</div>';
-
-    // Update intro text with detected OS
-    if (detected) {
-      document.getElementById('user-intro').textContent =
-        'Ihr System wurde als ' + detected + ' erkannt. Download unten:';
-    }
-
-    area.innerHTML = html;
-  } catch (err) {
-    area.innerHTML = '<div class="dl-error">'
-      + '<strong>Fehler:</strong> ' + err.message + '<br>'
-      + '<a href="https://github.com/' + GITHUB_REPO + '/releases" target="_blank" '
-      + 'style="color: var(--primary); text-decoration: none;">Releases manuell ansehen</a>'
-      + '</div>';
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(API_BASE + endpoint, opts);
+    return await res.json();
+  } catch (e) {
+    return null; // local_ui not running — standalone preview / pre-install state
   }
 }
+const STEPS = 5;
+let currentStep = 1;
+const btnBack = document.getElementById('btn-back');
+const btnNext = document.getElementById('btn-next');
+const dots = document.querySelectorAll('.step-dot');
 
-// ── Section expand/collapse (desktop hover + mobile tap accordion) ──
-const sections = document.querySelectorAll('.section');
-let expanded = null;
-
-function expandSection(section) {
-  sections.forEach(s => s.classList.remove('is-expanded'));
-  if (section) { section.classList.add('is-expanded'); expanded = section; }
-  else { expanded = null; }
+function showStep(n) {
+  document.querySelectorAll('.step').forEach(s => s.classList.remove('is-visible'));
+  document.getElementById('step-' + n).classList.add('is-visible');
+  dots.forEach((d, i) => {
+    d.classList.remove('is-active', 'is-done');
+    if (i < n - 1) d.classList.add('is-done');
+    if (i === n - 1) d.classList.add('is-active');
+  });
+  btnBack.style.visibility = n > 1 && n < STEPS ? 'visible' : 'hidden';
+  if (n === 1) { btnBack.style.visibility = 'hidden'; btnNext.textContent = 'Starten'; }
+  else if (n === STEPS) { btnNext.textContent = 'Fertig'; }
+  else if (n === 4) { btnNext.textContent = 'Warten…'; btnNext.disabled = true; runInstall(); }
+  else { btnNext.textContent = 'Weiter'; }
+  currentStep = n;
 }
 
-sections.forEach(section => {
-  // Click handler (mobile + desktop fallback)
-  section.addEventListener('click', (e) => {
-    if (e.target.closest('a, button, .code-block')) return;
-    if (expanded === section) expandSection(null);
-    else expandSection(section);
-  });
-  // Hover handler (desktop only)
-  section.addEventListener('mouseenter', () => {
-    if (window.matchMedia('(hover: hover) and (min-width: 768px)').matches) {
-      expandSection(section);
-    }
+btnNext.addEventListener('click', async () => {
+  if (currentStep === 2) {
+    const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || 'local';
+    const profileMap = { 'local': 'consumer', 'source': 'developer' };
+    await apiCall('/api/wizard/profile', 'POST', { profile: profileMap[selectedMode] || 'consumer' });
+  }
+  if (currentStep < STEPS) showStep(currentStep + 1);
+  else postInstallExit();
+});
+
+// R14-Fix: window.close() ist in Tauri-Webviews unzuverlaessig (weisser Screen).
+// Reihenfolge: laufende local-ui (8467) -> dorthin; sonst Tauri-close; sonst window.close.
+async function postInstallExit() {
+  const boot = (typeof API_BASE !== 'undefined') ? API_BASE : 'http://127.0.0.1:8467';
+  try {
+    const r = await fetch(boot + '/health', { cache: 'no-store' });
+    if (r.ok) { window.location.replace(boot + '/install'); return; }
+  } catch (e) { /* worker down */ }
+  try {
+    const cur = window.__TAURI__ && window.__TAURI__.window && window.__TAURI__.window.getCurrent();
+    if (cur && cur.close) { cur.close(); return; }
+  } catch (e) { /* fall through */ }
+  window.close();
+}
+btnBack.addEventListener('click', () => { if (currentStep > 1) showStep(currentStep - 1); });
+
+// Mode selection
+document.querySelectorAll('.mode-option').forEach(opt => {
+  opt.addEventListener('click', () => {
+    document.querySelectorAll('.mode-option').forEach(o => { o.classList.remove('is-selected'); o.querySelector('input').checked = false; });
+    opt.classList.add('is-selected');
+    opt.querySelector('input').checked = true;
   });
 });
 
-// Copy code helper
-function copyCode(btn) {
-  const text = btn.parentElement.innerText.replace('Kopieren', '').trim();
-  navigator.clipboard.writeText(text).then(() => {
-    btn.textContent = '\u2713';
-    setTimeout(() => { btn.textContent = 'Kopieren'; }, 1500);
-  });
+// Platform detection with live API state
+async function detectPlatform() {
+  const ua = navigator.userAgent;
+  let os = 'Linux', arch = 'x86_64';
+  if (ua.includes('Win')) os = 'Windows';
+  else if (ua.includes('Mac')) os = 'macOS';
+  document.getElementById('os-info').textContent = os;
+  document.getElementById('arch-info').textContent = arch;
+  // R15-Fix: echter Pfad statt 'User'-Platzhalter. Tauri: appDataDir (%LOCALAPPDATA%/<identifier>);
+  // Web-Fallback: statisch. launch.rs-Kanon (%LOCALAPPDATA%/toolboxv2/bin) wird unabhängig davon
+  // vom installer.ps1 Kanon-Block bedient (siehe R14).
+  let defaultPath = os === 'Windows' ? 'C:\\Users\\' + (window.username || 'User') + '\\ToolBoxV2'
+    : os === 'macOS' ? '/Applications/ToolBoxV2' : '/opt/toolboxv2';
+  try {
+    if (window.__TAURI__ && window.__TAURI__.path && window.__TAURI__.path.appDataDir) {
+      const ad = await window.__TAURI__.path.appDataDir();
+      if (ad) defaultPath = String(ad).replace(/[\\/]$/, '');
+    }
+  } catch (e) { /* Web-Kontext: Fallback */ }
+  document.getElementById('install-path').value = defaultPath;
+  document.getElementById('disk-space').textContent = 'ausreichend';
+  document.getElementById('net-status').className = 'status-dot is-online';
+
+  const state = await apiCall('/api/wizard/state');
+  if (!state || !state.ok) {
+    document.getElementById('net-status').className = 'status-dot';
+  }
 }
 
-// Auto-expand first section on load
-if (sections.length > 0) expandSection(sections[0]);
+// Install progress — Tauri Kaltstart (run_install + install-event) ODER 8467-API
+async function runInstall() {
+  const fill = document.getElementById('progress-fill');
+  const label = document.getElementById('progress-label');
+  const log = document.getElementById('log-output');
 
-// Load GitHub downloads
-loadDownloads();
+  function logMsg(msg, isSuccess = false) {
+    const line = document.createElement('div');
+    line.className = 'log-line' + (isSuccess ? ' is-success' : '');
+    line.textContent = '[' + new Date().toISOString().substr(11, 8) + '] ' + msg;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+  function setProgress(pct, msg) {
+    fill.style.width = Math.round(pct * 100) + '%';
+    if (msg) label.textContent = msg;
+  }
+
+  // --- Tauri-Kaltstart: echter Installer via run_install + install-event ---
+  if (window.__TAURI__ && window.__TAURI__.core) {
+    btnNext.disabled = true;
+    label.textContent = 'Starte Installer…';
+    logMsg('Installer wird gestartet (eigenständig, kein laufender Core nötig)…');
+    const profileMap = { local: 'consumer', source: 'developer' };
+    const config = {
+      profile: profileMap[document.querySelector('input[name="mode"]:checked')?.value] || 'consumer',
+      install_path: document.getElementById('install-path').value,
+      optional: [],
+    };
+    const unlisten = await window.__TAURI__.event.listen('install-event', e => {
+      const ev = e.payload || {};
+      if (ev.type === 'phase') { logMsg('[' + (ev.phase || '') + '] ' + (ev.msg || '')); setProgress(0.35, ev.msg); }
+      else if (ev.type === 'progress') { setProgress(ev.progress || 0.5, ev.msg); logMsg(ev.msg || ''); }
+      else if (ev.type === 'error') { logMsg('FEHLER: ' + (ev.msg || 'unbekannt')); label.textContent = 'Fehler'; }
+      else if (ev.type === 'done') {
+        setProgress(1, 'Installation abgeschlossen');
+        logMsg('ToolBoxV2 ' + (ev.version || '') + ' installiert unter ' + (ev.path || '') + '.', true);
+      }
+    });
+    try {
+      const res = await window.__TAURI__.core.invoke('run_install', { config });
+      logMsg('Installer beendet (exit=' + (res && res.exit_code) + ').', !!res?.success);
+      fill.style.width = '100%';
+      label.textContent = res?.success ? 'Installation abgeschlossen' : 'Installer meldete Fehler';
+    } catch (err) {
+      logMsg('FEHLER: ' + String(err));
+      label.textContent = 'Fehler';
+    } finally {
+      unlisten();
+      btnNext.disabled = false;
+      btnNext.textContent = 'Fertig';
+      showStep(5);
+    }
+    return;
+  }
+
+  // --- First-Run-Pfad: laufender Core (8467) via Wizard-API ---
+  fill.style.width = '15%';
+  label.textContent = 'Verbinde mit Wizard API…';
+  logMsg('Wizard API (127.0.0.1:8467) wird kontaktiert…');
+
+  const state = await apiCall('/api/wizard/state');
+  if (state && state.ok) {
+    fill.style.width = '35%';
+    logMsg('Verbindung hergestellt — ToolBoxV2 core online.', true);
+  } else {
+    fill.style.width = '35%';
+    logMsg('Kein lokaler Core erreichbar — Standalone-Modus (nur Installer-Paket).');
+  }
+
+  fill.style.width = '60%';
+  label.textContent = 'Schreibe Manifest & .env…';
+  const saveRes = await apiCall('/api/wizard/save', 'POST', {
+    app: { install_path: document.getElementById('install-path').value }
+  });
+
+  if (saveRes && saveRes.ok) {
+    fill.style.width = '85%';
+    logMsg('Manifest + .env geschrieben (wizard_api.save).', true);
+  } else {
+    logMsg('Manifest-Speichern übersprungen (kein Core aktiv).');
+  }
+
+  fill.style.width = '100%';
+  label.textContent = 'Installation abgeschlossen';
+  logMsg('ToolBoxV2 ist einsatzbereit.', true);
+
+  setTimeout(() => {
+    document.getElementById('summary-version').textContent = '0.1.28';
+    document.getElementById('summary-path').textContent = document.getElementById('install-path').value;
+    btnNext.disabled = false;
+    btnNext.textContent = 'Fertig';
+    showStep(5);
+  }, 500);
+}
+
+detectPlatform();
+</script>
+<button id="theme-toggle" title="Hell/Dunkel umschalten">🌗</button>
+<script>(function(){var b=document.getElementById("theme-toggle");if(!b)return;
+function lbl(){var t=document.documentElement.getAttribute("data-theme");b.textContent=t==="light"?"🌙":"☀️";}
+lbl();b.addEventListener("click",function(){var t=document.documentElement.getAttribute("data-theme")==="light"?"dark":"light";
+document.documentElement.setAttribute("data-theme",t);
+document.documentElement.classList.remove("light","dark");document.documentElement.classList.add(t);
+try{localStorage.setItem("tbjs_theme_preference",t);}catch(e){}lbl();});})();
 </script>
 </body>
 </html>
+<style>
+/* LIGHT-THEME (echte tbjs Werte, nur fehlende Vars) */
+[data-theme="light"] {
+    --color-accent: oklch(63% 0.15 230);
+    --color-primary-100: rgb(255, 255, 255);
+    --color-primary-300: oklch(90% 0.05 230);
+    --color-primary-400: oklch(72% 0.12 230);
+    --color-primary-500: oklch(63% 0.15 230);
+    --color-primary-600: oklch(55% 0.18 230);
+    --color-primary-700: oklch(48% 0.18 230);
+    --color-primary-900: oklch(40% 0.16 230);
+    --text-on-surface: var(--text-main);
+    --scrollbar-track: rgba(100, 150, 170, 0.1);
+    --scrollbar-thumb: rgba(100, 150, 170, 0.3);
+    --scrollbar-hover: rgba(80, 130, 160, 0.5);
+    --theme-bg-sun: #d0f0ff;
+    --theme-bg-light: #40a0c0;
+}
+
+#theme-toggle { position: fixed; top: 12px; right: 14px; z-index: 9999;
+    background: var(--bg-surface); color: var(--text-main);
+    border: var(--border-width) solid var(--border-subtle); border-radius: 9999px;
+    padding: 6px 10px; cursor: pointer; font-size: var(--text-sm);
+    transition: var(--duration-fast) var(--ease-default); }
+#theme-toggle:hover { border-color: var(--border-active); }
+</style>

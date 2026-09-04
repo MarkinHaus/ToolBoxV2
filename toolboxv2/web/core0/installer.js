@@ -164,9 +164,14 @@ setTimeout(() => {
     function createDownloadCard(title, description, links, icon = '📦') {
         const linksHtml = links.map(link => {
             if (link.onclick) {
-                return `<button onclick="${link.onclick}" style="margin:5px;padding:8px 16px;cursor:pointer;border-radius:4px;border:1px solid #007bff;background:#007bff;color:white;">${link.text}</button>`;
+                const needsTBf = /TBf/.test(link.onclick);
+                const tbfReady = !needsTBf || (typeof window.TBf !== 'undefined' && typeof window.TBf.registerServiceWorker === 'function');
+                if (!tbfReady) {
+                    return `<button disabled title="Nur innerhalb der ToolBox-App verfügbar (PWA-Registrierung)" style="margin:5px;padding:8px 16px;cursor:not-allowed;border-radius:4px;border:1px solid var(--border-subtle,#999);background:var(--bg-elevated,#eee);color:var(--text-muted,#888);opacity:.6;">${link.text}</button>`;
+                }
+                return `<button onclick="${link.onclick}" style="margin:5px;padding:8px 16px;cursor:pointer;border-radius:4px;border:1px solid var(--primary,#007bff);background:var(--primary,#007bff);color:#000;transition:var(--duration-fast,.15s) var(--ease-default,ease);">${link.text}</button>`;
             }
-            return `<a href="${link.url}" ${link.download ? 'download' : ''} target="_blank" style="display:inline-block;margin:5px;padding:8px 16px;background:#28a745;color:white;text-decoration:none;border-radius:4px;">${link.text}</a>`;
+            return `<a href="${link.url}" ${link.download ? 'download' : ''} target="_blank" style="display:inline-block;margin:5px;padding:8px 16px;background:var(--primary,#28a745);color:#000;text-decoration:none;border-radius:4px;transition:var(--duration-fast,.15s) var(--ease-default,ease);">${link.text}</a>`;
         }).join('');
 
         return `
@@ -193,7 +198,8 @@ setTimeout(() => {
                 throw new Error(`GitHub API: ${response.status} ${response.statusText}`);
             }
 
-            const releases = await response.json();
+            const allReleases = await response.json();
+            const releases = (allReleases || []).filter(r => !r.draft && !/demo/i.test(r.tag_name || ''));
             if (!releases || releases.length === 0) {
                 throw new Error('Keine Releases gefunden.');
             }
