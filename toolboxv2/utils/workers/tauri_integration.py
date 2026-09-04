@@ -344,6 +344,10 @@ def main():
         --mode       (compat tag, ignored)
     """
     import argparse
+    # FIX (bug-tauri-firstrun): TAURI_ENV/TB_ENV VOR allen Default-Aufloesungen
+    # setzen (BlobFile waehlt ansonsten beim Import/ctor noch das falsche Backend).
+    os.environ["TAURI_ENV"] = "true"
+    os.environ["TB_ENV"] = "tauri"
     parser = argparse.ArgumentParser(prog="tb-worker")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=None)

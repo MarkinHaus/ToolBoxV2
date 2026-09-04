@@ -417,7 +417,7 @@ class FastTB:
 
         return """<script>(function(){
 var proto=location.protocol==='https:'?'wss:':'ws:';
-var port=window.__TB_WS_PORT__||'8100';
+var port=window.__TB_WS_PORT__||'8468';
 var ws;
 function connect(){
     try{ws=new WebSocket(proto+'//'+location.hostname+':'+port+'/ws/open_hot_reload');}catch(e){return;}

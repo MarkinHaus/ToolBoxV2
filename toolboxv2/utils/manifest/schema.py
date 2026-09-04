@@ -246,7 +246,7 @@ class WSWorkerInstance(BaseModel):
     """Single WebSocket worker instance configuration."""
     name: str = Field(default="ws_main")
     host: str = Field(default="127.0.0.1")
-    port: int = Field(default=8100)
+    port: int = Field(default=8468)  # canonical WS port (matches worker_manager.rs)
     max_connections: int = Field(default=10000)
     ping_interval: int = Field(default=30)
     ping_timeout: int = Field(default=10)

@@ -135,7 +135,7 @@ class HTTPWorkerConfig:
 class WSWorkerConfig:
     """WebSocket worker configuration."""
     host: str = "localhost"
-    port: int = 8100
+    port: int = 8468  # canonical WS port (matches worker_manager.rs DEFAULT_WS_PORT)
     max_connections: int = 10000
     ping_interval: int = 30
     ping_timeout: int = 10
@@ -491,7 +491,7 @@ http_worker:
 # WebSocket Worker Configuration
 ws_worker:
   host: "127.0.0.1"
-  port: 8001
+  port: 8468
   max_connections: 10000
   ping_interval: 30
   ping_timeout: 10

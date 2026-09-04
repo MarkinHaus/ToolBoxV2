@@ -477,7 +477,7 @@ def docs_page(app) -> str:
 
 <script>
 var ROUTES = {routes_json};
-var wsPort = window.__TB_WS_PORT__ || '8100';
+var wsPort = window.__TB_WS_PORT__ || '8468';
 
 function filterRoutes(method) {{
   document.querySelectorAll('.filter-btn').forEach(function(b) {{

@@ -181,7 +181,8 @@ def endpoint_file() -> Path:
     return platform_data_dir() / ENDPOINT_FILENAME
 
 
-def publish_endpoint(host: Optional[str] = None, port: Optional[int] = None) -> Optional[Path]:
+def publish_endpoint(host: Optional[str] = None, port: Optional[int] = None,
+                     ws_port: Optional[int] = None) -> Optional[Path]:
     """Write the live endpoint to <data_dir>/toolboxv2/local_ui.json.
 
     Best-effort: returns the path on success, None on any failure. Called by
@@ -191,10 +192,17 @@ def publish_endpoint(host: Optional[str] = None, port: Optional[int] = None) -> 
     r_host, r_port = resolve_local_ui_endpoint()
     host = host or r_host
     port = int(port or r_port)
+    # FIX (bug-tauri-conn): ws_port mtpublicieren, damit Rust nicht raten muss.
+    env_ws = os.getenv("TB_WS_PORT", "").strip()
+    if ws_port is None:
+        ws_port = int(env_ws) if env_ws.isdigit() and int(env_ws) != 0 else (
+            8468 if port == 8467 else port + 1)
     payload = {
         "host": host,
         "port": port,
+        "ws_port": int(ws_port),
         "url": f"http://{host}:{port}",
+        "ws_url": f"ws://{host}:{int(ws_port)}",
         "pid": os.getpid(),
     }
     try:
