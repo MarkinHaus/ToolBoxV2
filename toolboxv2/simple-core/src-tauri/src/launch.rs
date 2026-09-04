@@ -211,11 +211,17 @@ mod tests {
 
     #[test]
     fn discover_tb_honors_override() {
-        // Nicht-existenter Override -> discovery faellt auf PATH/None,
-        // existierender Override -> wird geliefert.
+        // Contract: gueltiger Override gewinnt, ungueltiger wird NIE geliefert.
+        // WAS stattdessen gefunden wird (PATH/Candidates/None) ist Umgebungssache:
+        // der CI-Job installiert TB vorab per pip -> discover_tb findet das dann.
+        // (assert None war PATH-abhaengig -> S8-Run#3-Linux-Fail, launch.rs:218)
         let fake = std::env::temp_dir().join("tb_does_not_exist_9f3a.exe");
         std::env::set_var("TB_TB_PATH", &fake);
-        assert_eq!(discover_tb(), None);
+        let d = discover_tb();
+        assert_ne!(d.as_ref(), Some(&fake), "ungueltiger Override darf nie gewinnen");
+        if let Some(p) = &d {
+            assert!(p.exists(), "discover_tb liefert nur existierende Pfade");
+        }
         let real = std::env::temp_dir().join("tb_override_test_9f3a.exe");
         std::fs::write(&real, b"stub").unwrap();
         std::env::set_var("TB_TB_PATH", &real);
