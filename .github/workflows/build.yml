@@ -451,10 +451,14 @@ jobs:
           pip install pyinstaller
           pip install -e .
 
+                # tauri::generate_context! benoetigt frontendDist (../../dist) schon zur COMPILE-Zeit
+          # (proc-macro) — im CI-Checkout existiert es nicht (Build-Artefakt) -> Stub setzen
+          mkdir -p toolboxv2/dist
+          [ -f toolboxv2/dist/index.html ] || echo '<!doctype html><title>stub</title>' > toolboxv2/dist/index.html
       - name: Run installer unit tests (Linux only)
         if: matrix.os == 'ubuntu-latest'
         working-directory: ./toolboxv2/simple-core/src-tauri
-        run: cargo test --lib installer::
+        run: "cargo test --lib installer::"
 
       - name: Create Worker Wrapper Binary
         shell: bash

@@ -99,6 +99,10 @@ jobs:
             chmod +x ./toolboxv2/simple-core/src-tauri/binaries/tb-worker-${{ matrix.target_triple }}
           fi
 
+                # tauri::generate_context! benoetigt frontendDist (../../dist) schon zur COMPILE-Zeit
+          # (proc-macro) — im CI-Checkout existiert es nicht (Build-Artefakt) -> Stub setzen
+          mkdir -p toolboxv2/dist
+          [ -f toolboxv2/dist/index.html ] || echo '<!doctype html><title>stub</title>' > toolboxv2/dist/index.html
       - name: Run Rust unit tests (Linux only)
         if: matrix.os == 'ubuntu-latest'
         working-directory: ./toolboxv2/simple-core/src-tauri
