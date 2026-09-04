@@ -1,0 +1,127 @@
+name: Nightly Release
+
+# P1 Phase 2 (architecture.md): Nightly-Tag mit ueberschreibbaren Artefakten.
+# Kaltstart-Installer brauchen downloadbare Binaries ohne echten Release.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old nightly release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete nightly --cleanup-tag -y -R "$GITHUB_REPOSITORY" || true
+
+  nightly:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target_triple: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target_triple: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target_triple: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux deps (webkit2gtk)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev
+
+      - name: Setup Python for Worker
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+
+      - name: Install ToolBoxV2 + PyInstaller
+        run: |
+          pip install --upgrade pip
+          pip install pyinstaller
+          pip install -e .
+
+      - name: Create Worker Sidecar Binary
+        shell: bash
+        run: |
+          mkdir -p ./toolboxv2/simple-core/src-tauri/binaries
+          cat > worker_runner.py << 'PYEOF'
+          #!/usr/bin/env python3
+          """ToolBoxV2 Worker Runner - Sidecar for Tauri Desktop App (ports: 8467/8468)."""
+          import sys
+          import argparse
+
+          def main():
+              parser = argparse.ArgumentParser(description='ToolBoxV2 HTTP Worker')
+              parser.add_argument('--http-port', type=int, default=8467)
+              parser.add_argument('--ws-port', type=int, default=8468)
+              parser.add_argument('--mode', type=str, default='tauri')
+              args, unknown = parser.parse_known_args()
+
+              try:
+                  from toolboxv2.utils.workers.server_worker import run_http_worker
+                  run_http_worker(port=args.http_port, ws_port=args.ws_port, mode=args.mode)
+              except ImportError as e:
+                  print(f"Error: toolboxv2 not installed: {e}", file=sys.stderr)
+                  sys.exit(1)
+
+          if __name__ == "__main__":
+              main()
+          PYEOF
+
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            pyinstaller --onefile --name "tb-worker-${{ matrix.target_triple }}" --console worker_runner.py
+            cp dist/tb-worker-${{ matrix.target_triple }}.exe ./toolboxv2/simple-core/src-tauri/binaries/
+          else
+            pyinstaller --onefile --name "tb-worker-${{ matrix.target_triple }}" worker_runner.py
+            cp dist/tb-worker-${{ matrix.target_triple }} ./toolboxv2/simple-core/src-tauri/binaries/
+            chmod +x ./toolboxv2/simple-core/src-tauri/binaries/tb-worker-${{ matrix.target_triple }}
+          fi
+
+      - name: Run installer unit tests (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: ./toolboxv2/simple-core/src-tauri
+        run: cargo test --lib installer::
+
+      - name: Install frontend dependencies
+        working-directory: ./toolboxv2
+        run: |
+          npm install
+          npm install --prefix ./web
+          npm install --prefix ./simple-core
+          npm run build
+
+      - name: Build Tauri (nightly)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: ./toolboxv2/simple-core
+          tauriScript: npx tauri
+          tagName: nightly
+          releaseName: 'Nightly Build'
+          releaseBody: 'Automated nightly — P1 cold-start installer binaries (0.1.x-dev)'
+          releaseDraft: false
+          prerelease: true
+          args: ${{ matrix.args }}

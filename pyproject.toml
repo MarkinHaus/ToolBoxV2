@@ -24,6 +24,7 @@ dependencies = [
     "psutil",
     "prompt-toolkit>=3.0.52",
     "minio>=7.2.20",
+    "python-multipart>=0.0.18",
 ]
 
 [build-system]

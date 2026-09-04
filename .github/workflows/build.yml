@@ -362,7 +362,7 @@ jobs:
           -   name: Install dependencies
               run: |
                   python -m pip install --upgrade pip
-                  pip install -r requirements.txt || pip install .
+                  pip install -r _requirements.txt || pip install .
 
           # Using Nuitka-Action with FIXED mode setting
           -   name: Build with Nuitka Action
@@ -451,12 +451,16 @@ jobs:
           pip install pyinstaller
           pip install -e .
 
+      - name: Run installer unit tests (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: ./toolboxv2/simple-core/src-tauri
+        run: cargo test --lib installer::
+
       - name: Create Worker Wrapper Binary
         shell: bash
         run: |
           # Create binaries directory
           mkdir -p ./toolboxv2/simple-core/src-tauri/binaries
-
           # Create the worker runner script
           cat > worker_runner.py << 'PYEOF'
           #!/usr/bin/env python3
