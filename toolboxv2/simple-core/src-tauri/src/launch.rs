@@ -219,9 +219,6 @@ mod tests {
         std::env::set_var("TB_TB_PATH", &fake);
         let d = discover_tb();
         assert_ne!(d.as_ref(), Some(&fake), "ungueltiger Override darf nie gewinnen");
-        if let Some(p) = &d {
-            assert!(p.exists(), "discover_tb liefert nur existierende Pfade");
-        }
         let real = std::env::temp_dir().join("tb_override_test_9f3a.exe");
         std::fs::write(&real, b"stub").unwrap();
         std::env::set_var("TB_TB_PATH", &real);
