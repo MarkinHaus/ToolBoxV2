@@ -35,7 +35,11 @@ FEATURES_IMMUTABLE="mini core"
 MODULES_OPTIONAL="cli web desktop isaa exotic"
 
 # ── Colors ───────────────────────────────────────────────────
-if [ -t 1 ]; then
+# R17: NO_COLOR respektieren, FORCE_COLOR erzwingt Farben auch am Pipe-stdout
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  R='\033[0;31m' G='\033[0;32m' Y='\033[1;33m'
+  B='\033[0;34m' C='\033[0;36m' D='\033[2m' BOLD='\033[1m' NC='\033[0m'
+elif [ -n "${FORCE_COLOR:-}" ]; then
   R='\033[0;31m' G='\033[0;32m' Y='\033[1;33m'
   B='\033[0;34m' C='\033[0;36m' D='\033[2m' BOLD='\033[1m' NC='\033[0m'
 else
@@ -315,13 +319,13 @@ phase_config() {
   # Install mode
   if [ -z "$INSTALL_MODE" ]; then
     echo ""
-    echo "  Select install mode:"
-    echo "  ${C}1)${NC} native   — Single binary, no Python required ${D}(recommended)${NC}"
-    echo "  ${C}2)${NC} uv       — Python package via uv tool"
-    echo "  ${C}3)${NC} docker   — Containerized, isolated"
-    echo "  ${C}4)${NC} source   — Full source from Git or Registry"
+    echo -e "  Select install mode:"
+    echo -e "  ${C}1)${NC} native   — Single binary, no Python required ${D}(recommended)${NC}"
+    echo -e "  ${C}2)${NC} uv       — Python package via uv tool"
+    echo -e "  ${C}3)${NC} docker   — Containerized, isolated"
+    echo -e "  ${C}4)${NC} source   — Full source from Git or Registry"
     ask "Mode [1-4] (default: 1): "
-    read -r mode_choice
+    read -r mode_choice || mode_choice=""   # EOF/piped-sicher (set -e!) — S5/R17-Befund
     case "${mode_choice:-1}" in
       1) INSTALL_MODE="native" ;;
       2) INSTALL_MODE="uv" ;;
@@ -333,11 +337,11 @@ phase_config() {
 
   # source_from sub-selection
   if [ "$INSTALL_MODE" = "source" ] && [ -z "$SOURCE_FROM" ]; then
-    echo "  Source from:"
-    echo "  ${C}1)${NC} git      — Clone from GitHub (editable dev tree)"
-    echo "  ${C}2)${NC} registry — Download release tarball"
+    echo -e "  Source from:"
+    echo -e "  ${C}1)${NC} git      — Clone from GitHub (editable dev tree)"
+    echo -e "  ${C}2)${NC} registry — Download release tarball"
     ask "Source [1-2] (default: 1): "
-    read -r src_choice
+    read -r src_choice || src_choice=""    # EOF/piped-sicher
     [ "${src_choice:-1}" = "2" ] && SOURCE_FROM="registry" || SOURCE_FROM="git"
   fi
   SOURCE_FROM="${SOURCE_FROM:-git}"
@@ -370,7 +374,7 @@ phase_config() {
   default_path=$(os_default_path)
   if [ -z "$INSTALL_PATH" ]; then
     ask "Custom install path? Leave empty for default (${C}${default_path}${NC}): "
-    read -r custom_path
+    read -r custom_path || custom_path=""  # EOF/piped-sicher
     INSTALL_PATH="${custom_path:-$default_path}"
   fi
   INSTALL_PATH="${INSTALL_PATH:-$default_path}"
