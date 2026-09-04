@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-hud-position"
+description = "Enables the save_hud_position command without any pre-configured scope."
+commands.allow = ["save_hud_position"]
+
+[[permission]]
+identifier = "deny-save-hud-position"
+description = "Denies the save_hud_position command without any pre-configured scope."
+commands.deny = ["save_hud_position"]

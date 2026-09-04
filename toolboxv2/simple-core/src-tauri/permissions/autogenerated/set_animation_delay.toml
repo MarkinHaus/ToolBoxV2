@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-animation-delay"
+description = "Enables the set_animation_delay command without any pre-configured scope."
+commands.allow = ["set_animation_delay"]
+
+[[permission]]
+identifier = "deny-set-animation-delay"
+description = "Denies the set_animation_delay command without any pre-configured scope."
+commands.deny = ["set_animation_delay"]

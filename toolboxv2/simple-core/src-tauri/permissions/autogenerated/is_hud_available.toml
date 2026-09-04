@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-is-hud-available"
+description = "Enables the is_hud_available command without any pre-configured scope."
+commands.allow = ["is_hud_available"]
+
+[[permission]]
+identifier = "deny-is-hud-available"
+description = "Denies the is_hud_available command without any pre-configured scope."
+commands.deny = ["is_hud_available"]

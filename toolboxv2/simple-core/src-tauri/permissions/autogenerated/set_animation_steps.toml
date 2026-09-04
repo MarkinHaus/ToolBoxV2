@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-animation-steps"
+description = "Enables the set_animation_steps command without any pre-configured scope."
+commands.allow = ["set_animation_steps"]
+
+[[permission]]
+identifier = "deny-set-animation-steps"
+description = "Denies the set_animation_steps command without any pre-configured scope."
+commands.deny = ["set_animation_steps"]
