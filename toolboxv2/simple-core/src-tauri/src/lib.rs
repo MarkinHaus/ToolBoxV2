@@ -6,6 +6,8 @@
 )]
 
 mod hud_settings;
+mod installer;
+mod launch;
 mod mode_manager;
 mod worker_manager;
 
@@ -884,6 +886,80 @@ fn is_minimized_start() -> bool {
 // Main Application Entry
 // ============================================================================
 
+/// Ziel des Bootstrap-Routings.
+#[derive(Debug, Clone)]
+enum LaunchTarget {
+    /// local-ui URL oeffnen (Running oder erfolgreich gestartet).
+    LocalUi { url: String },
+    /// Kaltstart: installer.html im Tauri-Window.
+    NotInstalled,
+    /// Installiert, aber Start fehlgeschlagen (Fehlerseite statt black screen).
+    Error { reason: String },
+}
+
+/// Bootstrap-Routing (W1a): Entscheidet beim sichtbaren Start, welches
+/// Fenster geoeffnet wird - local-ui (Running/InstalledStopped) oder der
+/// Kaltstart-Installer (NotInstalled). Sidecar-Start bleibt im setup()
+/// (existierendes Verhalten); hier nur Zustandsermittlung + Navigation.
+async fn bootstrap_target() -> LaunchTarget {
+    let base = worker_manager::local_ui_url();
+    if launch::probe_health(&base).await {
+        // Reihenfolge wichtig: State lesen, waehrend 8467 antwortet.
+        let route = launch::target_route(&base).await;
+        return LaunchTarget::LocalUi { url: format!("{}{}", base, route) };
+    }
+
+    if launch::tb_on_path() {
+        if let Err(e) = launch::start_background() {
+            log::warn!("[Launch] background start failed: {}", e);
+        }
+        if launch::wait_until_running(&base, 25).await {
+            let route = launch::target_route(&base).await;
+            return LaunchTarget::LocalUi { url: format!("{}{}", base, route) };
+        }
+        // TB installiert, aber Start schlaegt fehl -> Fehlerseite statt black screen.
+        return LaunchTarget::Error { reason: "installed-stopped-timeout".into() };
+    }
+
+    LaunchTarget::NotInstalled
+}
+
+/// Bootstrap im Hintergrund ausfuehren und das Hauptfenster auf das Ziel
+/// navigieren (installer.html / starting.html / local-ui-URL).
+fn spawn_bootstrap(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let target = bootstrap_target().await;
+        log::info!("[Launch] bootstrap target: {:?}", target);
+        // Wizard lebt im frontendDist (web/installer/index.html, CopyPlugin:
+        // web/* -> dist/web/*). starting.html ist bundle.resource (kein
+        // app://-URL) -> Fehlerfall zeigt ebenfalls den Wizard (repair-faehig),
+        // Grund steht im Log.
+        match &target {
+            LaunchTarget::LocalUi { url } => {
+                navigate_or_create_window(&app, "main", url);
+            }
+            LaunchTarget::NotInstalled => {
+                // Wizard liegt im frontendDist (webpack CopyPlugin web/* ->
+                // dist/web/*). starting.html ist bundle.resource (kein
+                // app://-URL) -> Kaltstart+Fehlerfall zeigen den Wizard.
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.eval(
+                        "window.location.replace('web/installer/index.html');",
+                    );
+                }
+            }
+            LaunchTarget::Error { reason } => {
+                log::error!("[Launch] bootstrap error: {}", reason);
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.eval(
+                        "window.location.replace('web/installer/index.html');",
+                    );
+                }
+            }
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let worker_manager = WorkerManager::new();
@@ -929,6 +1005,9 @@ pub fn run() {
             check_worker_health,
             get_api_urls,
             update_tray_status,
+            // Installer (Kaltstart-Install, P1)
+            installer::run_install,
+            installer::cancel_install,
             save_settings,
             load_settings,
             // Mode management commands
@@ -1031,6 +1110,8 @@ pub fn run() {
                 drop(manager);
                 // subscribe to live tray events from the sidecar
                 subscribe_tray_events(app.handle().clone());
+                // W1a: Bootstrap-Routing (local-ui vs installer.html vs Fehlerseite)
+                spawn_bootstrap(app.handle().clone());
             }
 
             #[cfg(any(target_os = "android", target_os = "ios"))]

@@ -75,8 +75,11 @@ const Config = {
         const remoteWsUrl = initialUserConfig.remoteWsUrl || 'wss://simplecore.app';
 
         if (isTauri && !initialUserConfig.baseApiUrl) {
-            const workerHttpPort = initialUserConfig.workerHttpPort || 5000;
-            const workerWsPort = initialUserConfig.workerWsPort || 5001;
+            // FIX (bug-tauri-conn): echte Worker-Ports (config.yaml: live_ui 8467,
+            // ws_worker 8468) statt 5000/5001 — die alten Defaults erzeugten lokale
+            // URLs, die niemand bedient ( Ursache: "App verbindet nicht mit Worker").
+            const workerHttpPort = initialUserConfig.workerHttpPort || 8467;
+            const workerWsPort = initialUserConfig.workerWsPort || 8468;
             const localApiUrl = `http://localhost:${workerHttpPort}/api`;
             const localWsUrl = `ws://localhost:${workerWsPort}`;
 
@@ -161,7 +164,8 @@ const Config = {
                 _config.baseApiUrl = new URL(_config.baseApiUrl, window.location.origin).href;
             } else {
                 // For Tauri with relative URL (shouldn't happen, but fallback to local worker)
-                const workerHttpPort = initialUserConfig.workerHttpPort || 5000;
+            // FIX (bug-tauri-conn): 8467 (live_ui) statt 5000
+                const workerHttpPort = initialUserConfig.workerHttpPort || 8467;
                 _config.baseApiUrl = `http://localhost:${workerHttpPort}${_config.baseApiUrl}`;
             }
         }

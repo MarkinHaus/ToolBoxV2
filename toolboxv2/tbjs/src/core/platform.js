@@ -76,8 +76,8 @@ export const getApiUrls = async () => {
     if (!isTauri()) {
         // Default for web development
         return {
-            api_url: 'http://localhost:5000/api',
-            ws_url: 'ws://localhost:5001',
+            api_url: 'http://localhost:8467/api',
+            ws_url: 'ws://localhost:8468',
             is_remote: false
         };
     }
@@ -88,8 +88,8 @@ export const getApiUrls = async () => {
     } catch (e) {
         console.error('[Platform] Could not get API URLs:', e);
         return {
-            api_url: 'http://localhost:5000/api',
-            ws_url: 'ws://localhost:5001',
+            api_url: 'http://localhost:8467/api',
+            ws_url: 'ws://localhost:8468',
             is_remote: false
         };
     }

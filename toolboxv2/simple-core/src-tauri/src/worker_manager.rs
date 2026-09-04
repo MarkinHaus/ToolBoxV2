@@ -123,6 +123,13 @@ impl WorkerManager {
             .ok()
             .and_then(|p| p.trim().parse::<u16>().ok())
             .filter(|p| *p != 0)
+            .or_else(|| {
+                // FIX (bug-tauri-conn): Python published ws_port in local_ui.json
+                published_endpoint()
+                    .and_then(|v| v.get("ws_port").and_then(|p| p.as_u64()))
+                    .and_then(|p| u16::try_from(p).ok())
+                    .filter(|p| *p != 0)
+            })
             .unwrap_or_else(|| if http_port == DEFAULT_HTTP_PORT { DEFAULT_WS_PORT } else { http_port + 1 });
         WorkerManager {
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -202,19 +209,29 @@ impl WorkerManager {
                         Ok(())
                     }
                     Err(e) => {
-                        log::warn!("Failed to spawn worker sidecar: {}. Falling back to remote API.", e);
-                        self.fallback_to_remote()
+                        log::warn!("Failed to spawn worker sidecar: {}. Keeping LOCAL endpoint (external 'tb workers start' may serve 8467).", e);
+                        // FIX (bug-tauri-conn): kein stiller Remote-Switch — der
+                        // Worker laeuft oft extern; Remote nur auf User-Kommando.
+                        self.sidecar_available = false;
+                        self.running.store(false, Ordering::SeqCst);
+                        self.endpoint = ApiEndpoint::Local;
+                        Ok(())
                     }
                 }
             }
             Err(e) => {
-                log::warn!("Worker sidecar not available: {}. Using remote API.", e);
-                self.fallback_to_remote()
+                log::warn!("Worker sidecar not available: {}. Keeping LOCAL endpoint (external 'tb workers start' may serve 8467).", e);
+                self.sidecar_available = false;
+                self.running.store(false, Ordering::SeqCst);
+                self.endpoint = ApiEndpoint::Local;
+                Ok(())
             }
         }
     }
 
     /// Fallback to remote API when sidecar is not available
+    /// (explizite API, kein automatischer Aufruf mehr — bug-tauri-conn)
+    #[allow(dead_code)]
     fn fallback_to_remote(&mut self) -> Result<(), String> {
         self.endpoint = ApiEndpoint::Remote;
         self.sidecar_available = false;
@@ -292,9 +309,8 @@ impl WorkerManager {
     pub fn is_healthy(&self) -> bool {
         match &self.endpoint {
             ApiEndpoint::Local => {
-                if !self.running.load(Ordering::SeqCst) {
-                    return false;
-                }
+                // FIX (bug-tauri-conn): kein Running-Flag-Gate — der Worker kann
+                // extern gestartet sein; der TCP-Probe unten entscheidet.
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 {
                     // parse() on a hostname would panic; only dial when the

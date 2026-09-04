@@ -27,7 +27,7 @@ const SseManager = {
             } else {
                 // Fallback zu localhost
                 fullUrl = url.startsWith('/')
-                    ? `http://localhost:5000${url}`
+                    ? `http://localhost:8467${url}`
                     : url;
                 TB.logger.warn(`[SSE] Tauri mode - no worker URL, using fallback: ${fullUrl}`);
             }

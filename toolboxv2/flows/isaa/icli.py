@@ -1582,18 +1582,6 @@ def show_xray_v3(data: dict):
         f"  <style fg='{PTColors.GREY}'>  ↳ Gesamte Regelsätze: {sys_det['All Rules (Volume)']:,} Tokens</style>"
     ))
 
-    print_separator()
-
-    # Warnings & Tips
-    if usage_pct := (used / limit * 100) > 85:
-        print_status("KRITISCHE AUSLASTUNG – 'shift_focus' ausführen!", "error")
-    elif sys_det["VFS Content"] > 4000:
-        print_status(f"Hohe VFS-Last ({sys_det['VFS Content']:,} tokens) – 'vfs_close' empfohlen", "warning")
-    elif max_potential > limit:
-        print_status(
-            f"Achtung: Maximales Volumen ({max_potential:,} Tokens) übersteigt das Modell-Limit! Slot-Eviction ist zwingend aktiv.",
-            "info")
-
     print_box_footer()
 
 # =============================================================================

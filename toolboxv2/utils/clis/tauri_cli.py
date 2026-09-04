@@ -588,39 +588,64 @@ def run_app(with_worker: bool = True, http_port: int = 8467,
 
     project_root = get_project_root()
     worker_proc = None
+    app_proc = None
 
     try:
         # Start worker if requested
         if with_worker:
-            print_status("Starting local worker...", "progress")
-            worker_proc = run_worker_debug(project_root, http_port, ws_port, no_ws=no_ws)
-            print_status(f"Worker started (PID: {worker_proc.pid})", "success")
-            print_status(f"  HTTP API: http://localhost:{http_port}", "info")
-            if not no_ws:
-                print_status(f"  WebSocket: ws://localhost:{ws_port}", "info")
+            # FIX (gui-lifecycle): Port-Probe vor Spawn — laeuft schon ein Stack
+            # (tb workers), wuerde der Zweit-Worker mit Bind-Fehler sterben.
+            import socket as _socket
+            probe = _socket.socket()
+            probe.settimeout(0.5)
+            port_busy = probe.connect_ex(("127.0.0.1", http_port)) == 0
+            probe.close()
+            if port_busy:
+                print_status(f"Port {http_port} already in use - reusing running stack (no second worker)", "warning")
+            else:
+                print_status("Starting local worker...", "progress")
+                worker_proc = run_worker_debug(project_root, http_port, ws_port, no_ws=no_ws)
+                print_status(f"Worker started (PID: {worker_proc.pid})", "success")
+                print_status(f"  HTTP API: http://localhost:{http_port}", "info")
+                if not no_ws:
+                    print_status(f"  WebSocket: ws://localhost:{ws_port}", "info")
 
         # Start the app
         print_status(f"Launching: {app_path}", "launch")
 
+        # FIX (gui-lifecycle): Handle behalten — CLI lebt so lange wie das App-Fenster
+        # (vorher: wait auf Worker -> Zombie-CLI bei Fenster-Zu; Ctrl+C killte Worker,
+        # App blieb mit toten Verbindungen zurueck).
         if IS_WINDOWS:
-            subprocess.Popen([str(app_path)], creationflags=subprocess.DETACHED_PROCESS)
+            app_proc = subprocess.Popen([str(app_path)], creationflags=subprocess.DETACHED_PROCESS)
         elif IS_MACOS:
-            subprocess.Popen(["open", "-a", str(app_path.parent.parent.parent)])
+            app_proc = subprocess.Popen(["open", "-a", str(app_path.parent.parent.parent)])
         else:
-            subprocess.Popen([str(app_path)])
+            app_proc = subprocess.Popen([str(app_path)])
 
         print_status("App launched successfully!", "success")
-
-        if with_worker:
-            print_status("Worker running in background. Press Ctrl+C to stop.", "info")
-            try:
-                worker_proc.wait()
-            except KeyboardInterrupt:
-                pass
+        print_status("Close the app window to stop (Ctrl+C also stops everything).", "info")
+        try:
+            if app_proc is not None and app_proc.poll() is not None:
+                # App sofort beendet (z.B. zweiter Instance-Check) — nichts blocken.
+                print_status("App exited immediately (already running?)", "warning")
+            elif app_proc is not None:
+                app_proc.wait()
+        except KeyboardInterrupt:
+            pass
 
     except Exception as e:
         print_status(f"Failed to launch app: {e}", "error")
     finally:
+        # ponytail: terminate() = harte Beendigung unter Windows; Upgrade: graceful
+        # shutdown via Tauri-Event, sobald App-Seite einen close-Command kennt.
+        if app_proc is not None and app_proc.poll() is None:
+            print_status("Stopping app...", "progress")
+            app_proc.terminate()
+            try:
+                app_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                app_proc.kill()
         if worker_proc:
             print_status("Stopping worker...", "progress")
             worker_proc.terminate()

@@ -50,7 +50,7 @@ $GITHUB_REPO          = "MarkinHaus/ToolBoxV2"
 $GITHUB_RAW           = "https://raw.githubusercontent.com/$GITHUB_REPO/master"
 $MIN_DISK_MB          = 300
 $FEATURES_IMMUTABLE   = "mini core"
-$FEATURES_OPTIONAL    = @("cli","web","desktop","isaa","exotic")
+$MODULES_OPTIONAL    = @("cli","web","desktop","isaa","exotic")
 
 # ── Colors / Logging ─────────────────────────────────────────
 # NOTE: all human + JSON log output goes through Write-Host (information
@@ -395,7 +395,7 @@ function Invoke-InteractiveConfig {
     Write-Host ""
     Write-Host "  Included (always): mini core"
     $selFeatures = $FEATURES
-    foreach ($feat in $FEATURES_OPTIONAL) {
+    foreach ($feat in $MODULES_OPTIONAL) {
         $currently = if ($selFeatures -match "\b${feat}\b") { "yes" } else { "no" }
         $def = if ($currently -eq "yes") { "y" } else { "n" }
         if (Confirm-User "  Enable ${feat}? [currently: $currently]" $def) {
@@ -418,7 +418,7 @@ function Invoke-InteractiveConfig {
     Log "Mode: $INSTALL_MODE$(if ($SOURCE_FROM) { " ($SOURCE_FROM)" })"
     Log "Path: $INSTALL_PATH"
     Log "Env:  $ENVIRONMENT"
-    Log "Features: $FEATURES_IMMUTABLE $FEATURES"
+    Log "Modules: $FEATURES_IMMUTABLE $FEATURES"
 }
 
 # ============================================================
@@ -783,7 +783,7 @@ function Print-Summary {
     Write-Host "  Home:     $INSTALL_PATH"
     Write-Host "  Mode:     $INSTALL_MODE"
     Write-Host "  Runtime:  $RUNTIME"
-    Write-Host "  Features: $FEATURES_IMMUTABLE $FEATURES"
+    Write-Host "  Modules: $FEATURES_IMMUTABLE $FEATURES"
     Write-Host ""
     Write-Host "  Next steps:" -ForegroundColor Cyan
     Write-Host "  1. Restart terminal (PATH updated)"
@@ -837,3 +837,23 @@ switch ($ACTION) {
     "update"    { Phase-Discovery; Phase-Config; Action-Update }
     "uninstall" { Phase-Discovery; Action-Uninstall }
 }
+
+
+# R14: launch.rs-Kanon-Garantie — tb.exe/tb.cmd nach %LOCALAPPDATA%\toolboxv2\bin spiegeln
+# (launch.rs tb_candidates prueft genau diesen Pfad; GUI-Starts erbt nur User-PATH aus Registry)
+$TB_CANON_DIR = Join-Path $env:LOCALAPPDATA "toolboxv2\bin"
+try {
+  New-Item -ItemType Directory -Force -Path $TB_CANON_DIR | Out-Null
+  # launch.rs tb_candidates sucht NUR tb.exe (nicht .cmd!) -> pip-Exe-Shims betten den
+  # absoluten Python-Pfad ein, daher funktioniert der Kopierte ueberall:
+  $tbExe = Join-Path $INSTALL_PATH "Scripts\tb.exe"
+  if (Test-Path $tbExe) {
+    Copy-Item $tbExe (Join-Path $TB_CANON_DIR "tb.exe") -Force
+    Write-Host "[R14] Kanon tb.exe: $TB_CANON_DIR\tb.exe"
+  }
+  $tbCmd = Join-Path $INSTALL_PATH "bin\tb.cmd"
+  if (Test-Path $tbCmd) {
+    Copy-Item $tbCmd (Join-Path $TB_CANON_DIR "tb.cmd") -Force
+  }
+  Write-Host "[R14] Kanon-Kopie: $TB_CANON_DIR\tb.cmd"
+} catch { Write-Host "[R14] Kanon-Kopie fehlgeschlagen: $_" }

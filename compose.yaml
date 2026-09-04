@@ -64,7 +64,7 @@ services:
       retries: 3
     expose:
       - "8000"
-      - "8001"
+      - "8468"
       - "5555-5558"
     deploy:
       update_config:
@@ -116,6 +116,8 @@ services:
     volumes:
       - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./docker/nginx/box-enabled:/etc/nginx/box-enabled:ro
+      # dist direkt von nginx serven (Compose-Mode); API bleibt proxied an tb-worker
+      - ./toolboxv2/dist/web:/usr/share/nginx/html/tb:ro
       - nginx-cache:/var/cache/nginx
     ports:
       - "${NGINX_HTTP_PORT:-80}:80"

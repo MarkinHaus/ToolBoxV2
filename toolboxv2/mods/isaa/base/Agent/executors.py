@@ -571,11 +571,12 @@ def create_local_code_exec_tool(agent, legacy: bool = False, **kw) -> dict:
 
     executor = LocalCodeExecutor(agent=agent)
 
-    async def exec_code(code: str) -> dict:
+    async def exec_code(reason: str, code: str) -> dict:
         """
         Execute Python code locally using MockIPython (legacy path).
 
         Args:
+            reason: Reason for the action
             code: Python code to execute
 
         Returns:
@@ -606,7 +607,7 @@ def create_docker_code_exec_tool(agent, working_dir: str = None) -> dict:
     """
     executor = DockerCodeExecutor(agent=agent, working_dir=working_dir)
 
-    async def exec_code(code: str) -> dict:
+    async def exec_code(reason: str, code: str) -> dict:
         """
         Execute Python code in Docker container (toolboxv2:latest).
 
@@ -614,6 +615,7 @@ def create_docker_code_exec_tool(agent, working_dir: str = None) -> dict:
         VFS files are synced to the workspace directory.
 
         Args:
+            reason: Reason for the action
             code: Python code to execute
 
         Returns:

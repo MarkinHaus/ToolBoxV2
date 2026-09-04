@@ -167,13 +167,45 @@ def _local_ui_alive(timeout: float = 1.5) -> bool:
         return False
 
 
+def _workers_start_cmd() -> list[str]:
+    """Command-Vektor fuer `workers start` - tb.exe wenn findbar, sonst -m."""
+    import shutil
+
+    tb = shutil.which("tb")
+    if tb:
+        return [tb, "workers", "start"]
+    # Dev-Setup ohne PATH-Hit: Modul-Spawn aus Paket-Root (CWD-fuehrend).
+    import toolboxv2
+
+    return [sys.executable, "-m", "toolboxv2", "workers", "start"]
+
+
+def _workers_popen_kwargs() -> dict:
+    """Popen-Extras: cwd=Install-Root + echtes Detach + Log-Redirect."""
+    import toolboxv2
+
+    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(toolboxv2.__file__)))
+    log_dir = os.path.join(pkg_root, ".info")
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        lf = open(os.path.join(log_dir, "workers_start.log"), "ab")  # noqa: SIM115
+    except OSError:
+        lf = subprocess.DEVNULL
+    kw: dict = {"cwd": pkg_root, "stdout": lf, "stderr": lf,
+                "stdin": subprocess.DEVNULL}
+    if sys.platform == "win32":
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: ueberlebt Tray-Exit.
+        kw["creationflags"] = (subprocess.DETACHED_PROCESS
+                               | subprocess.CREATE_NEW_PROCESS_GROUP)
+    else:
+        kw["start_new_session"] = True
+    return kw
+
+
 def _start_local_ui() -> None:
     """Spawn the worker stack (owns the live UI) detached; non-blocking."""
     try:
-        subprocess.Popen(
-            [sys.executable, "-m", "toolboxv2", "workers", "start"],
-            start_new_session=True,
-        )
+        subprocess.Popen(_workers_start_cmd(), **_workers_popen_kwargs())
     except Exception as exc:  # noqa: BLE001
         log.error("could not start local ui workers: %s", exc)
 

@@ -17,7 +17,7 @@
         "style-src": "'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net",
         "font-src": "'self' https://fonts.gstatic.com https://cdn.jsdelivr.net",
         "img-src": "'self' data: https: asset: http://asset.localhost",
-        "connect-src": "'self' http://localhost:* ws://localhost:* https://simplecore.app https://*.simplecore.app wss://*.simplecore.app ipc: http://ipc.localhost https://unpkg.com https://cdn.jsdelivr.net"
+        "connect-src": "'self' http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:* https://simplecore.app https://*.simplecore.app wss://*.simplecore.app ipc: http://ipc.localhost https://unpkg.com https://cdn.jsdelivr.net"
       },
       "capabilities": ["default"],
       "dangerousDisableAssetCspModification": ["style-src", "script-src", "worker-src"]
@@ -46,7 +46,9 @@
       "setup.html",
       "starting.html",
       "hud.html",
-      "installer.html"
+      "installer.html",
+      "installer.sh",
+      "installer.ps1"
     ],
     "externalBin": [
       "binaries/tb-worker"

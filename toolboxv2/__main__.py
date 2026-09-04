@@ -487,9 +487,10 @@ RUNNER_KEYS = [
     "ytss",
     "LiveSync",
     "tray",
+    "local-cli"
 ]
 
-DEFAULT_MODI = "cli"
+DEFAULT_MODI = "local-cli"
 
 
 # =================== Helper Functions ===================
@@ -856,6 +857,7 @@ def show_interactive_guide():
     │    gui           Desktop GUI (feature: desktop)                            │
     │    http_worker   Single HTTP worker (feature: web)                         │
     │    jsx           JSX dev server                                            │
+    │    local-cli     Main tb local cli enty point                              │
     │    LiveSync      Real-time file synchronization                            │
     │    llm-gateway   LLM gateway proxy                                         │
     │    login         Login to ToolBoxV2                                        │

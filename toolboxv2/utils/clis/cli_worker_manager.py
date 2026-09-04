@@ -1721,7 +1721,15 @@ class ManagerAPI(BaseHTTPRequestHandler):
         pass  # Silent
 
     def _check_auth(self) -> bool:
-        """Every route requires X-Cluster-Secret == manager.cluster_secret."""
+        """Routes mit Secret-Pflicht; GET / + /api/health sind offen (Status-Homepage, kein Secret-Spill).
+
+        Browser kann keinen X-Cluster-Secret-Header senden -> bisher 403 auf /.
+        ponytail: UI-Login (localStorage->Header) spaeter, wenn UI-Formulare kommen.
+        """
+        path = urlparse(self.path).path
+        path = path.rstrip("/") or "/"
+        if self.command == "GET" and path in ("/", "/api/health"):
+            return True
         secret = self.headers.get("X-Cluster-Secret", "")
         if secret and secret == self.manager.cluster_secret:
             return True
@@ -1737,7 +1745,12 @@ class ManagerAPI(BaseHTTPRequestHandler):
             path = path[14:]  # Strip legacy prefix for cluster compat
         path = path.rstrip("/") or "/"
 
-        if path == "/api/status":
+        if path == "/":
+            # ponytail: Status-Homepage statt 404 (Browser-Ziel 9010). Echtes UI spaeter.
+            self._json({"service": "ToolBoxV2 Worker Manager", "status": "running",
+                        "auth": "API routes require X-Cluster-Secret header",
+                        "endpoints": ["/api/status", "/api/workers", "/api/metrics", "/api/health"]})
+        elif path == "/api/status":
             self._json(self.manager.get_status())
         elif path == "/api/workers":
             self._json(self.manager.get_workers())

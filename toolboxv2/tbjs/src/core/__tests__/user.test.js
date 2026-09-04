@@ -132,7 +132,7 @@ describe('User Module (Custom Auth)', () => {
 
         // Mock config
         config.get.mockImplementation((key) => {
-            if (key === 'baseApiUrl') return 'http://localhost:5000/api';
+            if (key === 'baseApiUrl') return 'http://localhost:8467/api';
             return undefined;
         });
 

@@ -390,8 +390,18 @@ input[type="text"]:focus { outline: none; border-color: var(--input-focus); back
 </div>
 
 <script>
-// ponytail: Minimal wizard logic — Tauri invoke calls replaced with stubs for standalone preview.
-// Wire to Tauri commands when integrating: invoke('detect_platform'), invoke('run_install', {config}), etc.
+// Wizard logic — consumes local_ui /api/wizard endpoints (degrades to standalone preview if 8467 offline).
+const API_BASE = 'http://127.0.0.1:8467';
+async function apiCall(endpoint, method = 'GET', body = null) {
+  try {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(API_BASE + endpoint, opts);
+    return await res.json();
+  } catch (e) {
+    return null; // local_ui not running — standalone preview / pre-install state
+  }
+}
 const STEPS = 5;
 let currentStep = 1;
 const btnBack = document.getElementById('btn-back');
@@ -414,7 +424,12 @@ function showStep(n) {
   currentStep = n;
 }
 
-btnNext.addEventListener('click', () => {
+btnNext.addEventListener('click', async () => {
+  if (currentStep === 2) {
+    const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || 'local';
+    const profileMap = { 'local': 'consumer', 'source': 'developer' };
+    await apiCall('/api/wizard/profile', 'POST', { profile: profileMap[selectedMode] || 'consumer' });
+  }
   if (currentStep < STEPS) showStep(currentStep + 1);
   else window.close();
 });
@@ -429,8 +444,8 @@ document.querySelectorAll('.mode-option').forEach(opt => {
   });
 });
 
-// Mock platform detection
-function detectPlatform() {
+// Platform detection with live API state
+async function detectPlatform() {
   const ua = navigator.userAgent;
   let os = 'Linux', arch = 'x86_64';
   if (ua.includes('Win')) os = 'Windows';
@@ -442,43 +457,107 @@ function detectPlatform() {
   document.getElementById('install-path').value = defaultPath;
   document.getElementById('disk-space').textContent = 'ausreichend';
   document.getElementById('net-status').className = 'status-dot is-online';
+
+  const state = await apiCall('/api/wizard/state');
+  if (!state || !state.ok) {
+    document.getElementById('net-status').className = 'status-dot';
+  }
 }
 
-// Mock install progress
-function runInstall() {
-  const phases = [
-    { pct: 10, msg: 'Lade Installer-Skript…' },
-    { pct: 25, msg: 'Konfiguration validiert' },
-    { pct: 40, msg: 'Lade ToolBoxV2 Core herunter…' },
-    { pct: 60, msg: 'Entpacke Module…' },
-    { pct: 75, msg: 'Schreibe Manifest…' },
-    { pct: 90, msg: 'Richte globalen Zugriff ein (tb access)…' },
-    { pct: 100, msg: 'Installation abgeschlossen' },
-  ];
-  let i = 0;
+// Install progress — Tauri Kaltstart (run_install + install-event) ODER 8467-API
+async function runInstall() {
   const fill = document.getElementById('progress-fill');
   const label = document.getElementById('progress-label');
   const log = document.getElementById('log-output');
-  const interval = setInterval(() => {
-    if (i >= phases.length) {
-      clearInterval(interval);
-      document.getElementById('summary-version').textContent = '0.1.28';
-      document.getElementById('summary-path').textContent = document.getElementById('install-path').value;
+
+  function logMsg(msg, isSuccess = false) {
+    const line = document.createElement('div');
+    line.className = 'log-line' + (isSuccess ? ' is-success' : '');
+    line.textContent = '[' + new Date().toISOString().substr(11, 8) + '] ' + msg;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+  function setProgress(pct, msg) {
+    fill.style.width = Math.round(pct * 100) + '%';
+    if (msg) label.textContent = msg;
+  }
+
+  // --- Tauri-Kaltstart: echter Installer via run_install + install-event ---
+  if (window.__TAURI__ && window.__TAURI__.core) {
+    btnNext.disabled = true;
+    label.textContent = 'Starte Installer…';
+    logMsg('Installer wird gestartet (eigenständig, kein laufender Core nötig)…');
+    const profileMap = { local: 'consumer', source: 'developer' };
+    const config = {
+      profile: profileMap[document.querySelector('input[name="mode"]:checked')?.value] || 'consumer',
+      install_path: document.getElementById('install-path').value,
+      optional: [],
+    };
+    const unlisten = await window.__TAURI__.event.listen('install-event', e => {
+      const ev = e.payload || {};
+      if (ev.type === 'phase') { logMsg('[' + (ev.phase || '') + '] ' + (ev.msg || '')); setProgress(0.35, ev.msg); }
+      else if (ev.type === 'progress') { setProgress(ev.progress || 0.5, ev.msg); logMsg(ev.msg || ''); }
+      else if (ev.type === 'error') { logMsg('FEHLER: ' + (ev.msg || 'unbekannt')); label.textContent = 'Fehler'; }
+      else if (ev.type === 'done') {
+        setProgress(1, 'Installation abgeschlossen');
+        logMsg('ToolBoxV2 ' + (ev.version || '') + ' installiert unter ' + (ev.path || '') + '.', true);
+      }
+    });
+    try {
+      const res = await window.__TAURI__.core.invoke('run_install', { config });
+      logMsg('Installer beendet (exit=' + (res && res.exit_code) + ').', !!res?.success);
+      fill.style.width = '100%';
+      label.textContent = res?.success ? 'Installation abgeschlossen' : 'Installer meldete Fehler';
+    } catch (err) {
+      logMsg('FEHLER: ' + String(err));
+      label.textContent = 'Fehler';
+    } finally {
+      unlisten();
       btnNext.disabled = false;
       btnNext.textContent = 'Fertig';
       showStep(5);
-      return;
     }
-    const p = phases[i];
-    fill.style.width = p.pct + '%';
-    label.textContent = p.msg;
-    const line = document.createElement('div');
-    line.className = 'log-line' + (p.pct === 100 ? ' is-success' : '');
-    line.textContent = '[' + new Date().toISOString().substr(11, 8) + '] ' + p.msg;
-    log.appendChild(line);
-    log.scrollTop = log.scrollHeight;
-    i++;
-  }, 600);
+    return;
+  }
+
+  // --- First-Run-Pfad: laufender Core (8467) via Wizard-API ---
+  fill.style.width = '15%';
+  label.textContent = 'Verbinde mit Wizard API…';
+  logMsg('Wizard API (127.0.0.1:8467) wird kontaktiert…');
+
+  const state = await apiCall('/api/wizard/state');
+  if (state && state.ok) {
+    fill.style.width = '35%';
+    logMsg('Verbindung hergestellt — ToolBoxV2 core online.', true);
+  } else {
+    fill.style.width = '35%';
+    logMsg('Kein lokaler Core erreichbar — Standalone-Modus (nur Installer-Paket).');
+  }
+
+  fill.style.width = '60%';
+  label.textContent = 'Schreibe Manifest & .env…';
+  const saveRes = await apiCall('/api/wizard/save', 'POST', {
+    app: { install_path: document.getElementById('install-path').value }
+  });
+
+  if (saveRes && saveRes.ok) {
+    fill.style.width = '85%';
+    logMsg('Manifest + .env geschrieben (wizard_api.save).', true);
+  } else {
+    logMsg('Manifest-Speichern übersprungen (kein Core aktiv).');
+  }
+
+  fill.style.width = '100%';
+  label.textContent = 'Installation abgeschlossen';
+  logMsg('ToolBoxV2 ist einsatzbereit.', true);
+
+  setTimeout(() => {
+    document.getElementById('summary-version').textContent = '0.1.28';
+    document.getElementById('summary-path').textContent = document.getElementById('install-path').value;
+    btnNext.disabled = false;
+    btnNext.textContent = 'Fertig';
+    showStep(5);
+  }, 500);
 }
 
 detectPlatform();

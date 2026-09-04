@@ -155,10 +155,10 @@ const WsManager = {
             } else {
                 // Fallback zu localhost defaults
                 fullUrl = url.startsWith('/')
-                    ? `ws://localhost:5001${url}`
+                    ? `ws://localhost:8468${url}`
                     : (url.startsWith('ws://') || url.startsWith('wss://'))
                         ? url
-                        : `ws://localhost:5001/${url}`;
+                        : `ws://localhost:8468/${url}`;
                 TB.logger.warn(`[WS] Tauri mode - no worker URL, using fallback: ${fullUrl}`);
             }
         }

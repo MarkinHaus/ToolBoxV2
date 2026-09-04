@@ -77,23 +77,23 @@ const Environment = {
             const status = await invoke('get_worker_status');
 
             if (status && status.running) {
-                Environment._workerUrls.http = status.http_url;  // "http://localhost:5000"
-                Environment._workerUrls.ws = status.ws_url;      // "ws://localhost:5001"
+                Environment._workerUrls.http = status.http_url;  // "http://localhost:8467"
+                Environment._workerUrls.ws = status.ws_url;      // "ws://localhost:8468"
                 Environment._workerUrls.sse = status.http_url;   // SSE geht über HTTP
 
                 logger.log('[Env] Tauri Worker URLs initialized:', Environment._workerUrls);
             } else {
                 // Fallback zu Default-Ports
-                Environment._workerUrls.http = 'http://localhost:5000';
-                Environment._workerUrls.ws = 'ws://localhost:5001';
-                Environment._workerUrls.sse = 'http://localhost:5000';
+                Environment._workerUrls.http = 'http://localhost:8467';
+                Environment._workerUrls.ws = 'ws://localhost:8468';
+                Environment._workerUrls.sse = 'http://localhost:8467';
                 logger.warn('[Env] Worker not running, using default URLs');
             }
         } catch (error) {
             // Fallback wenn Tauri Command nicht verfügbar
-            Environment._workerUrls.http = 'http://localhost:5000';
-            Environment._workerUrls.ws = 'ws://localhost:5001';
-            Environment._workerUrls.sse = 'http://localhost:5000';
+            Environment._workerUrls.http = 'http://localhost:8467';
+            Environment._workerUrls.ws = 'ws://localhost:8468';
+            Environment._workerUrls.sse = 'http://localhost:8467';
             logger.warn('[Env] Could not get worker status, using defaults:', error);
         }
     },

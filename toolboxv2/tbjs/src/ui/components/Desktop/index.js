@@ -200,7 +200,7 @@ export class DesktopStatusBar {
                 if (url) return url;
             }
             // Fallback
-            return 'http://localhost:5000';
+            return 'http://localhost:8467';
         }
         // WEB: Relative URL
         return '';
@@ -217,7 +217,7 @@ export class DesktopStatusBar {
                 if (url) return `${url}/ws/${wsId}`;
             }
             // Fallback
-            return `ws://localhost:5001/ws/${wsId}`;
+            return `ws://localhost:8468/ws/${wsId}`;
         }
 
         // WEB: Standard WebSocket URL
@@ -227,7 +227,7 @@ export class DesktopStatusBar {
 
     _getWsUrl() {
         const wsId = localStorage.getItem('WsID') || `status-${Date.now()}`;
-        return `ws://localhost:5001/ws/${wsId}`;
+        return `ws://localhost:8468/ws/${wsId}`;
     }
 
     _updateEndpointInfo(url) {

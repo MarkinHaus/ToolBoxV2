@@ -3710,7 +3710,7 @@ BEISPIELE:
 
         thought = f_args.get("thought", "")
         effort = f_args.get("effort", "fast")
-        working_history = str(ctx.working_history[-25:])
+        working_history = str(ctx.working_history[-15:])
         vfs_content = ""
         if self._current_session is not None:
             vfs_content = self._current_session.vfs.build_context_string()

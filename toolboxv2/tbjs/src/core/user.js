@@ -37,22 +37,22 @@ const user = {
 
     /**
      * Returns the base URL for non-API routes (e.g. /validateSession, /auth/discord/url).
-     * Web: '' (relative), Tauri: 'http://localhost:5000' (worker).
+     * Web: '' (relative), Tauri: 'http://localhost:8467' (worker).
      */
     _getBaseUrl() {
         if (env.isTauri()) {
-            return env.getWorkerHttpUrl() || 'http://localhost:5000';
+            return env.getWorkerHttpUrl() || 'http://localhost:8467';
         }
         return '';
     },
 
     /**
      * Returns the base URL for /api/* routes.
-     * Web: '' (relative), Tauri: 'http://localhost:5000' (worker).
+     * Web: '' (relative), Tauri: 'http://localhost:8467' (worker).
      */
     _getApiBaseUrl() {
         if (env.isTauri()) {
-            return env.getWorkerHttpUrl() || 'http://localhost:5000';
+            return env.getWorkerHttpUrl() || 'http://localhost:8467';
         }
         return '';
     },

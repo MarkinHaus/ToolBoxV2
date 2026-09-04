@@ -44,7 +44,7 @@ describe('Config', () => {
     it('should initialize with default values', () => {
       Config.init({});
       expect(Config.get('appRootId')).toBe('app-root');
-      expect(Config.get('baseApiUrl')).toBe('http://localhost:5000/api'); // Normalisiert
+      expect(Config.get('baseApiUrl')).toBe('http://localhost:8467/api'); // Normalisiert
       expect(Config.get('logLevel')).toBe('info');
       expect(Config.get('isProduction')).toBe(false); // Inferred from localhost
     });
@@ -82,12 +82,12 @@ describe('Config', () => {
     });
 
     it('should normalize baseApiUrl to be absolute', () => {
-      // In Tauri mode, relative URLs are resolved to localhost:5000
+      // In Tauri mode, relative URLs are resolved to localhost:8467
       Config.init({ baseApiUrl: 'api/v1' }); // Relative
-      expect(Config.get('baseApiUrl')).toBe('http://localhost:5000/api/v1');
+      expect(Config.get('baseApiUrl')).toBe('http://localhost:8467/api/v1');
 
       Config.init({ baseApiUrl: '/abs/api' }); // Absolute path
-      expect(Config.get('baseApiUrl')).toBe('http://localhost:5000/abs/api');
+      expect(Config.get('baseApiUrl')).toBe('http://localhost:8467/abs/api');
 
       Config.init({ baseApiUrl: 'https://example.com/api' }); // Full URL
       expect(Config.get('baseApiUrl')).toBe('https://example.com/api');
@@ -154,9 +154,9 @@ describe('Config', () => {
         // so wie es Config.init intern tun würde.
         const expectedConfigShape = {
           appRootId: 'app-root',
-          baseApiUrl: 'http://localhost:5000/api', // Normalisiert durch init (Tauri Desktop)
+          baseApiUrl: 'http://localhost:8467/api', // Normalisiert durch init (Tauri Desktop)
           baseFileUrl: 'http://localhost',    // Normalisiert durch init
-          baseWsUrl: 'ws://localhost:5001',   // WebSocket URL für Tauri
+          baseWsUrl: 'ws://localhost:8468',   // WebSocket URL für Tauri
           initialState: {},
           isAndroid: false,
           isIOS: false,

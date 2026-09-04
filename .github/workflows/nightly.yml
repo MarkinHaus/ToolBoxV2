@@ -99,10 +99,10 @@ jobs:
             chmod +x ./toolboxv2/simple-core/src-tauri/binaries/tb-worker-${{ matrix.target_triple }}
           fi
 
-      - name: Run installer unit tests (Linux only)
+      - name: Run Rust unit tests (Linux only)
         if: matrix.os == 'ubuntu-latest'
         working-directory: ./toolboxv2/simple-core/src-tauri
-        run: cargo test --lib installer::
+        run: cargo test --lib
 
       - name: Install frontend dependencies
         working-directory: ./toolboxv2

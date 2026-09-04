@@ -199,7 +199,7 @@ const Api = {
 
         if (env.isTauri()) {
             const workerHttpUrl = env.getWorkerHttpUrl();
-            baseUrl = workerHttpUrl || 'http://localhost:5000';
+            baseUrl = workerHttpUrl || 'http://localhost:8467';
             baseApiUrl = `${baseUrl}/api`;
             logger.debug(`[API] Tauri mode - using worker URL: ${baseUrl}`);
         } else {
@@ -336,7 +336,7 @@ const Api = {
 
         let baseUrl;
         if (env.isTauri()) {
-            baseUrl = env.getWorkerHttpUrl() || 'http://localhost:5000';
+            baseUrl = env.getWorkerHttpUrl() || 'http://localhost:8467';
         } else {
             baseUrl = (config.get('baseApiUrl') || '').replace(/\/api\/?$/, '');
         }

@@ -32,7 +32,7 @@ GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/refs/heads/master"
 MIN_DISK_MB=300
 FEATURES_IMMUTABLE="mini core"
-FEATURES_OPTIONAL="cli web desktop isaa exotic"
+MODULES_OPTIONAL="cli web desktop isaa exotic"
 
 # ── Colors ───────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -345,9 +345,9 @@ phase_config() {
   # Features
   echo ""
   echo "  Included (always): ${G}mini core${NC}"
-  echo "  Optional features:"
+  echo "  Optional modules:"
   local sel_features="$FEATURES"
-  for feat in $FEATURES_OPTIONAL; do
+  for feat in $MODULES_OPTIONAL; do
     local already=false
     echo "$sel_features" | grep -qw "$feat" && already=true
     local currently
@@ -378,7 +378,7 @@ phase_config() {
   log "Mode: ${INSTALL_MODE}${INSTALL_MODE:+ }${SOURCE_FROM:+(${SOURCE_FROM})}"
   log "Path: ${INSTALL_PATH}"
   log "Env:  ${ENVIRONMENT}"
-  log "Features: ${FEATURES_IMMUTABLE} ${FEATURES}"
+  log "Modules: ${FEATURES_IMMUTABLE} ${FEATURES}"
 }
 
 # ============================================================
@@ -970,7 +970,7 @@ print_summary() {
   echo -e "  ${BOLD}Home:${NC}     ${INSTALL_PATH}"
   echo -e "  ${BOLD}Mode:${NC}     ${INSTALL_MODE}"
   echo -e "  ${BOLD}Runtime:${NC}  ${RUNTIME}"
-  echo -e "  ${BOLD}Features:${NC} ${FEATURES_IMMUTABLE} ${FEATURES}"
+  echo -e "  ${BOLD}Modules:${NC} ${FEATURES_IMMUTABLE} ${FEATURES}"
   echo ""
   echo -e "  ${C}Next steps:${NC}"
   echo -e "  1. Reload shell:  ${BOLD}source ~/.bashrc${NC} (or open new terminal)"

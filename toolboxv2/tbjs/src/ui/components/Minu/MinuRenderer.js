@@ -92,8 +92,8 @@ class MinuRenderer {
                 return `${workerWsUrl}/ws/Minu/ui`;
             }
             // Fallback zu localhost
-            TB.logger.warn('[Minu] Tauri mode - no worker URL, using localhost:5001');
-            return 'ws://localhost:5001/ws/Minu/ui';
+            TB.logger.warn('[Minu] Tauri mode - no worker URL, using localhost:8468');
+            return 'ws://localhost:8468/ws/Minu/ui';
         }
 
         // WEB MODE - Standard-Verhalten

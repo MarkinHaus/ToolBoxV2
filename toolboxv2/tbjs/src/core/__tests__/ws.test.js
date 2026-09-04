@@ -90,10 +90,10 @@ describe('WsManager', () => {
 
     describe('connect', () => {
         it('should create a WebSocket connection', async () => {
-            WsManager.connect('ws://localhost:5001');
+            WsManager.connect('ws://localhost:8468');
 
             expect(WsManager.connection).toBeInstanceOf(MockWebSocket);
-            expect(WsManager.url).toBe('ws://localhost:5001');
+            expect(WsManager.url).toBe('ws://localhost:8468');
         });
 
         it('should build full URL from relative path', () => {
@@ -103,7 +103,7 @@ describe('WsManager', () => {
         });
 
         it('should append context parameters to URL', () => {
-            WsManager.connect('ws://localhost:5001', {
+            WsManager.connect('ws://localhost:8468', {
                 context: { room_id: '123', user_token: 'abc' }
             });
 
@@ -112,7 +112,7 @@ describe('WsManager', () => {
         });
 
         it('should emit ws:open event when connected', (done) => {
-            WsManager.connect('ws://localhost:5001', {
+            WsManager.connect('ws://localhost:8468', {
                 onOpen: () => {
                     expect(TB.events.emit).toHaveBeenCalledWith('ws:open', expect.objectContaining({
                         context: {}
@@ -124,15 +124,15 @@ describe('WsManager', () => {
 
         it('should call onOpen callback when connected', (done) => {
             const onOpen = jest.fn(() => done());
-            WsManager.connect('ws://localhost:5001', { onOpen });
+            WsManager.connect('ws://localhost:8468', { onOpen });
         });
 
         it('should not create duplicate connection to same URL', async () => {
-            WsManager.connect('ws://localhost:5001');
+            WsManager.connect('ws://localhost:8468');
             await new Promise(r => setTimeout(r, 20)); // Wait for connection
 
             const firstConnection = WsManager.connection;
-            WsManager.connect('ws://localhost:5001');
+            WsManager.connect('ws://localhost:8468');
 
             expect(WsManager.connection).toBe(firstConnection);
             expect(TB.logger.warn).toHaveBeenCalledWith(expect.stringContaining('Already connected'));
@@ -141,7 +141,7 @@ describe('WsManager', () => {
 
     describe('send', () => {
         beforeEach(async () => {
-            WsManager.connect('ws://localhost:5001');
+            WsManager.connect('ws://localhost:8468');
             await new Promise(r => setTimeout(r, 20)); // Wait for connection
         });
 
@@ -171,7 +171,7 @@ describe('WsManager', () => {
 
     describe('message handling', () => {
         beforeEach(async () => {
-            WsManager.connect('ws://localhost:5001');
+            WsManager.connect('ws://localhost:8468');
             await new Promise(r => setTimeout(r, 20));
         });
 
@@ -203,7 +203,7 @@ describe('WsManager', () => {
         it('should call onMessage callback', async () => {
             const onMessage = jest.fn();
             WsManager.disconnect();
-            WsManager.connect('ws://localhost:5001', { onMessage });
+            WsManager.connect('ws://localhost:8468', { onMessage });
 
             // Wait for connection
             await new Promise(r => setTimeout(r, 20));
@@ -216,7 +216,7 @@ describe('WsManager', () => {
 
     describe('disconnect', () => {
         beforeEach(async () => {
-            WsManager.connect('ws://localhost:5001', { context: { room: 'test' } });
+            WsManager.connect('ws://localhost:8468', { context: { room: 'test' } });
             await new Promise(r => setTimeout(r, 20));
         });
 
@@ -241,7 +241,7 @@ describe('WsManager', () => {
 
     describe('context management', () => {
         beforeEach(async () => {
-            WsManager.connect('ws://localhost:5001', { context: { initial: 'value' } });
+            WsManager.connect('ws://localhost:8468', { context: { initial: 'value' } });
             await new Promise(r => setTimeout(r, 20));
         });
 
@@ -271,7 +271,7 @@ describe('WsManager', () => {
         });
 
         it('should return WebSocket instance when connected', async () => {
-            WsManager.connect('ws://localhost:5001');
+            WsManager.connect('ws://localhost:8468');
             await new Promise(r => setTimeout(r, 20));
 
             expect(WsManager.getConnection()).toBeInstanceOf(MockWebSocket);

@@ -1,21 +1,199 @@
 name: Release
 
+# ============================================================================
+# TRIGGER
+#   - Tag-Push v*            -> Release-Build (Assets am Tag-Release)
+#   - Tag mit "app" im Namen -> zusaetzlich Tauri/Android/iOS (z.B. v0.1.28-app)
+#   - Tag mit "tbx" im Namen -> zusaetzlich TBLang-Compiler (z.B. v0.1.28-tbx)
+#   - Jeder Tag ausserdem:   -> Frontend, Browser-Ext, Wheel, Installer, Docker
+#   - Push auf master        -> Nur Kern-Binaries als Nightly-Prerelease
+#   PyPI-Publish bewusst NICHT hier (separater Workflow, 0.1.27 live).
+# ============================================================================
+
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - v*
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 env:
-  PYTHON_VERSION: "3.11"
+  PYTHON_VERSION: "3.10"
   NODE_VERSION: "lts/*"
 
 jobs:
   # ============================================================================
-  # FRONTEND BUILD
+  # KERN (immer): 3 Nuitka-Onefile-Binaries, installer.sh-Schema
+  # ============================================================================
+
+  # Linux onefile — GLIBC 2.31 Target (Ubuntu 20.04), laeuft auf allen aelteren Systemen
+  build-linux-x64:
+    runs-on: ubuntu-22.04
+    container: ubuntu:20.04
+    steps:
+      - name: Install git (base image ships without)
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install build deps
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends gcc patchelf ccache binutils
+          rm -rf /var/lib/apt/lists/*
+          python -m pip install --upgrade pip
+          pip install nuitka zstandard
+
+      - name: Install project
+        run: |
+          pip install .
+
+      - name: "Build onefile (installer asset name: toolbox-linux-x64)"
+        run: |
+          python -m nuitka --onefile --assume-yes-for-downloads --include-package=toolboxv2 --include-package-data=toolboxv2 --output-filename=toolbox-linux-x64 --output-dir=build toolboxv2/__main__.py
+
+      - name: Smoke test (no TTY in CI, R2 TTY-Fallback required)
+        run: |
+          chmod +x build/toolbox-linux-x64
+          ./build/toolbox-linux-x64 --version
+          ./build/toolbox-linux-x64 -l
+          ./build/toolbox-linux-x64 --test || echo 'WARN: --test rc!=0 (expected R4 clear-error without tb-registry)'
+
+      - name: GLIBC hard check (must be <= 2.31)
+        run: |
+          objdump -T build/toolbox-linux-x64 | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -n 1
+          objdump -T build/toolbox-linux-x64 | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -n 1 | grep -qE 'GLIBC_2\.([0-9]|1[0-9]|2[0-9]|3[01])$' && echo 'GLIBC OK <= 2.31' || { echo 'FAIL: GLIBC > 2.31, binary would not run on older systems'; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: toolbox-linux-x64
+          path: build/toolbox-linux-x64
+
+      # Tag-Release (v0.1.28 etc.) — Asset ans Release des Tags haengen
+      - name: Attach to tag release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/toolbox-linux-x64
+
+      # Nightly aus jedem master-Push — fortlaufender prerelease-Tag
+      - name: Update nightly prerelease
+        if: github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          prerelease: true
+          make_latest: false
+          files: build/toolbox-linux-x64
+
+  # Windows onefile
+  build-windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: "Build onefile (installer asset name: toolbox-windows-x64.exe)"
+        run: python -m nuitka --onefile --assume-yes-for-downloads --include-package=toolboxv2 --include-package-data=toolboxv2 --output-filename=toolbox-windows-x64.exe --output-dir=build toolboxv2/__main__.py
+
+      - name: Smoke test
+        run: .\build\toolbox-windows-x64.exe --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: toolbox-windows-x64
+          path: build/toolbox-windows-x64.exe
+
+      - name: Attach to tag release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/toolbox-windows-x64.exe
+
+  # macOS onefile (macos-latest = arm64)
+  build-macos-arm64:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: "Build onefile (installer asset name: toolbox-macos-arm64)"
+        run: python -m nuitka --onefile --assume-yes-for-downloads --include-package=toolboxv2 --include-package-data=toolboxv2 --output-filename=toolbox-macos-arm64 --output-dir=build toolboxv2/__main__.py
+
+      - name: Smoke test
+        run: |
+          chmod +x build/toolbox-macos-arm64
+          ./build/toolbox-macos-arm64 --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: toolbox-macos-arm64
+          path: build/toolbox-macos-arm64
+
+      - name: Attach to tag release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/toolbox-macos-arm64
+
+  # ============================================================================
+  # FLAG-EVAL (ALT github.event.release.tag_name -> NEU GITHUB_REF_TYPE/ref_name)
+  # ============================================================================
+
+  check-flags:
+    name: Evaluate Tag Flags
+    runs-on: ubuntu-latest
+    outputs:
+      is_tag: ${{ steps.eval.outputs.is_tag }}
+      build_tauri: ${{ steps.eval.outputs.build_tauri }}
+      build_tblang: ${{ steps.eval.outputs.build_tblang }}
+    steps:
+      - name: Evaluate ref
+        id: eval
+        shell: bash
+        run: |
+          ref="${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            echo "is_tag=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_tag=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]] && [[ "$ref" == *"app"* ]]; then
+            echo "build_tauri=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build_tauri=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]] && [[ "$ref" == *"tbx"* || "$ref" == *"TBX"* ]]; then
+            echo "build_tblang=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build_tblang=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ============================================================================
+  # FRONTEND BUILD (jeder Tag; Vorlauf-Job fuer Tauri/Mobile)
   # ============================================================================
 
   build-frontend:
     name: Build Frontend
     runs-on: ubuntu-latest
+    needs: [check-flags]
+    if: needs.check-flags.outputs.is_tag == 'true'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -40,29 +218,13 @@ jobs:
           path: toolboxv2/dist
 
   # ============================================================================
-  # TBLANG COMPILER BUILD (only if "tbx" in tag)
+  # TBLANG COMPILER (Opt-in: "tbx" im Tag)
   # ============================================================================
-
-  check-tblang:
-    name: Check TBLang Build Flag
-    runs-on: ubuntu-latest
-    outputs:
-      should_build: ${{ steps.eval.outputs.should_build }}
-    steps:
-      - name: Evaluate Tag
-        id: eval
-        run: |
-          tag="${{ github.event.release.tag_name }}"
-          if [[ "$tag" == *"tbx"* ]] || [[ "$tag" == *"TBX"* ]]; then
-            echo "should_build=true" >> $GITHUB_OUTPUT
-          else
-            echo "should_build=false" >> $GITHUB_OUTPUT
-          fi
 
   build-tblang:
     name: TBLang (${{ matrix.os }})
-    needs: check-tblang
-    if: needs.check-tblang.outputs.should_build == 'true'
+    needs: [check-flags]
+    if: needs.check-flags.outputs.build_tblang == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -108,12 +270,14 @@ jobs:
           path: artifacts/*
 
   # ============================================================================
-  # BROWSER EXTENSION BUILD
+  # BROWSER EXTENSION (jeder Tag, Auto-Detect ob tb_browser existiert)
   # ============================================================================
 
   build-browser-extension:
     name: Browser Extension
     runs-on: ubuntu-latest
+    needs: [check-flags]
+    if: needs.check-flags.outputs.is_tag == 'true'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -163,92 +327,14 @@ jobs:
           path: artifacts/*
 
   # ============================================================================
-  # NUITKA BUILD (Python Standalone)
+  # TAURI DESKTOP (Opt-in: "app" im Tag; braucht Frontend)
   # ============================================================================
-
-  build-nuitka:
-    name: Nuitka (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            artifact_name: toolbox-linux-x64
-          - os: windows-latest
-            artifact_name: toolbox-windows-x64.exe
-          - os: macos-latest
-            artifact_name: toolbox-macos-arm64
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Build with Nuitka
-        uses: Nuitka/Nuitka-Action@main
-        with:
-          nuitka-version: main
-          script-name: toolboxv2/__main__.py
-          mode: onefile
-          output-dir: build
-          include-package: toolboxv2
-          # Include data directories that aren't auto-detected
-          include-package-data: toolboxv2
-          include-data-dir: |
-            toolboxv2/mods=toolboxv2/mods
-            toolboxv2/features=toolboxv2/features
-          # Allow self-spawn for service manager (Fix 2 defense-in-depth)
-          no-deployment-flag: self-execution
-          assume-yes-for-downloads: true
-
-      - name: Package Artifact
-        shell: bash
-        run: |
-          mkdir -p artifacts
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp build/__main__.exe artifacts/${{ matrix.artifact_name }}
-          else
-            cp build/__main__.bin artifacts/${{ matrix.artifact_name }} 2>/dev/null || cp build/__main__ artifacts/${{ matrix.artifact_name }} || true
-            chmod +x artifacts/${{ matrix.artifact_name }} 2>/dev/null || true
-          fi
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: artifacts/*
-
-  # ============================================================================
-  # TAURI DESKTOP BUILDS
-  # ============================================================================
-
-  check-tauri:
-    name: Check Tauri Build Flag
-    runs-on: ubuntu-latest
-    outputs:
-      should_build: ${{ steps.eval.outputs.should_build }}
-    steps:
-      - name: Evaluate Tag
-        id: eval
-        run: |
-          tag="${{ github.event.release.tag_name }}"
-          if [[ "$tag" == *"app"* ]]; then
-            echo "should_build=true" >> $GITHUB_OUTPUT
-          else
-            echo "should_build=false" >> $GITHUB_OUTPUT
-          fi
 
   build-tauri:
     name: Tauri (${{ matrix.platform }})
-    needs: [check-tauri, build-frontend]
-    if: needs.check-tauri.outputs.should_build == 'true'
+    needs: [check-flags, build-frontend]
+    if: needs.check-flags.outputs.build_tauri == 'true'
     runs-on: ${{ matrix.platform }}
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -292,7 +378,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Create Worker Binary
         shell: bash
@@ -378,13 +464,13 @@ jobs:
           path: artifacts/*
 
   # ============================================================================
-  # ANDROID BUILD
+  # ANDROID APK (Opt-in: "app" im Tag)
   # ============================================================================
 
   build-android:
     name: Android APK
-    needs: [check-tauri, build-frontend]
-    if: needs.check-tauri.outputs.should_build == 'true'
+    needs: [check-flags, build-frontend]
+    if: needs.check-flags.outputs.build_tauri == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -469,13 +555,13 @@ jobs:
           path: artifacts/*.apk
 
   # ============================================================================
-  # iOS BUILD
+  # iOS (Opt-in: "app" im Tag)
   # ============================================================================
 
   build-ios:
     name: iOS Build
-    needs: [check-tauri, build-frontend]
-    if: needs.check-tauri.outputs.should_build == 'true'
+    needs: [check-flags, build-frontend]
+    if: needs.check-flags.outputs.build_tauri == 'true'
     runs-on: macos-latest
     steps:
       - name: Checkout Code
@@ -546,12 +632,14 @@ jobs:
           path: artifacts/*
 
   # ============================================================================
-  # PYTHON DISTRIBUTION BUILD - MIT CUSTOM FEATURE PACKING
+  # PYTHON WHEEL (jeder Tag; NICHT publishen — PyPI laeuft separat!)
   # ============================================================================
 
   build-python:
     name: Build Python Distribution
     runs-on: ubuntu-latest
+    needs: [check-flags]
+    if: needs.check-flags.outputs.is_tag == 'true'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -561,20 +649,13 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install Build Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install build pyyaml
-
-      # ========================================
-      # FEATURE PACKING + WHEEL BUILD via tb build
-      # ========================================
-      - name: Install ToolBoxV2 (editable for tb CLI)
+      - name: Install Build Dependencies + ToolBoxV2 (editable for tb CLI)
         run: |
           python -m pip install --upgrade pip
           python -m pip install build pyyaml
           pip install -e .
 
+      # Feature Packing + Wheel via tb build (kein Publish — separat!)
       - name: Pack Features + Build Wheel via tb build
         run: |
           echo "=== Packing Features + Building Wheel via tb build ==="
@@ -592,12 +673,10 @@ jobs:
         run: |
           echo "=== Verifying Package includes Feature ZIPs ==="
 
-          # Check wheel contents
           WHEEL=$(ls dist/*.whl | head -1)
           echo "Checking wheel: $WHEEL"
           python -m zipfile -l "$WHEEL" | grep -E "(features_packed|\.zip)" || echo "Warning: No feature ZIPs found in wheel"
 
-          # Check tarball contents
           TAR=$(ls dist/*.tar.gz | head -1)
           echo "Checking tarball: $TAR"
           tar -tzf "$TAR" | grep -E "(features_packed|\.zip)" || echo "Warning: No feature ZIPs found in tarball"
@@ -611,42 +690,14 @@ jobs:
             dist/*.whl
 
   # ============================================================================
-  # PYPI PUBLISH
-  # ============================================================================
-
-  pypi-publish:
-    name: Publish to PyPI
-    runs-on: ubuntu-latest
-    needs: [build-python]
-    environment:
-      name: pypi
-      url: https://pypi.org/p/ToolBoxV2
-    permissions:
-      id-token: write
-    steps:
-      - name: Download Dist
-        uses: actions/download-artifact@v4
-        with:
-          name: python-dist
-          path: dist/
-
-      - name: List Distribution Files
-        run: |
-          echo "=== Distribution Files ==="
-          ls -la dist/
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist/
-
-  # ============================================================================
-  # INSTALLERS (General + Termux)
+  # INSTALLERS (installer.sh + Termux, jeder Tag)
   # ============================================================================
 
   build-installers:
     name: Build Installers
     runs-on: ubuntu-latest
+    needs: [check-flags]
+    if: needs.check-flags.outputs.is_tag == 'true'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -655,19 +706,17 @@ jobs:
         run: |
           mkdir -p artifacts
 
-          # Copy main installer.sh
           cp installer.sh artifacts/installer.sh
           chmod +x artifacts/installer.sh
 
-          # Create Termux installer
           mkdir -p artifacts/termux
 
           cat > artifacts/termux/install-toolboxv2.sh << 'EOF'
           #!/data/data/com.termux/files/usr/bin/bash
           set -e
-          echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║         ToolBoxV2 - Termux Installer                         ║"
-          echo "╚══════════════════════════════════════════════════════════════╝"
+          echo "=============================================="
+          echo "         ToolBoxV2 - Termux Installer"
+          echo "=============================================="
           RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
           if [ ! -d "/data/data/com.termux" ]; then
               echo -e "${RED}Error: Run this in Termux!${NC}"; exit 1
@@ -704,13 +753,14 @@ jobs:
             artifacts/termux/*.sh
 
   # ============================================================================
-  # DOCKER IMAGE — Build & Push to GHCR
+  # DOCKER (jeder Tag) — Build & Push to GHCR
   # ============================================================================
 
   build-docker:
     name: Build & Push Docker Image
     runs-on: ubuntu-latest
-    needs: [build-python]
+    needs: [check-flags, build-python]
+    if: needs.check-flags.outputs.is_tag == 'true'
     permissions:
       contents: read
       packages: write
@@ -741,7 +791,7 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ steps.repo.outputs.name }}:latest
-            ghcr.io/${{ steps.repo.outputs.name }}:${{ github.event.release.tag_name }}
+            ghcr.io/${{ steps.repo.outputs.name }}:${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -753,60 +803,47 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ steps.repo.outputs.name }}:ssh
-            ghcr.io/${{ steps.repo.outputs.name }}:${{ github.event.release.tag_name }}-ssh
+            ghcr.io/${{ steps.repo.outputs.name }}:${{ github.ref_name }}-ssh
           build-args: |
             BASE_IMAGE=ghcr.io/${{ steps.repo.outputs.name }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   # ============================================================================
-  # UPLOAD ALL ASSETS TO RELEASE
+  # SAMMEL-UPLOAD fuer Flag-Assets (nur Tags, nie Nightly)
+  # ASSET-STRATEGIE (Empfehlung):
+  #   - Kern-Binaries (toolbox-*) -> pro-Job attach (NEU-Muster, Nightly-kompatibel)
+  #   - Flag-Assets -> dieser eine Sammel-Job (skipped jobs erzeugen keine
+  #     Artefakte, pattern matched dann einfach nichts)
   # ============================================================================
 
-  upload-release-assets:
-    name: Upload Release Assets
+  upload-optional-assets:
+    name: Upload Optional (Flag) Assets
     runs-on: ubuntu-latest
     needs:
+      - check-flags
       - build-frontend
       - build-tblang
       - build-browser-extension
-      - build-nuitka
       - build-python
       - build-installers
       - build-tauri
       - build-android
       - build-ios
       - build-docker
-    if: always()
-    permissions:
-      contents: write
+    if: always() && needs.check-flags.outputs.is_tag == 'true' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     steps:
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
-          path: all-artifacts/
+          path: all-artifacts
+          pattern: '{frontend-dist,tblang-*,browser-extension,python-dist,installers,simple-core-*,android-apk,ios-build}'
+          merge-multiple: true
 
       - name: List Artifacts
-        run: find all-artifacts -type f | head -50
-
-      - name: Prepare Release Assets
-        run: |
-          mkdir -p release-upload
-
-          # Copy all artifacts to release folder
-          for dir in all-artifacts/*/; do
-            if [ -d "$dir" ]; then
-              cp "$dir"* release-upload/ 2>/dev/null || true
-            fi
-          done
-
-          echo "=== Release Assets ==="
-          ls -la release-upload/
+        run: find all-artifacts -type f | head -50 || true
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release-upload/*
-          fail_on_unmatched_files: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: all-artifacts/**
