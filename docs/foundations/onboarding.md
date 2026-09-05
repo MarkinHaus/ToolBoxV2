@@ -3,6 +3,8 @@
 ###### GETTING STARTED · VERIFIED AGAINST `31a117e`
 
 From `pip install` to a running & configured instance.
+> 🧭 **Background:** the complete installer story — roles, install modes, decision tree and all proven pitfalls — is documented in [installer-story.md](../installer-story.md).
+
 ## 1 · Install
 
 ToolBoxV2 requires **Python ≥ 3.10**. The package ships feature-gated extras

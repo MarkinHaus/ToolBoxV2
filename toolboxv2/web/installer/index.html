@@ -247,6 +247,7 @@ input[type="text"]:focus { outline: none; border-color: var(--input-focus); back
 .status-dot { width: 10px; height: 10px; border-radius: var(--radius-full); display: inline-block; }
 .status-dot.is-online { background: var(--success); }
 .status-dot.is-offline { background: var(--error); }
+.progress-fill.error { background: var(--error); }
 .status-dot.is-pending { background: var(--warning); }
 @media (max-width: 767px) {
   .wizard { width: 95%; padding: var(--space-5) var(--space-3); }
@@ -576,13 +577,22 @@ if (inTauri && !(window.__TAURI__ && window.__TAURI__.core)) {
   logMsg('Wizard API (127.0.0.1:8467) wird kontaktiert…');
 
   const state = await apiCall('/api/wizard/state');
-  if (state && state.ok) {
-    fill.style.width = '35%';
-    logMsg('Verbindung hergestellt — ToolBoxV2 core online.', true);
-  } else {
-    fill.style.width = '35%';
-    logMsg('Kein lokaler Core erreichbar — Standalone-Modus (nur Installer-Paket).');
+  if (!state || !state.ok) {
+    // Root-Cause-Fix (Fake-Done-Bug): ohne Core (8467) und ohne Tauri-IPC
+    // ist KEINE Installation moeglich. Frueher lief die UI hier weiter und
+    // zeigte "Installation abgeschlossen" ohne dass etwas installiert wurde.
+    fill.style.width = '100%';
+    fill.classList.add('error');
+    label.textContent = 'Fehler: Kein Core erreichbar';
+    logMsg('FEHLER: Kein Core (127.0.0.1:8467) erreichbar und keine Tauri-IPC verfügbar. ' +
+           'Installation NICHT möglich — nichts wurde installiert. ' +
+           'Optionen: installer.ps1 manuell ausführen oder App neu starten.', true);
+    btnNext.disabled = false;
+    btnNext.textContent = 'Schließen';
+    return;
   }
+  fill.style.width = '35%';
+  logMsg('Verbindung hergestellt — ToolBoxV2 core online.', true);
 
   fill.style.width = '60%';
   label.textContent = 'Schreibe Manifest & .env…';
@@ -594,7 +604,14 @@ if (inTauri && !(window.__TAURI__ && window.__TAURI__.core)) {
     fill.style.width = '85%';
     logMsg('Manifest + .env geschrieben (wizard_api.save).', true);
   } else {
-    logMsg('Manifest-Speichern übersprungen (kein Core aktiv).');
+    fill.style.width = '100%';
+    fill.classList.add('error');
+    label.textContent = 'Fehler: Manifest-Speichern fehlgeschlagen';
+    logMsg('FEHLER: wizard_api.save meldete Fehler — Manifest/.env NICHT geschrieben. ' +
+           'Installation unvollständig. Core-Logs prüfen.', true);
+    btnNext.disabled = false;
+    btnNext.textContent = 'Schließen';
+    return;
   }
 
   fill.style.width = '100%';

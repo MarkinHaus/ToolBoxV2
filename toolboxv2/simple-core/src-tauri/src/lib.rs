@@ -497,10 +497,12 @@ fn setup_system_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
                         let _ = main_window.set_focus();
                     } else {
                         // Create main window if it doesn't exist (minimized start)
+                        // R15: loading.html statt index.html (kein Installer-Flash,
+                        // Bootstrap navigiert auf local-ui sobald Core laeuft)
                         let mut window_builder = WebviewWindowBuilder::new(
                             app,
                             "main",
-                            WebviewUrl::App("index.html".into()),
+                            WebviewUrl::App("loading.html".into()),
                         )
                         .title("SimpleCore - ToolBoxV2")
                         .inner_size(1200.0, 800.0)
@@ -924,36 +926,59 @@ async fn bootstrap_target() -> LaunchTarget {
     LaunchTarget::NotInstalled
 }
 
-/// Bootstrap im Hintergrund ausfuehren und das Hauptfenster auf das Ziel
-/// navigieren (installer.html / starting.html / local-ui-URL).
+/// Bootstrap im Hintergrund ausfuehren und Fenster entsprechend routing:
+/// LocalUi -> main (loading.html) navigiert auf local-ui URL;
+/// NotInstalled/Error -> eigenes "installer"-Fenster mit Initial-Load auf
+/// web/installer/index.html (R14: withGlobalTauri injiziert IPC nur beim
+/// Initial-Load zuverlaessig; R15: installierte Nutzer sehen nur die
+/// Loading-Page statt Installer-Flash).
 fn spawn_bootstrap(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let target = bootstrap_target().await;
         log::info!("[Launch] bootstrap target: {:?}", target);
-        // Wizard lebt im frontendDist (web/installer/index.html, CopyPlugin:
-        // web/* -> dist/web/*). starting.html ist bundle.resource (kein
-        // app://-URL) -> Fehlerfall zeigt ebenfalls den Wizard (repair-faehig),
-        // Grund steht im Log.
         match &target {
             LaunchTarget::LocalUi { url } => {
                 navigate_or_create_window(&app, "main", url);
             }
-            LaunchTarget::NotInstalled => {
-                // Wizard liegt im frontendDist (webpack CopyPlugin web/* ->
-                // dist/web/*). starting.html ist bundle.resource (kein
-                // app://-URL) -> Kaltstart+Fehlerfall zeigen den Wizard.
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.eval(
-                        "window.location.replace('web/installer/index.html');",
-                    );
+            LaunchTarget::NotInstalled | LaunchTarget::Error { .. } => {
+                if let LaunchTarget::Error { reason } = &target {
+                    log::error!("[Launch] bootstrap error: {}", reason);
                 }
-            }
-            LaunchTarget::Error { reason } => {
-                log::error!("[Launch] bootstrap error: {}", reason);
+                // Main-Fenster (loading) nur VERSTECKEN: close() wuerde
+                // CloseRequested->manager.stop() ausloesen (Sidecar tot) und
+                // bei Fensterlosigkeit den App-Exit triggern. Hidden-Fenster
+                // haelt die App am Leben; Tray/"Open App" + loading-Self-Poll
+                // heben es spaeter wieder (loading.html pollt 8467 und
+                // navigiert selbst zur local-ui).
                 if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.eval(
-                        "window.location.replace('web/installer/index.html');",
-                    );
+                    let _ = win.hide();
+                }
+                // Wizard in eigenem Fenster mit App-URL als Initial-Load ->
+                // IPC-Injektion garantiert (R14 Root-Cause #2).
+                let mut builder = tauri::WebviewWindowBuilder::new(
+                    &app,
+                    "installer",
+                    WebviewUrl::App("web/installer/index.html".into()),
+                )
+                .title("ToolBoxV2 Installation")
+                .inner_size(1000.0, 720.0)
+                .min_inner_size(800.0, 600.0)
+                .center()
+                .resizable(true);
+                #[cfg(target_os = "windows")]
+                {
+                    builder = builder.use_https_scheme(true);
+                }
+                if let Err(e) = builder.build() {
+                    log::error!("[Launch] installer window failed: {e}");
+                    // Fallback: Wizard via eval ins Main-Fenster (IPC evtl.
+                    // fehlend -> HTML-Fatal-Gate (R14 Fix b) faengt Fake-Done).
+                    if let Some(win) = app.get_webview_window("main") {
+                        let _ = win.show();
+                        let _ = win.eval(
+                            "window.location.replace('web/installer/index.html');",
+                        );
+                    }
                 }
             }
         }
@@ -1039,10 +1064,17 @@ pub fn run() {
                 // Only create visible windows if NOT started minimized
                 if !start_minimized {
                     // Create main window
+                    // R15: Initial-URL = neutrale Loading-Page. Verhindert den
+                    // Installer-Flash fuer installierte Nutzer (Wizard 1s sichtbar
+                    // -> Mainpage = verwirrend). spawn_bootstrap() entscheidet:
+                    // LocalUi -> Mainpage (eval-Navigation, IPC irrelevant da http)
+                    // NotInstalled -> eigenes "installer"-Fenster mit Initial-Load
+                    // (withGlobalTauri injiziert IPC nur beim Initial-Load
+                    // zuverlaessig, R14 Root-Cause #2).
                     let mut window_builder = WebviewWindowBuilder::new(
                         app,
                         "main",
-                        WebviewUrl::App("index.html".into()),
+                        WebviewUrl::App("loading.html".into()),
                     )
                     .title("SimpleCore - ToolBoxV2")
                     .inner_size(1200.0, 800.0)

@@ -69,7 +69,7 @@ pip install ToolBoxV2
 
 The installer auto-detects your platform, selects a runtime (`uv` → `venv` → bootstrap), and guides you through feature selection. Supports four install modes: `native` (single binary), `uv`, `docker`, and `source`.
 
-→ [Full Installation Guide](docs/new/analysis/installation/installation.md) · [Quickstart](docs/core/quickstart.md)
+→ [Full Installation Guide](docs/foundations/onboarding.md) · [Quickstart](docs/foundations/first_run.md)
 
 ---
 
@@ -266,6 +266,7 @@ ToolBoxV2 can be used to build a wide range of applications, including:
 
 *   [📦 Current Installer (Web Demo/Entry)](https://simplecore.app/web/core0/Installer.html)
 *   [📚 Documentation (WIP)](https://markinhaus.github.io/ToolBoxV2/)
+*   [🧭 Installer Deep-Dive (roles, modes, decision-tree, pitfalls)](docs/installer-story.md)
 *   [🐍 PyPI Package](https://pypi.org/project/ToolBoxV2)
 *   [🐙 GitHub Repository](https://github.com/MarkinHaus/ToolBoxV2)
 *   [⚙️ Worker System Documentation](toolboxv2/utils/workers/README.md)

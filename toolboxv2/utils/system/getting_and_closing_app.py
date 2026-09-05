@@ -28,15 +28,26 @@ def override_main_app(app):
 def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=False) -> AppType:
     global registered_apps
 
-    # print(f"get app requested from: {from_} withe name: {name}")
+    # Fast-path: registered app short-circuits BEFORE any logging/frames cost.
+    # (get_app is called dozens of times per agent run - logging must never
+    #  be paid on the hot path.)
+    _app = registered_apps[0]
+    if _app is not None:
+        logger = get_logger()
+        if logger.isEnabledFor(logging.DEBUG):
+            if from_ is None:
+                f = sys._getframe(1)  # 1 frame walk instead of getouterframes x2
+                from_ = f"{f.f_code.co_filename}::{f.f_lineno}"
+            logger.info(Style.GREYBG(f"get app requested from: {from_}"))
+        return _app
+
+    # Cold path: no app registered yet - full logging + boot.
     logger = get_logger()
     caller_src = "set debug mod"
-    if from_ is None and logger.level >= logging.DEBUG:
-        from inspect import getouterframes, currentframe
-        caller_src = f"{getouterframes(currentframe(), 2)[1].filename}::{getouterframes(currentframe(), 2)[1].lineno}"
+    if from_ is None and logger.isEnabledFor(logging.DEBUG):
+        f = sys._getframe(1)
+        caller_src = f"{f.f_code.co_filename}::{f.f_lineno}"
     logger.info(Style.GREYBG(f"get app requested from: {from_ if from_ is not None else caller_src}"))
-    if registered_apps[0] is not None:
-        return registered_apps[0]
 
     # Fail-safe: someone called get_app() straight from their own code/menu
     # before any onboarding ran. If no manifest exists, prepare 'mini headless'

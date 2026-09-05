@@ -114,6 +114,21 @@ def min_cash(func):
         return ___res[0]
     return _
 
+
+# fix4: hard sequence cap. Attention memory is O(seq^2); the previous 8192
+# token cap needed a 2.67 GB attention buffer and OOMed onnxruntime.
+# 512 covers retrieval chunks; env TB_EMBED_MAX_SEQ overrides if you know
+# your model takes more. (512 tokens ~= 2 KB text)
+ENV_MAX_SEQ = "TB_EMBED_MAX_SEQ"
+
+
+def _max_seq_len() -> int:
+    v = os.getenv(ENV_MAX_SEQ, "").strip()
+    try:
+        return max(64, min(8192, int(v))) if v else 512
+    except ValueError:
+        return 512
+
 @min_cash
 def _embedding_manifest():
     """Return app.manifest.isaa.embedding or None (isaa may be absent)."""
@@ -310,8 +325,16 @@ class LastTokenOnnxEmbedder:
         tok_path = hf_hub_download(hf_repo, "tokenizer.json", cache_dir=cache)
         self._tok = Tokenizer.from_file(tok_path)
         self._tok.enable_padding()
-        self._tok.enable_truncation(max_length=8192)
+        # fix4: 8192 produced a 2.67 GB attention alloc (O(seq^2)) -> OOM.
+        # Cap sequence length; override with TB_EMBED_MAX_SEQ.
+        self._tok.enable_truncation(max_length=_max_seq_len())
         so = ort.SessionOptions()
+        # fix4: return arena memory to the OS instead of hoarding it
+        try:
+            so.add_session_config_entry(
+                "session.arena.extend_strategy", "kSameAsRequested")
+        except Exception:
+            pass
         self._sess = ort.InferenceSession(
             model_path, so, providers=["CPUExecutionProvider"])
         self._out_names = [o.name for o in self._sess.get_outputs()]
@@ -398,6 +421,14 @@ class LocalEmbedder:
                 logger.warning(f"[local_embeddings] custom registration failed: {e}")
             logger.info(f"[local_embeddings] loading '{name}' (cache: {cache})")
             self._model = TextEmbedding(model_name=name, cache_dir=cache)
+            # fix4: fastembed's tokenize() calls encode_batch WITHOUT
+            # truncation - whole-file strings blow up attention memory
+            # (O(seq^2)). Enable truncation post-init on the inner tokenizer.
+            try:
+                self._model.model.tokenizer.enable_truncation(
+                    max_length=_max_seq_len())
+            except Exception as e:
+                logger.warning(f"[local_embeddings] truncation cap failed: {e}")
             self._model_name = name
             if not dim:  # probe unknown model
                 dim = len(next(iter(self._model.embed(["dim probe"]))))

@@ -257,8 +257,13 @@ class AISemanticMemory(metaclass=Singleton):
                 raise ValueError(f"File processing failed: {e}")
         elif isinstance(data, str):
             texts = [data.replace("\\t", "").replace("\t", "")]
+        # fix4: cap single-string embeds - O(seq^2) attention blows up on long texts
+        if len(data) > 6000:  # ponytail: add real chunking when recall quality drops
+            data = data[:6000]
         elif isinstance(data, list):
             texts = [d.replace("\\t", "").replace("\t", "") for d in data]
+        elif isinstance(data, dict):
+            raise NotImplementedError("Custom knowledge graph insertion not supported")
         else:
             raise ValueError("Unsupported data type")
 

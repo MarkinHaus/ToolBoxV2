@@ -1968,6 +1968,16 @@ BEISPIELE:
             ctx, session, query, max_iterations, is_resume
         )
 
+        # fix3: signal memory-index backfill to yield while an agent run is active
+        # (consumer: vfs_memory_bridge.AGENT_YIELD; lazy import avoids cycles)
+        _ay_set = None
+        try:
+            from toolboxv2.mods.isaa.base.Agent.vfs_memory_bridge import AGENT_YIELD as _AY
+            _AY.clear()
+            _ay_set = _AY.set
+        except Exception:
+            pass
+
 
         final_response = None
         success = True

@@ -37,6 +37,8 @@
     "autostart:allow-is-enabled",
 
     "allow-greet",
+    "allow-run-install",
+    "allow-cancel-install",
     "allow-start-worker",
     "allow-stop-worker",
     "allow-get-worker-status",

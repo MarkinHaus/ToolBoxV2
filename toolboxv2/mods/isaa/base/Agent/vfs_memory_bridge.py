@@ -75,6 +75,11 @@ def agent_index_space(agent_name: str) -> str:
 # per-agent backfill guard: ensures the (expensive) initial scan runs at most
 # once per agent process, no matter how many sessions/sub-agents spin up.
 _AGENT_BACKFILL_LOCK = __import__("asyncio").Lock()
+# Admission control: while set, the embedding backfill yields to agent runs.
+# Cleared while ExecutionEngine.execute() is active (avoids SQLite-lock + GIL
+# contention that slows agent runs 20-40x during indexing).
+AGENT_YIELD = threading.Event()
+AGENT_YIELD.set()  # default: no agent running, backfill may proceed
 _AGENT_BACKFILL_DONE: set[str] = set()
 
 
@@ -579,6 +584,9 @@ class VFSMemoryIndexer:
         done = 0
         try:
             for path in todo:
+                # Yield to active agent runs (see AGENT_YIELD).
+                if not AGENT_YIELD.is_set():
+                    AGENT_YIELD.wait(timeout=5.0)
                 await self._index_path(path)  # agent-scoped (session_scoped=False)
                 done += 1
                 bar.update(done, path)

@@ -35,6 +35,10 @@ fn main() {
                 "is_autostart_enabled",
                 "set_autostart",
                 "is_started_minimized",
+                // Installer (Kaltstart-Install, P1) - ohne Registrierung
+                // wird invoke('run_install') ACL-denied (leerer-Ordner-Bug #3)
+                "run_install",
+                "cancel_install",
             ]),
         ),
     )

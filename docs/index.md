@@ -36,6 +36,8 @@ pip install toolboxv2 && tb --guide
 
     [:octicons-arrow-right-24: Onboarding](foundations/onboarding.md)
 
+    [:octicons-arrow-right-24: Installer Story (Roles, Modes, Pitfalls)](installer-story.md)
+
 -   __ISAA · Agents__
 
     ---
