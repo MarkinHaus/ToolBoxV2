@@ -132,3 +132,7 @@ ENV/
 
 /llm-gateway/data/*
 /toolboxv2/.config.yaml
+
+# feature-loader markers and stale zips (local only, never commit)
+toolboxv2/features/*/.installed
+toolboxv2/features_packed/*.zip
