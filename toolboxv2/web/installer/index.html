@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="de" data-theme="dark">
 <head>
 <script>/* Theme-Init: konsistent mit tbjs ThemeManager */
 (function(){var t=null;try{t=localStorage.getItem("tbjs_theme_preference");}catch(e){}
@@ -528,6 +528,7 @@ async function runInstall() {
       if (ev.type === 'phase') { logMsg('[' + (ev.phase || '') + '] ' + (ev.msg || '')); setProgress(0.35, ev.msg); }
       else if (ev.type === 'progress') { setProgress(ev.progress || 0.5, ev.msg); logMsg(ev.msg || ''); }
       else if (ev.type === 'error') { logMsg('FEHLER: ' + (ev.msg || 'unbekannt')); label.textContent = 'Fehler'; }
+                                    else if (ev.type === 'log') { logMsg((ev.stream === 'stderr' ? '[stderr] ' : '') + (ev.msg || '')); }
       else if (ev.type === 'done') {
         setProgress(1, 'Installation abgeschlossen');
         logMsg('ToolBoxV2 ' + (ev.version || '') + ' installiert unter ' + (ev.path || '') + '.', true);
@@ -550,7 +551,26 @@ async function runInstall() {
     return;
   }
 
-  // --- First-Run-Pfad: laufender Core (8467) via Wizard-API ---
+  // --- Guard: Tauri-Kontext ohne IPC = harter Fehler (kein Standalone-Durchlauf!) ---
+// Root-Cause-Fix (leerer-Ordner-Bug): window.__TAURI__.core fehlte im
+// Release-Kaltstart -> Code fiel in den First-Run-Pfad -> 8467 tot ->
+// "Standalone-Modus" -> Fake-"Installation abgeschlossen" ohne Installation.
+// Im Tauri-Fenster (app://-Protokoll) MUSS IPC existieren; Fehlen = Fehler,
+// niemals simulierter Erfolg.
+const inTauri = typeof window.__TAURI_INTERNALS__ !== 'undefined' ||
+                typeof window.__TAURI__ !== 'undefined';
+if (inTauri && !(window.__TAURI__ && window.__TAURI__.core)) {
+  fill.style.width = '100%';
+  label.textContent = 'Fehler: IPC nicht verfügbar';
+  logMsg('FEHLER: Tauri-Kontext erkannt (' + location.protocol + '), aber window.__TAURI__.core fehlt. ' +
+         'Installation wurde NICHT ausgeführt — nichts wurde installiert. ' +
+         'Bitte App neu installieren (nightly-Build) und Log prüfen: %LOCALAPPDATA%\\ToolBoxV2\\app\\logs\\install.log', true);
+  btnNext.disabled = false;
+  btnNext.textContent = 'Schließen';
+  return;
+}
+
+// --- First-Run-Pfad: laufender Core (8467) via Wizard-API ---
   fill.style.width = '15%';
   label.textContent = 'Verbinde mit Wizard API…';
   logMsg('Wizard API (127.0.0.1:8467) wird kontaktiert…');
@@ -592,39 +612,5 @@ async function runInstall() {
 
 detectPlatform();
 </script>
-<button id="theme-toggle" title="Hell/Dunkel umschalten">🌗</button>
-<script>(function(){var b=document.getElementById("theme-toggle");if(!b)return;
-function lbl(){var t=document.documentElement.getAttribute("data-theme");b.textContent=t==="light"?"🌙":"☀️";}
-lbl();b.addEventListener("click",function(){var t=document.documentElement.getAttribute("data-theme")==="light"?"dark":"light";
-document.documentElement.setAttribute("data-theme",t);
-document.documentElement.classList.remove("light","dark");document.documentElement.classList.add(t);
-try{localStorage.setItem("tbjs_theme_preference",t);}catch(e){}lbl();});})();
-</script>
 </body>
 </html>
-<style>
-/* LIGHT-THEME (echte tbjs Werte, nur fehlende Vars) */
-[data-theme="light"] {
-    --color-accent: oklch(63% 0.15 230);
-    --color-primary-100: rgb(255, 255, 255);
-    --color-primary-300: oklch(90% 0.05 230);
-    --color-primary-400: oklch(72% 0.12 230);
-    --color-primary-500: oklch(63% 0.15 230);
-    --color-primary-600: oklch(55% 0.18 230);
-    --color-primary-700: oklch(48% 0.18 230);
-    --color-primary-900: oklch(40% 0.16 230);
-    --text-on-surface: var(--text-main);
-    --scrollbar-track: rgba(100, 150, 170, 0.1);
-    --scrollbar-thumb: rgba(100, 150, 170, 0.3);
-    --scrollbar-hover: rgba(80, 130, 160, 0.5);
-    --theme-bg-sun: #d0f0ff;
-    --theme-bg-light: #40a0c0;
-}
-
-#theme-toggle { position: fixed; top: 12px; right: 14px; z-index: 9999;
-    background: var(--bg-surface); color: var(--text-main);
-    border: var(--border-width) solid var(--border-subtle); border-radius: 9999px;
-    padding: 6px 10px; cursor: pointer; font-size: var(--text-sm);
-    transition: var(--duration-fast) var(--ease-default); }
-#theme-toggle:hover { border-color: var(--border-active); }
-</style>

@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 use tauri::{Emitter, Manager};
 
 /// Ein Installations-Config-Set (aus dem Wizard gesammelt).
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 pub struct InstallConfig {
     /// Wizard-Profil: consumer|homelab|server|business|developer
     pub profile: String,
@@ -102,6 +102,7 @@ pub fn run_install(
     config: InstallConfig,
     app: tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
+    use std::io::Write;
     let yaml = config_to_yaml(&config);
 
     // Config ins Temp-Dir schreiben
@@ -122,7 +123,48 @@ pub fn run_install(
     args.push("--config".into());
     args.push(yaml_path.to_string_lossy().to_string());
 
-    let mut child = Command::new(shell)
+    // install.log (Runde-11-Muster: niemals still scheitern) - exe-sibling logs/.
+    let log_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("logs")));
+    let log_path = log_dir.as_ref().map(|d| d.join("install.log"));
+    let log: Option<std::sync::Arc<std::sync::Mutex<std::fs::File>>> = log_path
+        .and_then(|p| {
+            if let Some(dir) = p.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(p)
+                .ok()
+        })
+        .map(|f| std::sync::Arc::new(std::sync::Mutex::new(f)));
+    if let Some(f) = log.as_ref() {
+        if let Ok(mut f) = f.lock() {
+            let _ = writeln!(
+                f,
+                "=== install start: shell={shell} args={args:?} config={:?} ===",
+                config
+            );
+        }
+    }
+    let emit_log = |handle: &tauri::AppHandle,
+                    log: &Option<std::sync::Arc<std::sync::Mutex<std::fs::File>>>,
+                    stream: &str,
+                    line: &str| {
+        if let Some(f) = log.as_ref() {
+            if let Ok(mut f) = f.lock() {
+                let _ = writeln!(f, "[{stream}] {line}");
+            }
+        }
+        let _ = handle.emit(
+            "install-event",
+            serde_json::json!({"type": "log", "stream": stream, "msg": line}),
+        );
+    };
+
+    let mut child = Command::new(&shell)
         .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -131,17 +173,48 @@ pub fn run_install(
 
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let handle = app.clone();
+    let log2 = log.clone();
     let reader_thread = std::thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line in reader.lines().map_while(Result::ok) {
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
-                let _ = handle.emit("install-event", value);
+            match serde_json::from_str::<serde_json::Value>(&line) {
+                Ok(value) => {
+                    let _ = handle.emit("install-event", value);
+                    if let Some(f) = log2.as_ref() {
+                        if let Ok(mut f) = f.lock() {
+                            let _ = writeln!(f, "{line}");
+                        }
+                    }
+                }
+                Err(_) => emit_log(&handle, &log2, "stdout", &line),
             }
         }
     });
 
+    // stderr gelesen statt nur gepiped: Deadlock-Risiko weg, Diagnostik im Log.
+    if let Some(stderr) = child.stderr.take() {
+        let handle = app.clone();
+        let log3 = log.clone();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                emit_log(&handle, &log3, "stderr", &line);
+            }
+        });
+    }
+
     let status = child.wait().map_err(|e| format!("wait failed: {e}"))?;
     let _ = reader_thread.join();
+    if let Some(f) = log.as_ref() {
+        if let Ok(mut f) = f.lock() {
+            let _ = writeln!(
+                f,
+                "=== install end: exit={} success={} ===",
+                status.code().unwrap_or(-1),
+                status.success()
+            );
+        }
+    }
 
     Ok(serde_json::json!({
         "exit_code": status.code().unwrap_or(-1),

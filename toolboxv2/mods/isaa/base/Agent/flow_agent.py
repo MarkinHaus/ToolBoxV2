@@ -4471,8 +4471,8 @@ class FlowAgent:
 
         if self.a2a_server:
             await self.a2a_server.close()
-        if self.mcp_server:
-            await self.mcp_server.close() # not found ...
+        # if self.mcp_server:
+        #    await self.mcp_server.close() # not found ...
         logger.info(f"FlowAgent '{self.amd.name}' closed")
 
     # =========================================================================

@@ -1,6 +1,12 @@
 <!DOCTYPE html>
 <html lang="de" data-theme="dark">
 <head>
+<script>/* Theme-Init: konsistent mit tbjs ThemeManager */
+(function(){var t=null;try{t=localStorage.getItem("tbjs_theme_preference");}catch(e){}
+if(t==="system"||!t){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches)?"light":"dark";}
+var d=document.documentElement;d.setAttribute("data-theme",t);
+d.classList.remove("light","dark");d.classList.add(t);})();
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ToolBoxV2 Installer</title>
@@ -431,8 +437,23 @@ btnNext.addEventListener('click', async () => {
     await apiCall('/api/wizard/profile', 'POST', { profile: profileMap[selectedMode] || 'consumer' });
   }
   if (currentStep < STEPS) showStep(currentStep + 1);
-  else window.close();
+  else postInstallExit();
 });
+
+// R14-Fix: window.close() ist in Tauri-Webviews unzuverlaessig (weisser Screen).
+// Reihenfolge: laufende local-ui (8467) -> dorthin; sonst Tauri-close; sonst window.close.
+async function postInstallExit() {
+  const boot = (typeof API_BASE !== 'undefined') ? API_BASE : 'http://127.0.0.1:8467';
+  try {
+    const r = await fetch(boot + '/health', { cache: 'no-store' });
+    if (r.ok) { window.location.replace(boot + '/install'); return; }
+  } catch (e) { /* worker down */ }
+  try {
+    const cur = window.__TAURI__ && window.__TAURI__.window && window.__TAURI__.window.getCurrent();
+    if (cur && cur.close) { cur.close(); return; }
+  } catch (e) { /* fall through */ }
+  window.close();
+}
 btnBack.addEventListener('click', () => { if (currentStep > 1) showStep(currentStep - 1); });
 
 // Mode selection
@@ -452,8 +473,17 @@ async function detectPlatform() {
   else if (ua.includes('Mac')) os = 'macOS';
   document.getElementById('os-info').textContent = os;
   document.getElementById('arch-info').textContent = arch;
-  const defaultPath = os === 'Windows' ? 'C:\\Users\\' + 'User' + '\\ToolBoxV2'
+  // R15-Fix: echter Pfad statt 'User'-Platzhalter. Tauri: appDataDir (%LOCALAPPDATA%/<identifier>);
+  // Web-Fallback: statisch. launch.rs-Kanon (%LOCALAPPDATA%/toolboxv2/bin) wird unabhängig davon
+  // vom installer.ps1 Kanon-Block bedient (siehe R14).
+  let defaultPath = os === 'Windows' ? 'C:\\Users\\' + (window.username || 'User') + '\\ToolBoxV2'
     : os === 'macOS' ? '/Applications/ToolBoxV2' : '/opt/toolboxv2';
+  try {
+    if (window.__TAURI__ && window.__TAURI__.path && window.__TAURI__.path.appDataDir) {
+      const ad = await window.__TAURI__.path.appDataDir();
+      if (ad) defaultPath = String(ad).replace(/[\\/]$/, '');
+    }
+  } catch (e) { /* Web-Kontext: Fallback */ }
   document.getElementById('install-path').value = defaultPath;
   document.getElementById('disk-space').textContent = 'ausreichend';
   document.getElementById('net-status').className = 'status-dot is-online';
@@ -498,6 +528,7 @@ async function runInstall() {
       if (ev.type === 'phase') { logMsg('[' + (ev.phase || '') + '] ' + (ev.msg || '')); setProgress(0.35, ev.msg); }
       else if (ev.type === 'progress') { setProgress(ev.progress || 0.5, ev.msg); logMsg(ev.msg || ''); }
       else if (ev.type === 'error') { logMsg('FEHLER: ' + (ev.msg || 'unbekannt')); label.textContent = 'Fehler'; }
+                                    else if (ev.type === 'log') { logMsg((ev.stream === 'stderr' ? '[stderr] ' : '') + (ev.msg || '')); }
       else if (ev.type === 'done') {
         setProgress(1, 'Installation abgeschlossen');
         logMsg('ToolBoxV2 ' + (ev.version || '') + ' installiert unter ' + (ev.path || '') + '.', true);
@@ -520,7 +551,26 @@ async function runInstall() {
     return;
   }
 
-  // --- First-Run-Pfad: laufender Core (8467) via Wizard-API ---
+  // --- Guard: Tauri-Kontext ohne IPC = harter Fehler (kein Standalone-Durchlauf!) ---
+// Root-Cause-Fix (leerer-Ordner-Bug): window.__TAURI__.core fehlte im
+// Release-Kaltstart -> Code fiel in den First-Run-Pfad -> 8467 tot ->
+// "Standalone-Modus" -> Fake-"Installation abgeschlossen" ohne Installation.
+// Im Tauri-Fenster (app://-Protokoll) MUSS IPC existieren; Fehlen = Fehler,
+// niemals simulierter Erfolg.
+const inTauri = typeof window.__TAURI_INTERNALS__ !== 'undefined' ||
+                typeof window.__TAURI__ !== 'undefined';
+if (inTauri && !(window.__TAURI__ && window.__TAURI__.core)) {
+  fill.style.width = '100%';
+  label.textContent = 'Fehler: IPC nicht verfügbar';
+  logMsg('FEHLER: Tauri-Kontext erkannt (' + location.protocol + '), aber window.__TAURI__.core fehlt. ' +
+         'Installation wurde NICHT ausgeführt — nichts wurde installiert. ' +
+         'Bitte App neu installieren (nightly-Build) und Log prüfen: %LOCALAPPDATA%\\ToolBoxV2\\app\\logs\\install.log', true);
+  btnNext.disabled = false;
+  btnNext.textContent = 'Schließen';
+  return;
+}
+
+// --- First-Run-Pfad: laufender Core (8467) via Wizard-API ---
   fill.style.width = '15%';
   label.textContent = 'Verbinde mit Wizard API…';
   logMsg('Wizard API (127.0.0.1:8467) wird kontaktiert…');
