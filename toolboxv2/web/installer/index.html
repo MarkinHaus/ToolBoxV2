@@ -480,9 +480,13 @@ async function detectPlatform() {
   let defaultPath = os === 'Windows' ? 'C:\\Users\\' + (window.username || 'User') + '\\ToolBoxV2'
     : os === 'macOS' ? '/Applications/ToolBoxV2' : '/opt/toolboxv2';
   try {
-    if (window.__TAURI__ && window.__TAURI__.path && window.__TAURI__.path.appDataDir) {
-      const ad = await window.__TAURI__.path.appDataDir();
-      if (ad) defaultPath = String(ad).replace(/[\\/]$/, '');
+    // R16-Fix: localDataDir() = %LOCALAPPDATA% (Windows) — NICHT appDataDir()
+    // (= Roaming\com.simple-core.app, WebView-Ordner!). Kanon wie installer.ps1
+    // L118 + launch.rs tb_candidates: <localDataDir>/toolboxv2.
+    if (window.__TAURI__ && window.__TAURI__.path) {
+      const p = window.__TAURI__.path;
+      const base = p.localDataDir ? await p.localDataDir() : null;
+      if (base) defaultPath = String(base).replace(/[\\/]$/, '') + '/toolboxv2';
     }
   } catch (e) { /* Web-Kontext: Fallback */ }
   document.getElementById('install-path').value = defaultPath;

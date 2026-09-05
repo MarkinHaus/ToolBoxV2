@@ -95,6 +95,7 @@ ACTION="install" # install | update | uninstall
 CONFIG_FILE=""
 JSON_OUTPUT=0
 DRY_RUN=0
+ASSUME_YES=""
 TB_VERSION_TARGET=""
 for arg in "$@"; do
   case $arg in
@@ -102,6 +103,8 @@ for arg in "$@"; do
     --update)              ACTION="update" ;;
     --config=*)            CONFIG_FILE="${arg#*=}" ;;
     --config)              shift; CONFIG_FILE="$1" ;;
+    --yes)                 ASSUME_YES="yes" ;;
+    --no)                  ASSUME_YES="no" ;;
     --mode=*)              INSTALL_MODE="${arg#*=}" ;;
     --mode)                shift; INSTALL_MODE="$1" ;;
     --path=*)              INSTALL_PATH="${arg#*=}" ;;
@@ -270,11 +273,17 @@ phase_discovery() {
     done
     echo ""
     if [ "$ACTION" = "install" ]; then
-      if confirm "Update existing installation?"; then
+      if [ "$ASSUME_YES" = "yes" ]; then
         ACTION="update"
         INSTALL_PATH="${found_installs[0]}"
+        info "assume=yes -> updating existing installation at ${INSTALL_PATH}"
       else
-        confirm "Install fresh alongside?" || fail "Aborted."
+        if confirm "Update existing installation?"; then
+          ACTION="update"
+          INSTALL_PATH="${found_installs[0]}"
+        else
+          confirm "Install fresh alongside?" || fail "Aborted."
+        fi
       fi
     fi
   else
@@ -308,6 +317,9 @@ phase_config() {
     OPT_OLLAMA=$(yaml_get "$CONFIG_FILE" "optional.ollama" "false")
     OPT_MINIO=$(yaml_get "$CONFIG_FILE" "optional.minio" "false")
     OPT_REGISTRY=$(yaml_get "$CONFIG_FILE" "optional.registry" "false")
+    [ -n "$ASSUME_YES" ]      || ASSUME_YES=$(yaml_get "$CONFIG_FILE" "assume" "")     # yes|no|""(ask)
+    [ "$ACTION" = "install" ] && ACTION=$(yaml_get "$CONFIG_FILE" "action" "$ACTION")
+    [ -z "$ENVIRONMENT" ]     || true   # env weiter unten via yaml_get gefuellt (L304), hier nur assume/action
 
     # Features from config (space-separated line under features:)
     local feat_line
@@ -351,7 +363,14 @@ phase_config() {
   echo "  Included (always): ${G}mini core${NC}"
   echo "  Optional modules:"
   local sel_features="$FEATURES"
+  if [ -n "$ASSUME_YES" ]; then
+    # non-interactive: konfigurierte Module aktivieren, Rest skippen
+    for feat in $MODULES_OPTIONAL; do
+      echo "$sel_features" | grep -qw "$feat" || sel_features="$sel_features $feat"
+    done
+  fi
   for feat in $MODULES_OPTIONAL; do
+    if [ -n "$ASSUME_YES" ]; then break; fi
     local already=false
     echo "$sel_features" | grep -qw "$feat" && already=true
     local currently
@@ -365,7 +384,9 @@ phase_config() {
   FEATURES=$(echo "$sel_features" | xargs)  # trim whitespace
 
   # Environment
-  if [ -z "$ENVIRONMENT" ] || [ "$ENVIRONMENT" = "development" ]; then
+  if [ -n "$ASSUME_YES" ]; then
+    ENVIRONMENT="${ENVIRONMENT:-production}"
+  elif [ -z "$ENVIRONMENT" ] || [ "$ENVIRONMENT" = "development" ]; then
     ENVIRONMENT=$(prompt_with_default "Environment" "development")
   fi
 

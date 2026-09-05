@@ -47,6 +47,10 @@ pub fn config_to_yaml(cfg: &InstallConfig) -> String {
     yaml.push_str("source_branch: master\n");
     yaml.push_str(&format!("environment: {}\n", environment));
     yaml.push_str("instance_id: tbv2_main\n");
+    // Tauri laeuft headless (kein stdin) -> Installer-Fragen sind unantwortbar.
+    // assume: yes + action machen sh/ps1 voll non-interactive.
+    yaml.push_str("assume: yes\n");
+    yaml.push_str("action: install\n");
     for opt in optional_all {
         let on = cfg.optional.iter().any(|o| o == opt);
         yaml.push_str(&format!("optional.{}: {}\n", opt, on));
@@ -119,8 +123,15 @@ pub fn run_install(
         let (s, a) = script_args(res_dir.as_deref());
         (s, a)
     };
-    args.push("--json-output".into());
-    args.push("--config".into());
+    // R16-Fix: OS-spezifische Flags. PowerShell kennt NUR -JsonOutput/-Config
+    // (Doppeldash = "Parameter nicht gefunden" -> exit 1, install.log-Beweis).
+    if cfg!(windows) {
+        args.push("-JsonOutput".into());
+        args.push("-Config".into());
+    } else {
+        args.push("--json-output".into());
+        args.push("--config".into());
+    }
     args.push(yaml_path.to_string_lossy().to_string());
 
     // install.log (Runde-11-Muster: niemals still scheitern) - exe-sibling logs/.

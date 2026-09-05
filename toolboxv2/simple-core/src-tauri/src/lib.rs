@@ -979,6 +979,36 @@ fn spawn_bootstrap(app: tauri::AppHandle) {
                             "window.location.replace('web/installer/index.html');",
                         );
                     }
+                } else {
+                    // R16 White-Screen-Fix: Core-Watcher. Nach der Installation
+                    // (oder bei spaeterem manuellen TB-Start) den Core hochfahren
+                    // und das hidden Main-Fenster zeigen; loading.html navigiert
+                    // dann selbst auf die local-ui. Installer-Fenster verstecken.
+                    let wapp = app.clone();
+                    let base = worker_manager::local_ui_url();
+                    tauri::async_runtime::spawn(async move {
+                        let mut started = false;
+                        for _ in 0..3600u32 {
+                            if launch::probe_health(&base).await {
+                                if let Some(m) = wapp.get_webview_window("main") {
+                                    let _ = m.show();
+                                    let _ = m.set_focus();
+                                }
+                                if let Some(i) = wapp.get_webview_window("installer") {
+                                    let _ = i.hide();
+                                }
+                                log::info!("[Launch] core online - main shown");
+                                break;
+                            }
+                            if !started && launch::tb_on_path() {
+                                if let Err(e) = launch::start_background() {
+                                    log::warn!("[Launch] post-install start: {e}");
+                                }
+                                started = true;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        }
+                    });
                 }
             }
         }
@@ -1157,6 +1187,18 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // Secondary windows (HUD, tray-spawned views) must never take the
                 // worker down with them; only closing the main window shuts down.
+                if window.label() == "installer" {
+                    // R16 White-Screen-Fix: Installer zu -> main (loading) zeigen.
+                    // loading.html pollt 8467 und navigiert auf local-ui sobald
+                    // der Core laeuft (Core-Watcher startet ihn ggf.).
+                    api.prevent_close();
+                    let _ = window.hide();
+                    if let Some(m) = window.app_handle().get_webview_window("main") {
+                        let _ = m.show();
+                        let _ = m.set_focus();
+                    }
+                    return;
+                }
                 if window.label() != "main" {
                     api.prevent_close();
                     let _ = window.hide();

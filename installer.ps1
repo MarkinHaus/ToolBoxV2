@@ -16,6 +16,7 @@ param(
     [string]$Mode       = "",
     [string]$Path       = "",
     [string]$Config     = "",
+    [string]$AssumeYes  = "",   # "yes" | "no" | "" (ask)
     [string]$Branch     = "master",
     [string]$Source     = "",          # github | registry
     [string]$Version    = "",          # nightly | latest | x.x.x
@@ -216,11 +217,17 @@ function Phase-Discovery {
         }
         Write-Host ""
         if ($ACTION -eq "install") {
-            if (Confirm-User "Update existing installation?") {
+            if ($AssumeYes -eq "yes") {
                 $script:ACTION       = "update"
                 $script:INSTALL_PATH = $foundInstalls[0]
+                Info "assume=yes -> updating existing installation at $INSTALL_PATH"
             } else {
-                if (-not (Confirm-User "Install fresh alongside?")) { Fail "Aborted." }
+                if (Confirm-User "Update existing installation?") {
+                    $script:ACTION       = "update"
+                    $script:INSTALL_PATH = $foundInstalls[0]
+                } else {
+                    if (-not (Confirm-User "Install fresh alongside?")) { Fail "Aborted." }
+                }
             }
         }
     } else {
@@ -254,6 +261,8 @@ function Phase-Config {
         $script:OPT_OLLAMA    = (Get-YamlField $Config "optional.ollama"          "false") -eq "true"
         $script:OPT_MINIO     = (Get-YamlField $Config "optional.minio"           "false") -eq "true"
         $script:OPT_REGISTRY  = (Get-YamlField $Config "optional.registry"        "false") -eq "true"
+        if (-not $AssumeYes)  { $AssumeYes = Get-YamlField $Config "assume" "" }   # yes|no|""(ask)
+        $script:AssumeYes     = $AssumeYes
     }
 
     # 1. Install path
@@ -342,7 +351,8 @@ function Check-Optional {
         if ($present) { Log "$Label already installed" }
         else { Install-Optional $Name }
     } elseif (-not $present) {
-        if (Confirm-User "$Label not found. Install it?") { Install-Optional $Name }
+        if ($AssumeYes -eq "yes") { Warn "$Label not found — skipped (assume=yes)" }
+        elseif (Confirm-User "$Label not found. Install it?") { Install-Optional $Name }
     } else {
         Log "$Label found"
     }
@@ -395,7 +405,14 @@ function Invoke-InteractiveConfig {
     Write-Host ""
     Write-Host "  Included (always): mini core"
     $selFeatures = $FEATURES
+    if ($AssumeYes -eq "yes") {
+        # non-interactive: konfigurierte Module aktivieren, Rest skippen
+        foreach ($feat in $MODULES_OPTIONAL) {
+            if ($selFeatures -notmatch "\b${feat}\b") { $selFeatures += " $feat" }
+        }
+    }
     foreach ($feat in $MODULES_OPTIONAL) {
+        if ($AssumeYes -eq "yes") { break }
         $currently = if ($selFeatures -match "\b${feat}\b") { "yes" } else { "no" }
         $def = if ($currently -eq "yes") { "y" } else { "n" }
         if (Confirm-User "  Enable ${feat}? [currently: $currently]" $def) {
@@ -406,7 +423,11 @@ function Invoke-InteractiveConfig {
     }
     $script:FEATURES = $selFeatures.Trim()
 
-    $script:ENVIRONMENT = Prompt-Default "Environment (development|production|staging)" $ENVIRONMENT
+    if ($AssumeYes -eq "yes") {
+        if (-not $ENVIRONMENT -or $ENVIRONMENT -eq "development") { $script:ENVIRONMENT = "production" }
+    } else {
+        $script:ENVIRONMENT = Prompt-Default "Environment (development|production|staging)" $ENVIRONMENT
+    }
 
     if (-not $INSTALL_PATH) {
         $default = Get-DefaultPath
