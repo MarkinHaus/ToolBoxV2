@@ -446,6 +446,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install ToolBoxV2 for Worker Build
+        shell: bash
         run: |
           pip install --upgrade pip
           pip install pyinstaller
