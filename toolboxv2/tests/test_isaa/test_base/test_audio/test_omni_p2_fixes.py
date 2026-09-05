@@ -35,7 +35,7 @@ ICLI = _repo_root() / "toolboxv2" / "flows" / "isaa" / "icli.py"
 def _extract(names):
     """Pull top-level def/class nodes named in `names` from icli.py and exec them
     in an isolated namespace with the few module-level deps they touch stubbed."""
-    tree = ast.parse(ICLI.read_text())
+    tree = ast.parse(ICLI.read_text(encoding="utf-8"))
     wanted = {n: None for n in names}
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in wanted:
