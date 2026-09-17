@@ -1318,6 +1318,9 @@ class DiscordInterface:
         # icli runner bridge: when launched from icli, route agent runs through
         # host.run_agent_monitored (on the icli loop) so they show in the dashboard.
         self.host = host
+        # Bot-Peers: Fremde Bots, deren Nachrichten akzeptiert werden
+        # (z.B. dc_self-Bot schickt Auftraege). Leere Menge = altes Verhalten.
+        self.bot_peers: set[int] = set()
         self.runner_loop = runner_loop
         self.moderator_safelist = (
             moderator_safelist if moderator_safelist is not None
@@ -1387,8 +1390,13 @@ class DiscordInterface:
 
         @self.bot.event
         async def on_message(message: discord.Message):
-            # Ignore self
+            # Ignore self + fremde Bots (ausser expliziten Peers, z.B. dc_self)
             if message.author.bot:
+                peer_ids = getattr(self, "bot_peers", None) or set()
+                if message.author.id in peer_ids:
+                    # Peer-Auftrag: immer verarbeiten (umgeht _should_respond)
+                    ctx = await self._build_message_context(message)
+                    await self._handle_message(ctx, message)
                 return
 
             # Build Context
