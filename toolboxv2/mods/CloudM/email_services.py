@@ -183,7 +183,7 @@ class EmailSender:
                 self.logger.error(err_msg)
                 return Result.default_internal_error(info=err_msg)
 
-            self.logger.info(f"Email sent to {', '.join(recipient_emails)} with subject: {subject}")
+            self.logger.info(f"Email sent to {', '.join(recipient_emails)} with subject: {subject} [from={SENDER_EMAIL_ADDRESS} via {SMTP_SERVER}:{SMTP_PORT}]")
             return Result.ok(info=f"Email successfully sent to {', '.join([email[:4]+'...'+email[-12:] for email in recipient_emails])}.")
         except smtplib.SMTPAuthenticationError as e:
             self.logger.error(f"SMTP Authentication Error for user {GMAIL_EMAIL}: {e}")

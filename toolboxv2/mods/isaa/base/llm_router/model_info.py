@@ -21,11 +21,15 @@ MODEL_INFO: dict[str, dict] = {
     # -------------------------------------------------
     # Z.ai / GLM Series (GLM-5 Generation bis 1M)
     # -------------------------------------------------
+    "zai/glm-5.3": {"ctx": 1_000_000, "tools": True},
+    "zai/glm-5.3-flash": {"ctx": 1_000_000, "tools": True},
     "zai/glm-5.2": {"ctx": 1_000_000, "tools": True},
     "zai/glm-5.1": {"ctx": 198_000, "tools": True},
     "zai/glm-5": {"ctx": 200_000, "tools": True},
     "zai/glm-4.7-flash": {"ctx": 128_000, "tools": True},
     "zai/glm-4.5-flash": {"ctx": 128_000, "tools": True},
+    "zglm/glm-5.3": {"ctx": 1_000_000, "tools": True},
+    "zglm/glm-5.3-flash": {"ctx": 1_000_000, "tools": True},
     "zglm/glm-5.2": {"ctx": 1_000_000, "tools": True},
     "zglm/glm-5": {"ctx": 200_000, "tools": True},
     "zglm/glm-4.7": {"ctx": 200_000, "tools": True},
