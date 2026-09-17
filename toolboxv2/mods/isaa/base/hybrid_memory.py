@@ -555,15 +555,20 @@ class HybridMemoryStore:
 
         # ── 2. BM25 via FTS5 ──
         if "bm25" in search_modes:
-            safe_query = self._fts_escape(re.sub(r'[\\/.:"\'(){}\[\]^~*!@#$&|<>=,;]', ' ', query_text).strip())
-            _fts5_unsafe = re.compile(r'[\\/.:"\'(){}\[\]^~*!@#$&|<>=,;]')
-            safe_query_text = _fts5_unsafe.sub(' ', query_text).strip()  # oder wie die Variable heißt
-            safe_query_text = ' '.join(safe_query_text.split())  # doppelte Spaces entfernen
-            if not safe_query_text:
+            # FTS5-Sanitizer: alle Sonderzeichen (inkl. '?'!), Keywords und
+            # Mehrfach-Spaces entfernen. EINE Variable, die auch in der SQL
+            # verwendet wird (alter Zustand: safe_query fehlte '?', 
+            # safe_query_text wurde nicht benutzt -> 'syntax error near "?"').
+            _fts5_unsafe = re.compile(r'[\\/.:"\'(){}\[\]^~*!@#$&|<>=,;?%-]')
+            safe_query = ' '.join(_fts5_unsafe.sub(' ', query_text).split())
+            if not safe_query:
                 bm25_results = []
-                print("No query text")
                 from toolboxv2 import get_logger
-                get_logger().error(f"No query text bm25_results len og query {len(query_text)} len save query {len(safe_query_text)}")
+
+                get_logger().warning(
+                    f"bm25 skipped: query text empty after sanitization "
+                    f"(len(original)={len(query_text)})"
+                )
             else:
                 bm25_results = self._exec(
                     """
