@@ -40,6 +40,8 @@ _PING_TARGET = os.environ.get(
 
 async def _auto_connect_discord(host) -> None:
     """Discord wie in der icli verbinden (gleiche Extension, gleiche Verbindung)."""
+    if os.environ.get("DC_SELF_DISCORD", "1") != "1":
+        return
     if not os.environ.get("DISCORD_BOT_TOKEN"):
         print(
             "[dc_self] DISCORD_BOT_TOKEN fehlt - Discord spaeter via "

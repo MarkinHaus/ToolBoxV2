@@ -1,428 +1,361 @@
 # toolboxv2/flows/mini/agent_builder.py
-# Builder-Flow (CODER + NAVIGATOR Tandem) - aufgebaut wie toolbox_admin:
-# ISAA-Agent via AgentBuilder, gleiche Toolgruppen + Builder-Tandem-Logik,
-# startbar via: tb -m isaa -f agent_builder  |  tb flow --flow agent_builder
-# Regeln (Markin 16.09.): flexible Pakete (3-10, jedes 100%), ASCII-Reports,
-# Docs-Feuer Default ToolBoxV2, Browser-Gate, zglm-Modelle (Subscription).
+# BUILDER-TANDEM v4 - EIN Flow, zwei Rollen, Toolbox-Konventionen 1:1.
+#
+#   CODER     = der BESTEHENDE Self-Agent "self" (ISAA_Host._init_self_agent,
+#               icli.py:5190) -> Toolbox-Admin 1:1: volle Tools, dangerous shell,
+#               iCLI-Jobtools (createJob/listJobs/deleteJob/createDreamJob),
+#               teachSkill, delegate. KEIN eigener Code, KEINE Wrapper.
+#   VALIDATOR = NEUE Agent-Instanz "builder_validator" (Bauplan exakt wie
+#               ISAA_Host._tool_spawn_agent, icli.py:5310): base tools + eigene
+#               Test-Tools (Multi-Turn-Shell, Playwright-Browser-Aktionen,
+#               Beweis-Sammlung). Volle Umfaenge: kann Websites testen, CLIs in
+#               Mehrschritt-Sessions fahren, Beweise liefern.
+#   DISCORD   = DIE Interface-Verbindung (DiscordCLIExtension._connect ->
+#               create_discord_interface) mit dem EIGENEN Builder-Bot-Token
+#               (BUILDER_DISCORD_TOKEN). Bot-Peer-Patch (discord_interface.py:
+#               bot_peers) erlaubt Auftraege VOM dc_self-Bot (1142855321849700523).
+#
+#   Routing (discord_interface._resolve_route):
+#     - Markin (BUILDER_ADMIN_ID) kann per "!agent self" auf den CODER schalten,
+#       Default = VALIDATOR (moderator slot).
+#     - dc_self-Auftraege landen als Bot-Peer-Nachrichten im Interface.
+#
+# Start (als markin, Screen "builder"):
+#   cd /home/markin/ToolBoxV2 && set -a; source /home/markin/builder/.env; set +a
+#   exec .venv/bin/tb -m agent_builder
+# Env: BUILDER_DISCORD_TOKEN, BUILDER_ADMIN_ID, BUILDER_GUILD_ID,
+#      BUILDER_DOCS_ROOT, BUILDER_DOCS_FOCUS, BUILDER_KEEP_CHANNELS
 
 import asyncio
 import json
 import os
-import sys
+from datetime import datetime
 from pathlib import Path
 
 NAME = "agent_builder"
-ICON = "construction"
+ICON = "hammer"
 AUTH = False
 
-FAST_DEFAULT = os.environ.get("BUILDER_FAST_MODEL", "zglm/glm-5.3-flash")
-COMPLEX_DEFAULT = os.environ.get("BUILDER_COMPLEX_MODEL", "zglm/glm-5.3")
+_DC_SELF_BOT_ID = 1142855321849700523  # Bot-Peer: dc_self darf Auftraege senden
+_PING_TARGET = os.environ.get(
+    "BUILDER_PING_TARGET", "discord://dm:268830485889810432"
+)
 
-# toolboxv2/flows/mini/agent_builder.py
-# Builder-Flow V3 (CODER + NAVIGATOR + Discord-Bridge) - wie toolbox_admin:
-# Start: tb -m agent_builder   (alt: tb flow --flow agent_builder)
-# V3-NEU: Discord-Connection (senden+lesen via Bot-Token, Default #builder)
-# + normal chatten (kein Bau-Auftrag -> direkte Antwort, kein Tandem-Ritual).
-# Regeln (Markin 16.09.): 2 Agenten, CODER mit vollen TB-Admin-Dev-Tools,
-# flexible Pakete 1-10 (1 = Mini-Edit erlaubt), jedes Paket 100%,
-# mehrschrittige Validierung (Terminal + Browser), ASCII-Reports,
-# Docs-Feuer Default ToolBoxV2.
+_TANDEM_SKILL = (
+    "Du arbeitest im Builder-Tandem: DU (self) bist der Coder = 1:1 Toolbox-Admin "
+    "(volle Tools, Job-Tools, teachSkill). Der Discord-Moderator-Kanal bedient den "
+    "Agenten 'builder_validator' (volle Test-Rechte: Multi-Turn-Shell via "
+    "validator_shell, Browser-Tests via validator_browser_action, Beweise via "
+    "validator_collect_evidence). Arbeitsweise: (1) Auftraege von Markin oder dem "
+    "dc_self-Bot entgegennehmen. (2) Implementierung mit deinen Admin-Tools "
+    "vornehmen (write_code/patch_code, Manifest, Tests). (3) Validierung an "
+    "'builder_validator' delegieren: konkreter Testauftrag mit erwartetem "
+    "Beobachtungs-Ergebnis. (4) Validator-Ergebnis (Pass/Fail + Beweise) "
+    "abwarten, bei Fail loop bis Pass. (5) Abschlussbericht: was, wo (Pfad), "
+    "Validierungsnachweis. Nutze teachSkill NICHT fuer dieses Protokoll - es ist "
+    "bereits dieser Skill."
+)
 
-import asyncio
-import json
-import os
-import sys
-from pathlib import Path
 
-NAME = "agent_builder"
-ICON = "construction"
-AUTH = False
-
-FAST_DEFAULT = os.environ.get("BUILDER_FAST_MODEL", "zglm/glm-5.3-flash")
-COMPLEX_DEFAULT = os.environ.get("BUILDER_COMPLEX_MODEL", "zglm/glm-5.3")
-
-CODER_PROMPT = """# Builder-CODER v2.0 (Umsetzer)
-
-Du bist CODER. Du setzt Bau-Auftraege um - vom 1-Zeilen Mini-Edit bis zum
-10-Pakete Projekt. Du hast die volle TB-Admin-Ausstattung: write_code,
-patch_code, shell, tb-CLI, docs, manifest, dev-Tools.
-
-## Kernprinzipien (Markin-Regeln 16.09.)
-
-1. **Quellcode > Docs**: Docs sind Orientierung, Ground Truth ist echter Code.
-   Verifiziere via docs_lookup(include_code=True).
-2. **Flexible Pakete**: Zerlege in 1-10 Pakete - so wenige wie moeglich, so
-   viele wie noetig. 1 Paket = Mini-Edit ist voll ok. JEDES Paket 100%.
-3. **Freiraum**: Ein Paket darf mehrschrittig sein (Terminal-Befehle,
-   mehrere Dateien) - solange das Ziel klar abgrenzbar ist.
-4. **ASCII-Reports**: Reines ASCII, Datei-Pfade + was getan wurde.
-5. **Docs-Feuer Default ToolBoxV2**: Vor dem Zerlegen docs_inventory lesen,
-   echte Pfade/APIs nutzen, nichts erfinden.
-6. **Kein Raten**: Was du nicht weisst, schlaegst du nach.
-7. **Normal chatten**: Kein Bau-Auftrag (Frage, Plausch, Feedback)? Dann
-   antworte direkt und kurz - KEIN Zerlegen, KEIN Tandem-Ritual.
-8. **Discord**: Status/Fragen via builder_discord_send an #builder
-   (Default-Kanal), Feedback via builder_discord_read holen.
-"""
-
-NAVIGATOR_PROMPT = """# Builder-NAVIGATOR v2.0 (Pruefer, kein Coder)
-
-Du bist NAVIGATOR. Du pruefst jedes CODER-Paket mehrschrittig - du schreibst
-selbst KEINEN Bau-Code um (nur Repair-Vorschlaege als Text).
-
-## Pruef-Schritte pro Paket
-
-1. **Terminal**: compile/lint/tests via shell bzw. builder_terminal_check
-   (z.B. python -m compileall, pytest, ruff) - je nach Artefakt.
-2. **Browser** (nur HTML/Web): builder_browser_check - Seite oeffnen,
-   Titel/Text assert, Screenshot pruefen.
-3. **Gate-JSON**: Antworte NUR JSON:
-   {"pass":true/false,"score":0-10,"browser_expect":[...],"issues":[...]}
-4. **Gate-Regel**: pass=true UND score>=9 = bestanden. Sonst konkreter
-   Repair-Vorschlag (max 3 Versuche), dann ABBRUCH empfehlen.
-
-## Reports: nur ASCII, kurz, mit Beleg (Befehl + Output-Kurzform).
-Beleg ggf. aus Discord-Verlauf (builder_discord_read). Selbst NICHT posten -
-Reports gehen ueber CODER.
-"""
 # ---------------------------------------------------------------------------
-# Builder-Tandem Tools
+# Validator-Tools (einmalige,duenne Ausfuehrungshelfer - keine Wrapper um tb)
 # ---------------------------------------------------------------------------
 
-BUILDER_CHANNEL = "1549821547886288996"
-DISCORD_GUILD_DEFAULT = "346680165348409345"
-
-def _discord_headers():
-    import urllib.request as _u
-    tok = os.environ.get("BUILDER_DISCORD_TOKEN", "")
-    return {"Authorization": "Bot " + tok, "Content-Type": "application/json",
-            "User-Agent": "BuilderFlow/3.0"}
+_CWD_STATE: dict[str, str] = {}
 
 
-def _build_discord_tools(app):
-    """Discord-Connection (Vorbild: discord_interface._register_agent_tools):
-    send/read/channels via Discord-REST mit BUILDER_DISCORD_TOKEN.
-    CODER: send+read. NAVIGATOR: read-only (kein Posten in fremdem Namen)."""
-    tools = []
+async def validator_shell(command: str, reset: bool = False) -> str:
+    """Multi-Turn-Shell fuer Validierung: bash in persistentem Arbeitsordner.
 
-    async def builder_discord_send(channel_id: str = BUILDER_CHANNEL,
-                                   text: str = "") -> str:
-        """Discord-Nachricht senden (Default #builder). Reports/Fragen an Markin."""
-        import urllib.request, json as _j
-        try:
-            req = urllib.request.Request(
-                f"https://discord.com/api/v10/channels/{channel_id}/messages",
-                data=_j.dumps({"content": text[:1900]}).encode(),
-                headers=_discord_headers(), method="POST")
-            with urllib.request.urlopen(req, timeout=20) as r:
-                d = _j.loads(r.read().decode("utf-8", "replace"))
-            return f"gesendet (msg {d.get('id')})"
-        except Exception as e:
-            return f"discord-send-error: {e}"
-
-    async def builder_discord_read(channel_id: str = BUILDER_CHANNEL,
-                                   limit: int = 10) -> str:
-        """Discord-Verlauf lesen (Default #builder). Feedback von Markin holen."""
-        import urllib.request, json as _j
-        try:
-            req = urllib.request.Request(
-                f"https://discord.com/api/v10/channels/{channel_id}/messages?limit={min(limit, 50)}",
-                headers=_discord_headers())
-            with urllib.request.urlopen(req, timeout=20) as r:
-                msgs = _j.loads(r.read().decode("utf-8", "replace"))
-            out = []
-            for m in msgs:
-                a = (m.get("author") or {}).get("username", "?")
-                out.append(f"{a}: {(m.get('content') or '')[:300]}")
-            return "\n".join(out) or "(leer)"
-        except Exception as e:
-            return f"discord-read-error: {e}"
-
-    async def builder_discord_channels() -> str:
-        """Textkanaele des test6-Servers auflisten (IDs fuer send/read)."""
-        import urllib.request, json as _j
-        try:
-            req = urllib.request.Request(
-                f"https://discord.com/api/v10/guilds/{DISCORD_GUILD_DEFAULT}/channels",
-                headers=_discord_headers())
-            with urllib.request.urlopen(req, timeout=20) as r:
-                chans = _j.loads(r.read().decode("utf-8", "replace"))
-            return "\n".join(f"{c.get('id')} | {c.get('name')}"
-                              for c in sorted(chans, key=lambda x: x.get("position", 0))
-                              if c.get("type") == 0)
-        except Exception as e:
-            return f"discord-channels-error: {e}"
-
-    tools.extend([
-        (builder_discord_send, "builder_discord_send",
-         "Discord-Nachricht senden (channel_id=Default #builder, text)",
-         ["builder", "discord"]),
-        (builder_discord_read, "builder_discord_read",
-         "Discord-Verlauf lesen (channel_id=Default, limit) - Feedback holen",
-         ["builder", "discord"]),
-        (builder_discord_channels, "builder_discord_channels",
-         "Textkanaele auflisten (IDs fuer send/read)",
-         ["builder", "discord"]),
-    ])
-    return tools
-
-
-def _build_builder_tools(app):
-    tools = []
-
-    async def builder_terminal_check(cmd: str, cwd: str = "") -> str:
-        """Terminal-Validierung: Befehl ausfuehren (compile/lint/pytest), Output zurueck."""
-        import subprocess as sp
-        try:
-            r = sp.run(cmd, shell=True, capture_output=True, text=True,
-                       timeout=120, cwd=cwd or None)
-            out = (r.stdout or "") + (r.stderr or "")
-            return f"RC={r.returncode}\n" + out[:3000]
-        except Exception as e:
-            return f"terminal-error: {e}"
-
-    async def builder_decompose(instruction: str, docs_context: str = "") -> str:
-        """Auftrag in 1-10 Pakete zerlegen (1 = Mini-Edit ok). JSON-Liste [{nr,title,goal}]."""
-        prompt = (
-            "Zerlege den Auftrag in 1 bis 10 sinnvolle Pakete (1 = Mini-Edit erlaubt) - so wenige wie "
-            "moeglich, so viele wie noetig. Jedes Paket einzeln 100%-umsetzbar. "
-            'NUR JSON-Liste: [{"nr":1,"title":"...","goal":"..."}]\nAuftrag: '
-            + instruction
-            + ("\nProjekt-Kontext:\n" + docs_context[:4000] if docs_context else "")
+    Args:
+        command: Bash-Befehl (Pipes, env, kompilierte Tests erlaubt).
+        reset: True -> Arbeitsordner-Zustand zuruecksetzen (neue Session).
+    """
+    cwd = _CWD_STATE.get("cwd", "/home/markin/ToolBoxV2")
+    if reset:
+        cwd = "/home/markin/ToolBoxV2"
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
-        return "PROMPT_FOR_AGENT:\n" + prompt
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
+        text = out.decode("utf-8", errors="replace")[-4000:]
+        if command.strip().startswith("cd "):
+            _CWD_STATE["cwd"] = command.strip()[3:].split(";")[0].strip() or cwd
+        return f"[cwd={_CWD_STATE.get('cwd', cwd)} rc={proc.returncode}]\n{text}"
+    except TimeoutError:
+        if proc is not None:
+            proc.kill()
+        return f"[cwd={cwd}] TIMEOUT nach 120s"
 
-    async def builder_validate_gate(packet_nr: int = 0, title: str = "",
-                                    goal: str = "", result: str = "") -> str:
-        """Navigator-Gate: pass=true + score>=9/10 erforderlich."""
-        prompt = (
-            f"Pruefe Paket {packet_nr} '{title}'\nZiel: {goal}\n"
-            f"Coder-Ergebnis:\n{result[:3500]}\n"
-            'NUR JSON: {"pass":true/false,"score":0-10,'
-            '"browser_expect":["sichtbare Texte"],"issues":["..."]}'
-        )
-        return "GATE-REGEL: pass=true UND score>=9 sonst Nachbau (max 3x).\n" + prompt
 
-    async def builder_browser_check(html_path: str, expects: str = "") -> str:
-        """HTML-Artefakt LIVE im Chromium oeffnen, Titel/Text pruefen, Screenshot."""
-        import subprocess as sp
-        want = [e.strip().lower() for e in expects.split(",") if e.strip()]
-        pylines = [
-            "from playwright.sync_api import sync_playwright",
-            "import os",
-            f"path = {html_path!r}",
-            f"want = {want!r}",
-            "with sync_playwright() as p:",
-            "    b = p.chromium.launch(args=['--no-sandbox','--disable-dev-shm-usage'])",
-            "    page = b.new_page()",
-            "    page.goto('file://' + os.path.abspath(path), timeout=15000)",
-            "    page.wait_for_load_state('networkidle', timeout=10000)",
-            "    body = (page.inner_text('body') + ' ' + page.title()).lower()",
-            "    page.screenshot(path='validation_' + os.path.basename(path) + '.png')",
-            "    b.close()",
-            "missing = [e for e in want if e not in body]",
-            "print('browser-OK' if not missing else 'fehlt im Browser: ' + ', '.join(missing))",
-        ]
-        code = "\n".join(pylines)
+async def validator_browser_action(action: str, target: str = "", value: str = "") -> str:
+    """Playwright-Website-Test: goto|click|fill|extract|screenshot|assert_text.
+
+    Args:
+        action: goto, click, fill, extract, screenshot oder assert_text.
+        target: URL (goto) bzw. CSS-Selector (click/fill/extract/assert_text).
+        value: Text fuer fill bzw. erwarteter Text bei assert_text.
+    """
+    script = """
+import asyncio, json, sys
+from playwright.async_api import async_playwright
+
+async def main():
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        result = {"ok": False, "data": "", "url": ""}
+        action, target, value = sys.argv[1], sys.argv[2], sys.argv[3]
         try:
-            r = sp.run([sys.executable, "-c", code], capture_output=True,
-                       text=True, timeout=90)
-            out = (r.stdout or "") + (r.stderr or "")
-            ok = "browser-OK" in out
-            return ("browser-OK" if ok else "browser-FAIL") + "\n" + out[:1500]
-        except Exception as e:
-            return f"browser-error: {e}"
+            if action == "goto":
+                resp = await page.goto(target, wait_until="domcontentloaded", timeout=30000)
+                result["data"] = f"status={resp.status if resp else 'n/a'}"
+                result["ok"] = bool(resp and resp.ok)
+            elif action == "click":
+                await page.click(target, timeout=15000)
+                await page.wait_for_load_state("domcontentloaded")
+                result["ok"] = True
+            elif action == "fill":
+                await page.fill(target, value, timeout=15000)
+                result["ok"] = True
+            elif action == "extract":
+                el = await page.query_selector(target)
+                result["data"] = (await el.inner_text())[:3000] if el else "selector-not-found"
+                result["ok"] = el is not None
+            elif action == "screenshot":
+                import os
+                os.makedirs("/home/markin/builder/validator_shots", exist_ok=True)
+                path = "/home/markin/builder/validator_shots/shot.png"
+                await page.screenshot(path=path, full_page=True)
+                result["data"] = path
+                result["ok"] = True
+            elif action == "assert_text":
+                await page.wait_for_selector(f"text={value}", timeout=15000)
+                result["ok"] = True
+                result["data"] = f"found: {value}"
+            result["url"] = page.url
+        except Exception as exc:
+            result["data"] = repr(exc)
+        await browser.close()
+        print(json.dumps(result))
 
-    async def builder_send_file(file_path: str) -> str:
-        """Datei-Inhalt zur Uebergabe bereitstellen (Pfad + Groesse)."""
-        try:
-            p = Path(file_path)
-            if not p.exists():
-                return f"Datei nicht gefunden: {p}"
-            return f"Datei bereit: {p} ({p.stat().st_size} Bytes)"
-        except Exception as e:
-            return f"Fehler: {e}"
-
-    tools.extend([
-        (builder_decompose, "builder_decompose",
-         "Auftrag in 1-10 Pakete zerlegen (instruction, docs_context)",
-         ["builder", "plan"]),
-        (builder_terminal_check, "builder_terminal_check",
-         "Terminal-Validierung: Befehl ausfuehren (cmd, cwd)",
-         ["builder", "terminal"]),
-        (builder_validate_gate, "builder_validate_gate",
-         "Navigator-Gate: pass+score>=9 (packet_nr, title, goal, result)",
-         ["builder", "validate"]),
-        (builder_browser_check, "builder_browser_check",
-         "HTML live im Browser pruefen + Screenshot (html_path, expects)",
-         ["builder", "browser"]),
-        (builder_send_file, "builder_send_file",
-         "Datei zur Uebergabe bereitstellen (file_path)",
-         ["builder", "file"]),
-    ])
-    return tools
-
-# ---------------------------------------------------------------------------
-# Main Entry (Spiegel von toolbox_admin.run)
-# ---------------------------------------------------------------------------
-
-async def _run_agent_stream(agent, text: str, session_id: str):
-    """Auftrag an einen der beiden Agenten streamen (wie _print_stream)."""
-    from toolboxv2.flows.mini.toolbox_admin import _print_stream
-    await _print_stream(agent, text, session_id=session_id)
+asyncio.run(main())
+"""
+    proc = await asyncio.create_subprocess_exec(
+        "/home/markin/ToolBoxV2/.venv/bin/python", "-c", script,
+        action, target, value,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    out = b""
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=90)
+    except TimeoutError:
+        if proc is not None:
+            proc.kill()
+    return out.decode("utf-8", errors="replace")[-2500:] if out else "[no output]"
 
 
-async def run(app, args=None):
-    """Main entry point for the agent_builder flow (2 Agenten: CODER + NAVIGATOR)."""
-    from toolboxv2.utils.extras.Style import Style, cls
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
-    from prompt_toolkit.completion import FuzzyCompleter, WordCompleter
-    from prompt_toolkit.history import FileHistory
-    from toolboxv2.flows.mini.toolbox_admin import (
-        _build_toolbox_tools, _build_docs_tools, _build_manifest_tools,
-        _build_dev_tools,
+def _register_validator_tools(builder) -> None:
+    """Eigene Validierungs-Tools an den Validator-Builder haengen (Konvention:
+    builder.add_tool wie icli.py:5772)."""
+    docs_root = os.environ.get("BUILDER_DOCS_ROOT", "/home/markin/ToolBoxV2")
+    builder.add_tool(
+        validator_shell,
+        "validator_shell",
+        "Multi-Turn-Bash-Shell mit persistentem Arbeitsordner: CLIs, Tests, "
+        "Builds in mehreren Schritten validieren. reset=True startet neu.",
+        category=["validator", "shell", "test"],
+    )
+    builder.add_tool(
+        validator_browser_action,
+        "validator_browser_action",
+        "Playwright-Browser-Aktion fuer Website-Tests: goto|click|fill|extract|"
+        "screenshot|assert_text (target=URL/Selector, value=Text).",
+        category=["validator", "browser", "test"],
     )
 
-    cls()
-    print(Style.CYAN("+-------------------------------+"))
-    print(Style.CYAN("|  Builder (TB-Flow V2, 2 Agents)|"))
-    print(Style.CYAN("|  CODER + NAVIGATOR via ISAA   |"))
-    print(Style.CYAN("+-------------------------------+"))
-    print()
+    async def validator_collect_evidence(topic: str, findings: str) -> str:
+        """Validierungs-Beweis ablegen (JSONL) und Quitung zurueckgeben."""
+        path = Path(docs_root) / "toolboxv2" / ".data" / "validator_evidence.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts": datetime.now().isoformat(),
+            "topic": topic,
+            "findings": findings,
+        }
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        return f"evidence stored: {path} ({topic})"
 
-    isaa = app.get_mod("isaa")
-    if isaa is None:
-        print(Style.RED("ERROR: ISAA module not loaded!"))
-        print("Start with: tb -m agent_builder")
+    builder.add_tool(
+        validator_collect_evidence,
+        "validator_collect_evidence",
+        "Validierungsnachweis (topic + findings) dauerhaft ablegen.",
+        category=["validator", "evidence"],
+    )
+
+
+async def _spawn_validator(host):
+    """Neue Vollrechte-Instanz 'builder_validator' (Bauplan wie
+    _tool_spawn_agent, icli.py:5310 - aber MIT Test-Tools)."""
+    if "builder_validator" in host.agent_registry:
+        return await host.isaa_tools.get_agent("builder_validator")
+
+    builder = host.isaa_tools.get_agent_builder(
+        name="builder_validator", add_base_tools=True, with_dangerous_shell=True
+    )
+    host._apply_rate_limiter_to_builder(builder)
+    builder.config.system_message = (
+        "Du bist builder_validator: qualitaetsbewusster Tester mit VOLLEN "
+        "Rechten. Du validierst Coder-Arbeiten durch echte Ausfuehrung: "
+        "Multi-Turn-CLIs (validator_shell), Website-Tests "
+        "(validator_browser_action), Beweisablage (validator_collect_evidence). "
+        "Arbeite evidenzbasiert: jeder Befund mit Befehl + Ausgabe.Antworte "
+        "kompakt mit PASS/FAIL + Beweisen."
+    )
+    _register_validator_tools(builder)
+    await host.isaa_tools.register_agent(builder)
+    from toolboxv2.flows.isaa.icli import AgentInfo
+
+    host.agent_registry["builder_validator"] = AgentInfo(
+        name="builder_validator",
+        persona="Full-permission validator (shell+browser+evidence)",
+        has_shell_access=True,
+    )
+    print("[builder] validator agent 'builder_validator' registered")
+    return await host.isaa_tools.get_agent("builder_validator")
+
+
+async def _connect_discord(host) -> bool:
+    """DIE Interface-Verbindung (wie iCLI) mit dem Builder-Bot-Token.
+
+    _connect liest den Token aus args[0] (oder DISCORD_BOT_TOKEN); wir
+    uebergeben ihn explizit. admin_ids werden nach dem Connect gesetzt,
+    damit '!agent self' (Routing auf den Coder) fuer Markin funktioniert.
+    """
+    token = os.environ.get("BUILDER_DISCORD_TOKEN")
+    if not token:
+        print("[builder] BUILDER_DISCORD_TOKEN fehlt - Discord aus.")
+        return False
+    await host.discord_ext.handle_command(["connect", token])
+    iface = getattr(host.discord_ext, "interface", None)
+    if iface is None:
+        return False
+    admin_raw = os.environ.get("BUILDER_ADMIN_ID", "268830485889810432")
+    try:
+        iface.admin_ids = [int(x) for x in admin_raw.split(",") if x.strip()]
+    except ValueError:
+        iface.admin_ids = [268830485889810432]
+    # Bot-Peer: Auftraege des dc_self-Bots zulassen (eigene ID bleibt gefiltert)
+    if hasattr(iface, "bot_peers"):
+        iface.bot_peers.add(_DC_SELF_BOT_ID)
+    return True
+
+
+async def _boot_report(host, discord_ok: bool) -> None:
+    """Boot-Quitung per DM (Cross-Thread-Bridge wie dc_self)."""
+    if not discord_ok:
+        print("[builder] Discord nicht verbunden - Boot-Report uebersprungen.")
         return
-    isaa.stuf = True
+    iface = getattr(host.discord_ext, "interface", None)
+    bot = getattr(iface, "bot", None)
+    if iface is None or bot is None:
+        print("[builder] Interface/Bot fehlt - Boot-Report uebersprungen.")
+        return
 
-    print(Style.YELLOW("Initializing ISAA..."))
-    await isaa.init_isaa(name="agent_builder")
+    async def _wait_ready() -> None:
+        for _ in range(30):
+            if bot.is_ready():
+                return
+            await asyncio.sleep(1)
 
-    # --- CODER: volle TB-Admin-Ausstattung (wie toolbox_admin) ---
-    print(Style.YELLOW("Building CODER agent (volle Dev-Tools)..."))
-    coder = isaa.get_agent_builder(
-        "builder_coder",
-        add_base_tools=True,
-        with_dangerous_shell=True,
-    )
-    coder.with_stream(True)
-    coder.with_models(FAST_DEFAULT, COMPLEX_DEFAULT)
-    for func, name, desc, cats in _build_toolbox_tools(isaa, app):
-        coder.add_tool(func, name, desc, category=cats, flags={"system_tool_by_name": True})
-    for func, name, desc, cats in _build_docs_tools(app):
-        coder.add_tool(func, name, desc, category=cats, flags={"system_tool_by_name": True})
-    for func, name, desc, cats in _build_manifest_tools(app):
-        coder.add_tool(func, name, desc, category=cats, flags={"system_tool_by_name": True})
-    for func, name, desc, cats in _build_dev_tools(app):
-        coder.add_tool(func, name, desc, category=cats, flags={"system_tool_by_name": True})
-    for func, name, desc, cats in _build_builder_tools(app):
-        coder.add_tool(func, name, desc, category=cats, flags={"system_tool_by_name": True})
-    for func, name, desc, cats in _build_discord_tools(app):
-        coder.add_tool(func, name, desc, category=cats, flags={"system_tool_by_name": True})
-    coder.config.system_message = CODER_PROMPT
-    await isaa.register_agent(coder)
-
-    # --- NAVIGATOR: read-only Pruefer (kein Bau-Code, kein dangerous shell) ---
-    print(Style.YELLOW("Building NAVIGATOR agent (Pruefer, read-only)..."))
-    navigator = isaa.get_agent_builder(
-        "builder_navigator",
-        add_base_tools=True,
-        with_dangerous_shell=False,
-    )
-    navigator.with_stream(True)
-    navigator.with_models(FAST_DEFAULT, COMPLEX_DEFAULT)
-    for func, name, desc, cats in _build_docs_tools(app):
-        navigator.add_tool(func, name, desc, category=cats, flags={"system_tool_by_name": True})
-    for func, name, desc, cats in _build_manifest_tools(app):
-        navigator.add_tool(func, name, desc, category=cats, flags={"system_tool_by_name": True})
-    for func, name, desc, cats in _build_builder_tools(app):
-        if name in ("builder_validate_gate", "builder_browser_check",
-                    "builder_terminal_check", "builder_send_file"):
-            navigator.add_tool(func, name, desc, category=cats,
-                               flags={"system_tool_by_name": True})
-    for func, name, desc, cats in _build_discord_tools(app):
-        if name in ("builder_discord_read", "builder_discord_channels"):
-            navigator.add_tool(func, name, desc, category=cats,
-                               flags={"system_tool_by_name": True})
-    navigator.config.system_message = NAVIGATOR_PROMPT
-    await isaa.register_agent(navigator)
-
-    coder_agent = await isaa.get_agent("builder_coder")
-    navi_agent = await isaa.get_agent("builder_navigator")
     try:
-        coder_agent.tool_manager.register_cli_tool("tb", executable="uv", executable_args=["run"],
-                                                   flags={"system_tool_by_name": True},
-                                                   cli_tool_executable="tb", category="system")
-    except Exception:
-        pass
+        await asyncio.wait_for(_wait_ready(), timeout=32)
+    except TimeoutError:
+        print("[builder] Bot nicht rechtzeitig ready - Boot-Report uebersprungen.")
+        return
 
-    print(Style.GREEN("Agents ready: builder_coder + builder_navigator"))
-    print(Style.GREEN(f"  CODER:     fast={coder_agent.amd.fast_llm_model} complex={coder_agent.amd.complex_llm_model}"))
-    print(Style.GREEN(f"  NAVIGATOR: fast={navi_agent.amd.fast_llm_model} complex={navi_agent.amd.complex_llm_model}"))
-    print()
-    print(Style.GREY("Commands: /status  /flows  /help  exit"))
-    print(Style.GREY("Bau-Auftrag -> CODER zerlegt (1-10 Pakete, 1=Mini-Edit ok),"))
-    print(Style.GREY("baut mehrschrittig, NAVIGATOR prueft (Terminal+Browser, Gate)."))
-    print(Style.GREY("/navi <text> = direkt an NAVIGATOR (Nachpruefung)."))
-    print()
-
-    history_path = Path(app.data_dir) / ".agent_builder_history"
-    history_path.parent.mkdir(parents=True, exist_ok=True)
-    session = PromptSession(
-        history=FileHistory(str(history_path)),
-        auto_suggest=AutoSuggestFromHistory(),
-        completer=FuzzyCompleter(
-            WordCompleter(["/status", "/flows", "/help", "exit", "quit"], ignore_case=True)),
+    ts = datetime.now().strftime("%d.%m. %H:%M")
+    coro = iface.router.route_response(
+        content=(
+            f"builder tandem online ({ts})\n"
+            "- coder = self (Toolbox-Admin 1:1, Job-Tools aktiv)\n"
+            "- validator = builder_validator (Multi-Turn-Shell + Playwright)\n"
+            f"- discord: {'OK' if discord_ok else 'FEHLER'} | "
+            "Auftraege: #builder (Mention) oder DM; '!agent self' = Coder; "
+            "dc_self-Bot-Peer aktiv"
+        ),
+        target_address=_PING_TARGET,
     )
-
-    while True:
-        try:
-            user_input = await session.prompt_async("builder> ")
-        except (EOFError, KeyboardInterrupt):
-            print(Style.YELLOW("\nBye!"))
-            break
-        text = user_input.strip()
-        if not text:
-            continue
-        if text.lower() in ("exit", "quit", "/quit", "/q", "/e"):
-            print(Style.YELLOW("Bye!"))
-            break
-        if text == "/status":
-            print(Style.GREEN(f"builder_coder | fast={coder_agent.amd.fast_llm_model} "
-                              f"complex={coder_agent.amd.complex_llm_model}"))
-            print(Style.GREEN(f"builder_navigator | fast={navi_agent.amd.fast_llm_model} "
-                              f"complex={navi_agent.amd.complex_llm_model}"))
-            continue
-        if text == "/flows":
-            for func, name, *_ in _build_toolbox_tools(isaa, app):
-                if name == "flow_manage":
-                    print(await func(action="list"))
-                    break
-            continue
-        if text == "/help":
-            print(Style.CYAN("Builder V2 (2 Agenten)"))
-            print("  Bau-Auftrag -> CODER baut (1-10 Pakete, Mini-Edit ok).")
-            print("  Danach/parallel: NAVIGATOR prueft (Terminal+Browser, Gate).")
-            print("  /navi <text> = direkt an NAVIGATOR.")
-            print("  /status /flows /help exit")
-            continue
-        if text.startswith("/navi "):
-            await _run_agent_stream(navi_agent, text[len("/navi "):].strip(),
-                                    session_id="builder_navigator")
-            continue
-        await _run_agent_stream(coder_agent, text, session_id="builder_coder")
-
-    print(Style.YELLOW("Saving agent state..."))
     try:
-        await isaa.on_exit()
-    except Exception:
-        pass
-    print(Style.GREEN("Auf Wiedersehen!"))
+        bot_loop = getattr(bot, "loop", None)
+        if bot_loop is not None and bot_loop is not asyncio.get_running_loop():
+            res = await asyncio.wait_for(
+                asyncio.wrap_future(
+                    asyncio.run_coroutine_threadsafe(coro, bot_loop)
+                ),
+                timeout=30,
+            )
+        else:
+            res = await asyncio.wait_for(coro, timeout=30)
+        print(f"[builder] Boot-Report: {res}")
+    except Exception as exc:  # noqa: BLE001 - Report blockiert Start nicht
+        print(f"[builder] Boot-Report fehlgeschlagen: {exc}")
 
 
-if __name__ == "__main__":
+async def run(app=None, *args):
+    """Builder-Tandem: Coder (self, 1:1 iCLI-Host) + Validator (neue Instanz),
+    ein Flow, Discord via Interface-Verbindung mit Builder-Bot."""
     from toolboxv2 import get_app
-    asyncio.run(run(get_app()))
+
+    app = app or get_app("agent_builder")
+
+    from toolboxv2.flows.isaa.icli import ISAA_Host
+    host = ISAA_Host(app)
+
+    #1 DISCORD_BOT_TOKEN (iCLI-Extensions-Lesepfad) auf den Builder-Bot setzen
+    token = os.environ.get("BUILDER_DISCORD_TOKEN")
+    if token:
+        os.environ["DISCORD_BOT_TOKEN"] = token
+
+    # Gleiche Discord-Integration wie iCLI-Entry (nur connect, kein safe-mode-
+    # Patch am Moderator: der Validator behaelt seine vollen Rechte).
+    try:
+        from toolboxv2.mods.isaa.extras.discord_interface.integration_example import (
+            patch_cli_for_discord,
+        )
+        patch_cli_for_discord(host)
+    except ImportError as exc:
+        print(f"[builder] Discord integration nicht verfuegbar: {exc}")
+
+    # Coder = BESTEHENDER Self-Agent (1:1 iCLI: root, Job-Tools, teachSkill)
+    await host._init_self_agent()
+
+    # Tandem-Protokoll als Skill beibringen (System-Mechanik teachSkill)
+    try:
+        await host._tool_teach_skill(
+            "self", "builder_tandem", _TANDEM_SKILL,
+            ["builder", "tandem", "validate", "auftrag", "umsetzen"],
+        )
+        print("[builder] teachSkill: builder_tandem an self uebergeben")
+    except Exception as exc:  # noqa: BLE001 - Skill darf Start nicht blockieren
+        print(f"[builder] teachSkill uebersprungen: {exc}")
+
+    # Validator = NEUE Instanz ( volle Umfaenge )
+    await _spawn_validator(host)
+
+    # Discord (Builder-Bot) + Bot-Peer fuer dc_self-Auftraege
+    discord_ok = False
+    try:
+        discord_ok = await _connect_discord(host)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[builder] Discord connect fehlgeschlagen: {exc}")
+
+    await _boot_report(host, discord_ok)
+
+    # iCLI-Host-Loop 1:1 (Scheduler, missed jobs, TUI)
+    await host.run()
