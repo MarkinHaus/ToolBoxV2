@@ -36,6 +36,16 @@ NAME = "agent_builder"
 ICON = "hammer"
 AUTH = False
 
+# V5: Beide Rollen = 1:1 toolbox_admin (Prompt + 4 Toolgruppen importiert aus dem
+# Bestand, kein Duplikat). Coder erhaelt den Validator zusaetzlich als Tool.
+from toolboxv2.flows.mini.toolbox_admin import (  # noqa: E402
+    SYSTEM_PROMPT as _ADMIN_PROMPT,
+    _build_dev_tools as _admin_build_dev_tools,
+    _build_docs_tools as _admin_build_docs_tools,
+    _build_manifest_tools as _admin_build_manifest_tools,
+    _build_toolbox_tools as _admin_build_toolbox_tools,
+)
+
 _DC_SELF_BOT_ID = 1142855321849700523  # Bot-Peer: dc_self darf Auftraege senden
 _PING_TARGET = os.environ.get(
     "BUILDER_PING_TARGET", "discord://dm:268830485889810432"
@@ -159,6 +169,45 @@ asyncio.run(main())
     return out.decode("utf-8", errors="replace")[-2500:] if out else "[no output]"
 
 
+_VALIDATOR_EXTRA_PROMPT = """
+
+## Deine Rolle im Builder-Tandem: VALIDATOR
+- Du bist die eigenstaendige Validator-Instanz (1:1 ToolBox Admin, alle Admin-Tools).
+- Aufgabe: Auftraege TESTEN und VALIDIEREN, nicht selbst umbauen.
+- Auftraggeber: Markin (BUILDER_ADMIN_ID), dc_self-Bot (Bot-Peer), der Coder
+  (via validator_dispatch). Aufgaben kurz halten; bei Unklarheit nachfragen.
+- Antworte mit Befund + Belegen (Befehle, Exit-Codes, Ausgaben). PASS/FAIL voranstellen.
+- Kein Umbau drumherum: reporten, nur auf ausdruecklichen Auftrag aendern.
+"""
+
+_CODER_EXTRA_PROMPT = """
+
+## Deine Rolle im Builder-Tandem: CODER
+- Du bist die Coder-Instanz (1:1 ToolBox Admin, alle Admin-Tools).
+- Dir ist der Validator ("builder_validator") als Tool angehaengt:
+  `validator_dispatch(task, wait=True, session_id="default")` delegiert Test-/
+  Validierungsauftraege an die Validator-Instanz (icli-Delegationsmechanik).
+- Arbeitsweise: baust/pruefst, delegierst Test+Validierung an den Validator und
+  beziehst dessen Befund ein. Bei Widerspruch gilt der Validator-Befund.
+"""
+
+
+async def _apply_admin_tooling(builder, isaa_tools, app, allow_toolbox: bool = True) -> None:
+    """1:1 toolbox_admin-Ausstattung (die 4 Original-Toolgruppen aus dem Bestand).
+    allow_toolbox=False verhindert Rekursiv-Self-Delegation (Validator ruft
+    toolbox_execute nicht - dort lebt die Admin-Delegation)."""
+    for func, name, desc, cats in _admin_build_toolbox_tools(isaa_tools, app):
+        if name == "toolbox_execute" and not allow_toolbox:
+            continue
+        builder.add_tool(func, name, desc, category=cats, flags={"system_tool_by_name": True})
+    for func, name, desc, cats in _admin_build_docs_tools(app):
+        builder.add_tool(func, name, desc, category=cats, flags={"system_tool_by_name": True})
+    for func, name, desc, cats in _admin_build_manifest_tools(app):
+        builder.add_tool(func, name, desc, category=cats, flags={"system_tool_by_name": True})
+    for func, name, desc, cats in _admin_build_dev_tools(app):
+        builder.add_tool(func, name, desc, category=cats, flags={"system_tool_by_name": True})
+
+
 def _register_validator_tools(builder) -> None:
     """Eigene Validierungs-Tools an den Validator-Builder haengen (Konvention:
     builder.add_tool wie icli.py:5772)."""
@@ -200,8 +249,8 @@ def _register_validator_tools(builder) -> None:
 
 
 async def _spawn_validator(host):
-    """Neue Vollrechte-Instanz 'builder_validator' (Bauplan wie
-    _tool_spawn_agent, icli.py:5310 - aber MIT Test-Tools)."""
+    """Neue Instanz 'builder_validator' - 1:1 toolbox_admin (voller Prompt +
+    alle 4 Admin-Toolgruppen) + eigene Validierungs-Tools."""
     if "builder_validator" in host.agent_registry:
         return await host.isaa_tools.get_agent("builder_validator")
 
@@ -209,14 +258,11 @@ async def _spawn_validator(host):
         name="builder_validator", add_base_tools=True, with_dangerous_shell=True
     )
     host._apply_rate_limiter_to_builder(builder)
-    builder.config.system_message = (
-        "Du bist builder_validator: qualitaetsbewusster Tester mit VOLLEN "
-        "Rechten. Du validierst Coder-Arbeiten durch echte Ausfuehrung: "
-        "Multi-Turn-CLIs (validator_shell), Website-Tests "
-        "(validator_browser_action), Beweisablage (validator_collect_evidence). "
-        "Arbeite evidenzbasiert: jeder Befund mit Befehl + Ausgabe.Antworte "
-        "kompakt mit PASS/FAIL + Beweisen."
-    )
+    # 1:1 toolbox_admin: Original-Prompt + Rollen-Zusatz
+    builder.config.system_message = _ADMIN_PROMPT + _VALIDATOR_EXTRA_PROMPT
+    # 1:1 toolbox_admin: alle 4 Admin-Toolgruppen (keine Rekursiv-Delegation)
+    await _apply_admin_tooling(builder, host.isaa_tools, host.app, allow_toolbox=False)
+    # Zusaetzlich die Validator-Spezialtools (Multi-Turn-Shell, Browser, Evidence)
     _register_validator_tools(builder)
     await host.isaa_tools.register_agent(builder)
     from toolboxv2.flows.isaa.icli import AgentInfo
@@ -308,8 +354,10 @@ async def _boot_report(host, discord_ok: bool) -> None:
 
 
 async def run(app=None, *args):
-    """Builder-Tandem: Coder (self, 1:1 iCLI-Host) + Validator (neue Instanz),
-    ein Flow, Discord via Interface-Verbindung mit Builder-Bot."""
+    """Builder-Tandem v5: Coder (self) + Validator (builder_validator), BEIDE
+    1:1 toolbox_admin (Original-Prompt + alle 4 Admin-Toolgruppen aus dem
+    Bestand). Der Coder erhaelt den Validator zusaetzlich als Tool
+    (validator_dispatch, icli-Delegationsmechanik)."""
     from toolboxv2 import get_app
 
     app = app or get_app("agent_builder")
@@ -345,8 +393,41 @@ async def run(app=None, *args):
     except Exception as exc:  # noqa: BLE001 - Skill darf Start nicht blockieren
         print(f"[builder] teachSkill uebersprungen: {exc}")
 
-    # Validator = NEUE Instanz ( volle Umfaenge )
-    await _spawn_validator(host)
+    # Validator = NEUE Instanz (1:1 toolbox_admin + Validierungs-Tools)
+    validator = await _spawn_validator(host)
+
+    # Coder = 1:1 toolbox_admin: Admin-Toolgruppen + Validator als Tool.
+    # (self hat die Admin-Gruppen teilweise als System-Tools; doppelte Namen
+    #  werden vom ToolManager ignoriert, die Delegation ist neu.)
+    try:
+        coder = await host.isaa_tools.get_agent("self")
+        coder.amd.system_message = _ADMIN_PROMPT + _CODER_EXTRA_PROMPT
+
+        async def validator_dispatch(
+            task: str, wait: bool = True, session_id: str = "default"
+        ) -> str:
+            """Delegiert einen Test-/Validierungsauftrag an builder_validator
+            (icli-Delegationsmechanik: _start_delegation)."""
+            exc = await host._start_delegation("builder_validator", task, session_id)
+            if wait:
+                result = await asyncio.shield(exc.async_task)
+                return str(result) if result else "(validator: kein Output)"
+            return f"✓ Validator-Task gestartet: {exc.task_id} (RunID: {exc.run_id})"
+
+        coder.add_tool(
+            validator_dispatch,
+            name="validator_dispatch",
+            description=(
+                "Test-/Validierungsauftrag an builder_validator delegieren "
+                "(1:1 toolbox_admin-Validator des Tandems). wait=True wartet auf "
+                "den Befund (PASS/FAIL + Beweise), wait=False startet nur "
+                "(returns task id)."
+            ),
+            category=["validator", "delegate"],
+        )
+        print("[builder] coder: admin-Prompt gesetzt + validator_dispatch-Tool angehaengt")
+    except Exception as exc:  # noqa: BLE001 - Tandem-Tool blockiert Start nicht
+        print(f"[builder] validator_dispatch-Registrierung fehlgeschlagen: {exc}")
 
     # Discord (Builder-Bot) + Bot-Peer fuer dc_self-Auftraege
     discord_ok = False
