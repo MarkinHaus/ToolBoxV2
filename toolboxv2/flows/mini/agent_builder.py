@@ -202,12 +202,13 @@ async def _wire_coder_validator(host, coder, validator) -> None:
     print("[builder] coder: validator_dispatch tool attached")
 
 
-async def _connect_discord(host, coder, admin_tool_names) -> object | None:
-    """Discord 1:1: Coder ist DEFAULT-Route (agent=), self_agent=None (kein
-    !agent-Switch noetig), admin_ids=[Markin], Safelist schuetzt die Admin-Tools
-    vor dem Moderator-Safe-Mode-Pruning."""
-    from toolboxv2.mods.isaa.extras.discord_interface.discord_interface import (
-        create_discord_interface,
+async def _connect_discord(host, coder, admin_tool_names, validator) -> object | None:
+    """Discord via PROGRAMMATISCHE API (agent_api) — der bessere Weg statt
+    icli-Bridge: Agent + Config rein, Handle mit start/stop/configure raus.
+    Coder ist DEFAULT-Route, self_agent=None (kein !agent noetig)."""
+    from toolboxv2.mods.isaa.extras.discord_interface.agent_api import (
+        AgentDiscordConfig,
+        DiscordAgentAPI,
     )
 
     token = os.environ.get("BUILDER_DISCORD_TOKEN")
@@ -215,32 +216,32 @@ async def _connect_discord(host, coder, admin_tool_names) -> object | None:
         print("[builder] BUILDER_DISCORD_TOKEN fehlt - Discord aus.")
         return None
 
-    interface = create_discord_interface(
-        agent=coder,                # Coder = out-of-the-box Route
-        self_agent=None,            # kein Agent-Switch
-        token=token,
-        respond_to_mentions_only=True,
-        admin_ids=[_ADMIN_ID],
-        language="de",
-        host=host,
-        runner_loop=asyncio.get_running_loop(),
-        # CRITICAL: Safelist muss VOR der Wrapper-Bindung gesetzt werden —
-        # _apply_moderator_safe_mode bindet sie im __init__ als Closure.
-        # Nachtraegliches Setzen (interface.moderator_safelist = ...) wirkt NICHT.
-        moderator_safelist=set(admin_tool_names) | {"tb", "validator_dispatch"},
+    handle = DiscordAgentAPI.register_agent(
+        coder,
+        AgentDiscordConfig(
+            token=token,
+            admin_ids=[_ADMIN_ID],
+            respond_to_mentions_only=True,
+            language="de",
+            # Safelist schuetzt die Admin-Tools vor dem Safe-Mode-Pruning:
+            moderator_safelist=set(admin_tool_names) | {"tb", "validator_dispatch"},
+            # !v-Extension: Auftraege von Markin an den Validator:
+            validator_agent=validator,
+            validator_enabled=True,
+            # dc_self-Bot darf weiterhin Auftraege senden:
+            bot_peers={_DC_SELF_BOT_ID},
+        ),
     )
-    # Safe-Mode-Pruning verhindern: alle Admin-Tools whitelisten (Parameter oben).
-    interface.moderator_safelist = set(admin_tool_names) | {"tb", "validator_dispatch"}
-    # !v-Extension aktivieren + Validator injizieren (Interface-Extension).
-    interface.validator_agent = await host.isaa_tools.get_agent("builder_validator")
-    interface.validator_enabled = True
-    # dc_self-Bot darf weiterhin Auftraege senden.
-    interface.bot_peers.add(_DC_SELF_BOT_ID)
-
-    app = host.app
-    app.run_bg_task_advanced(interface.start)
-    print("[builder] discord interface started (coder=default, validator=!v)")
-    return interface
+    ok = handle.start(wait_ready=True, timeout=35)
+    print(
+        f"[builder] discord via agent_api started (coder=default, validator=!v) "
+        f"ready={handle.ready} start_ok={ok}"
+    )
+    # Konvention: /discord-Commands via host — nur wenn die icli-Extension existiert
+    # (in der reinen agent_api-Variante ohne icli-Patch gibt es kein discord_ext).
+    if hasattr(host, "discord_ext"):
+        host.discord_ext.interface = handle.interface
+    return handle
 
 
 async def _boot_dm(interface) -> None:
@@ -303,7 +304,7 @@ async def run(app=None, *args):
 
     interface = None
     try:
-        interface = await _connect_discord(host, coder, admin_tool_names)
+        interface = await _connect_discord(host, coder, admin_tool_names, validator)
     except Exception as exc:  # noqa: BLE001
         print(f"[builder] discord connect fehlgeschlagen: {exc}")
 
