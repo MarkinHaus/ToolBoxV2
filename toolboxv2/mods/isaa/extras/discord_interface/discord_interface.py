@@ -1553,6 +1553,28 @@ class DiscordInterface:
                         await message.channel.send(reply)
                         return
 
+                # Builder/!v extension: admin-only gate + validator routing.
+                # Set by flows (agent_builder): validator_agent + validator_enabled.
+                if getattr(self, "validator_enabled", False):
+                    peers = getattr(self, "bot_peers", None) or set()
+                    if self.admin_ids and ctx.user_id not in self.admin_ids and ctx.user_id not in peers:
+                        return  # respond ONLY to admins (and allowed bot-peers)
+                    stripped = ctx.content.strip()
+                    validator = getattr(self, "validator_agent", None)
+                    if validator is not None and stripped.startswith("!v"):
+                        v_task = stripped[2:].strip() or "Bitte validiere die letzte Aenderung."
+                        v_result = await self._run_via_runner(
+                            validator,
+                            getattr(getattr(validator, "amd", None), "name", None) or "builder_validator",
+                            v_task,
+                            self._isolated_session_id(ctx),
+                        )
+                        await self._safe_route_response(
+                            content=f"[validator] {v_result}" if v_result else "[validator] (kein Output)",
+                            as_audio=ctx.wants_audio_response,
+                        )
+                        return
+
                 # Resolve which agent + session this message routes to
                 agent, agent_name, session_id = self._resolve_route(ctx)
 
