@@ -54,6 +54,16 @@ Wenn Markin (Admin) dir einen Auftrag gibt: baue es, validiere via
 validator_dispatch und berichte das Ergebnis kurz und praezise.
 """
 
+# Modelle aus der Builder-Env (User-Entscheidung 19.09.: kein cerebras mehr —
+# openrouter gpt-oss primaer, glm-4.7 als Fallback).
+_FAST_MODEL = os.environ.get("BUILDER_FAST_MODEL", "openrouter/openai/gpt-oss-120b")
+_COMPLEX_MODEL = os.environ.get("BUILDER_COMPLEX_MODEL", "openrouter/openai/gpt-oss-120b")
+_FALLBACK_CHAIN = [
+    m.strip() for m in os.environ.get(
+        "BUILDER_FALLBACK_CHAIN", "glm/glm-4.7"
+    ).split(",") if m.strip()
+]
+
 
 def _admin_tool_names(isaa_tools, app) -> list[str]:
     """Sammelt die Namen aller tb_admin-Tools aus den 4 Original-Gruppen
@@ -113,10 +123,16 @@ async def _spawn_coder(host) -> tuple[object, list[str]]:
     )
     host._apply_rate_limiter_to_builder(builder)
     builder.config.system_message = SYSTEM_PROMPT + _CODER_PROMPT_SUFFIX
+    builder.with_models(_FAST_MODEL, _COMPLEX_MODEL)
+    for fallback in _FALLBACK_CHAIN:
+        builder.add_fallback_chain(_COMPLEX_MODEL, [fallback])
     builder.with_stream(True)
     names = _build_and_register(builder, host.isaa_tools, host.app)
     await host.isaa_tools.register_agent(builder)
-    print("[builder] coder 'tb_admin_coder' registered (1:1 toolbox_admin)")
+    print(
+        f"[builder] coder 'tb_admin_coder' registered (1:1 toolbox_admin) "
+        f"| fast={_FAST_MODEL} complex={_COMPLEX_MODEL} fallback={_FALLBACK_CHAIN}"
+    )
     return await host.isaa_tools.get_agent("tb_admin_coder"), names
 
 
@@ -132,6 +148,9 @@ async def _spawn_validator(host, admin_tool_names: list[str]) -> object:
     )
     host._apply_rate_limiter_to_builder(builder)
     builder.config.system_message = SYSTEM_PROMPT + _VALIDATOR_PROMPT_SUFFIX
+    builder.with_models(_FAST_MODEL, _COMPLEX_MODEL)
+    for fallback in _FALLBACK_CHAIN:
+        builder.add_fallback_chain(_COMPLEX_MODEL, [fallback])
     _build_and_register(builder, host.isaa_tools, host.app)
     await host.isaa_tools.register_agent(builder)
 
