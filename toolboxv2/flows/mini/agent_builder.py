@@ -54,13 +54,13 @@ Wenn Markin (Admin) dir einen Auftrag gibt: baue es, validiere via
 validator_dispatch und berichte das Ergebnis kurz und praezise.
 """
 
-# Modelle aus der Builder-Env (User-Entscheidung 19.09.: kein cerebras mehr —
-# openrouter gpt-oss primaer, glm-4.7 als Fallback).
-_FAST_MODEL = os.environ.get("BUILDER_FAST_MODEL", "openrouter/openai/gpt-oss-120b")
-_COMPLEX_MODEL = os.environ.get("BUILDER_COMPLEX_MODEL", "openrouter/openai/gpt-oss-120b")
+# Modelle aus der Builder-Env (User-Entscheidung 19.09. abends: 9router-Aliase
+# primaer — 9rou/fast + 9rou/complex — mit glm-5.3-flash/5.3 als Fallback).
+_FAST_MODEL = os.environ.get("BUILDER_FAST_MODEL", "9rou/fast")
+_COMPLEX_MODEL = os.environ.get("BUILDER_COMPLEX_MODEL", "9rou/complex")
 _FALLBACK_CHAIN = [
     m.strip() for m in os.environ.get(
-        "BUILDER_FALLBACK_CHAIN", "glm/glm-4.7"
+        "BUILDER_FALLBACK_CHAIN", "glm/glm-5.3-flash,glm/glm-5.3,glm/glm-4.7"
     ).split(",") if m.strip()
 ]
 
@@ -129,11 +129,15 @@ async def _spawn_coder(host) -> tuple[object, list[str]]:
     builder.with_stream(True)
     names = _build_and_register(builder, host.isaa_tools, host.app)
     await host.isaa_tools.register_agent(builder)
+    coder = await host.isaa_tools.get_agent("tb_admin_coder")
+    # Runtime-Garantie (unabhaengig von Persistenz-Semantik des Registers):
+    coder.amd.fast_llm_model = _FAST_MODEL
+    coder.amd.complex_llm_model = _COMPLEX_MODEL
     print(
         f"[builder] coder 'tb_admin_coder' registered (1:1 toolbox_admin) "
         f"| fast={_FAST_MODEL} complex={_COMPLEX_MODEL} fallback={_FALLBACK_CHAIN}"
     )
-    return await host.isaa_tools.get_agent("tb_admin_coder"), names
+    return coder, names
 
 
 async def _spawn_validator(host, admin_tool_names: list[str]) -> object:
@@ -153,6 +157,11 @@ async def _spawn_validator(host, admin_tool_names: list[str]) -> object:
         builder.add_fallback_chain(_COMPLEX_MODEL, [fallback])
     _build_and_register(builder, host.isaa_tools, host.app)
     await host.isaa_tools.register_agent(builder)
+    validator = await host.isaa_tools.get_agent("builder_validator")
+    # Runtime-Garantie: Persistenz (agent.json alter Stände) darf die Modelle
+    # nie ueberschreiben — siehe Root-Case 'ollama/llama3.1 statt gpt-oss'.
+    validator.amd.fast_llm_model = _FAST_MODEL
+    validator.amd.complex_llm_model = _COMPLEX_MODEL
 
     from toolboxv2.flows.isaa.icli import AgentInfo
     host.agent_registry["builder_validator"] = AgentInfo(
@@ -160,7 +169,10 @@ async def _spawn_validator(host, admin_tool_names: list[str]) -> object:
         persona="End-to-end validator (full admin tools, PASS/FAIL evidence)",
         has_shell_access=True,
     )
-    print("[builder] validator 'builder_validator' registered")
+    print(
+        f"[builder] validator 'builder_validator' registered "
+        f"| fast={_FAST_MODEL} complex={_COMPLEX_MODEL} fallback={_FALLBACK_CHAIN}"
+    )
     return await host.isaa_tools.get_agent("builder_validator")
 
 
@@ -212,9 +224,13 @@ async def _connect_discord(host, coder, admin_tool_names) -> object | None:
         language="de",
         host=host,
         runner_loop=asyncio.get_running_loop(),
+        # CRITICAL: Safelist muss VOR der Wrapper-Bindung gesetzt werden —
+        # _apply_moderator_safe_mode bindet sie im __init__ als Closure.
+        # Nachtraegliches Setzen (interface.moderator_safelist = ...) wirkt NICHT.
+        moderator_safelist=set(admin_tool_names) | {"tb", "validator_dispatch"},
     )
-    # Coder-Drosselung via Safe-Mode verhindern: alle Admin-Tools whitelisten.
-    interface.moderator_safelist = set(admin_tool_names) | {"tb"}
+    # Safe-Mode-Pruning verhindern: alle Admin-Tools whitelisten (Parameter oben).
+    interface.moderator_safelist = set(admin_tool_names) | {"tb", "validator_dispatch"}
     # !v-Extension aktivieren + Validator injizieren (Interface-Extension).
     interface.validator_agent = await host.isaa_tools.get_agent("builder_validator")
     interface.validator_enabled = True
