@@ -8377,11 +8377,12 @@ class ISAA_Host:
             kind="job",
             agent_name=job.agent_name,
             query=job.query,
-            async_task=async_task,
+            async_task=None,
             run_id=run_id,
             take_focus=False,
         )
         _tid_holder[0] = exc.task_id
+        exc.async_task = async_task
 
         def _on_done(fut):
             _tid = _tid_holder[0]
