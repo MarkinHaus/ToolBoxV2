@@ -1440,7 +1440,7 @@ class SearchPanel(_PanelBase):
                 ).fetchall()
             else:  # fts5
                 import re as _re
-                safe = _re.sub(r'[\\/.:"\'(){}\[\]^~*!@#$&|<>=,;]', ' ', q).strip()
+                safe = _re.sub(r'[\\/.:"\'(){}\[\]^~*!@#$&|<>=,;?%-]', ' ', q).strip()
                 safe = ' '.join(safe.split())
                 if not safe:
                     self.app.status("Suchbegriff nach Bereinigung leer.", error=True)
