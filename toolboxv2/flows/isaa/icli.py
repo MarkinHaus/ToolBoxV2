@@ -4167,7 +4167,7 @@ class ISAA_Host:
         # Startup: animated rain for 2.5s
         # app_instance.run_bg_task_advanced(self.anim.play_startup,duration=1.5)
         self.zen_plus_mode = False
-        self.max_iteration = os.getenv("DEFAULT_MAX_ITERATIONS", 30)
+        self.max_iteration = int(os.getenv("DEFAULT_MAX_ITERATIONS", 30))
 
         self.app = app_instance or get_app("isaa-host")
         def _(*args, **k):

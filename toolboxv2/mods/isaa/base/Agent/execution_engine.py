@@ -978,7 +978,7 @@ class ExecutionContext:
         ctx.current_iteration = data.get("current_iteration", 0)
         ctx.loop_warning_given = data.get("loop_warning_given", False)
         ctx.loop_detector.history = data.get("loop_detector_history", [])
-        ctx.max_iterations = data.get("max_iterations", os.getenv("DEFAULT_MAX_ITERATIONS", 30))
+        ctx.max_iterations = int(data.get("max_iterations", os.getenv("DEFAULT_MAX_ITERATIONS", 30)))
         ctx.last_response = data.get("last_response", "")
         ctx.resume_count = data.get("resume_count", 0)
 
@@ -1923,7 +1923,7 @@ BEISPIELE:
         self,
         query: str,
         session_id: str,
-        max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 60),
+        max_iterations: int = int(os.getenv("DEFAULT_MAX_ITERATIONS", 60)),
         ctx: "ExecutionContext | None" = None,
         get_ctx: bool = False,
         persist_blocking: bool = False,
@@ -2189,7 +2189,7 @@ BEISPIELE:
         self,
         query: str,
         session_id: str,
-        max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 60),
+        max_iterations: int = int(os.getenv("DEFAULT_MAX_ITERATIONS", 60)),
         ctx: "ExecutionContext | None" = None,
         model=None,
         persist_blocking: bool = False,
@@ -6353,7 +6353,7 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
     async def resume(
         self,
         execution_id: str,
-        max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30),
+        max_iterations: int = int(os.getenv("DEFAULT_MAX_ITERATIONS", 30)),
         content="",
         stream=False,
     ) -> str | tuple[Callable[[...], Any], ExecutionContext] | tuple[str, ExecutionContext]:

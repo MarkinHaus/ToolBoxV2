@@ -1725,7 +1725,7 @@ class FlowAgent:
         session_id: str = "default",
         execution_id: str | None = None,
         human_online: bool = False,
-        max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS",30),
+        max_iterations: int = int(os.getenv("DEFAULT_MAX_ITERATIONS",30)),
         get_ctx: bool = False,
         persist_blocking: bool = False,
         **kwargs,
@@ -1861,7 +1861,7 @@ class FlowAgent:
         engine = self._get_execution_engine()
         return engine.list_executions()
 
-    async def resume_execution(self, execution_id: str, max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30),
+    async def resume_execution(self, execution_id: str, max_iterations: int = int(os.getenv("DEFAULT_MAX_ITERATIONS", 30)),
                                content="", stream=False) -> str:
         """
         Resume a paused execution.
@@ -1948,7 +1948,7 @@ class FlowAgent:
     async def resume_last_execution(
         self,
         content: str = "",
-        max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30),
+        max_iterations: int = int(os.getenv("DEFAULT_MAX_ITERATIONS", 30)),
         stream: bool = False,
         execution_id: str | None = None,
     ):
@@ -2008,7 +2008,7 @@ class FlowAgent:
         session_id: str = "default",
         execution_id: str | None = None,
         human_online: bool = False,
-        max_iterations: int = os.getenv("DEFAULT_MAX_ITERATIONS", 30),
+        max_iterations: int = int(os.getenv("DEFAULT_MAX_ITERATIONS", 30)),
         user_lightning_model: bool | None = None,
         persist_blocking: bool = False,
         **kwargs,
