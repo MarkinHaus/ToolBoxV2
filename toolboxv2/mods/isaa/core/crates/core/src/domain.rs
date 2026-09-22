@@ -34,7 +34,13 @@ pub enum NodeKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum NodeStatus { Pending, Ready, Running, Done, Failed }
+pub enum NodeStatus {
+    Pending,
+    Ready,
+    Running,
+    Done,
+    Failed,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DagNode {
@@ -65,7 +71,7 @@ pub struct State {
     /// per process and would break state-hash determinism.
     pub edges: PMap<NodeId, PVec<NodeId>>, // Deps -> Dependents
     pub decision_cache: PMap<Sig, Decision>,
-    pub active_adapter: Option<String>,    // System 2.5 LoRA Adapter ID
+    pub active_adapter: Option<String>, // System 2.5 LoRA Adapter ID
 }
 
 impl State {
@@ -89,30 +95,80 @@ impl State {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Event {
-    TaskSubmitted { goal: String },
-    DecisionArrived { node: NodeId, decision: Decision },
-    SubDagExpanded { parent: NodeId, nodes: Vec<NodeKind>, deps: Vec<(usize, usize)> },
-    ToolStarted { node: NodeId },
-    ToolCompleted { node: NodeId, result: Bytes, ok: bool },
-    RollbackRequested { target_version: Version },
-    ArtifactInstalled { playbook_name: String, content: String },
+    TaskSubmitted {
+        goal: String,
+    },
+    DecisionArrived {
+        node: NodeId,
+        decision: Decision,
+    },
+    SubDagExpanded {
+        parent: NodeId,
+        nodes: Vec<NodeKind>,
+        deps: Vec<(usize, usize)>,
+    },
+    ToolStarted {
+        node: NodeId,
+    },
+    ToolCompleted {
+        node: NodeId,
+        result: Bytes,
+        ok: bool,
+    },
+    RollbackRequested {
+        target_version: Version,
+    },
+    ArtifactInstalled {
+        playbook_name: String,
+        content: String,
+    },
 }
 
 #[derive(Clone, Debug)]
 pub enum Effect {
-    InvokeS1 { node: NodeId, state_sig: Sig, goal: String },
-    InvokeS2Plan { node: NodeId, goal: String },
-    ExecuteTool { node: NodeId, tool: String, args: Bytes, idem_key: Sig },
-    PersistTrace { row: Box<TraceRow> },
-    WriteVfs { path: PathBuf, content: String },
-    EmitTui { update: TuiUpdate },
+    InvokeS1 {
+        node: NodeId,
+        state_sig: Sig,
+        goal: String,
+    },
+    InvokeS2Plan {
+        node: NodeId,
+        goal: String,
+    },
+    ExecuteTool {
+        node: NodeId,
+        tool: String,
+        args: Bytes,
+        idem_key: Sig,
+    },
+    PersistTrace {
+        row: Box<TraceRow>,
+    },
+    WriteVfs {
+        path: PathBuf,
+        content: String,
+    },
+    EmitTui {
+        update: TuiUpdate,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TuiUpdate {
-    ToolLine { node: NodeId, label: String, ok: bool, ms: u32 },
-    TokenMeter { used: u32, budget: u32 },
-    DagSnapshot { version: Version, nodes: usize },
+    ToolLine {
+        node: NodeId,
+        label: String,
+        ok: bool,
+        ms: u32,
+    },
+    TokenMeter {
+        used: u32,
+        budget: u32,
+    },
+    DagSnapshot {
+        version: Version,
+        nodes: usize,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

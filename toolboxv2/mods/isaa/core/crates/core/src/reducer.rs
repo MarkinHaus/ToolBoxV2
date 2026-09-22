@@ -28,7 +28,10 @@ pub fn reduce(state: &State, event: &Event) -> (State, SmallVec<[Effect; 4]>) {
                 goal: goal.clone(),
             });
             fx.push(Effect::EmitTui {
-                update: TuiUpdate::DagSnapshot { version: next.version, nodes: next.nodes.len() },
+                update: TuiUpdate::DagSnapshot {
+                    version: next.version,
+                    nodes: next.nodes.len(),
+                },
             });
         }
 
@@ -53,13 +56,20 @@ pub fn reduce(state: &State, event: &Event) -> (State, SmallVec<[Effect; 4]>) {
                 // Escalate to System 2 / 2.5.
                 if let Some(n) = next.nodes.get(*node) {
                     if let NodeKind::Composite { goal } = &n.kind {
-                        fx.push(Effect::InvokeS2Plan { node: *node, goal: goal.clone() });
+                        fx.push(Effect::InvokeS2Plan {
+                            node: *node,
+                            goal: goal.clone(),
+                        });
                     }
                 }
             }
         }
 
-        Event::SubDagExpanded { parent, nodes: kinds, deps } => {
+        Event::SubDagExpanded {
+            parent,
+            nodes: kinds,
+            deps,
+        } => {
             let mut ids: Vec<NodeId> = Vec::with_capacity(kinds.len());
             for kind in kinds {
                 let bytes = postcard::to_stdvec(kind).unwrap_or_default();
@@ -92,7 +102,10 @@ pub fn reduce(state: &State, event: &Event) -> (State, SmallVec<[Effect; 4]>) {
                 }
             }
             fx.push(Effect::EmitTui {
-                update: TuiUpdate::DagSnapshot { version: next.version, nodes: next.nodes.len() },
+                update: TuiUpdate::DagSnapshot {
+                    version: next.version,
+                    nodes: next.nodes.len(),
+                },
             });
         }
 
@@ -107,7 +120,11 @@ pub fn reduce(state: &State, event: &Event) -> (State, SmallVec<[Effect; 4]>) {
 
         Event::ToolCompleted { node, result, ok } => {
             if let Some(n) = next.nodes.get_mut(*node) {
-                n.status = if *ok { NodeStatus::Done } else { NodeStatus::Failed };
+                n.status = if *ok {
+                    NodeStatus::Done
+                } else {
+                    NodeStatus::Failed
+                };
                 n.result = Some(result.clone());
             }
 
@@ -138,7 +155,10 @@ pub fn reduce(state: &State, event: &Event) -> (State, SmallVec<[Effect; 4]>) {
             });
         }
 
-        Event::ArtifactInstalled { playbook_name, content } => {
+        Event::ArtifactInstalled {
+            playbook_name,
+            content,
+        } => {
             let target_path = next.workspace.root.join("playbooks").join(playbook_name);
             fx.push(Effect::WriteVfs {
                 path: target_path,

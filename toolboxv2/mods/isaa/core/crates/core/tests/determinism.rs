@@ -1,12 +1,16 @@
-use isaa_core::*;
 use bytes::Bytes;
+use isaa_core::*;
 use proptest::prelude::*;
 use slotmap::KeyData;
 
 fn arb_kind() -> impl Strategy<Value = NodeKind> {
     prop_oneof![
-        ("[a-z_]{1,8}", proptest::collection::vec(any::<u8>(), 0..16))
-            .prop_map(|(tool, args)| NodeKind::Atomic { tool, args: Bytes::from(args) }),
+        ("[a-z_]{1,8}", proptest::collection::vec(any::<u8>(), 0..16)).prop_map(|(tool, args)| {
+            NodeKind::Atomic {
+                tool,
+                args: Bytes::from(args),
+            }
+        }),
         "[a-z ]{1,24}".prop_map(|goal| NodeKind::Composite { goal }),
         "[a-z ]{1,24}".prop_map(|check| NodeKind::Gate { check }),
     ]
@@ -24,13 +28,15 @@ fn arb_decision() -> impl Strategy<Value = Decision> {
         0.0f32..1.0,
         proptest::option::of("[a-z_]{1,8}"),
     )
-        .prop_map(|(task_category, confidence_bps, complexity, coverage, chosen_action)| Decision {
-            task_category,
-            confidence_bps,
-            complexity,
-            coverage,
-            chosen_action,
-        })
+        .prop_map(
+            |(task_category, confidence_bps, complexity, coverage, chosen_action)| Decision {
+                task_category,
+                confidence_bps,
+                complexity,
+                coverage,
+                chosen_action,
+            },
+        )
 }
 
 fn arb_event() -> impl Strategy<Value = Event> {
@@ -43,13 +49,29 @@ fn arb_event() -> impl Strategy<Value = Event> {
             proptest::collection::vec(arb_kind(), 0..4),
             proptest::collection::vec((0usize..4, 0usize..4), 0..4),
         )
-            .prop_map(|(parent, nodes, deps)| Event::SubDagExpanded { parent, nodes, deps }),
+            .prop_map(|(parent, nodes, deps)| Event::SubDagExpanded {
+                parent,
+                nodes,
+                deps
+            }),
         arb_node_id().prop_map(|node| Event::ToolStarted { node }),
-        (arb_node_id(), proptest::collection::vec(any::<u8>(), 0..16), any::<bool>())
-            .prop_map(|(node, result, ok)| Event::ToolCompleted { node, result: Bytes::from(result), ok }),
+        (
+            arb_node_id(),
+            proptest::collection::vec(any::<u8>(), 0..16),
+            any::<bool>()
+        )
+            .prop_map(|(node, result, ok)| Event::ToolCompleted {
+                node,
+                result: Bytes::from(result),
+                ok
+            }),
         (0u64..1000).prop_map(|target_version| Event::RollbackRequested { target_version }),
-        ("[a-z_]{1,8}", "[a-z ]{1,24}")
-            .prop_map(|(playbook_name, content)| Event::ArtifactInstalled { playbook_name, content }),
+        ("[a-z_]{1,8}", "[a-z ]{1,24}").prop_map(|(playbook_name, content)| {
+            Event::ArtifactInstalled {
+                playbook_name,
+                content,
+            }
+        }),
     ]
 }
 
