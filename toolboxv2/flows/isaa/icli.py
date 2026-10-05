@@ -13944,7 +13944,11 @@ class ISAA_Host:
             if not user_input.strip():
                 return
         from toolboxv2.mods.isaa.extras.zen.zen_renderer import ZenRenderer
-        self.zenrenderer = ZenRenderer(term_width=os.get_terminal_size().columns - 5)
+        try:
+            term_w = os.get_terminal_size().columns
+        except OSError:
+            term_w = 100
+        self.zenrenderer = ZenRenderer(term_width=term_w - 5)
         # -- User query header -------------------------------------------------
         c_print(ANSI(self.zenrenderer.render_user_input(user_input)+'\n\n'))
 
