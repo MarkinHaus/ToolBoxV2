@@ -269,6 +269,7 @@ MEDIA_ERROR_PATTERNS = [
     r"content.*type.*not.*(?:allowed|supported|valid)",
     r"(?:pdf|audio|video).*not.*supported",
 
+    r"1210",
     r"图片输入格式",
     r"解析错误",
     r"messages\.content\.type.*(?:text|非法)",
