@@ -10,6 +10,7 @@ from ..types import (
     ToolCallData, ToolCallDelta, UsageData, ProviderError,
 )
 from ..stream_metrics import StreamMetrics
+import codecs
 
 if TYPE_CHECKING:
     import aiohttp
@@ -337,8 +338,9 @@ class AnthropicAdapter(ProviderAdapter):
             tool_blocks: dict[int, dict] = {}  # index -> {id, name, args}
 
             buffer = ""
+            decoder = codecs.getincrementaldecoder("utf-8")()
             async for raw_bytes in resp.content.iter_any():
-                buffer += raw_bytes.decode("utf-8")
+                buffer += decoder.decode(raw_bytes)
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
                     line = line.strip()

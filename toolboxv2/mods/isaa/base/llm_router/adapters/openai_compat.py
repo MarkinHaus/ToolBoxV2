@@ -2,7 +2,7 @@
 from __future__ import annotations
 import time
 from typing import AsyncIterator, TYPE_CHECKING
-
+import codecs
 from ..adapter import ProviderAdapter
 from ..types import (
     CompletionResult, StreamChunk, EmbedResult,
@@ -66,8 +66,9 @@ class OpenAICompatAdapter(ProviderAdapter):
                 )
 
             buffer = ""
+            decoder = codecs.getincrementaldecoder("utf-8")()
             async for raw_bytes in resp.content.iter_any():
-                buffer += raw_bytes.decode("utf-8")
+                buffer += decoder.decode(raw_bytes)
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
                     chunk_dict = self.parse_sse_line(line)
