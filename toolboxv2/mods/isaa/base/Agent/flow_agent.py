@@ -310,10 +310,17 @@ def _remove_media_by_type(
 
     def should_remove(url: str) -> tuple[bool, str]:
         url_lower = url.lower()
+        if "image" in types_to_remove:
+            # Data-URIs oder bekannte Bildendungen oder generische URLs sofort als Image werten
+            if url_lower.startswith("data:image/") or any(url_lower.split("?")[0].endswith(ext) for ext in type_extensions["image"]):
+                return True, "image"
         for media_type, extensions in type_extensions.items():
             if media_type in types_to_remove:
-                if any(url_lower.endswith(ext) for ext in extensions):
+                if url_lower.startswith(f"data:{media_type}/") or any(url_lower.split("?")[0].endswith(ext) for ext in extensions):
                     return True, media_type
+        # Fallback: Wenn image entfernt werden soll und es im image_url-Block steckt
+        if "image" in types_to_remove:
+            return True, "image"
         return False, ""
 
     for msg in messages:
@@ -618,12 +625,38 @@ class FlowAgent:
         processed_messages = []
 
         for msg in messages:
-            if not isinstance(msg.get("content"), str):
-                # Already processed or non-text content
-                processed_messages.append(msg)
+            content = msg.get("content")
+
+            # Fall 1: Bereits formatierte Nachrichten aus alter History bereinigen
+            if isinstance(content, list):
+                sanitized_parts = []
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "image_url":
+                        img_dict = part.get("image_url", {})
+                        raw_url = img_dict.get("url", "")
+                        # Illegale Keys wie 'format' strippen
+                        clean_img = {"url": raw_url}
+                        if "detail" in img_dict:
+                            clean_img["detail"] = img_dict["detail"]
+
+                        # Lokale Pfade aus History nachträglich in Base64 Data-URI wandeln
+                        if raw_url and not raw_url.startswith(("http://", "https://", "data:")):
+                            encoded = _encode_local_image_to_data_uri(raw_url)
+                            if encoded:
+                                clean_img["url"] = encoded
+                                sanitized_parts.append({"type": "image_url", "image_url": clean_img})
+                            else:
+                                sanitized_parts.append({"type": "text", "text": f"[Bild nicht verfügbar: {raw_url}]"})
+                        else:
+                            sanitized_parts.append({"type": "image_url", "image_url": clean_img})
+                    else:
+                        sanitized_parts.append(part)
+                processed_messages.append({"role": msg["role"], "content": sanitized_parts})
                 continue
 
-            content = msg["content"]
+            if not isinstance(content, str):
+                processed_messages.append(msg)
+                continue
 
             if not content:
                 # Empty content but message may carry tool_calls — preserve it
@@ -1384,7 +1417,7 @@ class FlowAgent:
 
                     logger.info(f"Retry ohne Media-Typen: {new_types}")
 
-                    yield await self.a_run_llm_completion(
+                    retry_res = await self.a_run_llm_completion(
                         messages,  # Original messages!
                         model_preference,
                         with_context,
@@ -1398,6 +1431,12 @@ class FlowAgent:
                         _removed_types=new_types,
                         **kwargs,
                     )
+                    if use_stream and callable(retry_res):
+                        async for chunk in retry_res():
+                            yield chunk
+                    else:
+                        yield retry_res
+                    return  # Verhindert, dass der Code weiter in das nachfolgende 'raise' läuft!
                 # =====================================================================
                 import traceback
                 logger.error(f"LLM call failed: {e} || {traceback.format_exc()}")

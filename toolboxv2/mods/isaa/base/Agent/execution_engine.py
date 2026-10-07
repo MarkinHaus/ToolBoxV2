@@ -3230,7 +3230,6 @@ BEISPIELE:
                         })
                 except Exception as e:
                     get_logger().error(e)
-                    pass
             ctx.max_iterations = max_iterations
         elif self.taskmap_preinject and not self.is_sub_agent:
             ctx.pending_taskmap_task = asyncio.create_task(
