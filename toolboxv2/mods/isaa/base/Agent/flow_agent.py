@@ -131,30 +131,67 @@ def parse_media_from_query(query: str) -> tuple[str, list[dict]]:
         # litellm uses image_url format for vision models
         # Format: {"type": "image_url", "image_url": {"url": "...", "format": "image/jpeg"}}
         if media_type == "image":
-            # Detect image format for explicit MIME type
-            mime_type = _get_image_mime_type(media_path)
-            image_obj = {"url": media_path}
-            if mime_type:
-                image_obj["format"] = mime_type
-
-            media_list.append({"type": "image_url", "image_url": image_obj})
+            # Web-URLs und Data-URIs direkt übernehmen, lokale Pfade als Base64 einbetten
+            if media_path.startswith(("http://", "https://", "data:image/")):
+                media_list.append({"type": "image_url", "image_url": {"url": media_path}})
+            else:
+                encoded_url = _encode_local_image_to_data_uri(media_path)
+                if encoded_url:
+                    # 'format' entfernt, da von Zhipu/OpenAI API nicht erlaubt
+                    media_list.append({"type": "image_url", "image_url": {"url": encoded_url}})
+                elif AGENT_VERBOSE:
+                    print(f"Warning: Bilddatei '{media_path}' nicht gefunden oder lesbar.")
         elif media_type in ["audio", "video", "pdf"]:
-            # For non-image media, some models may support them
-            # but we use image_url as the standard format
-            # The model will handle or reject based on its capabilities
-            if AGENT_VERBOSE:
-                print(
-                    f"Warning: Media type '{media_type}' detected. Not all models support non-image media."
-                )
-            media_list.append({"type": "image_url", "image_url": {"url": media_path}})
+            if not media_path.startswith(("http://", "https://", "data:")):
+                encoded_url = _encode_local_file_to_data_uri(media_path, media_type)
+                if encoded_url:
+                    media_list.append({"type": "image_url", "image_url": {"url": encoded_url}})
+            else:
+                media_list.append({"type": "image_url", "image_url": {"url": media_path}})
         else:
-            # Unknown type - try as image
-            media_list.append({"type": "image_url", "image_url": {"url": media_path}})
+            if os.path.exists(media_path):
+                encoded_url = _encode_local_image_to_data_uri(media_path)
+                if encoded_url:
+                    media_list.append({"type": "image_url", "image_url": {"url": encoded_url}})
+            else:
+                media_list.append({"type": "image_url", "image_url": {"url": media_path}})
 
     # Remove media tags from query
     cleaned_query = re.sub(media_pattern, "", query).strip()
     return cleaned_query, media_list
 
+
+def _encode_local_image_to_data_uri(file_path: str) -> str | None:
+    """Liest ein lokales Bild ein und wandelt es in data:<mime>;base64,<data> um."""
+    import base64
+    from pathlib import Path
+    path = Path(file_path)
+    if not path.is_file():
+        return None
+    try:
+        mime_type = _get_image_mime_type(str(path)) or "image/png"
+        with open(path, "rb") as f:
+            encoded_bytes = base64.b64encode(f.read()).decode("utf-8")
+        return f"data:{mime_type};base64,{encoded_bytes}"
+    except Exception:
+        return None
+
+
+def _encode_local_file_to_data_uri(file_path: str, media_type: str) -> str | None:
+    """Fallback für non-image Medien als Data-URI."""
+    import base64
+    from pathlib import Path
+    path = Path(file_path)
+    if not path.is_file():
+        return None
+    try:
+        mime_map = {"pdf": "application/pdf", "audio": "audio/mp3", "video": "video/mp4"}
+        mime_type = mime_map.get(media_type, "application/octet-stream")
+        with open(path, "rb") as f:
+            encoded_bytes = base64.b64encode(f.read()).decode("utf-8")
+        return f"data:{mime_type};base64,{encoded_bytes}"
+    except Exception:
+        return None
 
 def _detect_media_type(path: str) -> str:
     """Detect media type from file extension or URL"""
@@ -231,6 +268,11 @@ MEDIA_ERROR_PATTERNS = [
     r"(?:400|422).*(?:media|image)",
     r"content.*type.*not.*(?:allowed|supported|valid)",
     r"(?:pdf|audio|video).*not.*supported",
+
+    r"图片输入格式",
+    r"解析错误",
+    r"messages\.content\.type.*(?:text|非法)",
+    r"不支持.*(?:图片|音频|视频)",
 ]
 
 
@@ -243,6 +285,8 @@ def _is_media_error(error: Exception) -> bool:
 def _extract_failed_media_type(error: Exception) -> str | None:
     """Extrahiert den fehlgeschlagenen Medientyp aus der Fehlermeldung"""
     error_str = str(error).lower()
+    if any(k in error_str for k in ["图片", "1210", "image", "png", "jpeg", "jpg"]):
+        return "image"
     for media_type in ["pdf", "audio", "video", "mp3", "wav", "mp4", "avi"]:
         if media_type in error_str:
             return media_type
