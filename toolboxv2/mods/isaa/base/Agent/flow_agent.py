@@ -809,17 +809,12 @@ class FlowAgent:
         if not image_model:
             image_model = self.amd.fast_llm_model
 
-        content = f"<image={resolved}>\n\n{question}"
+        content = f"[media:{resolved}]\n\n{question}"
         return await self.a_run_llm_completion(
             messages=[{"role": "user", "content": content}],
             model=image_model,
             stream=False,
-        )
-
-    async def chat(self, query:str,
-                   is_new=False, with_tools=True, stream=False):
-        res = await self.a_run_llm_completion(
-
+            with_context= False,
         )
 
     async def a_run_llm_completion(
