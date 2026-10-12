@@ -84,3 +84,33 @@ def test_non_dict_entries_pass_through():
     cleaned, removed, _ = purge_images_from_messages(msgs)
     assert removed == 0
     assert cleaned == msgs
+
+
+def test_media_text_tags_stripped_from_string_content():
+    """[media:...] / @media[...] Tags in STRING-Contents zaehlen als Bilder
+    und werden entfernt — X-Ray zaehlt genau diese Form (content.count)."""
+    msg_content = "Analysiere [media:https://cdn.example/x.png] und [media:/tmp/y.jpg] bitte"
+    msgs = [{"role": "user", "content": msg_content}]
+    cleaned, removed, freed = purge_images_from_messages(msgs)
+    assert removed == 2
+    assert freed > 0
+    assert cleaned[0]["content"] == "Analysiere  und  bitte"
+
+
+def test_media_tags_in_text_parts_removed_and_counted():
+    msgs = [{"role": "user", "content": [
+        {"type": "text", "text": "schau [media:https://x/y.png] an"},
+        {"type": "text", "text": "und zweiter teil"},
+    ]}]
+    cleaned, removed, _ = purge_images_from_messages(msgs)
+    # nur echte Media-Tag-Formen zaehlen; "@[media2]" matcht nicht das Tag-Pattern
+    assert removed == 1
+    texts = [p.get("text") for p in cleaned[0]["content"] if isinstance(p, dict) and p.get("type") == "text"]
+    assert "schau  an" in texts
+
+
+def test_clean_string_untouched():
+    msgs = [{"role": "user", "content": "ganz normaler text ohne tags"}]
+    cleaned, removed, _ = purge_images_from_messages(msgs)
+    assert removed == 0
+    assert cleaned[0]["content"] == "ganz normaler text ohne tags"

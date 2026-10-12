@@ -26,6 +26,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+import re
 import requests
 from prompt_toolkit.document import Document
 
@@ -1592,6 +1593,9 @@ VERSION = "4.0.0"
 CLI_NAME = "ISAA Host"
 NAME = "icli"
 # Default Rate Limiter Configuration (shared across all agents)
+_MEDIA_TAG_RE = re.compile(r"\[media:[^\]]*\]|@media\[[^\]]*\]")  # Discord/icli Media-Tags
+
+
 def purge_images_from_messages(messages):
     """Entfernt alle image_url-Parts aus LLM-Messages (In-Place-Liste neu aufbauen).
 
@@ -1605,6 +1609,7 @@ def purge_images_from_messages(messages):
     removed = 0
     freed = 0
     cleaned = []
+    tag_re = _MEDIA_TAG_RE or re.compile(r"\[media:[^\]]*\]|@media\[[^\]]*\]")
     for msg in messages:
         if not isinstance(msg, dict):
             cleaned.append(msg)
@@ -1621,6 +1626,20 @@ def purge_images_from_messages(messages):
                         pass
                 else:
                     new_parts.append(part)
+            # Text-Parts von Media-Tags befreien; leere Parts fallen weg
+            kept_parts = []
+            for part in new_parts:
+                if (isinstance(part, dict) and part.get("type") == "text"
+                        and isinstance(part.get("text"), str) and tag_re.search(part["text"])):
+                    m = tag_re.findall(part["text"])
+                    removed += len(m)
+                    freed += sum(len(x) for x in m)
+                    txt = tag_re.sub("", part["text"]).strip()
+                    if txt:
+                        kept_parts.append({"type": "text", "text": txt})
+                else:
+                    kept_parts.append(part)
+            new_parts = kept_parts
             new_msg = dict(msg)
             if not new_parts:
                 new_msg["content"] = "[Bild entfernt]"
@@ -1629,12 +1648,25 @@ def purge_images_from_messages(messages):
             else:
                 new_msg["content"] = new_parts
             cleaned.append(new_msg)
-        elif isinstance(content, str) and content.startswith("data:image/"):
-            removed += 1
-            freed += len(content)
-            new_msg = dict(msg)
-            new_msg["content"] = "[Bild entfernt]"
-            cleaned.append(new_msg)
+        elif isinstance(content, str):
+            # Media-Tags im Text ([media:url|pfad] / @media[pfad]) entfernen —
+            # X-Ray zaehlt genau diese Form (content.count("[media:")) als Bilder.
+            tag_matches = _MEDIA_TAG_RE.findall(content)
+            if tag_matches:
+                removed += len(tag_matches)
+                freed += sum(len(m) for m in tag_matches)
+                new_msg = dict(msg)
+                stripped = _MEDIA_TAG_RE.sub("", content).strip()
+                new_msg["content"] = stripped if stripped else "[Bild entfernt]"
+                cleaned.append(new_msg)
+            elif content.startswith("data:image/"):
+                removed += 1
+                freed += len(content)
+                new_msg = dict(msg)
+                new_msg["content"] = "[Bild entfernt]"
+                cleaned.append(new_msg)
+            else:
+                cleaned.append(msg)
         else:
             cleaned.append(msg)
     return cleaned, removed, freed
