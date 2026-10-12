@@ -1592,6 +1592,54 @@ VERSION = "4.0.0"
 CLI_NAME = "ISAA Host"
 NAME = "icli"
 # Default Rate Limiter Configuration (shared across all agents)
+def purge_images_from_messages(messages):
+    """Entfernt alle image_url-Parts aus LLM-Messages (In-Place-Liste neu aufbauen).
+
+    Kontext-Bloat-Fix: Discord/Vision-Bilder persistieren als Base64-Data-URIs in
+    der Session-History und reiten in JEDEM LLM-Call mit (75 Bilder ~= 40-150 MB
+    Payload). Text bleibt erhalten, Bilder werden gezählt.
+
+    Returns:
+        (cleaned_messages, removed_count, bytes_freed)
+    """
+    removed = 0
+    freed = 0
+    cleaned = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            cleaned.append(msg)
+            continue
+        content = msg.get("content")
+        if isinstance(content, list):
+            new_parts = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "image_url":
+                    removed += 1
+                    try:
+                        freed += len(str(part.get("image_url", {}).get("url", "")))
+                    except Exception:
+                        pass
+                else:
+                    new_parts.append(part)
+            new_msg = dict(msg)
+            if not new_parts:
+                new_msg["content"] = "[Bild entfernt]"
+            elif len(new_parts) == 1 and isinstance(new_parts[0], dict) and new_parts[0].get("type") == "text":
+                new_msg["content"] = new_parts[0].get("text", "")
+            else:
+                new_msg["content"] = new_parts
+            cleaned.append(new_msg)
+        elif isinstance(content, str) and content.startswith("data:image/"):
+            removed += 1
+            freed += len(content)
+            new_msg = dict(msg)
+            new_msg["content"] = "[Bild entfernt]"
+            cleaned.append(new_msg)
+        else:
+            cleaned.append(msg)
+    return cleaned, removed, freed
+
+
 DEFAULT_RATE_LIMITER_CONFIG = {
     "features": {
         "rate_limiting": True,
@@ -6494,6 +6542,7 @@ class ISAA_Host:
             "/quit": None,
             "/exit": None,
             "/clear": None,
+            "/clear_images": None,
             "/status": None,
             "/web-init": None,
             "/onboarding": {
@@ -7284,6 +7333,43 @@ class ISAA_Host:
         elif cmd == "/clear":
             os.system("cls" if os.name == "nt" else "clear")
             await self._print_status_dashboard()
+
+        elif cmd == "/clear_images":
+            try:
+                agent = await self.isaa_tools.get_agent(self.active_agent_name)
+                total_removed = 0
+                total_freed = 0
+                locations = 0
+                # 1) Persistente Session-History
+                session = agent.session_manager.get(self.active_session_id)
+                cs = getattr(session, "_chat_session", None) if session else None
+                if cs is not None and isinstance(getattr(cs, "history", None), list):
+                    cleaned, rem, freed = purge_images_from_messages(cs.history)
+                    cs.history[:] = cleaned
+                    locations += 1
+                    total_removed += rem
+                    total_freed += freed
+                # 2) Laufende Task-Kontexte (working_history in-place, Referenzen bleiben gueltig)
+                engine = agent._get_execution_engine()
+                active = getattr(engine, "_active_executions", None) or {}
+                for run_ctx in list(active.values()):
+                    wh = getattr(run_ctx, "working_history", None)
+                    if isinstance(wh, list):
+                        cleaned, rem, freed = purge_images_from_messages(wh)
+                        wh[:] = cleaned
+                        locations += 1
+                        total_removed += rem
+                        total_freed += freed
+                if locations == 0:
+                    print_status("Keine bereinigbaren Kontexte gefunden (Session nicht initialisiert?)", "warning")
+                else:
+                    print_status(
+                        f"{total_removed} Bilder aus {locations} Kontext(en) entfernt, "
+                        f"~{total_freed / (1024 * 1024):.1f} MB Payload freigegeben.",
+                        "success" if total_removed else "info",
+                    )
+            except Exception as e:
+                print_status(f"/clear_images Fehler: {e}", "error")
 
         elif cmd == "/help":
             self._print_help(args)
