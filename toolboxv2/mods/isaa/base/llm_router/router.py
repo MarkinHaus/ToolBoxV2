@@ -83,6 +83,11 @@ class CompletionRouter:
         """
         if not self._rate_limiter:
             return None
+        s_err = str(error)
+        # 400 = Content-/Request-Fehler (z.B. Bild-Parse 1210): Ein anderes Modell
+        # bekommt dasselbe kaputte Payload — Modell-Hopping ist verschwendet.
+        if 'HTTP 400' in s_err or '"code":"1210"' in s_err:
+            return None
         try:
             res = await self._rate_limiter.handle_rate_limit_error(
                 model=used_model, error=error, is_rate_limit="429" in str(error),
