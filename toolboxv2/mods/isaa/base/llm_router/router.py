@@ -74,6 +74,36 @@ class CompletionRouter:
             return _api_key
         return api_key
 
+    async def _resolve_fallback(self, used_model: str, error: Exception) -> str | None:
+        """Ermittle das aktuelle Fallback-Modell nach einem Provider-Fehler.
+
+        Robust gegen Struktur-Varianten des Rate-Limiters:
+        - handle_rate_limit_error() liefert (backoff, fallback_model) direkt
+        - fallback: ModelFallbackManager.get_active_model() via .fallback_manager
+        """
+        if not self._rate_limiter:
+            return None
+        try:
+            res = await self._rate_limiter.handle_rate_limit_error(
+                model=used_model, error=error, is_rate_limit="429" in str(error),
+            )
+            if res:
+                fb = res[1] if isinstance(res, tuple) and len(res) >= 2 else None
+                if fb and fb.lower() != used_model.lower():
+                    return fb
+        except Exception:
+            pass
+        fb_mgr = getattr(self._rate_limiter, "fallback_manager", None)
+        if fb_mgr is None:
+            return None
+        try:
+            active, is_fb = await fb_mgr.get_active_model(used_model)
+            if is_fb and active and active.lower() != used_model.lower():
+                return active
+        except Exception:
+            pass
+        return None
+
     async def complete(self, model: str, messages: list,
                        tools: list | None = None, **kw) -> CompletionResult:
         adapter, actual_model, prefix = self.resolve(model)
@@ -104,12 +134,7 @@ class CompletionRouter:
             result = await adapter.complete(self.session, api_key, actual_model,
                                             messages, tools, **kw)
         except Exception as e:
-            fallback_model = None
-            if self._rate_limiter:
-                await self._rate_limiter.handle_rate_limit_error(
-                    model=used_model, error=e, is_rate_limit="429" in str(e),
-                )
-                fallback_model, _ = await self._rate_limiter.get_active_model(used_model)
+            fallback_model = await self._resolve_fallback(used_model, e)
             # Fallback-Retry: wenn der Limiter ein anderes aktives Modell liefert,
             # direkt 1x damit wiederholen statt den Task craschen zu lassen.
             if fallback_model and fallback_model.lower() != used_model.lower() and not kw.get("_fallback_retry"):
@@ -151,15 +176,6 @@ class CompletionRouter:
             if used_model != model:
                 adapter, actual_model, prefix = self.resolve(used_model)
 
-        if not kw.get("_fallback_retry") and self._rate_limiter:
-            # Bei aktivem Fallback sofort auf das Fallback-Modell wechseln
-            try:
-                active_model, is_fb = await self._rate_limiter.get_active_model(used_model)
-                if is_fb and active_model.lower() != used_model.lower():
-                    used_model = active_model
-                    adapter, actual_model, prefix = self.resolve(used_model)
-            except Exception:
-                pass
         try:
             async for chunk in adapter.stream(self.session, api_key, actual_model,
                                               messages, tools, metrics=metrics, **kw):
@@ -167,12 +183,7 @@ class CompletionRouter:
                 if chunk.usage:
                     self._budget.track(model, chunk.usage)
         except Exception as e:
-            fallback_model = None
-            if self._rate_limiter:
-                await self._rate_limiter.handle_rate_limit_error(
-                    model=used_model, error=e, is_rate_limit="429" in str(e),
-                )
-                fallback_model, _ = await self._rate_limiter.get_active_model(used_model)
+            fallback_model = await self._resolve_fallback(used_model, e)
             if fallback_model and fallback_model.lower() != used_model.lower() and not kw.get("_fallback_retry"):
                 # 1x mit Fallback-Modell neu streamen statt craschen
                 try:
