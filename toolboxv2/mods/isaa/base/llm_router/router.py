@@ -104,10 +104,21 @@ class CompletionRouter:
             result = await adapter.complete(self.session, api_key, actual_model,
                                             messages, tools, **kw)
         except Exception as e:
+            fallback_model = None
             if self._rate_limiter:
                 await self._rate_limiter.handle_rate_limit_error(
                     model=used_model, error=e, is_rate_limit="429" in str(e),
                 )
+                fallback_model, _ = await self._rate_limiter.get_active_model(used_model)
+            # Fallback-Retry: wenn der Limiter ein anderes aktives Modell liefert,
+            # direkt 1x damit wiederholen statt den Task craschen zu lassen.
+            if fallback_model and fallback_model.lower() != used_model.lower() and not kw.get("_fallback_retry"):
+                try:
+                    return await self.complete(fallback_model, messages, tools=tools,
+                                               _fallback_retry=True,
+                                               **{k: v for k, v in kw.items() if k != "_fallback_retry"})
+                except Exception:
+                    pass
             raise
         self._budget.track(model, result.usage)
         if self._rate_limiter:
@@ -140,6 +151,15 @@ class CompletionRouter:
             if used_model != model:
                 adapter, actual_model, prefix = self.resolve(used_model)
 
+        if not kw.get("_fallback_retry") and self._rate_limiter:
+            # Bei aktivem Fallback sofort auf das Fallback-Modell wechseln
+            try:
+                active_model, is_fb = await self._rate_limiter.get_active_model(used_model)
+                if is_fb and active_model.lower() != used_model.lower():
+                    used_model = active_model
+                    adapter, actual_model, prefix = self.resolve(used_model)
+            except Exception:
+                pass
         try:
             async for chunk in adapter.stream(self.session, api_key, actual_model,
                                               messages, tools, metrics=metrics, **kw):
@@ -147,10 +167,23 @@ class CompletionRouter:
                 if chunk.usage:
                     self._budget.track(model, chunk.usage)
         except Exception as e:
+            fallback_model = None
             if self._rate_limiter:
                 await self._rate_limiter.handle_rate_limit_error(
                     model=used_model, error=e, is_rate_limit="429" in str(e),
                 )
+                fallback_model, _ = await self._rate_limiter.get_active_model(used_model)
+            if fallback_model and fallback_model.lower() != used_model.lower() and not kw.get("_fallback_retry"):
+                # 1x mit Fallback-Modell neu streamen statt craschen
+                try:
+                    async for chunk in self.stream(fallback_model, messages,
+                                                   tools=tools, metrics=metrics,
+                                                   _fallback_retry=True,
+                                                   **{k: v for k, v in kw.items() if k != "_fallback_retry"}):
+                        yield chunk
+                    return
+                except Exception:
+                    pass
             raise
         token_used = None
         if metrics:

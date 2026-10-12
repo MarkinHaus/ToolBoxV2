@@ -4483,7 +4483,14 @@ class ISAA_Host:
                         sub_tv.completed_at = time.time()
             if self._focused_task_id == task_id:
                 from toolboxv2.mods.isaa.extras.zen.zen_renderer import ZenRenderer
-                renderer = self.zenrenderer or ZenRenderer(term_width=os.get_terminal_size().columns - 5)
+                if self.zenrenderer is not None:
+                    renderer = self.zenrenderer
+                else:
+                    try:
+                        term_w = os.get_terminal_size().columns
+                    except OSError:
+                        term_w = 100
+                    renderer = ZenRenderer(term_width=term_w - 5)
 
                 chunk_type = chunk.get("type", "")
 

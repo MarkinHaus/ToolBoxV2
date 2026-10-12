@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-from aiohttp import ClientResponse, ClientSession, MultipartWriter
+from aiohttp import ClientResponse, ClientSession, MultipartWriter, ClientTimeout
 from aiohttp import ClientConnectorError, ClientError
 from requests import Response
 
@@ -85,7 +85,14 @@ class Session(metaclass=Singleton):
             return None
         s = self._loop_sessions.get(loop)
         if s is None or s.closed:
-            s = ClientSession()
+            # LLM-Calls (Vision/Reasoning) koennen >300s dauern; aiohttp-Default
+            # ist ClientTimeout(total=300) -> haertet als TimeoutError im Agent.
+            # Konfigurierbar via LLM_HTTP_TIMEOUT (Sekunden, Default 1800 = 30 Min).
+            import os as _os
+            _t = int(_os.getenv("LLM_HTTP_TIMEOUT", "1800"))
+            _sock_read = int(_os.getenv("LLM_SOCK_READ_TIMEOUT", "300"))
+            _ct = ClientTimeout(total=_t, sock_connect=30, sock_read=_sock_read)
+            s = ClientSession(timeout=_ct)
             self._loop_sessions[loop] = s
             self._session = s       # backward-compat cache
             self._event_loop = loop  # backward-compat cache
