@@ -1726,6 +1726,20 @@ class FlowAgent:
         """
         from toolboxv2.mods.isaa.base.Agent.execution_engine import ExecutionEngine
 
+        # Engine switch: when amd.engine == "page", return the bounded page+tail
+        # PageExecutionEngine drop-in instead of the V3 ExecutionEngine. The helper
+        # honors _execution_engine_cache so the engine is reused across calls.
+        try:
+            from toolboxv2.mods.isaa.base.Agent.page.isaa import (
+                get_execution_engine_for,
+            )
+
+            page_engine = get_execution_engine_for(self)
+            if page_engine is not None:
+                return page_engine
+        except Exception as _e:  # page engine optional: never break V3 path
+            get_logger().debug(f"[Engine] page engine switch skipped: {_e}")
+
         # Check if we can reuse cached engine
         if self._execution_engine_cache is not None:
             # Update dynamic parameters

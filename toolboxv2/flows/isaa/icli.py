@@ -3709,6 +3709,7 @@ _help_text = {
 /agent spawn <name> <persona> - Create new agent
 /agent stop <name>         - Stop agent tasks
 /agent model <fast|complex> <name> - Change LLM model on the fly
+/agent engine <v3|page>    - Switch the execution engine at runtime
 /agent checkpoint <save|load> [name] - Manage state persistence
 /agent checkpoint help     - List information about additional args like path
 /agent load-all            - Initialize all agents from disk
@@ -3821,6 +3822,12 @@ F6 during execution       - Move agent to background
     "bind": "/bind <agent_a> <agent_b> - Bind agents",
     "teach": "/teach <agent> <skill_name> - Teach skill",
     "context": "/context stats - Show context stats",
+    "page": """/page                     - Page engine view (page+tail; needs engine=page)
+/page slots P1 P2 ...     - Show specific page slots
+/page tail [n]            - Last n tail items (default 5)
+/page boxes               - Task plan (P1) with box states
+/page context             - Native page+tail token breakdown (X-Ray)
+    """,
 
 
     # History Management
@@ -6659,6 +6666,7 @@ class ISAA_Host:
                     "fast": model_options,
                     "complex": model_options
                 },
+                "engine": {"v3": None, "page": None},
                 "checkpoint": checkpoint_structure,
                 "load-all": None,
                 "save-all": None,
@@ -6732,6 +6740,12 @@ class ISAA_Host:
             ))()),
             "/context": {
                 "stats": None,
+            },
+            "/page": {
+                "slots": {s: None for s in ("P1", "P2", "P3", "P4", "PS", "P5")},
+                "tail": None,
+                "boxes": None,
+                "context": None,
             },
             "/skill": {
                 "list": None,
@@ -7488,6 +7502,9 @@ class ISAA_Host:
         elif cmd == "/context":
             await self._cmd_context(args)
 
+        elif cmd == "/page":
+            await self._cmd_page(args)
+
         elif cmd == "/feature":
             await self._cmd_feature(args)
 
@@ -8060,6 +8077,56 @@ class ISAA_Host:
                 print_code_block(json_to_md(data_dict), "md")
             else:
                 print_status("Config not found on disk", "error")
+
+        elif action == "engine":
+            # Switch the execution engine at runtime between the valid values.
+            VALID = ("v3", "page")
+            target = self.active_agent_name
+            try:
+                agent = await self.isaa_tools.get_agent(target)
+            except Exception as e:
+                print_status(f"Could not load agent '{target}': {e}", "error")
+                return
+            current = getattr(agent.amd, "engine", "v3")
+            if len(args) < 2:
+                print_status(
+                    f"engine for '{target}': {current}  "
+                    f"(valid: {', '.join(VALID)}; usage: /agent engine <v3|page>)",
+                    "info",
+                )
+                return
+            new_engine = args[1].lower()
+            if new_engine not in VALID:
+                print_status(
+                    f"invalid engine '{new_engine}'. valid: {', '.join(VALID)}", "error"
+                )
+                return
+            if new_engine == current:
+                print_status(f"engine already '{current}'", "info")
+                return
+            # Close + drop any cached engine so the switch takes effect immediately.
+            old_cache = getattr(agent, "_execution_engine_cache", None)
+            if old_cache is not None:
+                close = getattr(old_cache, "close", None)
+                if callable(close):
+                    try:
+                        await old_cache.close()
+                    except Exception:
+                        pass
+                try:
+                    agent._execution_engine_cache = None
+                except Exception:
+                    pass
+            agent.amd.engine = new_engine
+            try:
+                await self._tool_update_agent_config(target, {"engine": new_engine})
+            except Exception as e:
+                print_status(f"(engine switched in memory; persist failed: {e})", "warning")
+            print_status(
+                f"engine for '{target}': {current} → {new_engine} "
+                f"(next run uses the {new_engine} engine)",
+                "success",
+            )
 
         else:
             print_status(f"Unknown agent action: {action}", "error")
@@ -13765,6 +13832,133 @@ class ISAA_Host:
             print_status(f"Error: {e}", "error")
             import traceback
             c_print(traceback.format_exc())
+
+    async def _cmd_page(self, args: list[str]):
+        """Inspect the Page engine (page+tail) for the active agent.
+
+        Named ``/page`` on purpose: ``/context`` is the V3 context X-Ray and must
+        not be shadowed.  Subcommands:
+            /page                 full page (all slots) + context breakdown
+            /page slots P1 P2 ... show specific slots
+            /page tail [n]        last n tail items
+            /page boxes           task plan (P1) with box states
+            /page context         native token breakdown (page+tail)
+        Requires the active agent to run on ``amd.engine == 'page'``.
+        """
+        try:
+            agent = await self.isaa_tools.get_agent(self.active_agent_name)
+        except Exception as e:
+            print_status(f"Could not load agent: {e}", "error")
+            return
+        if getattr(agent.amd, "engine", "v3") != "page":
+            print_status(
+                "active agent is not on the page engine. "
+                "switch with: /agent engine page",
+                "warning",
+            )
+            return
+        adapter = getattr(agent, "_execution_engine_cache", None)
+        engine = getattr(adapter, "engine", None)  # PageExecutionEngine.engine == PageEngine
+        if engine is None:
+            print_status(
+                "page engine not initialized yet — run a query first, then /page.",
+                "info",
+            )
+            return
+        from toolboxv2.mods.isaa.base.Agent.page.core import SLOTS
+        sid = self.active_session_id
+        sub = args[0].lower() if args else "page"
+
+        try:
+            if sub in ("page", "slots", "slot"):
+                slots = (
+                    [a for a in args[1:] if a in SLOTS]
+                    if sub in ("slots", "slot")
+                    else list(SLOTS)
+                )
+                s = engine.session(sid)
+                print_box_header(f"PAGE v{s.page['v']}  (session {sid})", "📄")
+                for k in slots:
+                    title, owner = SLOTS[k]
+                    if k == "P1":
+                        body = "\n".join(engine._box_line(b) for b in s.page["boxes"]) or "(empty)"
+                    else:
+                        body = s.page["slots"].get(k, "") or "(empty)"
+                    print_box_content(f"## {k} {title} [{owner}]", "info")
+                    print_box_content(body, "")
+                print_box_footer()
+                if sub == "page":
+                    self._print_page_breakdown(engine, sid)
+            elif sub == "tail":
+                n = int(args[1]) if len(args) > 1 and args[1].isdigit() else 5
+                s = engine.session(sid)
+                items = s.tail[-n:]
+                print_box_header(f"TAIL  ({len(s.tail)} items, last {len(items)})", "📜")
+                for idx, it in enumerate(items):
+                    label = len(s.tail) - (len(items) - 1 - idx)
+                    tools = ",".join(it["meta"].get("tools", [])) or it["meta"].get("status", "?")
+                    print_box_content(
+                        f"t{label}  #{it['id']}  {tools}  {it['tok']}tok  media={len(it['media'])}",
+                        "info",
+                    )
+                print_box_footer()
+            elif sub == "boxes":
+                s = engine.session(sid)
+                boxes = s.page["boxes"]
+                print_box_header("TASK PLAN (P1)", "☑")
+                if not boxes:
+                    print_box_content("(no boxes)", "")
+                for b in boxes:
+                    print_box_content(engine._box_line(b), "")
+                print_box_footer()
+            elif sub == "context":
+                self._print_page_breakdown(engine, sid)
+            else:
+                print_status(f"Unknown /page action: {sub}", "error")
+        except Exception as e:
+            print_status(f"/page error: {e}", "error")
+
+    def _print_page_breakdown(self, engine, session_id: str):
+        """Render the native page+tail token breakdown in the V3 CONTEXT X-RAY
+        categories, so the user sees everything the agent really receives
+        (System Prompt, Tools, Working History, Last Input, Media)."""
+        b = engine.context_breakdown(session_id)
+        x = b.get("xray", {})
+        total = x.get("Total", b["total"])
+        cap = x.get("cap", b["cap"])
+        pct = int(100 * total / cap) if cap else 0
+        print_box_header(
+            f"PAGE CONTEXT X-RAY  v{b['page_version']}  {total:,}/{cap:,} tok ({pct}%)",
+            "🔍",
+        )
+        # System prompt block + sub-rows
+        print_box_content(f"System Prompt Total        {x.get('System Prompt Total', 0):>8,} tok", "info")
+        print_box_content(f"  └ Base System Prompt      {x.get('Base System Prompt', 0):>8,} tok", "")
+        print_box_content(f"  └ Page Plan (P1)          {x.get('Page Plan (P1)', 0):>8,} tok", "")
+        print_box_content(f"  └ Page Helpers (P3)       {x.get('Page Helpers (P3)', 0):>8,} tok", "")
+        # Tools
+        print_box_content(
+            f"Active Tools               {x.get('Active Tools', 0):>8,} tok  "
+            f"({x.get('tool_count', 0)} defs)",
+            "info",
+        )
+        # History (working = page P2/P5/P4/PS + raw tail)
+        print_box_content(
+            f"History (Working)          {x.get('History (Working)', 0):>8,} tok  "
+            f"({x.get('w_msg_count', 0)} tail items)",
+            "info",
+        )
+        print_box_content(f"History (Permanent)        {x.get('History (Permanent)', 0):>8,} tok", "")
+        print_box_content(f"Last Input                 {x.get('Last Input', 0):>8,} tok", "info")
+        if x.get("Media", 0):
+            print_box_content(
+                f"Multimedia (Vision)        {x.get('Media', 0):>8,} tok  "
+                f"({x.get('media_count', 0)} images)",
+                "info",
+            )
+        print_separator()
+        print_box_content(f"TOTAL                      {total:>8,} / {cap:,} tok ({pct}%)", "info")
+        print_box_footer()
 
     # ─── ICli web runner ────────────────────────────────────────────────────────
 

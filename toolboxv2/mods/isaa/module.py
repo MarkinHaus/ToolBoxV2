@@ -2682,8 +2682,9 @@ class ShellSession:
 
 
 SHELL_SESSION_LABELS = ("A", "B", "C")
-
+import re
 # Regex-Guardrail: Blockiert typische Kill-Kommandos als UX-Leitsystem (Word-Boundaries)
+import re
 DANGEROUS_KILL_PATTERN = re.compile(
     r"\b(kill|pkill|killall|taskkill|tskill)\b|Stop-Process|\bGet-Process\b.*\|\s*Stop-Process",
     re.IGNORECASE
@@ -2726,7 +2727,7 @@ def shell_tool_function(
     - 'reset-session [LABEL]': Hard-kills a hanging session and all its child
       processes immediately, respawning a clean shell in-place on that label
       (e.g., 'reset-session' for current session, or 'reset-session A').
-    - 'list-processes': Lists all active sub-processes spawned across your
+    - 'list-processes': Lists all active subprocesses spawned across your
       sessions (returns PID, name, cmdline, status).
     - 'kill-process <PID>': Safely terminates a specific process and its entire
       subtree (e.g., 'kill-process 1234').
@@ -2759,7 +2760,7 @@ def shell_tool_function(
     # In-Place Reset der Session (z.B. "reset-session" oder "reset-session A")
     if command.startswith("reset-session"):
         parts = command.split()
-        target_label = parts[1].upper() if len(parts) > 1 else label
+        target_label = parts[1].upper() if len(parts) > 1 else session_id
         old_session = _session_store.pop(target_label, None)
         if old_session:
             old_session.terminate()

@@ -787,6 +787,9 @@ class AgentModelData(BaseModel):
     fast_llm_model: str = "openrouter/anthropic/claude-3-haiku"
     complex_llm_model: str = "openrouter/openai/gpt-4o"
     system_message: str = ""
+    # Execution engine selector: "v3" (default ExecutionEngine) or "page"
+    # (bounded page+tail PageExecutionEngine drop-in, see Agent/page/compat_v3.py).
+    engine: str = "v3"
     temperature: float = 0.7
     max_tokens: int = 2048
     max_input_tokens: int = 32768

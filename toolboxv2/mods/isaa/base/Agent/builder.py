@@ -150,6 +150,9 @@ class AgentConfig(BaseModel):
     max_parallel_tasks: int = 3
     verbose_logging: bool = False
     stream: bool = True
+    # Execution engine: "v3" (default ReAct ExecutionEngine) | "page" (bounded
+    # page+tail PageExecutionEngine drop-in). Propagated to AgentModelData.engine.
+    engine: str = "v3"
 
     # Persona and formatting
     active_persona: Optional[str] = None
@@ -299,6 +302,26 @@ class FlowAgentBuilder:
     def with_stream(self, enable: bool = True) -> "FlowAgentBuilder":
         """Enable/disable streaming"""
         self.config.stream = enable
+        return self
+
+    def with_engine(self, engine: str = "page") -> "FlowAgentBuilder":
+        """Select the execution engine.
+
+        - ``"v3"`` (default): the ReAct ``ExecutionEngine``.
+        - ``"page"``: the bounded page+tail ``PageExecutionEngine`` drop-in.
+
+        The agent's custom tools are available in BOTH engines (the page engine
+        wraps the same ``tool_manager``). Example::
+
+            agent = await (FlowAgentBuilder()
+                           .with_name("my_agent")
+                           .with_models("openrouter/...")
+                           .with_engine("page")
+                           .build())
+        """
+        if engine not in ("v3", "page"):
+            raise ValueError(f"engine must be 'v3' or 'page', got {engine!r}")
+        self.config.engine = engine
         return self
 
     def with_vfs_window_lines(self, lines: int) -> "FlowAgentBuilder":
@@ -1059,6 +1082,8 @@ class FlowAgentBuilder:
                     obs_config=self.config.obs,
                     web_config=self.config.web_config,
                 )
+                # Select the execution engine (v3 default | page drop-in).
+                amd.engine = getattr(self.config, "engine", "v3")
 
                 # Step 4: Create FlowAgent
                 agent = FlowAgent(

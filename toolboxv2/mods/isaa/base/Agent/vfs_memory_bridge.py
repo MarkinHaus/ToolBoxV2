@@ -23,6 +23,7 @@ import asyncio
 import gc
 import hashlib
 import json
+import threading
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -101,7 +102,7 @@ class _IndexProgressHub:
     different tasks/threads)."""
 
     _instance: "_IndexProgressHub | None" = None
-    _cls_lock = __import__("threading").Lock()
+    _cls_lock = threading.Lock()
 
     def __new__(cls):
         with cls._cls_lock:
@@ -111,8 +112,6 @@ class _IndexProgressHub:
         return cls._instance
 
     def _init(self):
-        import threading
-
         self._lock = threading.Lock()
         self._jobs: dict[str, tuple[int, int]] = {}  # key → (done, total)
         self._spinner = None
@@ -172,7 +171,7 @@ class _ProgressReporter:
     when supplied, bypasses the hub entirely and routes to that callback (UI)."""
 
     _counter = 0
-    _counter_lock = __import__("threading").Lock()
+    _counter_lock = threading.Lock()
 
     def __init__(self, label: str, total: int, cb=None, enabled: bool = True):
         self.total = max(0, int(total))
