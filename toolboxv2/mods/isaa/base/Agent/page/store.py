@@ -21,6 +21,10 @@ class Fts:
             self.db.execute("DELETE FROM d WHERE key = ?", (key,))
             self.db.execute("INSERT INTO d VALUES (?, ?)", (key, body))
 
+    def delete_prefix(self, prefix: str) -> None:
+        with self.db:
+            self.db.execute("DELETE FROM d WHERE key LIKE ?", (prefix + "%",))
+
     def search(self, query: str, k: int = 5, prefix: str = "") -> list[tuple[str, str]]:
         terms = re.findall(r"\w+", query or "")  # FTS5 query escaping, not relevance logic
         if not terms:
@@ -64,6 +68,20 @@ class DirStore:
 
     def search(self, query: str, k: int = 5, prefix: str = "") -> list[tuple[str, str]]:
         return self.index.search(query, k, prefix)
+
+    def delete_prefix(self, prefix: str) -> None:
+        """Delete every stored entry whose path starts with ``prefix`` (on disk
+        and from the Fts index). ``prefix`` is a store path like ``"<sid>/"``."""
+        base = self._path(prefix.rstrip("/")) if prefix.strip("/") else self.root
+        import shutil
+        if base.is_dir():
+            shutil.rmtree(base, ignore_errors=True)
+        elif base.exists():
+            try:
+                base.unlink()
+            except OSError:
+                pass
+        self.index.delete_prefix(prefix)
 
     def close(self) -> None:
         self.index.close()

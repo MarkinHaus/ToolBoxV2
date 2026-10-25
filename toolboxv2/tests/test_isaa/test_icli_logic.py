@@ -1216,3 +1216,198 @@ class TestStatusSymbols(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# =============================================================================
+# 13. ZenRenderer.render_context_step — the page-engine context_step card
+# =============================================================================
+
+class TestRenderContextStep(unittest.TestCase):
+    """The page engine emits a 'context_step' chunk (mode action/context_fold/
+    context_validate, iter, page_version, tokens_used/max). The CLI previously
+    fell through to 'unknown chunk'. These pin a dedicated card renderer."""
+
+    def _r(self):
+        from toolboxv2.mods.isaa.extras.zen.zen_renderer import ZenRenderer
+        return ZenRenderer(term_width=100)
+
+    def _plain(self, s: str) -> str:
+        # strip prompt_toolkit <style> tags for content assertions
+        import re
+        return re.sub(r"</?[^>]+>", "", s)
+
+    def test_method_exists(self):
+        self.assertTrue(hasattr(self._r(), "render_context_step"))
+
+    def test_renders_mode_and_iteration(self):
+        out = self._plain(self._r().render_context_step(
+            mode="context_fold", iteration=10, page_version=13,
+            tokens_used=2060, tokens_max=16000))
+        self.assertIn("context_fold", out)
+        self.assertIn("10", out)          # iteration
+        self.assertIn("13", out)          # page version
+
+    def test_renders_token_meter(self):
+        out = self._plain(self._r().render_context_step(
+            mode="action", iteration=3, page_version=5,
+            tokens_used=2060, tokens_max=16000))
+        self.assertIn("2,060", out)       # formatted tokens_used
+        self.assertIn("16,000", out)      # tokens_max
+        self.assertIn("12.9%", out)       # 2060/16000
+
+    def test_is_nonempty_string(self):
+        out = self._r().render_context_step(
+            mode="context_validate", iteration=1, page_version=1,
+            tokens_used=0, tokens_max=0)
+        self.assertIsInstance(out, str)
+        self.assertTrue(out.strip())
+
+    def test_handles_missing_tokens_gracefully(self):
+        # tokens_max 0 -> no division error, still a string
+        out = self._r().render_context_step(
+            mode="action", iteration=2, page_version=4,
+            tokens_used=0, tokens_max=0)
+        self.assertIsInstance(out, str)
+
+
+
+# =============================================================================
+# 14. build_tool_card — tool input/output as a JSON card (table + code)
+# =============================================================================
+
+class TestBuildToolCard(unittest.TestCase):
+    """Tool input (args) AND output (result) are rendered as a JSON card: a
+    small summary table of top-level keys + the full JSON via the internal
+    print_code_block. These pin the (testable) data builder."""
+
+    def _b(self):
+        from toolboxv2.flows.isaa.icli import build_tool_card
+        return build_tool_card
+
+    def test_dict_input_builds_rows_and_json(self):
+        card = self._b()("vfs_write", {"path": "/g.html", "content": "x" * 200},
+                         direction="in")
+        self.assertEqual(card["name"], "vfs_write")
+        self.assertEqual(card["direction"], "in")
+        keys = [r[0] for r in card["rows"]]
+        self.assertIn("path", keys)
+        self.assertIn("content", keys)
+        import json
+        parsed = json.loads(card["json"])
+        self.assertEqual(parsed["path"], "/g.html")
+        self.assertIn("\n", card["json"])          # pretty-printed
+
+    def test_long_values_are_previewed_in_rows_not_json(self):
+        card = self._b()("t", {"big": "y" * 500}, direction="in")
+        row = [r for r in card["rows"] if r[0] == "big"][0]
+        self.assertLessEqual(len(row[2]), 80)
+        import json
+        self.assertEqual(len(json.loads(card["json"])["big"]), 500)
+
+    def test_json_string_input_is_parsed(self):
+        card = self._b()("t", '{"a": 1, "b": 2}', direction="out")
+        self.assertEqual({r[0] for r in card["rows"]}, {"a", "b"})
+
+    def test_non_dict_result_wrapped(self):
+        card = self._b()("t", "plain text result", direction="out")
+        self.assertTrue(card["rows"])
+        self.assertIn("plain text result", card["json"])
+
+    def test_row_has_key_type_preview(self):
+        card = self._b()("t", {"n": 42, "flag": True}, direction="in")
+        by_key = {r[0]: r for r in card["rows"]}
+        self.assertEqual(by_key["n"][1], "int")
+        self.assertEqual(by_key["flag"][1], "bool")
+
+    def test_empty_data_is_safe(self):
+        card = self._b()("t", {}, direction="in")
+        self.assertEqual(card["rows"], [])
+        self.assertEqual(card["json"].strip(), "{}")
+
+
+# =============================================================================
+# 15. Human-readable tool card — real newlines, indented blocks, no escaped \n
+# =============================================================================
+
+class TestToolCardReadable(unittest.TestCase):
+    """The card must present values as human-readable text blocks: real line
+    breaks (not literal \\n), full (untruncated) multiline values, indentation
+    and per-field type — NOT an escaped json.dumps string."""
+
+    def _b(self):
+        from toolboxv2.flows.isaa.icli import build_tool_card
+        return build_tool_card
+
+    def _lines(self):
+        from toolboxv2.flows.isaa.icli import render_tool_card_lines
+        return render_tool_card_lines
+
+    def _plain(self, s: str) -> str:
+        import re
+        return re.sub(r"</?[^>]+>", "", s)
+
+    # ---- data model: fields ------------------------------------------------
+    def test_fields_present_with_key_type_value(self):
+        card = self._b()("t", {"n": 42, "msg": "hello"}, direction="in")
+        self.assertIn("fields", card)
+        by = {f["key"]: f for f in card["fields"]}
+        self.assertEqual(by["n"]["type"], "int")
+        self.assertEqual(by["msg"]["value"], "hello")
+
+    def test_multiline_value_kept_in_full_with_real_newlines(self):
+        code = "import re\np = r\"C:\\x\"\ntxt = open(p).read()\n"
+        card = self._b()("code_run", {"code": code}, direction="in")
+        f = [f for f in card["fields"] if f["key"] == "code"][0]
+        self.assertTrue(f["multiline"])
+        # full value, with REAL newlines (not the 2-char escape backslash-n)
+        self.assertEqual(f["value"], code)
+        self.assertIn("\n", f["value"])
+        self.assertNotIn("\\n", f["value"])
+
+    def test_scalar_is_not_multiline(self):
+        card = self._b()("t", {"flag": True, "n": 7}, direction="in")
+        by = {f["key"]: f for f in card["fields"]}
+        self.assertFalse(by["flag"]["multiline"])
+        self.assertFalse(by["n"]["multiline"])
+
+    # ---- renderer: no escaped \n, real breaks ------------------------------
+    def test_renderer_emits_real_newlines_not_escaped(self):
+        code = "line one\nline two\nline three"
+        card = self._b()("code_run", {"code": code}, direction="in")
+        lines = self._lines()(card)
+        blob = self._plain("\n".join(lines))
+        self.assertIn("line one", blob)
+        self.assertIn("line two", blob)
+        # the literal two-char escape must NOT appear in the rendered output
+        self.assertNotIn("\\n", blob)
+        # each code line is on its own output line
+        self.assertTrue(any(l.strip().endswith("line two") for l in self._plain("\n".join(lines)).split("\n")))
+
+    def test_renderer_shows_key_and_type(self):
+        card = self._b()("t", {"path": "/g.html"}, direction="in")
+        blob = self._plain("\n".join(self._lines()(card)))
+        self.assertIn("path", blob)
+        self.assertIn("str", blob)
+        self.assertIn("/g.html", blob)
+
+    def test_renderer_header_has_name_and_direction(self):
+        card = self._b()("code_run", {"x": 1}, direction="out")
+        blob = self._plain("\n".join(self._lines()(card)))
+        self.assertIn("code_run", blob)
+        self.assertIn("OUTPUT", blob)
+
+    def test_renderer_empty_is_safe(self):
+        card = self._b()("t", {}, direction="in")
+        lines = self._lines()(card)
+        self.assertIsInstance(lines, list)
+        # still shows a header, no crash
+        self.assertTrue(any("t" in self._plain(l) for l in lines))
+
+    def test_long_scalar_wraps_not_squashes(self):
+        # a single very long (no-newline) string should wrap across lines,
+        # never be dumped as one giant escaped token
+        card = self._b()("t", {"url": "x" * 300}, direction="in")
+        lines = self._lines()(card)
+        blob = self._plain("\n".join(lines))
+        self.assertNotIn("\\n", blob)
+        self.assertIn("x" * 20, blob)   # content present

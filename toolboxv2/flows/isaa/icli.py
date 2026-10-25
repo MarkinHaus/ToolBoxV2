@@ -1412,6 +1412,175 @@ def print_code_block(code: str, language: str = "text", width: int = 76, show_li
         else:
             c_print(HTML(f"  {line}"))
 
+def build_tool_card(name: str, data, direction: str = "in") -> dict:
+    """Build a testable 'JSON card' model for a tool's input or output.
+
+    Returns ``{name, direction, rows, json}`` where:
+      * ``rows``  = list of ``(key, type, preview)`` for each top-level key — the
+                    summary table shown above the code block.
+      * ``json``  = the full, pretty-printed JSON (never truncated) for the
+                    internal ``print_code_block`` renderer.
+
+    Accepts a dict, a JSON string, or any scalar/text (wrapped as a single
+    ``value`` entry). ``direction`` is ``"in"`` (tool args) or ``"out"`` (result).
+    """
+    # Normalize into a dict we can both tabulate and pretty-print.
+    parsed = data
+    if isinstance(parsed, (bytes, bytearray)):
+        parsed = parsed.decode("utf-8", "replace")
+    if isinstance(parsed, str):
+        s = parsed.strip()
+        if s[:1] in ("{", "[") :
+            try:
+                parsed = json.loads(s)
+            except (json.JSONDecodeError, ValueError):
+                pass  # keep as string
+
+    if isinstance(parsed, dict):
+        obj = parsed
+    elif isinstance(parsed, list):
+        obj = {str(i): v for i, v in enumerate(parsed)}
+    else:
+        obj = {} if parsed is None or parsed == "" else {"value": parsed}
+
+    def _preview(v) -> str:
+        if isinstance(v, (dict, list)):
+            try:
+                t = json.dumps(v, ensure_ascii=False)
+            except (TypeError, ValueError):
+                t = str(v)
+        else:
+            t = str(v)
+        t = t.replace("\n", " ")
+        return t[:77] + "..." if len(t) > 80 else t
+
+    def _display(v) -> str:
+        """The value as human-readable text WITH real newlines (never escaped).
+
+        Dicts/lists are pretty-printed; scalars/strings are returned verbatim so
+        embedded ``\\n`` become actual line breaks in the rendered block."""
+        if isinstance(v, (dict, list)):
+            try:
+                return json.dumps(v, indent=2, ensure_ascii=False, default=str)
+            except (TypeError, ValueError):
+                return str(v)
+        return v if isinstance(v, str) else str(v)
+
+    rows: list[tuple[str, str, str]] = [
+        (k, type(v).__name__, _preview(v)) for k, v in obj.items()
+    ]
+
+    fields: list[dict] = []
+    for k, v in obj.items():
+        disp = _display(v)
+        fields.append({
+            "key": k,
+            "type": type(v).__name__,
+            "value": disp,
+            "multiline": ("\n" in disp) or (isinstance(v, (dict, list))),
+        })
+
+    try:
+        pretty = json.dumps(obj, indent=2, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        pretty = str(obj)
+
+    return {"name": name, "direction": direction,
+            "rows": rows, "fields": fields, "json": pretty}
+
+
+def render_tool_card_lines(card: dict, duration_ms: float | None = None,
+                           width: int = 100) -> list[str]:
+    """Build the human-readable tool card as a list of prompt_toolkit HTML lines.
+
+    Pure (no printing) so it is unit-testable. Each top-level field becomes a
+    small block:
+
+        ▸ key  <type>
+          <value, with REAL line breaks, indented, long lines wrapped>
+
+    Multiline / structured values are shown as an indented text block with the
+    original newlines preserved (never the literal ``\\n`` escape, never a single
+    squashed line). Scalars are shown inline.
+    """
+    import textwrap as _tw
+
+    name = card.get("name", "tool")
+    direction = card.get("direction", "in")
+    fields = card.get("fields")
+    if fields is None:  # tolerate an old-model card
+        fields = [{"key": k, "type": t, "value": p, "multiline": "\n" in str(p)}
+                  for k, t, p in card.get("rows", [])]
+
+    if direction == "out":
+        arrow, color, label = "\u2190", PTColors.GREEN, "OUTPUT"
+    else:
+        arrow, color, label = "\u2192", PTColors.CYAN, "INPUT"
+
+    dur = ""
+    if duration_ms is not None:
+        try:
+            dur = f"  <style fg='{PTColors.GREY}'>({float(duration_ms):.0f}ms)</style>"
+        except (TypeError, ValueError):
+            dur = ""
+
+    lines: list[str] = [
+        "",
+        f"  <style fg='{color}'>{arrow} {label}</style> "
+        f"<style fg='{PTColors.BRIGHT_WHITE}'><b>{esc(str(name))}</b></style>{dur}",
+    ]
+    if not fields:
+        lines.append(f"    <style fg='{PTColors.GREY}'>(empty)</style>")
+        return lines
+
+    inner_w = max(20, width - 6)        # wrap width for value text
+    for f in fields:
+        key = esc(str(f.get("key", "")))
+        typ = esc(str(f.get("type", "")))
+        val = f.get("value", "")
+        if not isinstance(val, str):
+            val = str(val)
+
+        # Field header: ▸ key  <type>
+        lines.append(
+            f"  <style fg='{color}'>\u25b8</style> "
+            f"<style fg='{PTColors.BRIGHT_CYAN}'><b>{key}</b></style>  "
+            f"<style fg='{PTColors.GREY}'>&lt;{typ}&gt;</style>"
+        )
+
+        is_block = f.get("multiline") or len(val) > (inner_w)
+        if not is_block:
+            # inline scalar
+            lines.append(f"      <style fg='{PTColors.WHITE}'>{esc(val)}</style>")
+            continue
+
+        # multiline / long value -> indented block with REAL newlines + wrapping
+        for raw_line in val.split("\n"):
+            if raw_line == "":
+                lines.append("")
+                continue
+            wrapped = _tw.wrap(raw_line, width=inner_w,
+                               break_long_words=True, break_on_hyphens=False,
+                               replace_whitespace=False, drop_whitespace=False) or [""]
+            for wl in wrapped:
+                lines.append(
+                    f"      <style fg='{PTColors.GREY}'>\u2502</style> "
+                    f"<style fg='{PTColors.WHITE}'>{esc(wl)}</style>"
+                )
+    return lines
+
+
+def _print_tool_card(card: dict, duration_ms: float | None = None) -> None:
+    """Print a tool input/output card as a human-readable block (real newlines,
+    indentation, colored labels) — not an escaped json.dumps string."""
+    try:
+        width = os.get_terminal_size().columns
+    except OSError:
+        width = 100
+    for line in render_tool_card_lines(card, duration_ms=duration_ms, width=width):
+        c_print(HTML(line))
+
+
 def _pct(part: int, total: int) -> str:
     return f"{part / total * 100:.1f}%" if total else "0.0%"
 
@@ -4597,16 +4766,16 @@ class ISAA_Host:
 
                 # -- Tool start ----------------------------------------------------
                 elif chunk_type == "tool_start":
-                    c_print(ANSI(renderer.render_tool_start(
-                        name=chunk.get("name", "unknown"),
-                        args=chunk.get("args")
-                    )))
+                    _print_tool_card(
+                        build_tool_card(chunk.get("name", "unknown"),
+                                        chunk.get("args"), direction="in"))
 
                 # -- Tool result ---------------------------------------------------
                 elif chunk_type == "tool_result":
-                    result = chunk.get("result", "")
-                    duration = chunk.get("duration_ms")
-                    c_print(ANSI(renderer.render_tool_result(result, duration)))
+                    _print_tool_card(
+                        build_tool_card(chunk.get("name", "tool"),
+                                        chunk.get("result", ""), direction="out"),
+                        duration_ms=chunk.get("duration_ms"))
 
                 # -- Tool error ----------------------------------------------------
                 elif chunk_type == "tool_error":
@@ -4651,6 +4820,16 @@ class ISAA_Host:
                     c_print(ANSI(renderer.render_iteration_start(
                         iteration=chunk.get("iteration", 0),
                         max_iter=chunk.get("max_iter", -1),
+                        tokens_used=chunk.get("tokens_used", 0),
+                        tokens_max=chunk.get("tokens_max", 0),
+                    )))
+
+                # -- Context step (page engine: action / fold / validate) ----------
+                elif chunk_type == "context_step":
+                    c_print(ANSI(renderer.render_context_step(
+                        mode=chunk.get("mode", "action"),
+                        iteration=chunk.get("iter", chunk.get("iteration", 0)),
+                        page_version=chunk.get("page_version", 0),
                         tokens_used=chunk.get("tokens_used", 0),
                         tokens_max=chunk.get("tokens_max", 0),
                     )))
@@ -8196,18 +8375,38 @@ class ISAA_Host:
             except Exception as e:
                 print_status(f"Error accessing session: {e}", "error")
                 return
-            session.clear_history()
-            # ── NEU: Engine-ctx für diese Session aufräumen ───────
+
+            # Only the ACTIVE engine is cleared. In page mode the context lives
+            # in the page (state.json page+tail+offloaded refs), NOT in the V3
+            # chat history — so clear the page engine via its own API. In V3 mode
+            # clear the chat history as before.
+            engine = None
             try:
                 engine = agent._get_execution_engine()
-                run_id = engine._session_last_run.pop(self.active_session_id, None)
-                if run_id:
-                    engine._active_executions.pop(run_id, None)
             except Exception:
-                pass
+                engine = getattr(agent, "_execution_engine_cache", None)
+
+            cleared_page = False
+            if engine is not None and hasattr(engine, "clear_session"):
+                try:
+                    engine.clear_session(self.active_session_id)
+                    cleared_page = True
+                except Exception as e:
+                    print_status(f"Page clear failed: {e}", "error")
+                    return
+            else:
+                # V3 path: clear the conversation history + the engine's run refs.
+                session.clear_history()
+                try:
+                    run_id = engine._session_last_run.pop(self.active_session_id, None)
+                    if run_id:
+                        engine._active_executions.pop(run_id, None)
+                except Exception:
+                    pass
 
             self._save_state()
-            print_status(f"History + context cleared for '{self.active_session_id}'.", "success")
+            where = "page context" if cleared_page else "history + context"
+            print_status(f"{where} cleared for '{self.active_session_id}'.", "success")
         elif action == "working":
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
             engine = agent._execution_engine_cache

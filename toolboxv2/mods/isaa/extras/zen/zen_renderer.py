@@ -1827,6 +1827,44 @@ class ZenRenderer:
 
         return "\n".join(lines)
 
+    def render_context_step(self, mode: str = "", iteration: int = 0,
+                            page_version: int = 0, tokens_used: int = 0,
+                            tokens_max: int = 0, **_ignored) -> str:
+        """Page-engine context_step card.
+
+        A page run reports its internal steps as ``context_step`` chunks:
+        ``mode`` is one of ``action`` / ``context_fold`` / ``context_validate``,
+        plus the current ``page_version`` and the live context fill
+        (``tokens_used`` / ``tokens_max``). Rendered as a compact card with a
+        mode badge, the page version and a token meter — so it no longer falls
+        through to the 'unknown chunk' path."""
+        mode = str(mode or "action")
+        # Mode -> color + glyph
+        mode_style = {
+            "action":           (T.PRIMARY, "\u2699"),   # gear
+            "context_fold":     (T.WARNING, "\u21ba"),   # ccw arrow (compress)
+            "context_validate": (T.INFO, "\u2713"),      # check
+        }
+        color, glyph = mode_style.get(mode, (T.FG_MUTED, "\u2022"))
+
+        badge = UI.badge(f" {glyph} {mode} ", bg_color=color, fg_color=T.BG)
+        it = Style().fg(*T.FG_MUTED).text(f"iter {iteration}")
+        pv = Style().fg(*T.FG_DIM).text(f"page v{page_version}")
+        header = f"  {badge}  {it}  {pv}"
+
+        lines = ["", header]
+
+        if tokens_max > 0:
+            meter = UI.meter(tokens_used, tokens_max, width=32, filled_color=color)
+            pct = tokens_used / tokens_max * 100
+            lbl = Style().fg(*T.FG_MUTED).text(
+                f"ctx {tokens_used:,}/{tokens_max:,} ({pct:.1f}%)")
+            lines.append(f"  {Style.muted(T.CORNER_BL + T.HORIZ)} {meter}  {lbl}")
+        else:
+            lines.append(f"  {Style.muted(T.CORNER_BL + T.HORIZ)} "
+                         f"{Style().fg(*T.FG_MUTED).text('ctx n/a')}")
+        return "\n".join(lines)
+
     def render_iteration_start(self, iteration: int, max_iter: int,
                                tokens_used: int = 0, tokens_max: int = 0) -> str:
         """Iteration header. Der Meter zeigt die ECHTE Context-Fuelle

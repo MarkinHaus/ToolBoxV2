@@ -309,14 +309,31 @@ class ObservabilityLayer:
         # _active_run_id ContextVar (set in begin_run). This makes parallel
         # sub-agents safe: each run has its own _RunSlot.
         self._slots: dict[str, _RunSlot] = {}
+        # Context-independent fallback anchor. When a run is driven from a
+        # DIFFERENT asyncio task than the one that recorded it (e.g. the page
+        # engine: begin_run runs in the emit callback task, while the FlowAgent's
+        # record_llm_* fire inside a separate streaming task where the
+        # _active_run_id ContextVar is NOT propagated), _slot() would resolve to
+        # None and the records would be dropped. A sticky run id lets those
+        # records still find their slot. Only used as a last-resort fallback.
+        self._sticky_run_id: str | None = None
+
+    def set_sticky_run(self, run_id: str | None):
+        """Set/clear the context-independent fallback run (see _slot)."""
+        self._sticky_run_id = run_id
 
     def _slot(self, run_id: str | None = None) -> _RunSlot | None:
         """Return the slot for the active run (or a given run_id).
 
         The ONE uniform line every record_* method starts with. Returns None
         when no run is active in this context, so callers guard with `if slot`.
+
+        Resolution order: explicit run_id -> _active_run_id ContextVar ->
+        _sticky_run_id fallback (for cross-task drivers like the page engine).
         """
         rid = run_id if run_id is not None else _active_run_id.get()
+        if rid is None:
+            rid = self._sticky_run_id
         if rid is None:
             return None
         return self._slots.get(rid)
@@ -582,6 +599,19 @@ class ObservabilityLayer:
             except RuntimeError:
                 pass  # no event loop
 
+        slot.step = None
+
+    def discard_step(self):
+        """Drop the currently open step WITHOUT appending it to the run.
+
+        Used when a step was pre-opened to catch an upcoming LLM record but no
+        record arrived (e.g. a trailing pre-opened step at run end). Unlike
+        ``end_step`` this does NOT append to ``run.steps``, so it never inflates
+        ``total_iterations``. Safe no-op when no step is open.
+        """
+        slot = self._slot()
+        if slot is None or slot.step is None:
+            return
         slot.step = None
 
     # =========================================================================

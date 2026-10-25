@@ -508,6 +508,51 @@ class PageEngine:
             self.sessions[sid] = s
         return self.sessions[sid]
 
+    def clear_session(self, sid: str) -> None:
+        """Reset ONE session's page context to empty.
+
+        Clears the committed page + working copy + tail, resets ``next_id``,
+        drops helpers/notices/evidence, atomically rewrites ``state.json``, and
+        deletes the offloaded refs (``<sid>/tail/*.json`` + summaries) from the
+        store. Only this session is touched. Safe for an unknown session.
+
+        This is the page-engine counterpart to V3's ``session.clear_history`` —
+        it clears what the PAGE run actually reads as context.
+        """
+        s = self.session(sid)
+        # Stop any background fold so it cannot re-commit stale state after us.
+        bg = getattr(s, "bg", None)
+        if bg is not None and not bg.done():
+            bg.cancel()
+        s.bg = None
+        prep = getattr(s, "prep", None)
+        if prep is not None and not prep.done():
+            prep.cancel()
+        s.prep = None
+
+        # Reset in-memory state to a fresh, empty page.
+        s.page = _empty_page()
+        s.work = copy.deepcopy(s.page)
+        s.tail = []
+        s.next_id = 1
+        s.helpers = {}
+        s.notices = []
+        s.evidence = {}
+        s.steer_pending = []
+        s.overrun = 0
+        s.gate_fired = False
+        s.rendered = (-1, "", 0)
+        self._save(s)
+
+        # Delete offloaded refs for this session (tail items + summaries).
+        delete_prefix = getattr(self.store, "delete_prefix", None)
+        if callable(delete_prefix):
+            try:
+                delete_prefix(f"{sid}/")
+            except Exception as e:  # never let cleanup break the clear
+                self.emit("clear_session", session=sid, warn=f"ref cleanup: {e}")
+        self.emit("clear_session", session=sid)
+
     async def close(self) -> None:
         for s in self.sessions.values():
             await self._cancel_bg(s)
@@ -1496,7 +1541,13 @@ class PageEngine:
         if ref:
             if not ref.startswith(f"{s.id}/"):
                 return Result("error: ref belongs to another session", False)
-            text = self.store.get(ref).decode("utf-8", "replace")
+            raw = self.store.get(ref)
+            if not raw:
+                # The ref is no longer retrievable (never persisted, or lost on a
+                # previous run). Surface a clean error instead of an empty hit or
+                # a raw FileNotFoundError from the store.
+                return Result(f"error: recall ref {ref!r} not found (no stored content)", False)
+            text = raw.decode("utf-8", "replace")
             n = self.cfg.inline_chars
             more = (
                 f"\n[more: recall(ref={ref!r}, offset={offset + n})]"

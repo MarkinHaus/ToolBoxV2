@@ -30,6 +30,25 @@ from .store import DirStore, Fts, JsonlEvents
 logger = logging.getLogger(__name__)
 
 
+def _delta_text(item) -> str:
+    """Visible text from a STREAMING DELTA chunk only.
+
+    Unlike ``_chunk_text`` this deliberately IGNORES a terminal/aggregated
+    ``ModelResponse`` (``.choices[0].message.content``): during streaming the
+    deltas already carried the full text, so reading the final object's content
+    again would duplicate the whole answer. Returns "" for a non-delta object.
+    """
+    if isinstance(item, str):
+        return item
+    try:
+        delta = item.choices[0].delta
+        if getattr(delta, "content", None):
+            return delta.content
+    except (AttributeError, IndexError):
+        pass
+    return ""
+
+
 def _chunk_text(item) -> str:
     """Extrahiert sichtbaren Text aus einem Stream-Chunk oder ModelResponse."""
     # str
@@ -192,11 +211,14 @@ class FlowAgentLLM:
                 if item:
                     yield item
                 continue
-            # Nicht-String: entweder ein Text tragendes Chunk-Objekt oder das finale Result
-            text = _chunk_text(item)
+            # Non-string item: either a streaming DELTA chunk (contributes text)
+            # or the terminal aggregated ModelResponse (full content + tool_calls).
+            # Only DELTA text may be yielded — the terminal object's full content
+            # would DUPLICATE the whole answer (deltas already streamed it), so we
+            # take ONLY its tool_calls from it. (Bug: "Hallo" -> "HalloHallo".)
+            text = _delta_text(item)
             if text:
                 yield text
-            # Tool-Calls aus dem (finalen) Objekt sammeln
             calls = _extract_tool_calls(item)
             if calls:
                 final_calls = calls
@@ -254,12 +276,21 @@ class VfsStore:
     - mkdir() ohne parents=True aufrufen wenn der Parent schon existiert
     """
 
-    def __init__(self, agent, bytes_root: Path):
+    def __init__(self, agent, bytes_root: Path, root: Path | None = None):
         self.agent = agent
         self.bytes = DirStore(bytes_root)
+        # Parent dir that holds the per-session folders (where state.json lives).
+        # Each session dir is mounted at /.page/<sid> with auto_sync so offloaded
+        # tail/summary entries persist on disk next to state.json and survive a
+        # restart (otherwise /.page/... lives only in-memory and recall fails
+        # after the process exits with a FileNotFoundError on the bytes store).
+        self.root = Path(root) if root is not None else None
+        self._mounted: set[str] = set()
 
     async def ensure(self, sid: str) -> None:
-        """Pre-create + initialize the session's VFS on the event loop.
+        """Pre-create + initialize the session's VFS on the event loop, and
+        mount the session's on-disk dir at /.page/<sid> for write-through
+        persistence.
 
         ``session_manager.get_or_create`` is an async method, but the Store API
         (``put``/``get``/``search``) is synchronous and runs deep inside the
@@ -273,6 +304,35 @@ class VfsStore:
             await sm.get_or_create(sid)
         except Exception as e:  # pragma: no cover - env dependent
             logger.warning("VfsStore.ensure(%s) failed: %s", sid, e)
+            return
+        self._mount_session(sid)
+
+    def _mount_session(self, sid: str) -> None:
+        """Mount root/<sid> at /.page/<sid> (auto_sync) once, for persistence."""
+        if self.root is None or sid in self._mounted:
+            return
+        vfs = self._vfs(sid)
+        if vfs is None or not hasattr(vfs, "mount"):
+            return
+        local = self.root / sid
+        try:
+            local.mkdir(parents=True, exist_ok=True)
+        except Exception as e:  # pragma: no cover - env dependent
+            logger.warning("VfsStore mount dir create failed for %s: %s", sid, e)
+            return
+        vfs_path = f"/.page/{sid}"
+        existing = getattr(vfs, "mounts", {})
+        if isinstance(existing, dict) and vfs_path in existing:
+            self._mounted.add(sid)
+            return
+        try:
+            result = vfs.mount(str(local), vfs_path=vfs_path, auto_sync=True)
+            if isinstance(result, dict) and result.get("success") is False:
+                # Already mounted or benign failure: still mark to avoid retrying.
+                logger.debug("VfsStore.mount(%s) note: %s", sid, result.get("error"))
+            self._mounted.add(sid)
+        except Exception as e:  # pragma: no cover - env dependent
+            logger.warning("VfsStore.mount(%s) failed: %s", sid, e)
 
     def _vfs(self, sid: str):
         """Resolve an already-initialized session's VFS synchronously.
@@ -320,8 +380,56 @@ class VfsStore:
             if result.get("success"):
                 content = result.get("content", "")
                 return content.encode() if isinstance(content, str) else content
-        # Fallback auf DirStore (Bytes, nicht aufgewärmt, oder nicht im VFS)
-        return self.bytes.get(path)
+        # Fallback auf DirStore (Bytes, nicht aufgewärmt, oder nicht im VFS).
+        # Ein fehlender Ref darf NICHT als FileNotFoundError durchschlagen
+        # (sonst crasht recall mit rohem Traceback) -> leere Bytes zurückgeben,
+        # der Aufrufer meldet das als sauberen Fehler.
+        try:
+            return self.bytes.get(path)
+        except FileNotFoundError:
+            logger.debug("VfsStore.get miss (not in VFS, not on disk): %s", path)
+            return b""
+        except Exception as e:  # pragma: no cover - env dependent
+            logger.warning("VfsStore.get failed for %s: %s", path, e)
+            return b""
+
+    def delete_prefix(self, prefix: str) -> str:
+        """Delete every entry under ``prefix`` (store path like ``"<sid>/"``).
+
+        Removes the subtree from the VFS, from the bytes DirStore, and from the
+        physical mounted session dir so offloaded tail/summary entries are gone
+        for good (used by ``PageEngine.clear_session``). Fail-safe."""
+        sid, _, rest = prefix.partition("/")
+        vfs = self._vfs(sid)
+        vpath = f"/.page/{sid}/{rest}".rstrip("/")
+        if vfs is not None:
+            try:
+                rmdir = getattr(vfs, "rmdir", None)
+                if callable(rmdir):
+                    rmdir(vpath, force=True)
+                else:
+                    vfs.delete(vpath)
+            except Exception as e:  # pragma: no cover - env dependent
+                logger.debug("VfsStore.delete_prefix vfs rm %s: %s", vpath, e)
+        # bytes DirStore
+        dp = getattr(self.bytes, "delete_prefix", None)
+        if callable(dp):
+            try:
+                dp(prefix)
+            except Exception as e:  # pragma: no cover
+                logger.debug("VfsStore.delete_prefix bytes %s: %s", prefix, e)
+        # physical mounted dir (root/<sid>/<rest>)
+        if self.root is not None:
+            import shutil
+            target = self.root / sid / rest.rstrip("/") if rest.strip("/") else self.root / sid
+            try:
+                if target.is_dir():
+                    shutil.rmtree(target, ignore_errors=True)
+                elif target.exists():
+                    target.unlink()
+            except Exception as e:  # pragma: no cover
+                logger.debug("VfsStore.delete_prefix disk %s: %s", target, e)
+        return prefix
 
     def search(self, query: str, k: int, prefix: str = "") -> list[tuple[str, str]]:
         try:
@@ -598,6 +706,210 @@ class AuditEventSink:
             close()
 
 
+# ================================================================== obs bridge
+# Page events the obs bridge consumes. Everything else is forwarded to inner
+# only. High-frequency stream chunks (content/content_chunk) are ignored here —
+# obs records one step per completed LLM call (the ``llm_call`` event), which
+# already carries ms + usage.
+def _usage_tokens(usage: dict) -> tuple[int, int]:
+    """Read (tokens_in, tokens_out) from a usage dict, tolerant of key names."""
+    if not isinstance(usage, dict):
+        return 0, 0
+    tin = usage.get("prompt_tokens", usage.get("tokens_in", usage.get("input_tokens", 0)))
+    tout = usage.get("completion_tokens", usage.get("tokens_out", usage.get("output_tokens", 0)))
+    try:
+        return int(tin or 0), int(tout or 0)
+    except (TypeError, ValueError):
+        return 0, 0
+
+
+class ObsEventSink:
+    """Compose an existing ``on_event`` sink with a native ``ObservabilityLayer``.
+
+    Forwards EVERY event to ``inner`` unchanged, and in addition drives obs so
+    page runs land in the native observability pipeline exactly like V3 runs —
+    WITHOUT touching ``core.py``.
+
+    KEY INSIGHT (verified against a live run): ``FlowAgent.a_run_llm_completion``
+    ALREADY records the real token usage onto the SAME ``agent.obs`` via
+    ``record_llm_start`` / ``record_llm_end`` — and it fires those calls just
+    BEFORE the engine emits the ``llm_call`` event. obs only attaches an LLM
+    record to a step if a step is OPEN at that moment. Therefore the sink must
+    NOT write tokens itself (that would overwrite the real record with zero).
+    Instead it keeps the page RUN + STEP structure so the FlowAgent's tokens
+    land in the right step:
+
+      run_begin   -> begin_run(run_id, query, session_id) + open a step
+      llm_call    -> end_step() (the FlowAgent already filled it) + open the
+                     next step (to catch the next FlowAgent LLM call)
+      page_commit -> record_vfs_delta into the open step (page update as a diff;
+                     the initial "init" commit is skipped)
+      tool_start  -> record_tool_start(name)
+      tool_result -> record_tool_end(name, status)
+      run_end     -> discard the trailing (unused, pre-opened) step + end_run
+
+    obs is ContextVar-based; page runs stream in a separate async task, so the
+    sink re-asserts the active run id before each obs call (``_reassert``).
+    Fail-safe (obs errors never break the engine), no-op when obs is None,
+    inner always receives every event, events with no active run are ignored.
+    """
+
+    def __init__(self, inner, obs, *, agent_name: str = "page"):
+        self._inner = inner or (lambda type, **data: None)
+        self._obs = obs
+        self._agent = agent_name
+        self._iter = 0           # per-run step counter
+        self._active = False     # True between run_begin and run_end
+        self._run_id = ""        # the run obs is tracking for this stream
+        self._step_open = False  # True while a step is open (pre-opened for the FlowAgent)
+
+    def _reassert(self) -> None:
+        """Re-point obs at the run we are tracking.
+
+        obs resolves the active run via a ContextVar that ``begin_run`` sets.
+        Page runs stream inside a separate asyncio task, so later events can fire
+        in a DIFFERENT context than ``run_begin`` — then obs would silently drop
+        them. We re-assert the active run id before every obs call: via the test
+        hook ``set_active`` if present, and via the real
+        ``observability._active_run_id`` ContextVar when available.
+        """
+        if not self._run_id:
+            return
+        setter = getattr(self._obs, "set_active", None)
+        if callable(setter):
+            try:
+                setter(self._run_id)
+            except Exception:
+                pass
+        sticky = getattr(self._obs, "set_sticky_run", None)
+        if callable(sticky):
+            try:
+                sticky(self._run_id)
+            except Exception:
+                pass
+        try:
+            from toolboxv2.mods.isaa.base.Agent.observability import _active_run_id
+            _active_run_id.set(self._run_id)
+        except Exception:
+            pass
+
+    def _open_step(self) -> None:
+        """Open the next step so the FlowAgent's upcoming record_llm_* attaches."""
+        self._iter += 1
+        self._reassert()
+        self._obs.begin_step(self._iter)
+        self._step_open = True
+
+    def _close_step(self) -> None:
+        if not self._step_open:
+            return
+        self._reassert()
+        self._obs.end_step()
+        self._step_open = False
+
+    def _discard_step(self) -> None:
+        if not self._step_open:
+            return
+        self._reassert()
+        discard = getattr(self._obs, "discard_step", None)
+        if callable(discard):
+            discard()
+        else:  # pragma: no cover - fallback for older obs without discard_step
+            self._obs.end_step()
+        self._step_open = False
+
+    def __call__(self, type: str, **data) -> None:
+        try:
+            self._inner(type, **data)
+        finally:
+            if self._obs is None:
+                return
+            try:
+                self._dispatch(type, data)
+            except Exception as e:  # pragma: no cover - obs must never break the run
+                logger.debug("page obs bridge failed for %s: %s", type, e)
+
+    def _dispatch(self, type: str, data: dict) -> None:
+        if type == "run_begin":
+            self._iter = 0
+            self._active = True
+            self._step_open = False
+            self._run_id = str(data.get("run") or data.get("run_id") or "page")
+            self._obs.begin_run(
+                run_id=self._run_id,
+                query=data.get("query", ""),
+                session_id=data.get("session", data.get("session_id", "")),
+            )
+            # Pre-open a step so the FlowAgent's first record_llm_* lands in it.
+            self._open_step()
+        elif type == "llm_call":
+            if not self._active:
+                return
+            # The FlowAgent already filled the open step with the real tokens
+            # (it fired record_llm_start/end just before this event). Close it,
+            # then open the next step to catch a possible next LLM call.
+            self._close_step()
+            self._open_step()
+        elif type == "page_commit":
+            # A page update -> record it as a VFS delta in the current (open)
+            # step. The initial empty-page commit ("init") is not a diff.
+            if not self._active or data.get("reason") == "init":
+                return
+            if not self._step_open:
+                self._open_step()
+            self._reassert()
+            delta = {
+                "path": f"page://v{data.get('v')}",
+                "action": str(data.get("reason", "commit")),
+                "lines_added": 0,
+                "lines_removed": 0,
+                **{k: v for k, v in data.items()},
+            }
+            self._obs.record_vfs_delta(
+                path=delta["path"], action=delta["action"], delta_dict=delta,
+            )
+        elif type == "tool_start":
+            if self._active:
+                self._reassert()
+                self._obs.record_tool_start(
+                    name=str(data.get("name", "")),
+                    call_id=str(data.get("id", "")),
+                )
+        elif type == "tool_result":
+            if self._active:
+                self._reassert()
+                self._obs.record_tool_end(
+                    name=str(data.get("name", "")),
+                    status="error" if data.get("ok") is False else "ok",
+                    call_id=str(data.get("id", "")),
+                )
+        elif type == "run_end":
+            if not self._active:
+                return
+            self._active = False
+            # The last pre-opened step is unused (no LLM call followed) -> drop it
+            # so it does not count as an extra empty iteration.
+            self._discard_step()
+            self._reassert()
+            self._obs.end_run(
+                success=bool(data.get("success", True)),
+                final_answer=str(data.get("final", data.get("final_answer", ""))),
+            )
+            # Clear the cross-task anchor so a later background fold / next run is
+            # not mis-attributed to this (now closed) run.
+            clear = getattr(self._obs, "set_sticky_run", None)
+            if callable(clear):
+                try:
+                    clear(None)
+                except Exception:
+                    pass
+
+    def close(self) -> None:
+        close = getattr(self._inner, "close", None)
+        if callable(close):
+            close()
+
+
 def _resolve_audit_logger():
     """Resolve ``app.audit_logger`` once (None if unavailable). No per-event cost."""
     try:
@@ -627,7 +939,7 @@ def make_page_engine(
         )
     root = Path(root)
 
-    store = VfsStore(agent, root / "media")
+    store = VfsStore(agent, root / "media", root=root)
 
     async def _warm_vfs(_engine, session) -> str:
         """Prep hook: initialize the session VFS so the sync Store path can
@@ -646,6 +958,14 @@ def make_page_engine(
             _sink = AuditEventSink(
                 _sink, _audit, agent_name=getattr(agent.amd, "name", "page")
             )
+    # Compose the native ObservabilityLayer bridge on top (opt-in: only when the
+    # agent has an obs layer). Page runs then land in obs like V3 runs — steps,
+    # tokens, tool calls — without any change to core.py. Fail-safe + no-op if
+    # obs is absent; it wraps the (possibly audit-wrapped) inner sink so every
+    # event still reaches JSONL + audit unchanged.
+    _obs = getattr(agent, "obs", None)
+    if _obs is not None:
+        _sink = ObsEventSink(_sink, _obs, agent_name=getattr(agent.amd, "name", "page"))
 
     return PageEngine(
         root,

@@ -83,6 +83,13 @@ class PageExecutionEngine:
         self._active_executions: dict[str, ExecutionContext] = {}
         self._session_last_run: dict[str, str] = {}
 
+    # ponytail: delegates to agent.session_manager.skills_manager; real fix is
+    # guarding icli.py unguarded callers. Remove when icli is fixed.
+    # Restore pre-patch state: copy compat_v3.py.orig-backup over compat_v3.py.
+    @property
+    def skills_manager(self):
+        return getattr(getattr(self.agent, "session_manager", None), "skills_manager", None)
+
     # ------------------------------------------------------------ helpers
     def _new_ctx(self, query: str, session_id: str) -> ExecutionContext:
         ctx = ExecutionContext(self.engine, session_id=session_id, query=query)
@@ -304,6 +311,19 @@ class PageExecutionEngine:
         if self._session_last_run.get(ctx.session_id) == execution_id:
             self._session_last_run.pop(ctx.session_id, None)
         return True
+
+    def clear_session(self, session_id: str) -> None:
+        """V3-compatible clear: reset the PAGE context for ``session_id`` and
+        drop this session's run bookkeeping. Delegates the actual page reset to
+        :meth:`PageEngine.clear_session`."""
+        self.engine.clear_session(session_id)
+        rid = self._session_last_run.pop(session_id, None)
+        if rid:
+            self._active_executions.pop(rid, None)
+        # drop any other active ctx bound to this session
+        for rid in [r for r, c in self._active_executions.items()
+                    if getattr(c, "session_id", None) == session_id]:
+            self._active_executions.pop(rid, None)
 
     def list_executions(self) -> list[dict]:
         return [
