@@ -957,9 +957,7 @@ async def run(app: App, args=None):
         "tb_admin",
         add_base_tools=True,
         with_dangerous_shell=True,
-    )
-
-    builder.with_stream(True)
+    ).with_engine("page").with_stream(True)
 
     # --- Register all tool groups ---
     for func, name, desc, cats in _build_toolbox_tools(isaa, app):
