@@ -20,6 +20,7 @@ import asyncio
 import contextlib
 import inspect
 import io
+import keyword
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -274,6 +275,13 @@ def _make_action_fn(name: str, desc: str, props: dict, required: list,
     """
     params: list[inspect.Parameter] = []
     for key in list(required) + [k for k in props if k not in required]:
+        # A JSON param name may be a Python keyword (e.g. cut_tail's "from").
+        # Such names are illegal as inspect.Parameter names, so we omit them
+        # from the displayed signature — they still arrive via **kwargs at call
+        # time and are validated below. The docstring lists them so the model
+        # still sees how to call it.
+        if keyword.iskeyword(key) or not key.isidentifier():
+            continue
         ann = _JSON_PY.get(props.get(key, {}).get("type", "string"), str)
         params.append(inspect.Parameter(
             key,
@@ -281,15 +289,17 @@ def _make_action_fn(name: str, desc: str, props: dict, required: list,
             default=inspect._empty if key in required else None,
             annotation=ann,
         ))
+    # Accept any extra (keyword-named) params too.
+    params.append(inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD))
     sig = inspect.Signature(params)
+    _required = list(required)
 
     async def _action_fn(**kwargs):
-        missing = [p.name for p in params
-                   if p.default is inspect._empty and p.name not in kwargs]
+        missing = [k for k in _required if k not in kwargs]
         if missing:
             raise TypeError(f"{name}() missing required: {', '.join(missing)}")
         # Drop unset optionals so action defaults apply.
-        clean = {k: v for k, v in kwargs.items() if v is not None or k in required}
+        clean = {k: v for k, v in kwargs.items() if v is not None or k in _required}
         return await dispatch(name, clean)
 
     _action_fn.__name__ = name

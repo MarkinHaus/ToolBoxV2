@@ -111,6 +111,8 @@ class Config:
     done_gate: bool = True
     mode: str = "act"                 # P2.10: "act" (Done-Gate + boxes) | "talk" (free-form, no gate)
     kernel_timeout: float = 120
+    code_run_default_timeout: float = 30    # code_run timeout when the agent omits one
+    code_run_max_timeout: float = 300       # hard cap the agent cannot exceed
     decider_timeout: float = 0.15
     prep_timeout: float = 5
     vision: bool = True
@@ -176,7 +178,8 @@ Old tail items get folded: their content moves to storage and leaves a stub line
 Your slots: P2 context and P5 chat (page_edit), P1 task plan (plan). P3/P4/PS are written by the harness.
 Page edits become visible after the next commit; the tool result confirms them.
 - Multi-step task: first plan(op="add") one box per deliverable with a `check` (python expression, truthy when
-  done, run in your kernel) or check="soft". When done: propose_done. final_answer needs every box done or
+  done, run in your kernel) or check="soft". When a box is finished: mark_done(box_id) — the harness
+  auto-validates it on the next step, you do NOT wait. final_answer needs every box done or
   plan(op="reason").
 - Put facts you need later into P2 at once. Reasoning alone is lost after a fold.
 - code_run: persistent python. Inside: await tools("name", **args), await tools.search("q"), show(path_or_bytes).
@@ -185,6 +188,10 @@ Examples:
   page_edit(slot="P2", op="append", text="- config: vfs:/project/app.yaml")
   page_edit(slot="P2", op="replace", old="port 8000", text="port 8080")
   plan(op="add", title="tests pass", check="__import__('subprocess').run(['pytest','-q']).returncode == 0")
+
+Work thoroughly and user-oriented: briefly explain your approach, use as many steps as the task
+genuinely needs, and prefer quality and completeness over brevity. Being concise is about wording,
+not about doing less — deliver the full, helpful result.
 """
 FOLD = """\
 CONTEXT STEP (fold). No world actions. Tail items {first}..t2 get folded, t1 stays.
@@ -204,17 +211,39 @@ _S = {"type": "string"}
 _ENUM = lambda *v: {"type": "string", "enum": list(v)}  # noqa: E731
 # name: (description, properties, required, modes it is allowed in)
 ACTIONS: dict[str, tuple[str, dict, list, str]] = {
-    "code_run": ("Run python in your persistent kernel (top-level await ok).", {"code": _S}, ["code"], "A"),
+    "code_run": ("Run python in your persistent kernel (top-level await ok). Optional `timeout` "
+                 "(seconds) bounds this cell so looping/long code cannot run forever "
+                 "(default 30s, max 300s).",
+                 {"code": _S, "timeout": {"type": "number"}}, ["code"], "A"),
     "tool": ("Call a harness tool by name.", {"name": _S, "args": {"type": "object"}}, ["name"], "A"),
+    "decide_noul": ("Make a validated yes/no (boolean) decision via the decider. Returns true/false, "
+                    "or 'no opinion' if it abstains. Use for larger tasks that need a typed judgement.",
+                    {"question": _S, "state": _S}, ["question"], "A"),
+    "decide_score": ("Make a validated numeric (float) decision via the decider, e.g. a 0..1 rating. "
+                     "Returns the number, or 'no opinion' if it abstains.",
+                     {"question": _S, "state": _S}, ["question"], "A"),
+    "decide_choose": ("Make a validated choice among `options` via the decider. Returns exactly one of "
+                      "the options (invalid picks are rejected), or 'no opinion' if it abstains.",
+                      {"question": _S, "options": {"type": "array", "items": _S}, "state": _S},
+                      ["question", "options"], "A"),
     "tool_search": ("Find harness tools.", {"query": _S}, ["query"], "A"),
     "page_edit": ("Edit P2 or P5. replace needs `old` matching exactly once.",
                   {"slot": _ENUM("P2", "P5"), "op": _ENUM("append", "replace", "set"), "text": _S, "old": _S},
                   ["slot", "op", "text"], "AFV"),
+    "keep": ("Keep a fact: append `text` to your P2 context page so it survives folds. "
+             "Shortcut for page_edit(slot='P2', op='append'). Use it (also in a fold step) "
+             "to put 'what we want to keep' directly on the page.",
+             {"text": _S}, ["text"], "AF"),
     "plan": ("Task plan P1: add(title, check) | note(box_id, text) | reason(box_id, text).",
              {"op": _ENUM("add", "note", "reason"), "box_id": _S, "title": _S, "check": _S, "text": _S},
              ["op"], "AFV"),
-    "propose_done": ("Propose a box as done; the harness validates it.", {"box_id": _S, "evidence": _S},
-                     ["box_id"], "A"),
+    "mark_done": ("Mark a box as done. The harness AUTOMATICALLY validates it on the next "
+                  "step (runs its check) — you do NOT wait for anything: keep working or call "
+                  "final_answer; if the check fails the box reopens with the reason.",
+                  {"box_id": _S, "evidence": _S}, ["box_id"], "A"),
+    "propose_done": ("Alias of mark_done (kept for compatibility). Marks a box done; the harness "
+                     "auto-validates next step — do not wait, keep working.",
+                     {"box_id": _S, "evidence": _S}, ["box_id"], "A"),
     "run_check": ("Run the check of the proposed box (once).", {"box_id": _S}, ["box_id"], "V"),
     "recall": ("Search offloaded content (query) or read one entry (ref, offset).",
                {"query": _S, "ref": _S, "offset": {"type": "integer"}}, [], "AF"),
@@ -233,6 +262,17 @@ ACTIONS: dict[str, tuple[str, dict, list, str]] = {
                   "stay recall-able; a prior summary note can be summarized again (summary of summaries).",
                   {"labels": {"type": "array", "items": _S}, "text": _S, "title": _S},
                   ["labels", "text"], "F"),
+    "cut_tail": ("Collapse a contiguous range of your tail into ONE nested item, using the existing "
+                 "t-labels (t1 = newest). cut_tail(from=t_old, to=t_new, summary=...) replaces items "
+                 "from..to with a single line (your summary) plus a recall ref to the full cut; items "
+                 "before and after stay untouched (nested tail). Keeps your tail short on long runs. "
+                 "The originals stay recall-able.",
+                 {"from": {"type": "integer"}, "to": {"type": "integer"}, "summary": _S},
+                 ["from", "to", "summary"], "AF"),
+    "clear_done": ("Remove the named DONE boxes from the task plan (P1). Pass the exact box_ids to "
+                   "drop — only boxes that are both named AND state=done are removed, never all. "
+                   "Use between runs to clear finished tasks you no longer need.",
+                   {"box_ids": {"type": "array", "items": _S}}, ["box_ids"], "A"),
     "need_more": ("Ask for one more context step.", {}, [], "F"),
     "final_answer": ("Deliver the answer to the user.", {"answer": _S, "success": {"type": "boolean"}},
                      ["answer"], "A"),
@@ -795,8 +835,9 @@ class PageEngine:
         if not (self.cfg.done_gate and open_) or s.gate_fired:
             return None
         s.gate_fired = True
-        return (f"final_answer blocked once: open boxes {', '.join(open_)}. propose_done them or "
-                f"plan(op='reason'). The next final_answer goes through.")
+        return (f"final_answer blocked once: open boxes {', '.join(open_)}. mark_done them "
+                f"(the harness auto-validates each on the next step — you don't wait) or "
+                f"plan(op='reason') if one can't be done. The next final_answer goes through.")
 
     # ------------------------------------------------------------ prompt
     def render(self, s: Session) -> str:
@@ -830,7 +871,7 @@ class PageEngine:
             f"[LIVE] {time.strftime('%Y-%m-%d %H:%M')} | {MODES[mode]} | {self.cfg.mode} mode "
             f"| page v{s.page['v']} "
             f"{self.render_tokens(s)} tok | tail {len(s.tail)} items "
-            f"{sum(i['tok'] for i in s.tail)} tok | cap {self.cfg.page_cap}"
+            f"{sum(i['tok'] for i in s.tail)} tok"
         ]
         if s.work != s.page:
             lines.append("staged page edits pending (visible after the next commit)")
@@ -1052,6 +1093,42 @@ class PageEngine:
             return {}
         self.emit("decider", keys=[q["key"] for q in questions], answers=answers)
         return answers
+
+    async def _decide_one(self, kind: str, question: str, state: str = "",
+                          options: list | None = None) -> Result:
+        """Shared impl for the native decision tools. Returns a typed, validated
+        result text, or a clear message when there is no decider / no opinion."""
+        if not self.decider:
+            return Result("error: no decider configured for this agent", False)
+        q = {"key": "d", "kind": kind, "q": question}
+        if options is not None:
+            q["options"] = options
+        answers = await self._decide(state or question, [q])
+        val = answers.get("d")
+        # Validate/coerce here too, so the tool is robust regardless of whether
+        # the specific decider backend already coerced the value.
+        if val is not None:
+            if kind == "noul":
+                val = bool(val)
+            elif kind == "score":
+                try:
+                    val = float(val)
+                except (TypeError, ValueError):
+                    val = None
+            elif kind == "choice":
+                val = val if val in (options or []) else None
+        if val is None:
+            return Result("no opinion (the decider abstained or the value was invalid)")
+        return Result(f"decision ({kind}): {json.dumps(val, ensure_ascii=False, default=str)}")
+
+    async def _do_decide_noul(self, s, st, question, state=""):
+        return await self._decide_one("noul", question, state)
+
+    async def _do_decide_score(self, s, st, question, state=""):
+        return await self._decide_one("score", question, state)
+
+    async def _do_decide_choose(self, s, st, question, options, state=""):
+        return await self._decide_one("choice", question, state, options=options)
 
     async def _error_recall(self, s: Session, results: list[Result]) -> None:
         """After a tool/kernel error: surface the error and 1..N probable-cause
@@ -1395,12 +1472,21 @@ class PageEngine:
         except Exception as e:  # an error is a result, not a crash
             return Result(f"error: {type(e).__name__}: {e}", False)
 
-    async def _do_code_run(self, s, st, code):
+    async def _do_code_run(self, s, st, code, timeout=None):
         if s.kernel is None:
             return Result("error: no kernel configured", False)
+        # Effective timeout: the agent's value (if positive), else the config
+        # default, clamped to the configured max so a cell can never run forever.
+        try:
+            t = float(timeout) if timeout is not None else 0.0
+        except (TypeError, ValueError):
+            t = 0.0
+        if t <= 0:
+            t = self.cfg.code_run_default_timeout
+        t = min(t, self.cfg.code_run_max_timeout)
         self._active = (s, st)  # kernel-invoked page actions target this step
         try:
-            r = await s.kernel.run(code, self.cfg.kernel_timeout)
+            r = await s.kernel.run(code, t)
         finally:
             self._active = None
         s.work["slots"]["P4"] = s.kernel.digest(
@@ -1499,10 +1585,17 @@ class PageEngine:
             return Result(f"ok: {box['id']} {box['state']}")
         return Result("error: op is add | note | reason (reason needs text)", False)
 
-    async def _do_propose_done(self, s, st, box_id, evidence=""):
+    async def _do_mark_done(self, s, st, box_id, evidence=""):
         box = self._box(s, box_id)
         box["state"], s.evidence[box_id], st.proposed = "proposed", evidence, box_id
-        return Result(f"ok: {box_id} proposed, validation follows")
+        return Result(
+            f"ok: {box_id} marked done. The harness auto-validates it on the next step — "
+            f"no need to wait; keep working or call final_answer. If the check fails it reopens."
+        )
+
+    async def _do_propose_done(self, s, st, box_id, evidence=""):
+        # Backwards-compatible alias of mark_done.
+        return await self._do_mark_done(s, st, box_id, evidence)
 
     async def _do_run_check(self, s, st, box_id):
         if st.checked:
@@ -1587,6 +1680,82 @@ class PageEngine:
         return Result(
             f"ok: summarizing {len(labels)} item(s) into one note '{title or 'summary'}'"
         )
+
+    async def _do_cut_tail(self, s, st, **kw):
+        """Collapse a contiguous tail range (by existing t-labels, t1=newest)
+        into ONE nested item: the summary + a recall ref to the full cut.
+        Items before/after are untouched. ``from``/``to`` are t-numbers."""
+        frm = kw.get("from")
+        to = kw.get("to")
+        summary = kw.get("summary", "")
+        try:
+            frm = int(frm)
+            to = int(to)
+        except (TypeError, ValueError):
+            return Result("error: cut_tail needs integer t-labels from/to", False)
+        n = len(s.tail)
+        # t-label N -> index n-N. from is the OLDER (higher t), to the NEWER (lower t).
+        lo_lbl, hi_lbl = max(frm, to), min(frm, to)   # lo_lbl older, hi_lbl newer
+        start = n - lo_lbl   # inclusive index of the oldest item in range
+        end = n - hi_lbl     # inclusive index of the newest item in range
+        if not (0 <= start <= end < n):
+            return Result(
+                f"error: cut_tail range t{frm}..t{to} out of bounds (tail has {n} items)",
+                False,
+            )
+        cut = s.tail[start:end + 1]
+        archived = [m for it in cut for m in it["msgs"]]
+        payload = json.dumps(
+            {"ids": [it["id"] for it in cut], "msgs": archived}, ensure_ascii=False
+        )
+        ref = self.store.put(
+            f"{s.id}/tail/cut_{hashlib.sha256(payload.encode()).hexdigest()[:16]}.json",
+            payload,
+        )
+        note = (
+            f"[cut t{lo_lbl}..t{hi_lbl}, {len(cut)} items] {summary} "
+            f"| full tail at recall(ref={ref!r})"
+        )
+        new_item = {
+            "id": s.next_id,
+            "msgs": [{"role": "system", "content": note}],
+            "tok": self.tokens(note),
+            "media": [],
+            "meta": {"status": "cut", "ref": ref, "ids": [it["id"] for it in cut]},
+        }
+        s.next_id += 1
+        s.tail = s.tail[:start] + [new_item] + s.tail[end + 1:]
+        self._save(s)
+        return Result(
+            f"ok: cut {len(cut)} tail items into one note ({ref}); originals recall-able"
+        )
+
+    async def _do_keep(self, s, st, text):
+        """Keep a fact on the page: append it to P2. Shortcut for
+        page_edit(slot='P2', op='append'). Usable in A and F."""
+        if not text or not str(text).strip():
+            return Result("error: keep needs non-empty text", False)
+        return await self._do_page_edit(s, st, slot="P2", op="append", text=text)
+
+    async def _do_clear_done(self, s, st, box_ids):
+        """Remove ONLY the named boxes that are state=='done'. Never all."""
+        if not box_ids or not isinstance(box_ids, list):
+            return Result("error: clear_done needs a non-empty box_ids list", False)
+        wanted = set(box_ids)
+        removed, skipped = [], []
+        keep = []
+        for b in s.work["boxes"]:
+            if b["id"] in wanted and b["state"] == "done":
+                removed.append(b["id"])
+            else:
+                if b["id"] in wanted:
+                    skipped.append(f"{b['id']}({b['state']})")
+                keep.append(b)
+        s.work["boxes"] = keep
+        msg = f"ok: removed done boxes {removed or '[]'}"
+        if skipped:
+            msg += f"; skipped (not done): {skipped}"
+        return Result(msg)
 
     async def _do_final_answer(self, s, st, answer, success=True):
         st.final = (answer, bool(success))

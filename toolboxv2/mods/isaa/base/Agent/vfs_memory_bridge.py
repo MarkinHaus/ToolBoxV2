@@ -476,18 +476,79 @@ class VFSMemoryIndexer:
                     logger.debug(f"[VFSMemoryIndexer] unindex {path} in {sp}: {e}")
         self._hashes.pop(path, None)
 
+    def _meta_hash(self, path: str) -> str:
+        """Cheap change signature from VFS METADATA only — never reads content.
+
+        Uses size_bytes + the best available change timestamp (local_mtime for
+        disk-backed/shadow files like /global, else updated_at) + the VFS's own
+        content hash if it already has one. Same metadata -> same hash (skip,
+        no read); changed metadata -> different hash (re-index). Same idempotent
+        effect as hashing the content, but without reading every file.
+        """
+        f = self.vfs.files.get(path)
+        if f is None:
+            return ""
+        size = getattr(f, "size_bytes", 0) or 0
+        mtime = getattr(f, "local_mtime", None)
+        stamp = mtime if mtime is not None else (getattr(f, "updated_at", "") or "")
+        vfs_hash = getattr(f, "_content_hash", None) or ""
+        sig = f"{path}|{size}|{stamp}|{vfs_hash}"
+        return hashlib.sha1(sig.encode("utf-8", "replace")).hexdigest()
+
+    def _migrate_source_hash(self, store, source: str, new_hash: str) -> None:
+        """Rewrite the stored ``content_hash`` (inside meta_custom) for ``source``
+        to ``new_hash`` WITHOUT touching the embedding — the one-time legacy
+        content-sha1 -> metadata-hash transition. Fail-safe."""
+        if store is None:
+            return
+        try:
+            rows = store._exec(
+                "SELECT id, meta_custom FROM entries "
+                "WHERE meta_source = ? AND space = ? AND is_active = 1",
+                (source, store.space),
+            ).fetchall()
+            for row in rows:
+                try:
+                    custom = json.loads(row["meta_custom"] or "{}")
+                except Exception:
+                    custom = {}
+                custom["content_hash"] = new_hash
+                store._exec(
+                    "UPDATE entries SET meta_custom = ? WHERE id = ?",
+                    (json.dumps(custom, ensure_ascii=False), row["id"]),
+                )
+        except Exception as e:  # never let migration break indexing
+            logger.debug(f"[VFSMemoryIndexer] hash migrate {source}: {e}")
+
     async def _index_path(self, path: str, session_scoped: bool = False):
         if not self._eligible(path):
             return
+        # Metadata-only change check FIRST — no content read for unchanged files.
+        h = self._meta_hash(path)
+        if not h:
+            return
+        if self._hashes.get(path) == h:
+            return  # unchanged (decided from metadata, nothing was read)
         content = self._get_content(path)
         if not content or not content.strip():
             return
-        h = hashlib.sha1(content.encode("utf-8", "replace")).hexdigest()
-        if self._hashes.get(path) == h:
-            return  # unchanged
         space = self._space_for(path, session_scoped)
         source = f"vfs:{path}"
         store = self._store(space)
+        # One-time clean transition (legacy content-sha1 -> metadata hash):
+        # if a hash was stored but differs from the new meta hash, verify ONCE
+        # against the real content. If the content is unchanged (its sha1 equals
+        # the stored hash), the entry is already correctly embedded — only the
+        # hash TYPE is old. Migrate the stored hash to the meta hash WITHOUT
+        # re-embedding. From then on only the (cheap) meta hash is compared.
+        prev = self._hashes.get(path)
+        if prev and prev != h:
+            content_sha1 = hashlib.sha1(content.encode("utf-8", "replace")).hexdigest()
+            if content_sha1 == prev:
+                self._migrate_source_hash(store, source, h)
+                self._hashes[path] = h
+                return  # same content, hash migrated, no re-embed
+            # else: content genuinely changed -> fall through to normal re-index
         if store is not None:
             if space in (GLOBAL_INDEX_SPACE, self.agent_space) and \
                     _global_hash_current(store, source, h):
@@ -583,9 +644,14 @@ class VFSMemoryIndexer:
         done = 0
         try:
             for path in todo:
-                # Yield to active agent runs (see AGENT_YIELD).
-                if not AGENT_YIELD.is_set():
-                    AGENT_YIELD.wait(timeout=5.0)
+                # Yield to active agent runs (see AGENT_YIELD) WITHOUT blocking
+                # the event loop: poll cooperatively with await asyncio.sleep.
+                # A blocking threading.Event.wait here froze the whole loop
+                # (Discord heartbeat blocked >1700s).
+                waited = 0.0
+                while not AGENT_YIELD.is_set() and waited < 5.0:
+                    await asyncio.sleep(0.1)
+                    waited += 0.1
                 await self._index_path(path)  # agent-scoped (session_scoped=False)
                 done += 1
                 bar.update(done, path)

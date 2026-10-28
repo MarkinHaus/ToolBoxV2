@@ -2265,6 +2265,15 @@ class FlowAgent:
                     need_new_line = True
                     yield renderer.render_reasoning(chunk.get("chunk", ""))
 
+                elif chunk_type == "context_step":
+                    yield renderer.render_context_step(
+                        mode=chunk.get("mode", "action"),
+                        iteration=chunk.get("iter", chunk.get("iteration", 0)),
+                        page_version=chunk.get("page_version", 0),
+                        tokens_used=chunk.get("tokens_used", 0),
+                        tokens_max=chunk.get("tokens_max", 0),
+                    )
+
                 # -- Tool start ----------------------------------------------------
                 elif chunk_type == "tool_start":
                     yield renderer.render_tool_start(

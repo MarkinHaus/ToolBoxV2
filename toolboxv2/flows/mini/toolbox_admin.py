@@ -898,6 +898,127 @@ def _build_style():
 # Streaming Output Helper
 # ---------------------------------------------------------------------------
 
+_VALID_ENGINES = ("page", "v3")
+
+
+async def _admin_switch_engine(agent, target: str | None):
+    """Switch the admin agent's execution engine between 'page' and 'v3'.
+
+    Returns ``(message, changed)``. With no target, reports the current engine.
+    Invalidates (and closes) the cached engine so the switch takes effect at the
+    next run. The ISAA agent object itself is assumed to work (tb infra)."""
+    current = getattr(agent.amd, "engine", "v3") or "v3"
+    if not target:
+        return (f"engine: {current}  (switch with /engine page | /engine v3)", False)
+    target = target.strip().lower()
+    if target not in _VALID_ENGINES:
+        return (f"unknown engine {target!r}. valid: {', '.join(_VALID_ENGINES)}", False)
+    if target == current:
+        return (f"engine already '{current}'", False)
+    # Close + drop the cached engine so the new one is built on next run.
+    old = getattr(agent, "_execution_engine_cache", None)
+    if old is not None:
+        close = getattr(old, "close", None)
+        if callable(close):
+            try:
+                await old.close()
+            except Exception:
+                pass
+    try:
+        agent._execution_engine_cache = None
+    except Exception:
+        pass
+    agent.amd.engine = target
+    return (f"engine switched: {current} -> {target}", True)
+
+
+def _admin_page_engine(agent):
+    """Return the live PageEngine for the admin agent, or None."""
+    adapter = getattr(agent, "_execution_engine_cache", None)
+    return getattr(adapter, "engine", None) if adapter is not None else None
+
+
+def _admin_render_page(agent, session_id: str, args: list[str]) -> str:
+    """Render the page (page+tail+context) of the admin agent as text.
+
+    Subcommands: (none)->full page+breakdown, slots [P..], tail [n], boxes,
+    context. Requires the agent to run on the page engine."""
+    if getattr(agent.amd, "engine", "v3") != "page":
+        return "active agent is not on the page engine. switch with: /engine page"
+    engine = _admin_page_engine(agent)
+    if engine is None:
+        return "page engine not initialized yet — run a query first, then /page."
+    try:
+        from toolboxv2.mods.isaa.base.Agent.page.core import SLOTS
+    except Exception as e:  # pragma: no cover
+        return f"page engine unavailable: {e}"
+    sub = args[0].lower() if args else "page"
+    s = engine.session(session_id)
+    out: list[str] = []
+    try:
+        if sub in ("page", "slots", "slot"):
+            slots = ([a for a in args[1:] if a in SLOTS]
+                     if sub in ("slots", "slot") else list(SLOTS))
+            out.append(f"PAGE v{s.page['v']}  (session {session_id})")
+            for k in slots:
+                title, owner = SLOTS[k]
+                if k == "P1":
+                    body = "\n".join(engine._box_line(b) for b in s.page["boxes"]) or "(empty)"
+                else:
+                    body = s.page["slots"].get(k, "") or "(empty)"
+                out.append(f"## {k} {title} [{owner}]\n{body}")
+            if sub == "page":
+                bd = engine.context_breakdown(session_id)
+                out.append(f"\ncontext: {bd.get('total', '?')} / {bd.get('cap', '?')} tokens")
+        elif sub == "tail":
+            n = int(args[1]) if len(args) > 1 and args[1].isdigit() else 5
+            items = s.tail[-n:]
+            out.append(f"TAIL ({len(s.tail)} items, last {len(items)})")
+            for idx, it in enumerate(items):
+                label = len(s.tail) - (len(items) - 1 - idx)
+                tools = ",".join(it["meta"].get("tools", [])) or it["meta"].get("status", "?")
+                out.append(f"t{label}  #{it['id']}  {tools}  {it['tok']}tok  media={len(it['media'])}")
+        elif sub == "boxes":
+            out.append(f"BOXES (P1, page v{s.page['v']})")
+            lines = [engine._box_line(b) for b in s.page["boxes"]]
+            out.append("\n".join(lines) or "(no boxes)")
+        elif sub == "context":
+            bd = engine.context_breakdown(session_id)
+            out.append("CONTEXT breakdown:")
+            for k, v in bd.items():
+                out.append(f"  {k}: {v}")
+        else:
+            return (f"unknown /page subcommand {sub!r}. "
+                    f"use: /page [slots|tail|boxes|context]")
+    except Exception as e:
+        return f"page render failed: {e}"
+    return "\n".join(out)
+
+
+def _admin_steer(agent, session_id: str, text: str) -> str:
+    """Inject a steering instruction into the admin page session (like the icli
+    steer). On the page engine it interrupts a running stream at the next chunk
+    and is seen by the next action step."""
+    text = (text or "").strip()
+    if not text:
+        return "usage: /steer <instruction>"
+    if getattr(agent.amd, "engine", "v3") != "page":
+        return "steering needs the page engine. switch with: /engine page"
+    engine = _admin_page_engine(agent)
+    if engine is None:
+        return "page engine not initialized yet — run a query first, then /steer."
+    steer = getattr(engine, "steer", None)
+    if not callable(steer):
+        return "this engine does not support steering."
+    try:
+        steer(session_id, text)
+    except Exception as e:
+        return f"steer failed: {e}"
+    return f"steering queued for session '{session_id}': {text}"
+
+
+# ---------------------------------------------------------------------------
+
 async def _print_stream(agent, text: str, session_id: str = "admin"):
     """Run agent with a_stream_verbose and print chunks live."""
 
@@ -924,6 +1045,42 @@ async def _print_stream(agent, text: str, session_id: str = "admin"):
         print(Style.RED(f"\nAgent error: {e}"))
         import traceback
         traceback.print_exc()
+
+
+async def _run_with_steering(agent, text: str, session, session_id: str = "admin"):
+    """Run the agent stream while accepting mid-run steering.
+
+    Any NON-EMPTY line typed WHILE the run is in progress is injected as a
+    steering instruction into the running session (page engine). No special
+    command — just type and press enter. Empty lines are ignored. The input
+    reader is cancelled as soon as the run finishes.
+
+    On the V3 engine (no steer hook) mid-run input is ignored with a hint.
+    """
+    run_task = asyncio.create_task(_print_stream(agent, text, session_id))
+
+    async def _reader():
+        # Only meaningful on the page engine (has steer()).
+        while not run_task.done():
+            try:
+                line = await session.prompt_async("  …steer> ")
+            except (EOFError, KeyboardInterrupt):
+                return
+            line = (line or "").strip()
+            if not line:
+                continue
+            msg = _admin_steer(agent, session_id, line)
+            print(Style.GREY(f"  {msg}"))
+
+    reader_task = asyncio.create_task(_reader())
+    try:
+        await run_task
+    finally:
+        reader_task.cancel()
+        try:
+            await reader_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 
@@ -1014,7 +1171,8 @@ async def run(app: App, args=None):
         print(Style.YELLOW(f"  Docs init skipped: {e}"))
 
     print()
-    print(Style.GREY("Commands: /status  /mods  /flows  /manifest  /docs  /help  exit"))
+    print(Style.GREY("Commands: /status  /mods  /flows  /manifest  /docs  /engine  /page  /help  exit"))
+    print(Style.GREY("While a run is active, type any text + enter to steer it."))
     print(Style.GREY("Everything else goes to the agent (streaming)."))
     print()
 
@@ -1024,6 +1182,8 @@ async def run(app: App, args=None):
 
     completions = [
         "/status", "/mods", "/flows", "/manifest", "/docs", "/help",
+        "/engine", "/engine page", "/engine v3",
+        "/page", "/page slots", "/page tail", "/page boxes", "/page context",
         "exit", "quit", "/quit",
     ]
     session = PromptSession(
@@ -1047,6 +1207,20 @@ async def run(app: App, args=None):
         if text.lower() in ("exit", "quit", "/quit", "/q", "/e"):
             print(Style.YELLOW("Bye!"))
             break
+
+        # --- Page-engine commands (like steering) ---
+        _parts = text.split()
+        _cmd0 = _parts[0].lower() if _parts else ""
+
+        if _cmd0 == "/engine":
+            msg, _changed = await _admin_switch_engine(
+                agent, _parts[1] if len(_parts) > 1 else None)
+            print(Style.CYAN(msg))
+            continue
+
+        if _cmd0 == "/page":
+            print(_admin_render_page(agent, "admin", _parts[1:]))
+            continue
 
         # --- Quick commands (bypass agent) ---
         if text == "/status":
@@ -1097,6 +1271,11 @@ async def run(app: App, args=None):
             print("  /help      - This help")
             print("  exit       - Quit")
             print()
+            print(Style.GREY("Page engine:"))
+            print("  /engine [page|v3]           - show / switch execution engine")
+            print("  /page [slots|tail|boxes|context] - view the agent's page")
+            print(Style.GREY("  (during a run, just type any text + enter to steer)"))
+            print()
             print("Agent examples (streaming):")
             print('  "Zeige alle CloudM Funktionen"')
             print('  "Setze database.mode auf sqlite"')
@@ -1106,8 +1285,8 @@ async def run(app: App, args=None):
             print('  "Lookup die AgentBuilder Klasse mit Code"')
             continue
 
-        # --- Agent streaming ---
-        await _print_stream(agent, text)
+        # --- Agent streaming (non-empty input during the run = steering) ---
+        await _run_with_steering(agent, text, session, session_id="admin")
 
     # --- Cleanup ---
     print(Style.YELLOW("Saving agent state..."))
