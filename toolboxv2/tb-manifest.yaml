@@ -44,7 +44,7 @@ http_worker:
   instance_prefix: http
 ws_worker:
   host: 127.0.0.1
-  port: 8001
+  port: 8468
   max_connections: 10000
   ping_interval: 30
   ping_timeout: 10
@@ -67,6 +67,7 @@ database:
     secret_key: ${MINIO_SECRET_KEY:minioadmin}
     bucket: user-data-enc
     use_ssl: false
+    default_name: cloud
 nginx:
   enabled: true
   config_path: /etc/nginx/sites-available/toolboxv2
@@ -145,7 +146,7 @@ isaa:
     max_dynamic_tools: 10
   embedding:
     mode: ${TB_EMBED_LOCAL:auto}
-    local_model: ${TB_EMBED_LOCAL_MODEL:nomic-ai/nomic-embed-text-v1.5-Q}
+    local_model: ${TB_EMBED_LOCAL_MODEL:nomic-ai/nomic-embed-text-v1.5}
     cache_dir: ${TB_EMBED_CACHE_DIR:}
     auto_install: true
     models:

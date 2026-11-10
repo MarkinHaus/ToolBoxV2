@@ -256,7 +256,11 @@ class RegistryClient:
         self._client: Optional[httpx.AsyncClient] = None
         self._user: Optional[UserInfo] = None
         self._token_refresh_attempted = False
-        self.logger = logging.getLogger(__name__)
+        try:
+            from toolboxv2 import get_logger
+            self.logger = get_logger()
+        except ImportError:
+            self.logger = logging.getLogger(__name__)
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client."""

@@ -4,9 +4,9 @@ toolboxv2/utils/workers/tauri_integration.py - Tauri Worker
 
 Owns three pieces in one process, mirroring the original architecture but
 replacing HTTPWorker with our FastTB local_ui:
-  • FastTB server (local_ui + tray-API) — serves UI on http://127.0.0.1:5000
+  • FastTB server (local_ui + tray-API) — serves UI + API on http://127.0.0.1:8467
   • ZMQ broker                          — internal bus, like the original
-  • WS worker                            — realtime channel on 127.0.0.1:5001
+  • WS worker                            — realtime channel on 127.0.0.1:8468
 
 Other Python workers (tb workers, tb http_worker, …) start as separate
 processes and connect to this one via TB_TRAY_URL for tray status updates.

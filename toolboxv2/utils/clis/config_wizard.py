@@ -223,34 +223,13 @@ def validate_llm_key(provider_key: str, api_key: str, base_url: str = "") -> Tup
 
 PROFILE_CORE_DEFAULTS: Dict[str, dict] = {
     "local": {
-        "APP_BASE_URL": "http://localhost:8000",
+        "APP_BASE_URL": "http://localhost:8467",
         "TOOLBOXV2_BASE": "localhost",
         "TOOLBOXV2_REMOTE_BASE": "https://simplecore.app",
         "IS_OFFLINE_DB": "true",
         "DB_MODE_KEY": "LC",
-    },
-    "consumer": {
-        "APP_BASE_URL": "http://localhost:8000",
-        "TOOLBOXV2_BASE": "localhost",
-        "TOOLBOXV2_REMOTE_BASE": "https://simplecore.app",
-        "IS_OFFLINE_DB": "true",
-        "DB_MODE_KEY": "LC",
-    },
-    "homelab": {
-        "APP_BASE_URL": "http://localhost:8000",
-        "TOOLBOXV2_BASE": "localhost",
-        "TOOLBOXV2_REMOTE_BASE": "https://simplecore.app",
-        "IS_OFFLINE_DB": "false",
-        "DB_MODE_KEY": "LR",
     },
     "server": {
-        "APP_BASE_URL": "https://simplecore.app",
-        "TOOLBOXV2_BASE": "0.0.0.0",
-        "TOOLBOXV2_REMOTE_BASE": "https://simplecore.app",
-        "IS_OFFLINE_DB": "false",
-        "DB_MODE_KEY": "RR",
-    },
-    "business": {
         "APP_BASE_URL": "https://simplecore.app",
         "TOOLBOXV2_BASE": "0.0.0.0",
         "TOOLBOXV2_REMOTE_BASE": "https://simplecore.app",
@@ -258,7 +237,7 @@ PROFILE_CORE_DEFAULTS: Dict[str, dict] = {
         "DB_MODE_KEY": "CB",
     },
     "developer": {
-        "APP_BASE_URL": "http://localhost:8000",
+        "APP_BASE_URL": "http://localhost:8467",
         "TOOLBOXV2_BASE": "localhost",
         "TOOLBOXV2_REMOTE_BASE": "https://simplecore.app",
         "IS_OFFLINE_DB": "false",
@@ -269,8 +248,8 @@ PROFILE_CORE_DEFAULTS: Dict[str, dict] = {
 
 def get_profile_defaults(profile: Optional[str]) -> dict:
     """Return core env defaults for the given profile."""
-    if not profile:
-        return PROFILE_CORE_DEFAULTS["local"]
+    from toolboxv2.utils.manifest.schema import PROFILE_ALIASES
+    profile = PROFILE_ALIASES.get(profile or "local", profile or "local")
     return PROFILE_CORE_DEFAULTS.get(profile, PROFILE_CORE_DEFAULTS["local"])
 
 
@@ -1180,7 +1159,7 @@ def run_config_wizard(root_dir: Optional[Path] = None) -> int:
 
         manifest_data = manifest.model_dump()
 
-        is_server = profile in ("server", "business")
+        is_server = profile == "server"
         total_steps = 6 if not is_server else 7
 
         # Step 1: App Settings

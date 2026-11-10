@@ -19,8 +19,6 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import yaml
-
 from toolboxv2 import get_app, tb_root_dir
 
 from .cli_printing import (
@@ -37,43 +35,7 @@ from toolboxv2.mods.CloudM.LogInSystem import (
 # =============================================================================
 
 from toolboxv2.mods.CloudM.auth.config import LOCAL_ADMIN_EMAIL
-
-
-def _features_dir() -> Path:
-    return tb_root_dir / "features"
-
-
-def _user_facing(feature_yaml: Path) -> List[Dict[str, Any]]:
-    try:
-        data = yaml.safe_load(feature_yaml.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return []
-    out = []
-    for entry in data.get("user_facing", []) or []:
-        if not isinstance(entry, dict) or "name" not in entry:
-            continue
-        out.append({
-            "name": entry["name"],
-            "function": entry.get("function") or entry.get("entry_point") or "start",
-            "label": entry.get("label", entry["name"]),
-            "icon": entry.get("icon", "▸"),
-            "description": entry.get("description", ""),
-            "feature": data.get("name", "unknown"),
-        })
-    return out
-
-
-def _all_user_facing_mods() -> List[Dict[str, Any]]:
-    features_dir = _features_dir()
-    if not features_dir.exists():
-        return []
-    out = []
-    for fyaml in features_dir.glob("*/feature.yaml"):
-        if not (fyaml.parent / ".installed").exists():
-            continue
-        out.extend(_user_facing(fyaml))
-    return out
-
+from toolboxv2.utils.system.user_apps import all_user_apps as _all_user_facing_mods
 
 
 def _is_remote() -> bool:

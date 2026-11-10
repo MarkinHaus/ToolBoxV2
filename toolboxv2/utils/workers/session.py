@@ -26,8 +26,11 @@ from http.cookies import SimpleCookie
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import quote, unquote
 
-logger = logging.getLogger(__name__)
-
+try:
+    from toolboxv2 import get_logger
+    logger = get_logger()
+except ImportError:
+    logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Custom Auth Integration

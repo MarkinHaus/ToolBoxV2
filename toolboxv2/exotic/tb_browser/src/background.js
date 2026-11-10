@@ -49,7 +49,6 @@ class ToolBoxBackground {
                         this.useNative = false;
                         break;
                     case 'tauri':
-                        // Tauri worker läuft auf Port 5000 (kein dist, kein web-login)
                         // Tauri worker / Local UI auf Port 8467 (kein dist, kein web-login)
                         this.apiBase = 'http://localhost:8467';
                         this.useNative = false;
@@ -97,7 +96,7 @@ class ToolBoxBackground {
         if (this.useNative || !this.apiBase || !this.isConnected) return;
         const isLocal = this.apiBase.includes('localhost') || this.apiBase.includes('127.0.0.1');
         const wsBase = isLocal
-            ? this.apiBase.replace(/^http/, 'ws').replace(/:\d+$/, '') + ':5001'
+            ? this.apiBase.replace(/^http/, 'ws').replace(/:\d+$/, '') + ':8468'  // one local WS port (ws_worker.port)
             : this.apiBase.replace(/^http/, 'ws');
         this._connectWS(wsBase + '/ws');
     }

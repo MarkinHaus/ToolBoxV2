@@ -13,8 +13,11 @@ Integration between the worker system and ToolBoxV2:
 import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
-
-logger = logging.getLogger(__name__)
+try:
+    from toolboxv2 import get_logger
+    logger = get_logger()
+except ImportError:
+    logger = logging.getLogger(__name__)
 
 
 # ============================================================================

@@ -236,6 +236,20 @@ def mount_tray_api(app, store: Optional[TrayStateStore] = None) -> TrayStateStor
         finally:
             unsubscribe()
 
+    @app.get("/tray/apps")
+    async def get_apps(request):
+        """User-facing apps (feature.yaml) for mainContent.html. Local owner only."""
+        from toolboxv2.utils.system.user_apps import all_user_apps
+        mounted = set(getattr(_owner_app, "_mounted_sources", {}) or {}) if _owner_app else set()
+        return {"apps": [
+            {"name": a["name"], "title": a["label"], "description": a["description"],
+             "icon": a["icon"], "feature": a["feature"],
+             "launchable": bool(a["mount"]) and _owner_app is not None,
+             "running": f"app:{a['name']}" in mounted,
+             "path": "/" + (a["mount"] or {}).get("prefix", a["name"]).strip("/")}
+            for a in all_user_apps()
+        ]}
+
     @app.post("/tray/command")
     async def post_command(request):
         """Tauri asks for an action. Translates to a registered handler.
@@ -300,7 +314,15 @@ def _cmd_mount_app(module: str, attr: str = "app", prefix: str = "",
     conflicts = _owner_app.mount_app(joiner, pfx, src)
     if conflicts:
         return {"merged": False, "conflicts": conflicts}
-    return {"merged": True, "prefix": "/" + pfx.strip("/"), "source": src}
+    res = {"merged": True, "prefix": "/" + pfx.strip("/"), "source": src}
+    if getattr(joiner, "_ws_routes", None):
+        # Mounted app has WS routes -> owner subscribes to the existing broker.
+        try:
+            res["ws"] = bool(_owner_app.attach_ws_bridge())
+        except Exception as e:
+            res["ws"] = False
+            res["ws_error"] = str(e)
+    return res
 
 
 def reload_from_src(module_path: str, attr: str = "app",
@@ -357,7 +379,66 @@ def reload_from_src(module_path: str, attr: str = "app",
 def _cmd_unmount_app(source: str, **_) -> dict:
     if _owner_app is None:
         return {"unmounted": False, "error": "no owner app"}
-    return {"unmounted": _owner_app.unmount_app(source), "source": source}
+    ok = _owner_app.unmount_app(source)
+    if ok and source.startswith("app:"):
+        _save_mounted_apps([n for n in load_mounted_apps() if n != source[4:]])
+    return {"unmounted": ok, "source": source}
+
+
+# --- Mount persistence (TBEF.DB) — survives owner failover / restart ----------
+_MOUNTS_KEY = "LIVE_UI::mounted_apps"
+
+
+def load_mounted_apps() -> list:
+    """Registry names of apps that were started on this live-UI port."""
+    try:
+        from toolboxv2 import TBEF, get_app
+        res = get_app("tray_api.mounts").run_any(TBEF.DB.GET, query=_MOUNTS_KEY, get_results=True)
+        raw = None if res.is_error() else res.get()
+        if isinstance(raw, list):
+            raw = raw[0] if raw else None
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        names = json.loads(raw) if isinstance(raw, str) else raw
+        return [n for n in names if isinstance(n, str)] if isinstance(names, list) else []
+    except Exception:
+        return []
+
+
+def _save_mounted_apps(names) -> None:
+    try:
+        from toolboxv2 import TBEF, get_app
+        get_app("tray_api.mounts").run_any(TBEF.DB.SET, query=_MOUNTS_KEY,
+                                           data=json.dumps(sorted(set(names))))
+    except Exception:
+        pass  # best effort: a lost entry only means one extra click
+
+
+def restore_mounted_apps() -> dict:
+    """Re-mount persisted apps. Call once this process became the owner."""
+    return {name: _cmd_start_app(name, _persist=False) for name in load_mounted_apps()}
+
+
+def _cmd_start_app(name: str, _persist: bool = True, **_) -> dict:
+    """Lazy-start a registered user-facing app (feature.yaml) inside the owner.
+
+    Only apps from the registry can be started — never an arbitrary module path.
+    Idempotent: an already mounted app just returns its prefix.
+    """
+    from toolboxv2.utils.system.user_apps import get_user_app
+    entry = get_user_app(name)
+    if not entry or not entry["mount"]:
+        return {"merged": False, "error": f"no launchable app '{name}'"}
+    m = entry["mount"]
+    source = f"app:{name}"
+    prefix = "/" + (m.get("prefix") or name).strip("/")
+    if _owner_app is not None and source in (getattr(_owner_app, "_mounted_sources", {}) or {}):
+        return {"merged": True, "prefix": prefix, "source": source, "already": True}
+    res = _cmd_mount_app(module=m["module"], attr=m.get("attr", "app"),
+                         prefix=prefix.strip("/"), source=source)
+    if res.get("merged") and _persist:
+        _save_mounted_apps(load_mounted_apps() + [name])
+    return res
 
 
 def register_collective_commands(owner_app) -> None:
@@ -365,6 +446,7 @@ def register_collective_commands(owner_app) -> None:
     set_owner_app(owner_app)
     register_command_handler("mount_app", _cmd_mount_app)
     register_command_handler("unmount_app", _cmd_unmount_app)
+    register_command_handler("start_app", _cmd_start_app)
 
 # =============================================================================
 # Client side — what every other worker embeds

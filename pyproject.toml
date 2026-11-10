@@ -338,7 +338,6 @@ dev = [
     "toolboxv2[all]",
     "pytest>=9.0.2",
     "ruff>=0.8.0",
-    "pytest",
     "pytest-xdist",
     "build",
     "pytest-asyncio",

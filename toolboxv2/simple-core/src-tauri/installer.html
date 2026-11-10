@@ -398,7 +398,13 @@ input[type="text"]:focus { outline: none; border-color: var(--input-focus); back
 
 <script>
 // Wizard logic — consumes local_ui /api/wizard endpoints (degrades to standalone preview if 8467 offline).
-const API_BASE = 'http://127.0.0.1:8467';
+// radio values (native | source) -> manifest ProfileType (local | server | developer)
+const PROFILE_FOR_MODE = { native: 'local', local: 'local', source: 'developer' };
+
+// Same origin when served by the core (any port), else the canonical live UI.
+const API_BASE = (location.protocol.startsWith('http') &&
+                  ['127.0.0.1', 'localhost'].includes(location.hostname))
+                 ? location.origin : 'http://127.0.0.1:8467';
 async function apiCall(endpoint, method = 'GET', body = null) {
   try {
     const opts = { method, headers: { 'Content-Type': 'application/json' } };
@@ -433,9 +439,8 @@ function showStep(n) {
 
 btnNext.addEventListener('click', async () => {
   if (currentStep === 2) {
-    const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || 'local';
-    const profileMap = { 'local': 'consumer', 'source': 'developer' };
-    await apiCall('/api/wizard/profile', 'POST', { profile: profileMap[selectedMode] || 'consumer' });
+    const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || 'native';
+    await apiCall('/api/wizard/profile', 'POST', { profile: PROFILE_FOR_MODE[selectedMode] || 'local' });
   }
   if (currentStep < STEPS) showStep(currentStep + 1);
   else postInstallExit();
@@ -517,21 +522,25 @@ async function runInstall() {
     if (msg) label.textContent = msg;
   }
 
+  // Served by the running core (127.0.0.1:8467 — browser or Tauri window):
+  // always the wizard API. IPC/run_install only from the Tauri bundle itself.
+  const servedByCore = location.protocol.startsWith('http') &&
+                       ['127.0.0.1', 'localhost'].includes(location.hostname);
+
   // --- Tauri-Kaltstart: echter Installer via run_install + install-event ---
-  if (window.__TAURI__ && window.__TAURI__.core) {
+  if (!servedByCore && window.__TAURI__ && window.__TAURI__.core) {
     btnNext.disabled = true;
     label.textContent = 'Starte Installer…';
     logMsg('Installer wird gestartet (eigenständig, kein laufender Core nötig)…');
-    const profileMap = { local: 'consumer', source: 'developer' };
     const config = {
-      profile: profileMap[document.querySelector('input[name="mode"]:checked')?.value] || 'consumer',
+      profile: PROFILE_FOR_MODE[document.querySelector('input[name="mode"]:checked')?.value] || 'local',
       install_path: document.getElementById('install-path').value,
       optional: [],
     };
     const unlisten = await window.__TAURI__.event.listen('install-event', e => {
       const ev = e.payload || {};
       if (ev.type === 'phase') { logMsg('[' + (ev.phase || '') + '] ' + (ev.msg || '')); setProgress(0.35, ev.msg); }
-      else if (ev.type === 'progress') { setProgress(ev.progress || 0.5, ev.msg); logMsg(ev.msg || ''); }
+      else if (ev.type === 'progress') { if (typeof ev.progress === 'number') setProgress(ev.progress, ev.msg); logMsg('[' + (ev.phase || '') + '] ' + (ev.msg || '')); }
       else if (ev.type === 'error') { logMsg('FEHLER: ' + (ev.msg || 'unbekannt')); label.textContent = 'Fehler'; }
                                     else if (ev.type === 'log') { logMsg((ev.stream === 'stderr' ? '[stderr] ' : '') + (ev.msg || '')); }
       else if (ev.type === 'done') {
@@ -564,7 +573,7 @@ async function runInstall() {
 // niemals simulierter Erfolg.
 const inTauri = typeof window.__TAURI_INTERNALS__ !== 'undefined' ||
                 typeof window.__TAURI__ !== 'undefined';
-if (inTauri && !(window.__TAURI__ && window.__TAURI__.core)) {
+if (!servedByCore && inTauri && !(window.__TAURI__ && window.__TAURI__.core)) {
   fill.style.width = '100%';
   label.textContent = 'Fehler: IPC nicht verfügbar';
   logMsg('FEHLER: Tauri-Kontext erkannt (' + location.protocol + '), aber window.__TAURI__.core fehlt. ' +

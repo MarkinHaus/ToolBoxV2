@@ -59,13 +59,38 @@ class AuthProvider(str, Enum):
 
 
 class ProfileType(str, Enum):
-    """User profile — controls bare 'tb' default behavior."""
-    LOCAL = "local"  # auto-set on silent first init — zero-friction default
-    CONSUMER  = "consumer"   # tb → tb gui
-    HOMELAB   = "homelab"    # tb → interactive dashboard
-    SERVER    = "server"     # tb → ASCII status overview + exit
-    BUSINESS  = "business"   # tb → 3-line health summary + exit
-    DEVELOPER = "developer"  # tb → interactive dashboard + dev hints
+    """User profile — controls bare 'tb' default behavior.
+
+    Single source of truth for profiles. Legacy values (consumer/homelab/
+    business) are still accepted on load and mapped via PROFILE_ALIASES.
+    """
+    LOCAL = "local"          # personal use on this machine → local UI / CLI
+    SERVER = "server"        # headless / infra → status overview + exit
+    DEVELOPER = "developer"  # builds mods/features → CLI + dev hints
+
+    @classmethod
+    def _missing_(cls, value):
+        alias = PROFILE_ALIASES.get(str(value).lower())
+        return cls(alias) if alias else None
+
+
+# Legacy profile names → current ProfileType value (old manifests, Tauri installer).
+PROFILE_ALIASES = {
+    "consumer": "local",
+    "homelab": "local",
+    "business": "server",
+}
+
+# Manifest defaults applied when a profile is chosen (dot-paths for manifest set).
+PROFILE_DEFAULTS = {
+    "local": {"database.mode": "LC", "nginx.enabled": False,
+              "autostart.enabled": True, "autostart.services": ["daemon"]},
+    "server": {"database.mode": "CB", "nginx.enabled": True,
+               "autostart.enabled": True, "autostart.services": ["daemon", "workers", "db"]},
+    "developer": {"database.mode": "LC", "nginx.enabled": False,
+                  "app.debug": True, "app.log_level": "DEBUG",
+                  "autostart.enabled": True, "autostart.services": ["daemon", "workers"]},
+}
 
 
 # =============================================================================
@@ -548,7 +573,7 @@ class IsaaEmbeddingConfig(BaseModel):
     Env overrides: TB_EMBED_LOCAL, TB_EMBED_LOCAL_MODEL, TB_EMBED_CACHE_DIR."""
     mode: str = Field(default="${TB_EMBED_LOCAL:auto}")
     local_model: str = Field(
-        default="${TB_EMBED_LOCAL_MODEL:nomic-ai/nomic-embed-text-v1.5-Q}")
+        default="${TB_EMBED_LOCAL_MODEL:nomic-ai/nomic-embed-text-v1.5}")
     cache_dir: str = Field(default="${TB_EMBED_CACHE_DIR:}")
     auto_install: bool = Field(default=True)
     models: List[IsaaEmbeddingModelEntry] = Field(

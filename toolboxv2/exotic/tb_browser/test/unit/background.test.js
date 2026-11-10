@@ -25,7 +25,7 @@ class AgentView {
 // Load ToolBoxBackground logic inline (extracted methods)
 class ToolBoxBackground {
   constructor() {
-    this.apiBase = 'http://localhost:8080';
+    this.apiBase = 'http://localhost:8467';
     this.isConnected = false;
     this.activeTab = null;
     this.gestureHistory = [];
@@ -49,12 +49,12 @@ class ToolBoxBackground {
 
   applyBackendSettings(settings) {
     switch (settings.backend) {
-      case 'local':  this.apiBase = 'http://localhost:8080'; this.useNative = false; break;
-      case 'tauri':  this.apiBase = 'http://localhost:5000'; this.useNative = false; break;
+      case 'local':  this.apiBase = 'http://localhost:8467'; this.useNative = false; break;
+      case 'tauri':  this.apiBase = 'http://localhost:8467'; this.useNative = false; break;
       case 'native': this.apiBase = null; this.useNative = true; break;
       case 'remote': this.apiBase = 'https://simplecore.app'; this.useNative = false; break;
-      case 'custom': this.apiBase = settings.customBackendUrl || 'http://localhost:8080'; this.useNative = false; break;
-      default:       this.apiBase = 'http://localhost:8080'; this.useNative = false;
+      case 'custom': this.apiBase = settings.customBackendUrl || 'http://localhost:8467'; this.useNative = false; break;
+      default:       this.apiBase = 'http://localhost:8467'; this.useNative = false;
     }
   }
 
@@ -106,8 +106,8 @@ class ToolBoxBackground {
     this.authData = { username, jwt: jwtToken, isAuthenticated: true };
     let backend = 'local';
     if (baseUrl?.includes('simplecore.app')) backend = 'remote';
-    else if (baseUrl === 'http://localhost:5000') backend = 'tauri';
-    else if (baseUrl && baseUrl !== 'http://localhost:8080') backend = 'custom';
+    else if (baseUrl === 'http://localhost:8467') backend = 'tauri';
+    else if (baseUrl && baseUrl !== 'http://localhost:8467') backend = 'custom';
 
     const stored = await chrome.storage.sync.get(['toolboxSettings']);
     const settings = stored.toolboxSettings || {};
@@ -120,7 +120,7 @@ class ToolBoxBackground {
     if (this.useNative || !this.apiBase || !this.isConnected) return null;
     const isLocal = this.apiBase.includes('localhost') || this.apiBase.includes('127.0.0.1');
     const wsBase = isLocal
-      ? this.apiBase.replace(/^http/, 'ws').replace(/:\d+$/, '') + ':5001'
+      ? this.apiBase.replace(/^http/, 'ws').replace(/:\d+$/, '') + ':8468'  // one local WS port (ws_worker.port)
       : this.apiBase.replace(/^http/, 'ws');
     return wsBase + '/ws';
   }
@@ -183,17 +183,17 @@ describe('generateSessionId', () => {
 
 // ── applyBackendSettings / loadBackendSettings ────────────────────────────────
 describe('backend settings', () => {
-  test('local → port 8080', () => {
+  test('local → port 8467', () => {
     const bg = new ToolBoxBackground();
     bg.applyBackendSettings({ backend: 'local' });
-    expect(bg.apiBase).toBe('http://localhost:8080');
+    expect(bg.apiBase).toBe('http://localhost:8467');
     expect(bg.useNative).toBe(false);
   });
 
-  test('tauri → port 5000', () => {
+  test('tauri → port 8467', () => {
     const bg = new ToolBoxBackground();
     bg.applyBackendSettings({ backend: 'tauri' });
-    expect(bg.apiBase).toBe('http://localhost:5000');
+    expect(bg.apiBase).toBe('http://localhost:8467');
   });
 
   test('native → apiBase null, useNative true', () => {
@@ -221,7 +221,7 @@ describe('backend settings', () => {
     });
     const bg = new ToolBoxBackground();
     await bg.loadBackendSettings();
-    expect(bg.apiBase).toBe('http://localhost:5000');
+    expect(bg.apiBase).toBe('http://localhost:8467');
     expect(bg.authData.username).toBe('max');
     expect(bg.authData.isAuthenticated).toBe(true);
   });
@@ -302,14 +302,14 @@ describe('storeAuthCredentials', () => {
 
   test('detects tauri backend', async () => {
     const bg = new ToolBoxBackground();
-    await bg.storeAuthCredentials('bob', 'jwtX', 'http://localhost:5000');
+    await bg.storeAuthCredentials('bob', 'jwtX', 'http://localhost:8467');
     const stored = await chrome.storage.sync.get(['toolboxSettings']);
     expect(stored.toolboxSettings.backend).toBe('tauri');
   });
 
-  test('detects local backend', async () => {
+  test('no base url keeps local backend', async () => {
     const bg = new ToolBoxBackground();
-    await bg.storeAuthCredentials('charlie', 'jwtY', 'http://localhost:8080');
+    await bg.storeAuthCredentials('charlie', 'jwtY', undefined);
     const stored = await chrome.storage.sync.get(['toolboxSettings']);
     expect(stored.toolboxSettings.backend).toBe('local');
   });
@@ -317,20 +317,20 @@ describe('storeAuthCredentials', () => {
 
 // ── WebSocket URL construction ────────────────────────────────────────────────
 describe('setupWebSocket URL', () => {
-  test('local → ws on port 5001', () => {
+  test('local → ws on port 8468', () => {
     const bg = new ToolBoxBackground();
-    bg.apiBase = 'http://localhost:8080';
+    bg.apiBase = 'http://localhost:8467';
     bg.isConnected = true;
     const url = bg.setupWebSocket();
-    expect(url).toBe('ws://localhost:5001/ws');
+    expect(url).toBe('ws://localhost:8468/ws');
   });
 
-  test('tauri → ws on port 5001', () => {
+  test('tauri → ws on port 8468', () => {
     const bg = new ToolBoxBackground();
-    bg.apiBase = 'http://localhost:5000';
+    bg.apiBase = 'http://localhost:8467';
     bg.isConnected = true;
     const url = bg.setupWebSocket();
-    expect(url).toBe('ws://localhost:5001/ws');
+    expect(url).toBe('ws://localhost:8468/ws');
   });
 
   test('remote → wss same port', () => {
@@ -343,7 +343,7 @@ describe('setupWebSocket URL', () => {
 
   test('returns null when not connected', () => {
     const bg = new ToolBoxBackground();
-    bg.apiBase = 'http://localhost:8080';
+    bg.apiBase = 'http://localhost:8467';
     bg.isConnected = false;
     expect(bg.setupWebSocket()).toBeNull();
   });

@@ -692,8 +692,12 @@ class FastTBHandler:
         # ---- WS Infrastructure (ZMQ broker + WS worker + bridge) ----
         has_ws = enable_ws if enable_ws is not None else bool(self._app._ws_routes)
 
+        # Kept so a later mount (One-Port-Collective owner) can attach the WS
+        # bridge on demand instead of every standby replica starting one.
+        self._app._ws_ctx = (self, config, app, worker, _get_infra_loop)
         if has_ws:
             self._start_ws_infrastructure(config, app, worker, _get_infra_loop)
+            self._app._ws_bridge_started = True
 
         ftb_handler = self
         original_wsgi = worker.wsgi_app
@@ -702,6 +706,15 @@ class FastTBHandler:
             """FastTB routes first, then HTTPWorker for built-in endpoints."""
             path = environ.get("PATH_INFO", "/")
             method = environ.get("REQUEST_METHOD", "GET")
+
+            # CSRF: cross-site state-changing requests never reach a handler
+            # (wizard_api / tray commands are auth=False on loopback).
+            from toolboxv2.utils.workers.server_worker import csrf_rejection
+            blocked = csrf_rejection(environ)
+            if blocked:
+                status, headers, body = blocked
+                start_response(f"{status} Forbidden", list(headers.items()))
+                return [body]
 
             # Check if FastTB can handle this (path + method only, no body read)
             if ftb_handler.has_route(path, method):
@@ -851,6 +864,14 @@ class FastTBHandler:
         threading.Thread(target=_run_ws_worker, daemon=True, name="fasttb-ws-worker").start()
 
         # 3. Start event manager + WS bridge on the FastTB event loop
+        self._start_ws_bridge(config, app, worker, get_loop_fn)
+
+    def _start_ws_bridge(self, config, app, worker, get_loop_fn):
+        """Subscribe this process to an EXISTING ZMQ broker and handle WS events.
+
+        Used standalone by the live-UI owner: the worker manager already runs
+        broker + WS worker; the owner only needs the bridge for mounted apps.
+        """
         loop = get_loop_fn()
 
         async def _init_bridge():

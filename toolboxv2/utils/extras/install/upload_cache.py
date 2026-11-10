@@ -11,7 +11,12 @@ from typing import List, Optional
 
 from packaging.version import Version
 
-logger = logging.getLogger(__name__)
+try:
+    from toolboxv2 import get_logger
+    logger = get_logger()
+except ImportError:
+    logger = logging.getLogger(__name__)
+
 
 
 class UploadCache:

@@ -5,7 +5,11 @@ from typing import Callable, Dict, Optional
 
 from toolboxv2.utils.workers.event_manager import Event, EventType, ZMQEventManager
 
-logger = logging.getLogger(__name__)
+try:
+    from toolboxv2 import get_logger
+    logger = get_logger()
+except ImportError:
+    logger = logging.getLogger(__name__)
 
 _registry_instance: Optional["InterfaceRegistry"] = None
 

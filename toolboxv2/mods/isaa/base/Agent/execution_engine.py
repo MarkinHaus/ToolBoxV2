@@ -3524,6 +3524,11 @@ BEISPIELE:
             ctx.loop_warning_given = True
         ctx.working_history = clean_messages(ctx.working_history)
 
+        # Mid-run compact (P2, 10.11.2026): naive threshold (requirement):
+        # compact at 60% of the model context, hard max 60_000 tokens. Before
+        # this, compression only ran at run boundaries -> prompt grew linearly.
+        self._maybe_compact_history(ctx)
+
         # Build current tool list
 
         messages = self._sanitize_history_for_api(ctx.working_history.copy())
@@ -5555,6 +5560,44 @@ BEISPIELE:
     # PROMPT BUILDING
     # =========================================================================
 
+    _COMPACT_KEEP = 8  # tail messages kept verbatim across a mid-run compact
+
+    def _maybe_compact_history(self, ctx: ExecutionContext) -> None:
+        """Mid-run history compaction (P2, 10.11.2026).
+
+        Naive thresholds per spec: hard 60% of the model context window,
+        max 60_000 tokens. Compact = Semantic Ledger (HistoryCompressor)
+        + last _COMPACT_KEEP messages verbatim. Atomic swap (page-fold
+        pattern): summary + new history are built completely, then
+        ctx.working_history is replaced in one assignment - a failure
+        before the swap leaves the history untouched.
+        """
+        wh = ctx.working_history
+        if len(wh) <= self._COMPACT_KEEP + 2:
+            return
+        max_tokens = self._get_max_context_tokens(ctx)
+        limit = min(60_000, int(max_tokens * 0.6))
+        used = sum(self._estimate_tokens(m.get("content", "") or "") for m in wh)
+        for m in wh:
+            for tc in m.get("tool_calls", []) or []:
+                fn = getattr(tc, "function", None)
+                args = (fn.arguments if fn is not None
+                        else tc.get("function", {}).get("arguments", ""))
+                used += self._estimate_tokens(args or "")
+        if used <= limit:
+            return
+        summary, new_hist = HistoryCompressor.compress_partial(
+            wh, keep_last_n=self._COMPACT_KEEP
+        )
+        if summary is None:
+            return
+        ctx.working_history = new_hist  # atomic swap
+        post = sum(self._estimate_tokens(m.get("content", "") or "") for m in new_hist)
+        self.live.enter(
+            AgentPhase.COMPRESSING,
+            f"mid-run compact: ~{used}->{post} tok (limit {limit})",
+        )
+
     def _build_static_system_prompt(self, ctx: ExecutionContext, session) -> str:
         """Order: STATIC prefix → marker → DYNAMIC suffix.
         Static prefix is byte-stable across runs → provider caching works.
@@ -5942,6 +5985,12 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                 f"compressed summary : {summary}"
                 f"Erstelle eine prägnante Zusammenfassung mit wichtigen details (max 2-3 Sätze) der durchgeführten Aktionen und des Ergebnisses."
                 f"Erwähne erstellte/bearbeitete Dateien."
+                f" Folge GENAU diesem Format (maschinenlesbar, der Dreamer parst es):\n"
+                f"GOAL: <ein Satz Ziel>\n"
+                f"DONE: <Ergebnis/Status, ein Satz>\n"
+                f"FILES: <kommagetrennte erstellte/geänderte Pfade, sonst none>\n"
+                f"TOOLS: <kommagetrennte wichtigste Tools, sonst none>\n"
+                f"NEXT: <offener Punkt/naechster Schritt, sonst none>"
             )
 
             # Wir nutzen working_history als Kontext, aber limitiert
@@ -5995,6 +6044,12 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
 
         self.live.log(f"Run {ctx.run_id} committed (task map aggregation in bg)")
 
+        # P3 (10.11.2026): compact run digest for the Dreamer + archive cleanup marker.
+        try:
+            await self._write_run_digest(ctx, session, query, final_response, success)
+        except Exception:
+            pass
+
         # ── Notify idle tracker ──
         try:
             from toolboxv2 import get_app
@@ -6004,6 +6059,83 @@ Die Aufgabe war möglicherweise zu komplex oder ich bin in einer Schleife geland
                 sched._agent_idle_eval.record_activity(self.agent.amd.name)
         except Exception:
             pass
+
+    async def _write_run_digest(
+        self, ctx: ExecutionContext, session, query: str,
+        final_response: str, success: bool,
+    ) -> None:
+        """P3 (10.11.2026): compact run-digest under /global/.memory/archive/.
+
+        One file per run: {run_id}.digest.md with GOAL/DONE/FILES/TOOLS/NEXT
+        (parsed from the structured run-end summary). Purposes:
+        1. Dreamer reads compact digests instead of thousands of raw
+           call_*.txt files -> better harvest, less storage.
+        2. Cleanup marker: raw call files of this run may be deleted after
+           digest creation (see _cleanup_archived_calls, opt-in).
+        """
+        import re as _re
+
+        def _field(tag: str, text: str) -> str:
+            m = _re.search(rf"^{tag}:\s*(.+)$", text or "", _re.MULTILINE | _re.IGNORECASE)
+            return m.group(1).strip() if m else ""
+
+        goal = _field("GOAL", final_response)
+        done = _field("DONE", final_response)
+        files = _field("FILES", final_response)
+        tools = _field("TOOLS", final_response)
+        nxt = _field("NEXT", final_response)
+        task_type = getattr(ctx, "task_type", None) or "unknown"
+        subtype = getattr(ctx, "subtype", None) or "general"
+        lines = [
+            f"# RUN DIGEST {ctx.run_id}",
+            f"- date: {ctx.started_at}",
+            f"- topic: {task_type}/{subtype}",
+            f"- query: {(query or '')[:300]}",
+            f"- goal: {goal[:200]}",
+            f"- done: {'success' if success else 'failed'} - {done[:200]}",
+            f"- files: {files[:200]}",
+            f"- tools: {tools[:200]}",
+            f"- next: {nxt[:200]}",
+            f"- archived_calls: /global/.memory/archive/{ctx.run_id}_call_*",
+        ]
+        digest_path = f"/global/.memory/archive/{ctx.run_id}.digest.md"
+        payload = "\n".join(lines)
+        try:
+            session.vfs.mkdir("/global/.memory/archive", parents=True)
+        except Exception:
+            pass
+        try:
+            await session.vfs_write_file(digest_path, payload)
+        except (AttributeError, TypeError):
+            # Fallback: sync vfs.write (different session wrappers)
+            try:
+                session.vfs.write(digest_path, payload)
+            except Exception:
+                return
+
+    async def _cleanup_archived_calls(self, session, run_id: str, dry_run: bool = True) -> dict:
+        """P3 (10.11.2026, opt-in): delete raw call_*.txt of a run AFTER its
+        digest exists; keeps {run_id}.digest.md. dry_run=True (default) only
+        counts - the Dreamer/auto-pilot decides via dry_run=False.
+        """
+        archived = deleted = 0
+        try:
+            ls = session.vfs.ls("/global/.memory/archive", recursive=True)
+            files = ls.get("files", []) if isinstance(ls, dict) else []
+        except Exception:
+            return {"archived": 0, "deleted": 0, "error": "ls failed"}
+        for f in files:
+            p = f["path"] if isinstance(f, dict) else str(f)
+            name = p.rsplit("/", 1)[-1]
+            if name.startswith(f"{run_id}_call_"):
+                archived += 1
+                if not dry_run:
+                    try:
+                        session.vfs.delete("/global/.memory/archive/" + name)
+                        deleted += 1
+                    except Exception:
+                        pass
+        return {"archived": archived, "deleted": deleted}
 
     async def _persist_persona_stats(self, session, persona: PersonaProfile) -> None:
         """Merge updated stats back into the VFS personas store."""

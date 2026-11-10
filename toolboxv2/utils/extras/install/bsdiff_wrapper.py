@@ -11,7 +11,12 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger(__name__)
+try:
+    from toolboxv2 import get_logger
+    logger = get_logger()
+except ImportError:
+    logger = logging.getLogger(__name__)
+
 
 
 class BsdiffError(Exception):

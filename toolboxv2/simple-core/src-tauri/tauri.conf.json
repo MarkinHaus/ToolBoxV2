@@ -51,7 +51,8 @@
       "installer.ps1"
     ],
     "externalBin": [
-      "binaries/tb-worker"
+      "binaries/tb-worker",
+      "binaries/uv"
     ],
     "android": {
       "versionCode": 100,

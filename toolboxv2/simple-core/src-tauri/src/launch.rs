@@ -2,8 +2,8 @@
 //!
 //! Kette: health-probe 8467 -> Running | tb vorhanden -> InstalledStopped
 //! (start + poll) | sonst NotInstalled (installer.html).
-//! Der Wizard lebt an 3 Orten mit derselben UI: Tauri cold (installer.html),
-//! local-ui /welcome (first_run), local-ui /install (manage).
+//! Eine Onboarding-UI fuer alle Wege: installer.html (Tauri-Bundle, Kaltstart)
+//! == web/installer/index.html, von der local-ui unter /setup ausgeliefert.
 
 use std::time::Duration;
 
@@ -156,41 +156,37 @@ pub async fn wait_until_running(base: &str, max_secs: u64) -> bool {
     false
 }
 
-/// Ziel-Route auf der local-ui bestimmen: first_run -> /welcome, sonst /install.
+/// Ziel-Route auf der local-ui bestimmen: first_run -> /setup, sonst /.
 ///
-/// FIX (bug-tauri-firstrun-loop): Bei JEGLICHER Unsicherheit (Timeout, 4xx/5xx,
-/// JSON-Fehler, fehlendes Feld) -> "/install", niemals "/welcome". Begruendung:
-/// /welcome ist der First-Run-Wizard - ein Default darauf erzeugt die Schleife
-/// "Installations-Dialog bei jedem Start". Die local-ui leitet bei echtem
-/// first_run auf /install selbst per 302 auf /welcome um (local_ui.py),
-/// d.h. echte Erstnutzer erreichen den Wizard trotzdem. Installierte Nutzer
-/// landen im Manager-Hub statt gefangen im Wizard.
+/// Bei JEGLICHER Unsicherheit (Timeout, 4xx/5xx, JSON-Fehler, fehlendes Feld)
+/// -> "/" (nie eine Wizard-Schleife). Die local-ui zeigt auf "/" bei echtem
+/// first_run selbst das Onboarding (Quelle: manifest app.profile).
 pub async fn target_route(base: &str) -> &'static str {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(3000))
         .build()
         .ok();
     let Some(client) = client else {
-        return "/install";
+        return "/";
     };
     let Ok(resp) = client
         .get(format!("{}/api/wizard/state", base))
         .send()
         .await
     else {
-        return "/install";
+        return "/";
     };
     if !resp.status().is_success() {
-        return "/install";
+        return "/";
     }
     let Ok(v) = resp.json::<serde_json::Value>().await else {
-        return "/install";
+        return "/";
     };
     // Nur ein explizites first_run:true oeffnet den Wizard.
     if v.get("first_run").and_then(|f| f.as_bool()) == Some(true) {
-        "/welcome"
+        "/setup"
     } else {
-        "/install"
+        "/"
     }
 }
 #[cfg(test)]

@@ -14,7 +14,12 @@ from toolboxv2.utils.extras.install.upload_cache import UploadCache
 from toolboxv2.utils.extras.registry_client import RegistryClient
 from toolboxv2.utils.extras.install.bsdiff_wrapper import create_patch_auto, estimate_patch_size
 
-logger = logging.getLogger(__name__)
+try:
+    from toolboxv2 import get_logger
+    logger = get_logger()
+except ImportError:
+    logger = logging.getLogger(__name__)
+
 
 
 @dataclass

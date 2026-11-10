@@ -723,6 +723,25 @@ connect();
     # WebSocket Handler Export (for WebSocketMessageHandler integration)
     # =========================================================================
 
+    def attach_ws_bridge(self) -> bool:
+        """Make this (already serving) app handle WS events of mounted sub-apps.
+
+        Registers the current WS handlers on the ToolBox app and, once per
+        process, subscribes to the existing ZMQ broker (no own broker / WS
+        worker). Returns True if WS handling is active afterwards.
+        """
+        ctx = getattr(self, "_ws_ctx", None)
+        if not ctx:
+            return False
+        handler, config, tb_app, worker, get_loop = ctx
+        if not hasattr(tb_app, "websocket_handlers"):
+            tb_app.websocket_handlers = {}
+        tb_app.websocket_handlers.update(self.get_websocket_handlers())
+        if not getattr(self, "_ws_bridge_started", False):
+            handler._start_ws_bridge(config, tb_app, worker, get_loop)
+            self._ws_bridge_started = True
+        return True
+
     def get_websocket_handlers(self) -> Dict[str, Dict[str, Callable]]:
         """Export WebSocket handlers in ToolBoxV2 format.
 

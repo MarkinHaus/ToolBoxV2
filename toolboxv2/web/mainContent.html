@@ -341,6 +341,27 @@
             color: oklch(75% 0.12 85);
         }
 
+        .app-type-badge.local {
+            background: oklch(90% 0.1 150);
+            color: oklch(40% 0.14 150);
+        }
+
+        [data-theme="dark"] .app-type-badge.local {
+            background: oklch(25% 0.08 150);
+            color: oklch(75% 0.12 150);
+        }
+
+        .app-card.starting {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
+        .app-card .app-start-error {
+            margin-top: 4px;
+            font-size: 0.75rem;
+            color: oklch(55% 0.18 25);
+        }
+
         .app-desc {
             font-size: var(--text-sm);
             color: var(--text-secondary);
@@ -490,6 +511,7 @@
                 <button class="filter-tab active" data-filter="all" role="tab" aria-selected="true">All</button>
                 <button class="filter-tab" data-filter="app" role="tab" aria-selected="false">Apps</button>
                 <button class="filter-tab" data-filter="flow" role="tab" aria-selected="false">Flows</button>
+                <button class="filter-tab" data-filter="local" role="tab" aria-selected="false" id="tab-local" hidden>Lokal</button>
             </nav>
 
             <!-- App Grid -->
@@ -518,7 +540,10 @@
                 // ============================================================
                 const CONFIG = {
                     cloudmEndpoint: '/api/CloudM/openui',
-                    minuFlowsEndpoint: '/api/Minu/list_flows'
+                    minuFlowsEndpoint: '/api/Minu/list_flows',
+                    // Only served by the local owner (8467); 404 behind nginx → no local apps.
+                    localAppsEndpoint: '/tray/apps',
+                    localCommandEndpoint: '/tray/command'
                 };
 
                 // ============================================================
@@ -603,18 +628,62 @@
                     }
                 }
 
+                async function fetchLocalApps() {
+                    try {
+                        const response = await fetch(CONFIG.localAppsEndpoint, { credentials: 'include' });
+                        if (!response.ok) return [];
+                        const data = await response.json();
+                        const apps = data?.apps || data?.result?.data?.apps || [];
+                        return Array.isArray(apps) ? apps : [];
+                    } catch (error) {
+                        return [];  // not local → no local apps
+                    }
+                }
+
+                async function startLocalApp(card) {
+                    const name = card.dataset.localApp;
+                    card.classList.add('starting');
+                    card.querySelector('.app-start-error')?.remove();
+                    try {
+                        const response = await fetch(CONFIG.localCommandEndpoint, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'include',
+                            body: JSON.stringify({ command: 'start_app', args: { name } })
+                        });
+                        const data = await response.json();
+                        const result = data?.result || {};
+                        if (!data?.ok || !result.merged) {
+                            const why = result.error || (result.conflicts ? `route conflict: ${result.conflicts.join(', ')}` : data?.error) || 'start failed';
+                            throw new Error(why);
+                        }
+                        window.location.href = result.prefix.replace(/\/?$/, '/');
+                    } catch (error) {
+                        console.error('[Dashboard] local app start failed:', error);
+                        card.classList.remove('starting');
+                        const msg = document.createElement('p');
+                        msg.className = 'app-start-error';
+                        msg.textContent = error.message;
+                        card.querySelector('.app-content')?.appendChild(msg);
+                    }
+                }
+
                 // ============================================================
                 // Rendering
                 // ============================================================
 
                 function createAppCard(app) {
                     const isFlow = app.type === 'flow';
+                    const isLocal = app.type === 'local';
                     const requiresAuth = app.auth === true;
                     const hasBg = !!app.bg_img_url;
 
                     let badges = '';
                     if (isFlow) {
                         badges += '<span class="app-type-badge flow">Flow</span>';
+                    }
+                    if (isLocal) {
+                        badges += `<span class="app-type-badge local">${app.running ? 'Läuft' : 'Lokal'}</span>`;
                     }
                     if (requiresAuth) {
                         badges += '<span class="app-type-badge auth">🔒</span>';
@@ -647,7 +716,8 @@
                        style="${cardStyle}"
                        data-type="${app.type || 'app'}"
                        data-search="${searchText}"
-                       data-auth="${requiresAuth}">
+                       data-auth="${requiresAuth}"
+                       ${isLocal && app.launchable ? `data-local-app="${escapeHtml(app.name)}"` : ''}>
                         <div class="app-icon" style="${iconContainerStyle}">
                             <span class="material-symbols-outlined" style="${iconColorStyle}">${escapeHtml(icon)}</span>
                         </div>
@@ -766,9 +836,10 @@
 
                 async function init() {
                     // Fetch data in parallel
-                    const [cloudmApps, minuFlows] = await Promise.all([
+                    const [cloudmApps, minuFlows, localApps] = await Promise.all([
                         fetchCloudMApps(),
-                        fetchMinuFlows()
+                        fetchMinuFlows(),
+                        fetchLocalApps()
                     ]);
 
                     // Normalize CloudM apps
@@ -795,8 +866,23 @@
                         bg_img_url: flow.bg_img_url || null
                     }));
 
+                    // Normalize local user-facing apps (feature.yaml → /tray/apps)
+                    const normalizedLocal = localApps.map(a => ({
+                        type: 'local',
+                        name: a.name,
+                        title: a.title || a.name,
+                        description: a.description || '',
+                        path: a.path || `/${a.name}`,
+                        icon: a.icon || 'apps',
+                        auth: false,
+                        bg_img_url: null,
+                        launchable: !!a.launchable,
+                        running: !!a.running
+                    }));
+                    document.getElementById('tab-local').hidden = normalizedLocal.length === 0;
+
                     // Combine
-                    allApps = [...normalizedApps, ...normalizedFlows];
+                    allApps = [...normalizedLocal, ...normalizedApps, ...normalizedFlows];
 
                     // Initial render
                     renderApps();
@@ -808,6 +894,13 @@
 
                 // Event listeners
                 elements.search.addEventListener('input', handleSearch);
+                elements.grid.addEventListener('click', (e) => {
+                    const card = e.target.closest('[data-local-app]');
+                    if (!card) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    startLocalApp(card);
+                }, true);
                 elements.tabs.addEventListener('click', handleFilterClick);
 
                 // Grid size buttons

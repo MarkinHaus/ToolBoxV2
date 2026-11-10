@@ -36,11 +36,15 @@ _PROFILE_PRESETS: dict[str, dict] = {
                 "env_overrides": {"TOOLBOX_LOGGING_LEVEL": "WARNING"}},
     "colab":   {"profile": "local",    "db": "LC", "offline": True,  "services": [],
                 "env_overrides": {"TOOLBOX_LOGGING_LEVEL": "WARNING"}},
-    # desktop: gui+cli+tray, local dict DB, workers available
-    "desktop": {"profile": "consumer", "db": "LC", "offline": True,  "services": ["workers"],
+    # desktop / local: gui+cli+tray, local dict DB, workers available
+    "desktop": {"profile": "local",    "db": "LC", "offline": True,  "services": ["workers"],
                 "env_overrides": {"TOOLBOX_LOGGING_LEVEL": "INFO"}},
+    "local":   {"profile": "local",    "db": "LC", "offline": True,  "services": ["workers"],
+                "env_overrides": {"TOOLBOX_LOGGING_LEVEL": "INFO"}},
+    "developer": {"profile": "developer", "db": "LC", "offline": True, "services": ["workers"],
+                  "env_overrides": {"TOOLBOX_LOGGING_LEVEL": "DEBUG"}},
     # server: full stack, services + autostart expected
-    "server":  {"profile": "server",   "db": "RR", "offline": False, "services": ["workers", "db"],
+    "server":  {"profile": "server",   "db": "CB", "offline": False, "services": ["workers", "db"],
                 "env_overrides": {"TOOLBOX_LOGGING_LEVEL": "INFO"}},
 }
 
@@ -169,15 +173,19 @@ def _resolve_preset(profile: str) -> dict:
 
 
 def build_manifest(profile: str = "mini", save: bool = True,
-                   path: Optional[Union[str, Path]] = None):
-    """Create (and optionally save) a profile manifest. Returns the TBManifest."""
+                   path: Optional[Union[str, Path]] = None, onboarded: bool = True):
+    """Create (and optionally save) a profile manifest. Returns the TBManifest.
+
+    onboarded=False leaves app.profile unset, so the first bare 'tb' still
+    runs the interactive onboarding (used by the silent get_app fail-safe).
+    """
     from toolboxv2.utils.manifest import ManifestLoader, TBManifest
 
     preset = _resolve_preset(profile)
     manifest = TBManifest(
         manifest_version="1.0.0",
         app={"name": "ToolBoxV2", "environment": "development",
-             "profile": preset["profile"]},
+             "profile": preset["profile"] if onboarded else None},
         mods={
             "installed": {"CloudM": "^0.1.0", "DB": "^0.0.3"},
             "init_modules": ["CloudM", "DB"],
@@ -218,7 +226,7 @@ def prepare_mini_failsafe() -> bool:
         return False
     _FAILSAFE_DONE = True
     try:
-        init(profile="mini", headless=True, create_app=False)
+        init(profile="mini", headless=True, create_app=False, onboarded=False)
     except Exception:
         # Never let onboarding prep break get_app(); App has its own defaults.
         return False
@@ -329,16 +337,18 @@ def init(profile: str = "mini",
          env: Optional[Mapping[str, str]] = None,
          manifest: Optional[Union[str, Path, dict]] = None,
          create_app: bool = True,
-         persist_secret: bool = True):
+         persist_secret: bool = True,
+         onboarded: bool = True):
     """Bulletproof one-call onboarding.
 
     Args:
-        profile: mini | colab | desktop | server.
+        profile: local | server | developer (+ presets mini | colab | desktop).
         headless: no CLI/web; just return a ready App (or None if create_app=False).
         env: extra/override env vars, applied before the App boots.
         manifest: a path/dict to use instead of the profile default.
         create_app: if False, only prepare env+secret+manifest and return None.
         persist_secret: write the generated secret to .env (set False for ephemeral CI).
+        onboarded: False = don't mark onboarding done (app.profile stays unset).
 
     Returns:
         The booted App singleton, or None when create_app=False.
@@ -375,7 +385,7 @@ def init(profile: str = "mini",
         # caller-provided file: load + re-save into the active location.
         loader.save(loader.load(str(manifest)))
     elif not (tb_root_dir / "tb-manifest.yaml").exists():
-        build_manifest(profile, save=True)
+        build_manifest(profile, save=True, onboarded=onboarded)
 
     if not create_app:
         return None
@@ -431,7 +441,7 @@ def _demo() -> None:
     # manifest builder produces a valid profile mapping
     m = build_manifest("server", save=False)
     assert m.app.profile.value == "server"
-    assert m.database.mode.value == "RR"
+    assert m.database.mode.value == "CB"
 
     print("ponytail init self-check: OK")
 

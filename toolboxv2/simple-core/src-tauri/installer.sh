@@ -11,6 +11,7 @@
 #   bash installer.sh --update
 # ============================================================
 
+{  # banner is human output -> stderr (stdout may be the JSON protocol channel)
 echo "**************************************************************************"
 echo "***████████╗*██████╗***██████╗**██╗*********██████╗***██████╗*██╗***██╗***"
 echo "***╚══██╔══╝██╔═══██╗*██╔═══██╗*██║*********██╔══██╗*██╔═══██╗*╚██╗██╔╝***"
@@ -20,6 +21,7 @@ echo "******██║***╚██████╔╝*╚██████╔╝*
 echo "******╚═╝****╚═════╝***╚═════╝**╚══════╝****╚═════╝***╚═════╝**╚═╝**╚═╝***"
 echo "**************************************************************************"
 echo "Zero the Hero - ToolBoxV2 Core Installer"
+} >&2
 
 set -euo pipefail
 
@@ -49,23 +51,33 @@ fi
 log()   { echo -e "${G}[✓]${NC} $*" >&2; }
 info()  { echo -e "${B}[→]${NC} $*" >&2; }
 warn()  { echo -e "${Y}[!]${NC} $*" >&2; }
+# ── JSON-Lines protocol (GUI / Tauri) ───────────────────────
+# One event per line on fd 3 = the real stdout, also inside $(...) captures.
+# {"type":"progress"|"error"|"log"|"done", "phase", "step", "status", "msg",
+#  "pct":0..100, "progress":0..1}   — human output always goes to stderr.
+exec 3>&1
+_jesc() {
+  local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"
+  s="${s//$'\n'/ }"; s="${s//$'\r'/ }"; s="${s//$'\t'/ }"
+  printf '%s' "$s"
+}
 jlog() {
-  local phase="$1" step="$2" status="$3" msg="$4" pct="${5:-0}"
-  printf '{"ts":"%s","phase":"%s","step":"%s","status":"%s","msg":"%s","pct":%s}\n' \
-    "$(date -u +%FT%TZ)" "$phase" "$step" "$status" "$msg" "$pct" >&2
+  [[ "${JSON_OUTPUT:-0}" == "1" ]] || return 0
+  local phase="$1" step="$2" status="$3" msg="$4" pct="${5:-0}" type="progress"
+  case "$status" in error|fail) type="error" ;; warn) type="log" ;; esac
+  printf '{"type":"%s","ts":"%s","phase":"%s","step":"%s","status":"%s","msg":"%s","pct":%s,"progress":%s}\n' \
+    "$type" "$(date -u +%FT%TZ)" "$(_jesc "$phase")" "$(_jesc "$step")" "$(_jesc "$status")" \
+    "$(_jesc "$msg")" "$pct" "$(awk -v p="$pct" 'BEGIN{printf "%.2f", p/100}')" >&3
+}
+jdone() {  # final event: version, path, profile
+  [[ "${JSON_OUTPUT:-0}" == "1" ]] || return 0
+  printf '{"type":"done","version":"%s","path":"%s","profile":"%s","progress":1}\n' \
+    "$(_jesc "$1")" "$(_jesc "$2")" "$(_jesc "$3")" >&3
 }
 dry() { [[ "$DRY_RUN" == "1" ]] && { warn "[dry-run] $*"; return 0; } || return 1; }
 
-# suppress human output when JSON mode active
-if [[ "${JSON_OUTPUT:-0}" == "1" ]]; then
-  log()   { :; }
-  info()  { :; }
-  warn()  { jlog "warn" "" "warn" "$*"; }
-  fail()  { jlog "error" "" "fail" "$*"; exit 1; }
-  step()  { :; }
-else
-  fail()  { echo -e "${R}[✗]${NC} $*" >&2; exit 1; }
-fi
+warn()  { echo -e "${Y}[!]${NC} $*" >&2; jlog "warn" "" "warn" "$*"; }
+fail()  { echo -e "${R}[✗]${NC} $*" >&2; jlog "error" "" "fail" "$*"; exit 1; }
 ask()   { echo -e "${C}[?]${NC} $*" >&2; }
 step()  { echo -e "\n${BOLD}${B}── $* ${NC}${D}──────────────────────────────────────${NC}" >&2; }
 
@@ -97,17 +109,23 @@ JSON_OUTPUT=0
 DRY_RUN=0
 ASSUME_YES=""
 TB_VERSION_TARGET=""
-for arg in "$@"; do
+TB_PROFILE=""    # local | server | developer -> `tb -init <profile>` after install
+UI_AFTER=""      # cli | browser | none (default: cli on a TTY, else none)
+while [ $# -gt 0 ]; do
+  arg="$1"; shift
   case $arg in
     --uninstall)           ACTION="uninstall" ;;
     --update)              ACTION="update" ;;
     --config=*)            CONFIG_FILE="${arg#*=}" ;;
-    --config)              shift; CONFIG_FILE="$1" ;;
+    --config)              CONFIG_FILE="${1:-}"; shift || true ;;
     --yes)                 ASSUME_YES="yes" ;;
     --no)                  ASSUME_YES="no" ;;
     --mode=*)              INSTALL_MODE="${arg#*=}" ;;
-    --mode)                shift; INSTALL_MODE="$1" ;;
+    --mode)                INSTALL_MODE="${1:-}"; shift || true ;;
     --path=*)              INSTALL_PATH="${arg#*=}" ;;
+    --path)                INSTALL_PATH="${1:-}"; shift || true ;;
+    --profile=*)           TB_PROFILE="${arg#*=}" ;;
+    --ui=*)                UI_AFTER="${arg#*=}" ;;
     --json-output)         JSON_OUTPUT=1 ;;
     --dry-run)             DRY_RUN=1 ;;
     --source=*)            SOURCE_FROM="${arg#*=}" ;;
@@ -119,6 +137,8 @@ for arg in "$@"; do
       echo "  --path <dir>        Custom install directory"
       echo "  --source <src>      github | registry (default: registry, fallback github)"
       echo "  --version <ver>     nightly | latest | x.x.x (default: latest)"
+      echo "  --profile=<p>       local | server | developer (skips the onboarding questions)"
+      echo "  --ui=<ui>           after install: cli | browser | none"
       echo "  --json-output       Machine-readable JSON-Lines output for GUI integration"
       echo "  --dry-run           Validate config and phases without installing"
       echo "  --update            Update existing installation"
@@ -319,6 +339,8 @@ phase_config() {
     OPT_REGISTRY=$(yaml_get "$CONFIG_FILE" "optional.registry" "false")
     [ -n "$ASSUME_YES" ]      || ASSUME_YES=$(yaml_get "$CONFIG_FILE" "assume" "")     # yes|no|""(ask)
     [ "$ACTION" = "install" ] && ACTION=$(yaml_get "$CONFIG_FILE" "action" "$ACTION")
+    [ -n "$TB_PROFILE" ]      || TB_PROFILE=$(yaml_get "$CONFIG_FILE" "profile" "")
+    [ -n "$UI_AFTER" ]        || UI_AFTER=$(yaml_get "$CONFIG_FILE" "ui" "")
     [ -z "$ENVIRONMENT" ]     || true   # env weiter unten via yaml_get gefuellt (L304), hier nur assume/action
 
     # Features from config (space-separated line under features:)
@@ -462,8 +484,18 @@ phase_preflight() {
     RUNTIME="none"
     log "Runtime: none required for ${INSTALL_MODE} mode"
   else
+    # 0. uv bundled with the Tauri app (sidecar) wins: no download, no PATH luck
+    if [ -n "${TB_UV_BIN:-}" ] && [ -x "${TB_UV_BIN}" ]; then
+      # Copy into the install dir: tb wrappers/updates must not depend on the app bundle.
+      UV_BIN="$TB_UV_BIN"
+      if ! dry "copy bundled uv"; then
+        mkdir -p "${INSTALL_PATH}/bin" && cp -f "$TB_UV_BIN" "${INSTALL_PATH}/bin/uv" \
+          && chmod +x "${INSTALL_PATH}/bin/uv" && UV_BIN="${INSTALL_PATH}/bin/uv"
+      fi
+      RUNTIME="uv"
+      log "Runtime: bundled uv at ${UV_BIN}"
     # Try uv first
-    if command -v uv &>/dev/null; then
+    elif command -v uv &>/dev/null; then
       UV_BIN=$(command -v uv)
       RUNTIME="uv"
       log "Runtime: uv found at ${UV_BIN}"
@@ -483,7 +515,9 @@ phase_preflight() {
       done
 
       # Bootstrap uv if still no runtime
-      if [ -z "$RUNTIME" ]; then
+      if [ -z "$RUNTIME" ] && dry "bootstrap uv"; then
+        RUNTIME="uv"; UV_BIN="uv"
+      elif [ -z "$RUNTIME" ]; then
         info "No runtime found — bootstrapping uv..."
         if command -v curl &>/dev/null; then
           curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -533,6 +567,7 @@ _check_optional() {
 
 _install_optional() {
   local name="$1"
+  dry "install optional ${name}" && return 0
   case "$name" in
     docker)
       case "$OS" in
@@ -686,14 +721,15 @@ _install_uv() {
 
   # _install_uv extras already sanitized above
 
-  # Ensure uv tool bin is in PATH
+  # Ensure uv tool bin is in PATH (`tool dir --bin`; plain `tool dir` is the venv root)
   local uv_bin_dir
-  uv_bin_dir=$("$UV_BIN" tool dir 2>/dev/null || echo "${HOME}/.local/bin")
+  uv_bin_dir=$("$UV_BIN" tool dir --bin 2>/dev/null || echo "${UV_TOOL_BIN_DIR:-${HOME}/.local/bin}")
   export PATH="${uv_bin_dir}:$PATH"
 
+  # Version straight from uv (tb --version prints to stderr / needs a booted app)
   local tb_ver
-  tb_ver=$(tb --version 2>/dev/null | grep -o '[0-9][0-9.]*' | head -1 || echo "unknown")
-  echo "$tb_ver"
+  tb_ver=$("$UV_BIN" tool list 2>/dev/null | awk 'tolower($1)=="toolboxv2"{sub(/^v/,"",$2);print $2;exit}')
+  echo "${tb_ver:-unknown}"
 }
 
 _install_venv() {
@@ -1010,9 +1046,52 @@ print_summary() {
 }
 
 # ============================================================
+# Phase 6 — Onboarding hand-off (same flow as `tb` first run)
+# ============================================================
+phase_onboarding() {
+  local tb_bin="$1"
+  [ -x "$tb_bin" ] || tb_bin="$(command -v tb || true)"
+  [ -n "$tb_bin" ] || { warn "tb not found — run 'tb' manually to finish setup"; return 0; }
+  dry "onboarding" && return 0
+
+  # Profile known (Tauri wizard / --profile): apply it non-interactively.
+  if [ -n "$TB_PROFILE" ]; then
+    jlog onboarding profile running "Applying profile ${TB_PROFILE}" 95
+    # Success = tb's JSON result {"ok": true, ...}; older tb versions ignore
+    # unknown -init values with exit 0, so the exit code alone is not proof.
+    local init_out
+    init_out=$("$tb_bin" -init "$TB_PROFILE" 2>&1 </dev/null || true)
+    printf '%s\n' "$init_out" >&2
+    if printf '%s' "$init_out" | grep -q '"ok": *true'; then
+      jlog onboarding profile done "Profile ${TB_PROFILE} applied" 98
+    else
+      warn "Could not apply profile ${TB_PROFILE} (tb too old?) — run 'tb -init onboard'"
+    fi
+  fi
+
+  local ui="${UI_AFTER:-}"
+  if [ -z "$ui" ]; then
+    if [ -t 0 ] && [ -t 2 ] && [[ "${JSON_OUTPUT:-0}" != "1" ]]; then ui="cli"; else ui="none"; fi
+  fi
+  case "$ui" in
+    cli)
+      # 3-question onboarding; tb itself skips it if already onboarded.
+      [ -z "$TB_PROFILE" ] && [ -t 0 ] && "$tb_bin" -init onboard </dev/tty >&2 || true ;;
+    browser)
+      # Local web onboarding (127.0.0.1:8467), detached so the installer ends.
+      jlog onboarding ui running "Opening onboarding in the browser" 99
+      nohup "$tb_bin" -init web >/dev/null 2>&1 &
+      info "Onboarding opens in your browser: http://127.0.0.1:8467" ;;
+    none|*) : ;;
+  esac
+}
+
+# ============================================================
 # MAIN
 # ============================================================
 main() {
+  # JSON mode: stdout carries only protocol lines (fd 3); human text -> stderr.
+  [[ "${JSON_OUTPUT:-0}" == "1" ]] && exec 1>&2
   echo -e "${BOLD}${C}"
   echo "  ╔════════════════════════════════════════╗"
   echo "  ║     ToolBoxV2 Installer v${INSTALLER_VERSION}       ║"
@@ -1021,34 +1100,43 @@ main() {
 
   case "$ACTION" in
     install)
+      jlog discovery start running "Detecting system" 2
       phase_discovery
+      jlog config start running "Loading configuration" 4
       phase_config
+      jlog preflight start running "Checking prerequisites" 6
       phase_preflight
+      jlog install start running "Installing ToolBoxV2 (${INSTALL_MODE})" 8
 
       local tb_version="unknown"
-      # Route to correct install function
-      if [ "$INSTALL_MODE" = "uv" ] && [ "$RUNTIME" = "venv" ]; then
+      # Route to correct install function (--dry-run: validate only, touch nothing)
+      if dry "install (${INSTALL_MODE}) -> ${INSTALL_PATH}"; then
+        tb_version="dry-run"
+      elif [ "$INSTALL_MODE" = "uv" ] && [ "$RUNTIME" = "venv" ]; then
         tb_version=$(_install_venv)
       else
         tb_version=$(phase_install)
       fi
 
-      phase_write_manifests "$tb_version"
+      jlog manifests write running "Writing manifests" 85
+      dry "write manifests" || phase_write_manifests "$tb_version"
 
       # Phase 5: tb access — make tb globally available
       local tb_bin="${INSTALL_PATH}/bin/tb"
       if [ -f "$tb_bin" ] && ! dry "tb access"; then
-        jlog install access running "Setting up tb global access" 95
+        jlog install access running "Setting up tb global access" 90
         if "$tb_bin" access 2>/dev/null; then
-          jlog install access done "tb accessible globally" 100
+          jlog install access done "tb accessible globally" 92
         else
           # Fallback: symlink already created in _install_native
           warn "tb access command failed — symlink fallback active"
-          jlog install access done "tb accessible via symlink" 100
+          jlog install access done "tb accessible via symlink" 92
         fi
       fi
 
       print_summary "$tb_version"
+      phase_onboarding "$tb_bin"
+      jdone "$tb_version" "$INSTALL_PATH" "$TB_PROFILE"
       ;;
     update)
       phase_discovery

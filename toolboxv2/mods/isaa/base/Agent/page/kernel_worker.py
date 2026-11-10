@@ -153,6 +153,11 @@ class _FS:
         return await loop.run_in_executor(
             None, lambda: _rpc({"rpc": "fs.write", "path": path, "data": data}))
 
+    async def stat(self, path):
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, lambda: _rpc({"rpc": "fs.stat", "path": path}))
+
 
 def _show(data, mime="image/png", caption=""):
     raw = data if isinstance(data, (bytes, bytearray)) else bytes(data)

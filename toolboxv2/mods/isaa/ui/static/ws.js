@@ -12,8 +12,9 @@
 
   function url() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // WS worker runs on its own port (default :8100). Override via window.__TB_WS_PORT__.
-    const port = window.__TB_WS_PORT__ || '8100';
+    // One local WS port for worker manager, Tauri and FastTB (ws_worker.port 8468).
+    // Override via window.__TB_WS_PORT__.
+    const port = window.__TB_WS_PORT__ || '8468';
     return `${proto}//${location.hostname}:${port}/ws/open_chat`;
   }
 

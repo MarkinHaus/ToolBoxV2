@@ -9,7 +9,7 @@ class ToolBoxPopup {
         this.recognition = null;
         this.chatHistory = [];
         this.synthesis = null;
-        this.apiBase = 'http://localhost:8080';
+        this.apiBase = 'http://localhost:8467';
         this.isConnected = false;
         this.currentAudio = null;
         this.currentlyPlayingButton = null;
@@ -265,10 +265,10 @@ async saveSettings() {
 applySettings() {
     switch (this.settings.backend) {
         case 'local':
-            this.apiBase = 'http://localhost:8080';
+            this.apiBase = 'http://localhost:8467';
             break;
         case 'tauri':
-            this.apiBase = 'http://localhost:5000';
+            this.apiBase = 'http://localhost:8467';
             break;
         case 'native':
             this.apiBase = null;   // kein HTTP – alles über native messaging
@@ -277,10 +277,10 @@ applySettings() {
             this.apiBase = 'https://simplecore.app';
             break;
         case 'custom':
-            this.apiBase = this.settings.customBackendUrl || 'http://localhost:8080';
+            this.apiBase = this.settings.customBackendUrl || 'http://localhost:8467';
             break;
         default:
-            this.apiBase = 'http://localhost:8080';
+            this.apiBase = 'http://localhost:8467';
     }
 
     const backendSelector = document.getElementById('backendSelector');
@@ -791,9 +791,9 @@ updateAuthUI() {
                 if (response?.found) {
                     this.settings.backend = 'tauri';
                     this.saveSettings();
-                    this.showSettingsFeedback('✅ Tauri Worker gefunden (Port 5000)!', false);
+                    this.showSettingsFeedback('✅ Tauri Worker gefunden (Port 8467)!', false);
                 } else {
-                    this.showSettingsFeedback('Kein Tauri Worker auf Port 5000.', true);
+                    this.showSettingsFeedback('Kein Tauri Worker auf Port 8467.', true);
                 }
                 btn.textContent = prev;
                 btn.disabled = false;

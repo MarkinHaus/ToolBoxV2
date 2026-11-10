@@ -1315,7 +1315,7 @@ let reconnectDelay=500;
 
 function wsConnect(){
   const proto=location.protocol==='https:'?'wss:':'ws:';
-  const wsPort=window.__TB_WS_PORT__ || '8100';
+  const wsPort=window.__TB_WS_PORT__ || '8468';
   const url=proto+'//'+location.hostname+(wsPort?':'+wsPort:'')+'/ws/openLive';
   ws=new WebSocket(url);
   ws.onopen=()=>{

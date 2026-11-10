@@ -380,6 +380,10 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Fetch uv sidecar (bundle.externalBin binaries/uv)
+        shell: bash
+        run: bash scripts/fetch_uv_sidecar.sh "${{ matrix.target_triple }}"
+
       - name: Create Worker Binary
         shell: bash
         run: |

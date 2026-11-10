@@ -1,5 +1,5 @@
 """
-E2E: wizard_api + /live sub-mount durch echten HTTP-Stack (waitress, random Port).
+E2E: local_ui (onboarding routes, wizard_api, /live) over a real HTTP stack.
 
 Startet den FastTB local_ui-Server in einem Thread, spreicht die Endpunkte
 ueber echtes HTTP an und prueft JSON-Contracts. Danach sauberer Shutdown.
@@ -63,27 +63,46 @@ def test_e2e_wizard_state_over_http():
     with _Server() as srv:
         status, data = srv.get("/api/wizard/state")
         assert status == 200
-        assert data["first_run"] is True or data["first_run"] is False
-        assert isinstance(data["steps"], list) and data["steps"]
-        ids = {s["id"] for s in data["steps"]}
-        assert "app" in ids and "database" in ids
+        assert data["first_run"] in (True, False)
+        assert data["installed"] is True
 
 
-def test_e2e_wizard_profiles_over_http():
+def test_e2e_wizard_profile_over_http():
     with _Server() as srv:
-        status, data = srv.get("/api/wizard/profiles")
-        assert status == 200
-        assert {"consumer", "homelab", "server", "business", "developer"} <= \
-               {p["id"] for p in data["profiles"]}
+        status, data = srv.post("/api/wizard/profile", {"profile": "developer"})
+        assert status == 200 and data == {"ok": True, "profile": "developer"}
 
 
-def test_e2e_wizard_step_roundtrip_over_http():
-    with _Server() as srv:
-        _, state = srv.get("/api/wizard/state")
-        app_step = next(s for s in state["steps"] if s["id"] == "app")
-        values = {f["name"]: f["value"] for f in app_step["fields"]}
-        status, res = srv.post("/api/wizard/step", {"step": "app", "values": values})
-        assert status == 200 and res.get("ok") is True
+def test_browser_onboarding_flow_over_http():
+    """installer.html browser path: first_run -> profile -> save -> onboarded."""
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import patch
+    import toolboxv2.utils.workers.fast.wizard_api as wa
+
+    tmp = Path(tempfile.mkdtemp(prefix="tb_onb_"))
+    session = {}
+    with patch("toolboxv2.tb_root_dir", tmp), patch.object(wa, "tb_root_dir", tmp), \
+         patch.object(wa, "_load_session", lambda: dict(session)), \
+         patch.object(wa, "_save_session", lambda s: (session.clear(), session.update(s))), \
+         _Server() as srv:
+        assert srv.get("/api/wizard/state")[1]["first_run"] is True
+        # legacy name from old installer builds is normalized, not rejected
+        assert srv.post("/api/wizard/profile", {"profile": "consumer"})[1]["profile"] == "local"
+        status, res = srv.post("/api/wizard/save", {"apply": False})
+        assert status == 200 and res["ok"] is True
+        state = srv.get("/api/wizard/state")[1]
+    assert state["first_run"] is False and state["profile"] == "local"
+
+
+def test_removed_endpoints_are_gone():
+    """Dead wizard endpoints (incl. GET /api/wizard/llm, which leaked keys)."""
+    import toolboxv2.utils.workers.fast.wizard_api as wa
+    import inspect
+    src = inspect.getsource(wa)
+    for gone in ("/api/wizard/llm", "/api/wizard/step", "/api/wizard/features",
+                 "/api/wizard/gui", "/api/wizard/dist", "/api/wizard/profiles"):
+        assert gone not in src, gone
 
 
 def test_e2e_live_health_over_http():
@@ -133,39 +152,36 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def test_install_redirects_to_welcome_on_first_run():
-    """W1c: /install gehoert dem Manage-Modus; first_run -> /welcome."""
+def _get_html(srv, path):
+    with urllib.request.urlopen(f"http://127.0.0.1:{srv.port}{path}", timeout=10) as r:
+        return r.status, r.read().decode("utf-8")
+
+
+def test_root_serves_onboarding_on_first_run():
+    """first_run (no manifest profile) -> '/' is the one onboarding UI."""
     import toolboxv2.utils.workers.fast.local_ui as lu
     from unittest.mock import patch
 
-    # State mocken: Dev-Maschinen haben first_run=False (installierte TB).
     with _Server() as srv, patch.object(
         lu, "get_installation_state",
-        return_value={"installed": True, "first_run": True},
+        return_value={"installed": True, "first_run": True, "profile": None},
     ):
-        opener = urllib.request.build_opener(_NoRedirect())
-        try:
-            opener.open(f"http://127.0.0.1:{srv.port}/install", timeout=10)
-            assert False, "expected 302"
-        except urllib.error.HTTPError as e:
-            assert e.code == 302, f"unexpected {e.code}"
-            assert e.headers.get("Location") == "/welcome"
+        status, html = _get_html(srv, "/")
+    assert status == 200
+    assert "ToolBoxV2 Installer" in html
+    assert "/api/wizard/state" in html
 
 
-def test_install_serves_manage_hub_when_installed():
-    """W1b: /install = Manager (Profil/Module/GUI/Dist-Karten, Wizard-API)."""
-    from unittest.mock import patch
+def test_setup_always_serves_onboarding():
+    """/setup re-opens onboarding on an installed TB (replaces /install hub)."""
+    status, html = 0, ""
+    with _Server() as srv:
+        status, html = _get_html(srv, "/setup")
+    assert status == 200
+    assert "ToolBoxV2 Installer" in html
 
+
+def test_old_ui_pages_are_gone():
     import toolboxv2.utils.workers.fast.local_ui as lu
-
-    with _Server() as srv, patch.object(
-        lu, "get_installation_state",
-        return_value={"installed": True, "first_run": False},
-    ):
-        with urllib.request.urlopen(
-                f"http://127.0.0.1:{srv.port}/install", timeout=10) as r:
-            assert r.status == 200
-            html = r.read().decode("utf-8")
-        assert "ToolBox Manager" in html
-        assert "/api/wizard/profiles" in html
-        assert "/api/wizard/features" in html
+    assert not hasattr(lu, "welcome")
+    assert not hasattr(lu, "install")

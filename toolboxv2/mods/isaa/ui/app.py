@@ -329,6 +329,20 @@ def _resolve_ctx(conn_id, session, ctx, **kw):
 # Launcher
 # ============================================================================
 
+_APP: FastTB | None = None
+
+
+def __getattr__(name: str):
+    """Lazy module-level `app` (PEP 562) so a One-Port-Collective owner can
+    mount this UI via reload_from_src(module, "app"). Built on first access."""
+    global _APP
+    if name == "app":
+        if _APP is None:
+            _APP = build_app()
+        return _APP
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 def main(host: str = "127.0.0.1", port: int = 8765) -> None:
     from toolboxv2.utils.workers.fast_tb_handler import FastTBHandler
     app = build_app()

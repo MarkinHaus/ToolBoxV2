@@ -22,7 +22,12 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
+try:
+    from toolboxv2 import get_logger
+    logger = get_logger()
+except ImportError:
+    logger = logging.getLogger(__name__)
+
 
 
 @dataclass
@@ -154,8 +159,12 @@ class RollbackManager:
         # Package backups storage
         self.packages_dir = self.backup_root / "packages"
         self.packages_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            from toolboxv2 import get_logger
+            self.logger  = get_logger()
+        except ImportError:
+            self.logger  = logging.getLogger(__name__)
 
-        self.logger = logging.getLogger(__name__)
 
     def _generate_backup_id(self, package_name: str) -> str:
         """Generate unique backup ID.

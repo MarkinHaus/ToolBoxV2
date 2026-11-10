@@ -152,9 +152,9 @@ function startClock() {
 function stopClock() { if (es) es.close(); }
 
 // WebSocket
-// WebSocket — WS worker runs on separate port (default 8100)
+// WebSocket — WS worker runs on separate port (default 8468)
 const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const wsPort = window.__TB_WS_PORT__ || '8100';
+const wsPort = window.__TB_WS_PORT__ || '8468';
 ws = new WebSocket(proto + '//' + location.hostname + ':' + wsPort + '/ws/openEcho');
 ws.onmessage = e => {
     const d = JSON.parse(e.data);

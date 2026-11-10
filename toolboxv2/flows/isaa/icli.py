@@ -1578,7 +1578,10 @@ def _print_tool_card(card: dict, duration_ms: float | None = None) -> None:
     except OSError:
         width = 100
     for line in render_tool_card_lines(card, duration_ms=duration_ms, width=width):
-        c_print(HTML(line))
+        try:
+            c_print(HTML(line))
+        except:
+            pass
 
 
 def _pct(part: int, total: int) -> str:

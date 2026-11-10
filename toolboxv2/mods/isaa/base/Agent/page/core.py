@@ -7,13 +7,16 @@ Meaning is decided by the model or the Decider port - never by text heuristics.
 Commits are synchronous: cancelling a task can never leave a half-applied page.
 """
 from __future__ import annotations
+import os
 
 import asyncio
 import base64
 import contextlib
 import copy
 import difflib
+import contextvars
 import hashlib
+import inspect
 import json
 import mimetypes
 import time
@@ -25,6 +28,11 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Protocol
 
 from .store import DirStore, lock_file
+
+# Session, deren Action/Tool gerade ausgefuehrt wird.  Wird in _dispatch gesetzt, damit
+# der Tools-Port (gateway -> tools.call) session-gebundene Tools (vfs_shell/vfs_view)
+# der RICHTIGEN Session zuordnen kann.  None ausserhalb eines Dispatch.
+CURRENT_SESSION: contextvars.ContextVar = contextvars.ContextVar("page_current_session", default=None)
 
 
 # ================================================================== ports
@@ -339,6 +347,7 @@ class Session:
     helpers: dict = field(default_factory=dict)  # prep hook name -> text, rendered into P3
     evidence: dict = field(default_factory=dict)
     notices: list = field(default_factory=list)
+    step: int = 0
     steer_pending: list = field(default_factory=list)  # P5a: mid-stream steering, drained per step
     overrun: int = 0
     gate_fired: bool = False
@@ -537,13 +546,21 @@ class PageEngine:
                 # get_tool_names: () -> list[str]            – für dir(tools) + digest
                 # show:           (bytes, mime, caption) -> media_ref
                 # cap_check:      (cap) -> bool              – import/fs Gating (Subprocess)
+                extra = {}
+                try:  # BM25-Suche im Kernel nur, wenn der Kernel sie kennt (Subprocess-Kernel evtl. nicht)
+                    if "search_tools" in inspect.signature(s.kernel.bind).parameters:
+                        extra["search_tools"] = lambda q, k=8: self.tools.search(q, k)
+                except (TypeError, ValueError):
+                    pass
                 s.kernel.bind(
                     self.gateway,
-                    lambda: [n for n, _ in self.tools.search("", 200)],
+                    lambda: [n for n, _ in self.tools.search("", 100_000)],
                     lambda b, m, c, s=s: self._put_media(s, b, m, c),
                     cap_check=self.capsule.allows,
+                    get_tool_docs=lambda: dict(self.tools.search("", 100_000)),
                     action_dispatch=self.action_dispatch,
                     actions_schema=KERNEL_ACTIONS,
+                    **extra,
                 )
             self.sessions[sid] = s
         return self.sessions[sid]
@@ -664,6 +681,7 @@ class PageEngine:
 
             mode, last, ctx_n, chain_n, final = "A", "A", 0, 0, None
             for step in range(1, self.cfg.max_steps + 1):
+                s.step = step
                 if mode == "V" and not any(b["state"] == "proposed" for b in s.work["boxes"]) \
                         or mode == "F" and len(s.tail) < 2:
                     mode = "A"
@@ -741,6 +759,11 @@ class PageEngine:
                 ):
                     mode, chain_n = "F", 0
 
+            if final is None and s.step >= self.cfg.max_steps - 2:
+                s.notices.append(
+                    f"[budget] {self.cfg.max_steps - s.step} steps left "
+                    f"(limit {self.cfg.max_steps}). Wrap up now and final_answer."
+                )
             final = final or (
                 f"Stopped after {self.cfg.max_steps} steps; the state is on the page.", False
             )
@@ -871,7 +894,8 @@ class PageEngine:
             f"[LIVE] {time.strftime('%Y-%m-%d %H:%M')} | {MODES[mode]} | {self.cfg.mode} mode "
             f"| page v{s.page['v']} "
             f"{self.render_tokens(s)} tok | tail {len(s.tail)} items "
-            f"{sum(i['tok'] for i in s.tail)} tok"
+            f"{sum(i['tok'] for i in s.tail)} tok | "
+            f"steps {s.step}/{self.cfg.max_steps}"
         ]
         if s.work != s.page:
             lines.append("staged page edits pending (visible after the next commit)")
@@ -1465,12 +1489,18 @@ class PageEngine:
             return Result(f"error: unknown action {call.name!r}", False)
         if st.mode not in spec[3]:
             return Result(f"error: {call.name} is not allowed in {MODES[st.mode]}", False)
+        missing = [k for k in spec[2] if k not in call.args]
+        if missing:
+            return Result(f"error: {call.name} missing required arg(s): {', '.join(missing)}", False)
+        tok = CURRENT_SESSION.set(s.id)
         try:
             return await getattr(self, f"_do_{call.name}")(s, st, **call.args)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # an error is a result, not a crash
             return Result(f"error: {type(e).__name__}: {e}", False)
+        finally:
+            CURRENT_SESSION.reset(tok)
 
     async def _do_code_run(self, s, st, code, timeout=None):
         if s.kernel is None:
@@ -1485,6 +1515,30 @@ class PageEngine:
             t = self.cfg.code_run_default_timeout
         t = min(t, self.cfg.code_run_max_timeout)
         self._active = (s, st)  # kernel-invoked page actions target this step
+        # Fix 09.11.2026 (Sub-Agent VFS-Pfad-Guard): raw open('/global/...') landet auf
+        # Windows im Current-Drive-Root (C:\global). Echter Mount-Root + output_dir als
+        # Kernel-Variablen bereitstellen, damit Sub-Agent-Code Pfade korrekt aufloest.
+        od = getattr(self, "sub_output_dir", None)
+        if od:
+            vr = getattr(self, "vfs_global_root", None)
+            # Fix 09.11.2026 (R1): __OUTPUT_DIR__ als HOST-Pfad injizieren. Der
+            # VFS-String '/global/sub/X' resolvte in raw open() zu C:\global\sub\X.
+            host_od = None
+            if vr:
+                rel = od.lstrip("/").split("/", 1)
+                if rel and rel[0] == "global":
+                    host_od = os.path.join(vr, rel[1]) if len(rel) > 1 else vr
+            if host_od:
+                try:
+                    os.makedirs(host_od, exist_ok=True)
+                except OSError:
+                    pass
+            code = (
+                f"__VFS_ROOT__ = {vr!r}\n"
+                f"__OUTPUT_DIR__ = {host_od!r}\n"
+                "# NOTE: __OUTPUT_DIR__ is a HOST path - open()/os work directly.\n"
+                "# __VFS_ROOT__ = host root of the /global mount.\n" + code
+            )
         try:
             r = await s.kernel.run(code, t)
         finally:
@@ -1565,8 +1619,10 @@ class PageEngine:
             raise KeyError(f"unknown box {box_id!r}")
         return box
 
-    async def _do_plan(self, s, st, op, box_id=None, title=None, check="soft", text=""):
+    async def _do_plan(self, s, st, op=None, box_id=None, title=None, check="soft", text=""):
         boxes = s.work["boxes"]
+        if not op:
+            return Result("error: plan needs op='add' | 'note' | 'reason'", False)
         if op == "add":
             if not title:
                 return Result("error: add needs a title", False)

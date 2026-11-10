@@ -62,7 +62,12 @@ except ImportError:
     zmq = None
     ZMQ_AVAILABLE = False
 
-logger = logging.getLogger(__name__)
+try:
+    from toolboxv2 import get_logger
+    logger = get_logger()
+except ImportError:
+    logger = logging.getLogger(__name__)
+
 
 # ============================================================================
 # Constants & OS Detection
@@ -183,7 +188,12 @@ from pathlib import Path
 from typing import List, Tuple, Optional
 import platform
 
-logger = logging.getLogger(__name__)
+try:
+    from toolboxv2 import get_logger
+    logger = get_logger()
+except ImportError:
+    logger = logging.getLogger(__name__)
+
 
 SYSTEM = platform.system()
 IS_WINDOWS = SYSTEM == "Windows"
@@ -1199,6 +1209,34 @@ def _run_http_worker_process(worker_id: str, config_dict: Dict, port: int, socke
     else:
         worker.run(port=port)
 
+def ws_base_port(config) -> int:
+    """First WS worker port — ONE source for worker start and nginx upstreams.
+
+    Locally (no nginx) this is the canonical ws_worker.port (8468), the same
+    port Tauri and FastTB standalone use. Only if it collides with the HTTP
+    worker range (started with nginx) it moves right behind that range.
+    """
+    ws = int(config.ws_worker.port)
+    if getattr(config.nginx, "enabled", False):
+        http_lo = int(config.http_worker.port)
+        http_hi = http_lo + int(config.http_worker.workers)
+        if http_lo <= ws < http_hi:
+            logger.warning(f"ws_worker.port {ws} collides with HTTP workers "
+                           f"{http_lo}-{http_hi - 1}; using {http_hi}")
+            ws = http_hi
+    return ws
+
+
+def live_ui_bind_host(config) -> str:
+    """The live UI (dist + tray/wizard API, auth=False routes) is never exposed:
+    remote access goes through nginx -> HTTP workers, not through 8467."""
+    host = getattr(config.manager, "live_ui_host", "127.0.0.1") or "127.0.0.1"
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        logger.warning(f"Live-UI: live_ui_host={host!r} ignored — binding 127.0.0.1 only")
+        return "127.0.0.1"
+    return host
+
+
 def _run_live_ui_process(worker_id: str, config_dict: Dict, port: int, standby: bool = True):
     """Serve the FastTB local_ui as the One-Port-Collective owner.
 
@@ -1210,11 +1248,23 @@ def _run_live_ui_process(worker_id: str, config_dict: Dict, port: int, standby: 
     config = Config.from_dict(config_dict)
     from toolboxv2.utils.workers.fast.local_ui import app as local_ui_app
     from toolboxv2.utils.workers.fast.tray_api import (
-        mount_tray_api, register_collective_commands,
+        mount_tray_api, register_collective_commands, restore_mounted_apps,
     )
     mount_tray_api(local_ui_app)
     register_collective_commands(local_ui_app)
-    host = getattr(config.manager, "live_ui_host", "127.0.0.1")
+    host = live_ui_bind_host(config)
+
+    def _restore_when_owner():
+        # Standby replicas block in serve() until they bind; _server is set
+        # exactly when this process became the owner.
+        while getattr(local_ui_app, "_server", None) is None:
+            time.sleep(0.5)
+        restored = restore_mounted_apps()
+        if restored:
+            logger.info(f"Live-UI owner {worker_id}: restored apps {restored}")
+
+    Thread(target=_restore_when_owner, daemon=True,
+                     name="liveui-restore").start()
     # Tray icon and Tauri shell discover the live UI through this file.
     try:
         from toolboxv2.utils.workers.fast.endpoint import publish_endpoint
@@ -1251,10 +1301,7 @@ class WorkerManager:
         self._broker_process: Process | None = None
         self._running = False
         self._next_http_port = config.http_worker.port
-        ws_base = config.ws_worker.port
-        if ws_base < config.http_worker.port + 100:
-            ws_base = config.http_worker.port + 100
-        self._next_ws_port = ws_base
+        self._next_ws_port = ws_base_port(config)
 
         # ZMQ endpoints from config
         zmq_pub = getattr(config.zmq, 'pub_endpoint', 'tcp://127.0.0.1:5555')
@@ -1448,7 +1495,7 @@ class WorkerManager:
             max_http_workers=cfg.http_worker.workers,
             max_ws_workers=getattr(cfg.ws_worker, 'max_workers', 4),
             base_http_port=cfg.http_worker.port,
-            base_ws_port=cfg.ws_worker.port,
+            base_ws_port=ws_base_port(cfg),
             remote_nodes=self._cluster.get_remote_addresses(),
             site_name="toolbox",
             force=force,
@@ -1461,13 +1508,19 @@ class WorkerManager:
         else:
             logger.error("Nginx config test failed — reload skipped")
 
+    def _http_worker_count(self) -> int:
+        """nginx enabled -> configured worker count, else 0 (nothing routes to them)."""
+        return self.config.http_worker.workers if self.config.nginx.enabled else 0
+
     def start_all(self) -> bool:
         logger.info("Starting all services...")
 
         if not self.start_broker():
             return False
 
-        for _ in range(self.config.http_worker.workers):
+        # HTTP workers only serve traffic routed by nginx; without nginx the
+        # live-UI owner (8467) serves dist + API in-process.
+        for _ in range(self._http_worker_count()):
             self.start_http_worker()
         self.start_ws_worker()
 
@@ -1535,16 +1588,13 @@ class WorkerManager:
         # (HTTP base..base+workers-1 / WS base..). Otherwise ports drift upward
         # on every restart and nginx routes to nothing.
         self._next_http_port = self.config.http_worker.port
-        ws_base = self.config.ws_worker.port
-        if ws_base < self.config.http_worker.port + 100:
-            ws_base = self.config.http_worker.port + 100
-        self._next_ws_port = ws_base
+        self._next_ws_port = ws_base_port(self.config)
 
         # Start broker + workers again
         if not self.start_broker():
             logger.error("restart_all: broker failed to start")
             return False
-        for _ in range(self.config.http_worker.workers):
+        for _ in range(self._http_worker_count()):
             self.start_http_worker()
         self.start_ws_worker()
         for _ in range(max(1, getattr(self.config.manager, "live_ui_replicas", 2))):
@@ -2259,7 +2309,7 @@ tb workers debug             Startet Debug-Server auf dist/"""
             max_http_workers=config.http_worker.workers,
             max_ws_workers=getattr(config.ws_worker, "max_workers", 4),
             base_http_port=config.http_worker.port,
-            base_ws_port=config.ws_worker.port,
+            base_ws_port=ws_base_port(config),
             site_name="toolbox",
             force=getattr(args, "force", False),
             write_htpasswd=False,  # bereits oben erledigt wenn --write-htpasswd

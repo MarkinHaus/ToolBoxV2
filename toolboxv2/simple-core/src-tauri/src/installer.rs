@@ -11,7 +11,7 @@ use tauri::{Emitter, Manager};
 /// Ein Installations-Config-Set (aus dem Wizard gesammelt).
 #[derive(serde::Deserialize, Debug)]
 pub struct InstallConfig {
-    /// Wizard-Profil: consumer|homelab|server|business|developer
+    /// Wizard-Profil: local|server|developer (legacy consumer|homelab|business accepted)
     pub profile: String,
     #[serde(default)]
     pub install_path: Option<String>,
@@ -25,6 +25,15 @@ pub struct InstallConfig {
 /// tb-install.yaml Keys (installer.ps1 L245-258 / installer.sh L296-301):
 /// install_mode, install_path, tb_version, source_from, source_branch,
 /// environment, instance_id, optional.nginx/docker_runtime/ollama/minio/registry
+/// Legacy wizard names -> ToolBoxV2 ProfileType (manifest schema is the source).
+pub fn canon_profile(p: &str) -> &'static str {
+    match p {
+        "server" | "business" => "server",
+        "developer" => "developer",
+        _ => "local",
+    }
+}
+
 pub fn config_to_yaml(cfg: &InstallConfig) -> String {
     let optional_all: &[&str] = &[
         "nginx", "docker_runtime", "ollama", "minio", "registry",
@@ -47,6 +56,10 @@ pub fn config_to_yaml(cfg: &InstallConfig) -> String {
     yaml.push_str("source_branch: master\n");
     yaml.push_str(&format!("environment: {}\n", environment));
     yaml.push_str("instance_id: tbv2_main\n");
+    // installer.sh/ps1 run `tb -init <profile>` after install -> no CLI questions.
+    yaml.push_str(&format!("profile: {}\n", canon_profile(&cfg.profile)));
+    // Tauri shows its own UI afterwards; never open a browser/CLI onboarding.
+    yaml.push_str("ui: none\n");
     // Tauri laeuft headless (kein stdin) -> Installer-Fragen sind unantwortbar.
     // assume: yes + action machen sh/ps1 voll non-interactive.
     yaml.push_str("assume: yes\n");
@@ -95,6 +108,14 @@ fn script_args(resource_dir: Option<&std::path::Path>) -> (&'static str, Vec<Str
     } else {
         ("bash", vec![resolve("installer.sh")])
     }
+}
+
+/// uv sidecar (bundle.externalBin "binaries/uv"): Tauri places it next to the
+/// app executable with the target triple stripped. None -> installer bootstraps uv.
+pub fn bundled_uv(exe: &std::path::Path) -> Option<std::path::PathBuf> {
+    let name = if cfg!(windows) { "uv.exe" } else { "uv" };
+    let p = exe.parent()?.join(name);
+    p.is_file().then_some(p)
 }
 
 /// Kaltstart-Install: fuehrt den OS-Installer mit Wizard-Config aus und
@@ -175,8 +196,13 @@ pub fn run_install(
         );
     };
 
-    let mut child = Command::new(&shell)
-        .args(&args)
+    let mut cmd = Command::new(&shell);
+    cmd.args(&args);
+    // Bundled uv -> no network bootstrap of uv/Python tooling (installer.sh/ps1 TB_UV_BIN).
+    if let Some(uv) = std::env::current_exe().ok().as_deref().and_then(bundled_uv) {
+        cmd.env("TB_UV_BIN", &uv);
+    }
+    let mut child = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -260,11 +286,34 @@ mod tests {
         assert!(yaml.contains("optional.nginx: true"));
         assert!(yaml.contains("optional.minio: false"));
         assert!(yaml.contains("instance_id: tbv2_main"));
+        assert!(yaml.contains("profile: local"));
+        assert!(yaml.contains("ui: none"));
+    }
+
+    #[test]
+    fn bundled_uv_found_next_to_exe() {
+        let d = std::env::temp_dir().join("tb_uv_sidecar_unit");
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let exe = d.join("SimpleCore");
+        assert!(bundled_uv(&exe).is_none());
+        let name = if cfg!(windows) { "uv.exe" } else { "uv" };
+        std::fs::write(d.join(name), b"x").unwrap();
+        assert_eq!(bundled_uv(&exe), Some(d.join(name)));
+    }
+
+    #[test]
+    fn legacy_profiles_map_to_schema() {
+        assert_eq!(canon_profile("consumer"), "local");
+        assert_eq!(canon_profile("homelab"), "local");
+        assert_eq!(canon_profile("business"), "server");
+        assert_eq!(canon_profile("developer"), "developer");
+        assert_eq!(canon_profile("server"), "server");
     }
 
     #[test]
     fn parses_valid_and_skips_invalid_lines() {
-        let raw = "{\"type\":\"phase\",\"phase\":\"discovery\"}\nnot json\n{\"type\":\"done\"}";
+        let raw = "{\"type\":\"progress\",\"phase\":\"discovery\",\"progress\":0.02}\nnot json\n{\"type\":\"done\"}";
         let events = parse_lines(raw);
         assert_eq!(events.len(), 2);
         assert_eq!(events[1]["type"], "done");

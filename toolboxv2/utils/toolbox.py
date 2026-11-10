@@ -280,6 +280,7 @@ class App(AppType, metaclass=Singleton):
                     min_io_db_start(modes[0][0])
                     self.print(f"starting db name={modes[0][0]} of mode={modes[0][1]}")
                 else:
+                    print(modes)
                     try:
                         self.print(f"Starting default node {self.manifest.database.minio.default_name}")
                         min_io_db_start(self.manifest.database.minio.default_name)

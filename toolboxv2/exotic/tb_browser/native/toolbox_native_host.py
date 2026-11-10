@@ -17,7 +17,7 @@ UNTERSTÜTZTE ACTIONS:
     ping                → Verbindungstest
     validate_session    → BlobFile CLI-Session validieren (kein Server!)
     get_session_jwt     → JWT aus CLI-Session für Tauri/HTTP-Backend
-    tauri_check         → Prüft ob Tauri Worker auf Port 5000 läuft
+    tauri_check         → Prüft ob Tauri Worker / Live-UI auf Port 8467 läuft
     isaa_chat           → ISAA mini_task_completion
     isaa_stream_start   → ISAA Streaming (via connectNative)
     password_get        → PasswordManager get_password_for_autofill
@@ -196,7 +196,7 @@ async def handle_get_session_jwt(app, payload: Dict) -> Dict:
     (Tauri Worker = HTTP-Worker ohne /dist, kein Web-Login-Endpunkt).
 
     Flow: Native Host liest BlobFile → extrahiert access_token →
-          background.js schickt diesen als Bearer an http://localhost:5000
+          background.js schickt diesen als Bearer an http://localhost:8467
     """
     try:
         from toolboxv2.mods.CloudM.LogInSystem import (
@@ -238,7 +238,7 @@ async def handle_get_session_jwt(app, payload: Dict) -> Dict:
 
 async def handle_tauri_check(app, payload: Dict) -> Dict:
     """
-    Prüft ob ein Tauri Worker (HTTP-Worker) auf Port 5000 erreichbar ist.
+    Prüft ob ein Tauri Worker (Live-UI) auf Port 8467 erreichbar ist.
     Wird von background.js DETECT_TAURI Nachricht aufgerufen.
     """
     import urllib.request

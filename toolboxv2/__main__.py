@@ -1133,7 +1133,7 @@ def parse_args():
         "-init",
         type=str,
         metavar="TYPE",
-        help="Initialize ToolBoxV2 [main|config|manifest]",
+        help="Initialize ToolBoxV2 [onboard|web|local|server|developer|main|config|manifest]",
     )
 
     core.add_argument(
@@ -1430,8 +1430,9 @@ def edit_logs():
 
 
 def run_tests(test_path, args=None, cwd=None, venv=None):
+    print("Running tests...")
     if args is None:
-        args = ["-n", "auto"]
+        args = ["-n", "auto", "-ra", "--color=yes", "-o", "console_output_style=count"]
 
     # Eigene venv nutzen wenn angegeben
     if venv:
@@ -1441,15 +1442,20 @@ def run_tests(test_path, args=None, cwd=None, venv=None):
         python = sys.executable
 
     command = [python, "-m", "pytest", test_path] + args
-
     try:
-        result = subprocess.run(
+        result = subprocess.Popen(
             command,
-            check=True,
-            encoding="cp850",
-            cwd=cwd  # ins Subprojekt wechseln
+            stdout = subprocess.PIPE,
+            stderr = subprocess.STDOUT,
+            text = True,
+            encoding = "utf-8",
+            errors = "replace",
+            cwd = cwd,
+            env = {**os.environ, "PYTHONUNBUFFERED": "1"},
         )
-        return result.returncode == 0
+        for line in result.stdout:
+            print(line, end="", flush=True)  # oder in deinen Logger/UI schicken
+        return result.wait() == 0
     except subprocess.CalledProcessError as e:
         get_app().logger.error(f"Fehler beim Ausführen der Unittests: {e}")
         return False
@@ -1779,9 +1785,34 @@ async def main(App=TbApp, do_exit=True):
         tb_app.print(f"Created manifest at {tb_root_dir}/tb-manifest.yaml (profile={m.app.profile.value})")
         await a_save_closing_app()
         exit(0)
+    elif args.init == "onboard":
+        from .utils.clis.first_run import run_first_run, onboarding_state
+        state = onboarding_state()
+        if not state["first_run"]:
+            tb_app.print(f"Onboarding already done (profile={state['profile']}). "
+                         f"Change it: tb -init local|server|developer")
+            await a_save_closing_app()
+            exit(0)
+        res = run_first_run(interactive=True)
+        await a_save_closing_app()
+        exit(0 if res["ok"] else 1)
+    elif args.init == "web":
+        # Browser onboarding / local UI on 127.0.0.1:8467 (blocks until Ctrl+C).
+        from toolboxv2.init_onboarding import launch_ui
+        surface = launch_ui(tb_app, prefer="web")
+        await a_save_closing_app()
+        exit(0 if surface == "web" else 1)
+    elif args.init in ("local", "server", "developer"):
+        # Non-interactive, machine-readable: for AI assistants / CI / installers.
+        import json
+        from .utils.clis.first_run import apply_profile
+        res = apply_profile(args.init)
+        print(json.dumps(res))
+        await a_save_closing_app()
+        exit(0 if res["ok"] else 1)
     elif args.init is not None:
         tb_app.print(
-            "No init action specified valid options are ['main', 'config', 'manifest']"
+            "Unknown -init action. Valid: onboard, web, local, server, developer, main, config, manifest"
         )
         await a_save_closing_app()
         exit(1)
@@ -2553,29 +2584,21 @@ def main_runner():
             async def main_helper(runner_name):
                 # Default to interactive dashboard if no runner specified
                 # This applies to: `tb`, `tb -l`, `tb --debug`, etc.
-                if runner_name is None and not '--test' in sys.argv:
+                if runner_name is None and '--test' not in sys.argv and '-init' not in sys.argv:
                     profile = _get_profile()
 
+                    want_login = False
                     if profile is None:
-                        # Silent auto-init: create minimal manifest, no interaction
-                        from toolboxv2.utils.manifest import ManifestLoader
-                        from toolboxv2 import tb_root_dir
-                        _m = ManifestLoader(tb_root_dir).load_or_create_default()
-                        profile = _m.app.profile.value if _m.app.profile else "local"
-                    if profile == "local":
-                        runner_name = "local-cli"  # zero-friction default (F1)
-                    elif profile == "consumer":
-                        runner_name = "gui"  # web UI in Tauri
-                    elif profile == "homelab":
-                        runner_name = "gui"  # web UI in Tauri/browser — same surface
-                    elif profile == "developer":
-                        runner_name = "local-cli"  # terminal version of the same screens
+                        # First run: max 3 questions on a TTY, silent 'local' otherwise.
+                        from toolboxv2.utils.clis.first_run import run_first_run
+                        _res = run_first_run()
+                        profile, want_login = _res["profile"], _res.get("login", False)
+                    if want_login:
+                        runner_name = "login"
+                    elif profile in ("local", "developer"):
+                        runner_name = "local-cli"
                     elif profile == "server":
                         _run_server_overview()
-                        if len(sys.argv) < 2:
-                            return
-                    elif profile == "business":
-                        _run_business_overview()
                         if len(sys.argv) < 2:
                             return
                     else:

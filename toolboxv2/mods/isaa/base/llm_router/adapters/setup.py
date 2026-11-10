@@ -7,6 +7,7 @@ from .openai_compat import OpenAICompatAdapter
 from .zai import ZAIAdapter
 from .anthropic import AnthropicAdapter
 from .minimax import MiniMaxAdapter
+from .cactuscompute import CactusComputeAdapter
 
 
 def setup_default_adapters(router: CompletionRouter, env: dict | None = None):
@@ -60,6 +61,13 @@ def setup_default_adapters(router: CompletionRouter, env: dict | None = None):
     # MiniMax
     if os.getenv("MINIMAX_API_KEY"):
         router.register("minimax", MiniMaxAdapter("https://api.minimax.io/v1"), env_key_name="MINIMAX_API_KEY")
+
+    # Needle
+    # Cactus Compute Needle 3 — a LOCAL, on-device tool-calling model.
+    # No API key: the cactus-needle package is pip-installed on first use and
+    # the engine + weights download themselves. Naming a model `needle/needle3`
+    # routes here. Always registered (like Ollama).
+    router.register("needle", CactusComputeAdapter())
 
     # Ollama (always available)
     ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")

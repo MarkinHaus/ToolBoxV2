@@ -18,16 +18,20 @@ Bekannte API-Korrekturen gegenüber Spec-Text (verifiziert gegen echten Code):
 """
 from __future__ import annotations
 
+import dataclasses
+import inspect
 import json
 import logging
+import types
 from pathlib import Path
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
-from .core import Call, Capsule, Config, PageEngine, Reply
+from .core import CURRENT_SESSION, Call, Capsule, Config, PageEngine, Reply
 from .kernel import InProcessKernel
 from .store import DirStore, Fts, JsonlEvents
 
-logger = logging.getLogger(__name__)
+from toolboxv2 import get_logger
+logger = get_logger()
 
 
 def _delta_text(item) -> str:
@@ -230,31 +234,115 @@ class FlowAgentLLM:
 
 # ================================================================== Tools
 class FlowAgentTools:
-    """Tools-Port über FlowAgent.tool_manager und arun_function."""
+    """Tools-Port über FlowAgent.tool_manager und arun_function.
+
+    * LIVE-Sicht: Index/Docs werden bei Registry-Änderung neu gebaut (``refresh``).
+      Vorher war es ein Snapshot aus ``__init__`` -> alles, was danach registriert
+      wurde (vfs_shell/vfs_view/search_vfs/sandbox_*/docker_* aus
+      ``init_session_tools``, MCP, ``add_tool``), war für ``tool_search``,
+      ``dir(tools)`` und den Kernel-Digest unsichtbar.
+    * Session-Warmup: ``ensure_session`` ruft ``agent.init_session_tools`` – das hat auf dem
+      Page-Pfad bisher niemand getan (nur FlowAgent.a_run*).
+    * Session-gebundene Tools (``SESSION_TOOLS``) sind Closures über EINE Session und global
+      im tool_manager registriert (zuletzt initialisierte Session gewinnt -> Sub-/Parallel-
+      Sessions würden auf dem VFS der falschen Session arbeiten).  ``call`` bindet sie
+      deshalb pro aktueller Session (``CURRENT_SESSION``).
+    """
+
+    SESSION_TOOLS = ("vfs_shell", "vfs_view")
 
     def __init__(self, agent):
         self.agent = agent
         self.index = Fts()
         self.docs: dict[str, str] = {}
-        for t in agent.tool_manager.get_all():
-            cats = t.category if isinstance(t.category, list) else [t.category]
-            self.docs[t.name] = (t.description or "").split("\n")[0]
-            self.index.add(
-                t.name,
-                f"{t.name} {self.docs[t.name]} {' '.join(c for c in cats if c)}",
-            )
+        self._sig: int | None = None
+        self._warm: set[str] = set()
+        self._bound: dict[tuple[str, str], Any] = {}
+        self.refresh(force=True)
 
-    async def call(self, name: str, args: dict):
-        return await self.agent.arun_function(name, **args)
+    # ------------------------------------------------------------ discovery
+    def refresh(self, force: bool = False) -> bool:
+        """Index neu aufbauen, falls sich die Menge der Tool-Namen geändert hat."""
+        tools = list(self.agent.tool_manager.get_all())
+        sig = hash(tuple(sorted(t.name for t in tools)))
+        if sig == self._sig and not force:
+            return False
+        index, docs = Fts(), {}
+        for t in tools:
+            cats = t.category if isinstance(t.category, list) else [t.category]
+            docs[t.name] = (t.description or "").split("\n")[0]
+            index.add(t.name, f"{t.name} {docs[t.name]} {' '.join(c for c in cats if c)}")
+        old = self.index
+        self.index, self.docs, self._sig = index, docs, sig
+        close = getattr(old, "close", None)
+        if callable(close) and old is not index:
+            close()
+        return True
 
     def search(self, query: str, k: int) -> list[tuple[str, str]]:
+        self.refresh()
         if not query:
             # Leerer Query = alle Tools (für dir(tools) / digest im Kernel)
-            return [(name, self.docs.get(name, "")) for name in self.docs][:k]
-        return [
-            (name, self.docs.get(name, ""))
-            for name, _ in self.index.search(query, k)
-        ]
+            return list(self.docs.items())[:k]
+        toks = query.lower().split()
+        direct = [n for n in self.docs if all(t in n.lower() for t in toks)]  # Name-Treffer zuerst
+        try:
+            bm25 = [n for n, _ in self.index.search(query, k)]
+        except Exception:  # FTS-Syntaxfehler im Query -> nur Name-Treffer
+            bm25 = []
+        order = list(dict.fromkeys(direct + bm25))[:k]
+        return [(n, self.docs.get(n, "")) for n in order]
+
+    # ------------------------------------------------------------ sessions
+    async def ensure_session(self, sid: str) -> None:
+        """Session-VFS + session-gebundene Tools registrieren (idempotent)."""
+        if sid in self._warm:
+            return
+        sm = getattr(self.agent, "session_manager", None)
+        if sm is None:
+            self._warm.add(sid)
+            return
+        try:
+            session = await sm.get_or_create(sid)
+            self.agent.init_session_tools(session)  # no-op wenn tools_initialized
+        except Exception as e:  # pragma: no cover - env dependent
+            logger.warning("FlowAgentTools.ensure_session(%s) failed: %s", sid, e)
+            return  # beim nächsten Call erneut versuchen
+        self._warm.add(sid)
+        self.refresh()
+
+    def _session_fn(self, name: str, sid: str):
+        key = (name, sid)
+        fn = self._bound.get(key)
+        if fn is None:
+            sm = getattr(self.agent, "session_manager", None)
+            session = getattr(sm, "sessions", {}).get(sid) if sm is not None else None
+            if session is None:
+                return None
+            from toolboxv2.mods.isaa.base.patch.vfs_shell_tool import (
+                make_vfs_shell,
+                make_vfs_view,
+            )
+            fn = (make_vfs_shell if name == "vfs_shell" else make_vfs_view)(session)
+            self._bound[key] = fn  # lazy: nach evtl. RestrictedVFSWrapper der Session
+        return fn
+
+    def drop_session(self, sid: str) -> None:
+        self._warm.discard(sid)
+        for key in [k for k in self._bound if k[1] == sid]:
+            self._bound.pop(key, None)
+
+    # ------------------------------------------------------------ call
+    async def call(self, name: str, args: dict):
+        sid = CURRENT_SESSION.get()
+        if sid is not None:
+            await self.ensure_session(sid)
+            if name in self.SESSION_TOOLS:
+                fn = self._session_fn(name, sid)
+                if fn is not None:
+                    out = fn(**args)
+                    return await out if inspect.isawaitable(out) else out
+        return await self.agent.arun_function(name, **args)
 
     def close(self) -> None:
         """P2.12: release the in-memory Fts SQLite handle (no ResourceWarning)."""
@@ -940,12 +1028,15 @@ def make_page_engine(
     root = Path(root)
 
     store = VfsStore(agent, root / "media", root=root)
+    tools_port = FlowAgentTools(agent)
 
     async def _warm_vfs(_engine, session) -> str:
         """Prep hook: initialize the session VFS so the sync Store path can
         resolve it without awaiting an async get_or_create (fixes the
-        'coroutine object has no attribute vfs' crash)."""
+        'coroutine object has no attribute vfs' crash).  Registriert zusätzlich
+        die Session-Tools (vfs_shell/vfs_view/...) -> sofort in tool_search sichtbar."""
         await store.ensure(session.id)
+        await tools_port.ensure_session(session.id)
         return ""
 
     # Compose the JSONL event sink with the native audit pipeline (opt-out via
@@ -970,7 +1061,7 @@ def make_page_engine(
     return PageEngine(
         root,
         FlowAgentLLM(agent),
-        tools=FlowAgentTools(agent),
+        tools=tools_port,
         kernel=InProcessKernel,
         store=store,
         capsule=Capsule.load(str(root / "capsule.json")),
@@ -986,6 +1077,81 @@ def make_page_engine(
         skill_loader=_skill_loader(agent),
     )
 
+
+
+# ================================================================== sub-agent factory
+SUB_AGENT_PROMPT = """\
+You are a focused SUB-AGENT for one specific task.
+- You can ONLY write to {output_dir}/ (reads: entire VFS).
+- You CANNOT spawn sub-agents and CANNOT ask follow-up questions - work with the given information.
+- Token budget: {budget}. Step limit: {max_steps}.
+- Write your result to {output_dir}/result.md (if it exists already: _result.md), then call final_answer.
+- The live status shows your remaining steps ("steps N/limit"). Start wrapping up at
+  20% remaining: write result.md, then final_answer. If the step limit hits without
+  final_answer, the parent sees NO result. Never keep exploring when you could deliver.
+"""
+
+
+def get_base_page_engine(agent, root: str | Path | None = None, cfg: Config | None = None) -> PageEngine:
+    """Gemeinsame Basis-PageEngine pro Agent (llm/tools/store/prep werden von allen Subs geteilt).
+
+    Nutzt die Engine des PageExecutionEngine, falls ``amd.engine == "page"``; sonst eine eigene,
+    am Agent gecachte Instanz (``_page_base_engine``)."""
+    inner = getattr(getattr(agent, "_execution_engine_cache", None), "engine", None)
+    if isinstance(inner, PageEngine):
+        return inner
+    base = getattr(agent, "_page_base_engine", None)
+    if base is None:
+        base = make_page_engine(agent, root=root, cfg=cfg)
+        try:
+            agent._page_base_engine = base
+        except Exception:
+            pass
+    return base
+
+
+def make_page_sub_engine(
+    agent,
+    *,
+    output_dir: str,
+    max_steps: int,
+    budget: int | None = None,
+    allow: list[str] | None = None,
+) -> PageEngine:
+    """Eigene PageEngine-Instanz für EINEN Sub-Agent (isolierte Capsule + cfg, geteilte Ports).
+
+    Wie ``PageEngine.spawn_sub``, aber langlebig (Resume) und mit V3-kompatiblem Verhalten:
+    keine Rückfragen (ask=None), Step-Limit = max_iterations, Sub-Agent-Prompt."""
+    base = get_base_page_engine(agent)
+    prompt = SUB_AGENT_PROMPT.format(output_dir=output_dir.rstrip("/"), budget=budget, max_steps=max_steps)
+    sysmsg = (getattr(getattr(agent, "amd", None), "system_message", "") or "").strip()
+    sub = PageEngine(
+        base.root, base.llm, tools=base.tools, kernel=base.kernel_factory,
+        store=base.store, decider=base.decider,
+        capsule=Capsule(allow=base.capsule.intersect(allow), pool=list(base.capsule.pool)),
+        ask=None, cfg=dataclasses.replace(base.cfg, max_steps=int(max_steps)),
+        prep=base.prep, static_prompt=f"{sysmsg}\n\n{prompt}".strip(),
+        on_event=base.emit, skill_loader=base.skill_loader,
+    )
+    sub.live = types.SimpleNamespace(narrator_msg="")  # SubAgentManager.get_status liest live.narrator_msg
+    sub.sub_output_dir = output_dir  # Fix 09.11.2026: _do_code_run nutzt es fuer den VFS-Pfad-Guard
+    return sub
+
+
+async def close_page_sub_engine(sub: PageEngine) -> None:
+    """Nur die EIGENEN Sessions/Kernels/Locks der Sub-Engine schließen (Store/Sink gehören der Basis)."""
+    for ss in list(sub.sessions.values()):
+        await sub._cancel_bg(ss)
+        if ss.prep:
+            ss.prep.cancel()
+        if ss.kernel:
+            await ss.kernel.close()
+        if ss.lock_handle:
+            ss.lock_handle.close()
+        drop = getattr(sub.tools, "drop_session", None)
+        if callable(drop):
+            drop(ss.id)
+    sub.sessions.clear()
 
 
 # ================================================================== V3 drop-in factory

@@ -29,3 +29,13 @@ name: isaa
 requires:
 - core
 version: "0.1.28"
+user_facing:
+- name: isaa
+  function: ui
+  label: ISAA
+  icon: smart_toy
+  description: Agent chat, workspace & tools — startet erst beim Öffnen
+  mount:
+    module: toolboxv2.mods.isaa.ui.app
+    attr: app
+    prefix: isaa

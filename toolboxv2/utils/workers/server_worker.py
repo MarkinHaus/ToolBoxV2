@@ -62,7 +62,11 @@ except ImportError:
 # event_manager imports deferred to method level (saves ~30-50 MB per worker)
 from toolboxv2.utils.system.types import RequestData
 
-logger = logging.getLogger(__name__)
+try:
+    from toolboxv2 import get_logger
+    logger = get_logger()
+except ImportError:
+    logger = logging.getLogger(__name__)
 
 # Multipart warning loggen falls nicht verfügbar
 if not MULTIPART_AVAILABLE:
@@ -1317,9 +1321,12 @@ class WebSocketMessageHandler:
             return
 
         # Access control for WS handlers
-        # Extract module/function from handler_id (format: Module/handler)
+        # Extract module/function from handler_id (format: Module/handler).
+        # FastTB routes carry an explicit "auth"; auth=False is a route-level
+        # decision (same as the connect gate) and skips the module check.
         parts = handler_id.split("/", 1)
-        if len(parts) == 2:
+        route_auth = self.app.websocket_handlers.get(handler_id, {}).get("auth")
+        if len(parts) == 2 and route_auth is not False:
             module_name, function_name = parts
             # Get user level from event payload
             user_level = int(event.payload.get("level", AccessLevel.NOT_LOGGED_IN))
@@ -1526,6 +1533,52 @@ def get_location(ip_address):
     import requests  # lazy — saves ~15 MB per worker
     response = requests.get(f"https://ipapi.co/{ip_address}/json/", timeout=5).json()
     return response
+
+
+# =========================================================================
+# Origin policy (CORS + CSRF) — one source for HTTPWorker and FastTB
+# =========================================================================
+
+_LOCAL_ORIGIN_PREFIXES = ("http://localhost:", "http://127.0.0.1:",
+                          "https://localhost:", "https://127.0.0.1:")
+_STATIC_ALLOWED_ORIGINS = (
+    "http://tauri.localhost", "https://tauri.localhost", "tauri://localhost",
+    "http://localhost", "https://localhost", "http://127.0.0.1", "https://127.0.0.1",
+    "https://simplecore.app",
+)
+_UNSAFE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
+
+
+def is_allowed_origin(origin: str, environ: Optional[Dict] = None) -> bool:
+    """True for Tauri/localhost, simplecore.app (+TOOLBOXV2_REMOTE_BASE),
+    TB_CORS_ORIGINS (comma-separated) and same-origin requests."""
+    if not origin or origin == "null":
+        return False
+    extra = [o.strip().rstrip("/") for o in os.getenv("TB_CORS_ORIGINS", "").split(",") if o.strip()]
+    remote = os.getenv("TOOLBOXV2_REMOTE_BASE", "").strip().rstrip("/")
+    if origin in _STATIC_ALLOWED_ORIGINS or origin in extra or (remote and origin == remote):
+        return True
+    if origin.startswith(_LOCAL_ORIGIN_PREFIXES):
+        return True
+    if environ:  # same-origin (own domain behind nginx)
+        host = environ.get("HTTP_X_FORWARDED_HOST") or environ.get("HTTP_HOST") or ""
+        if host and origin.split("://", 1)[-1] == host.split(",")[0].strip():
+            return True
+    return False
+
+
+def csrf_rejection(environ: Dict) -> Optional[Tuple]:
+    """Block cross-site state-changing requests (incl. 'simple' POSTs that skip
+    the CORS preflight). Non-browser clients (no Origin, no Sec-Fetch-Site) pass."""
+    if environ.get("REQUEST_METHOD", "GET").upper() not in _UNSAFE_METHODS:
+        return None
+    origin = environ.get("HTTP_ORIGIN", "")
+    if origin:
+        if is_allowed_origin(origin, environ):
+            return None
+    elif environ.get("HTTP_SEC_FETCH_SITE", "").lower() != "cross-site":
+        return None
+    return error_response("Cross-site request blocked", 403, "CSRFBlocked")
 
 
 class HTTPWorker:
@@ -1760,26 +1813,12 @@ class HTTPWorker:
 
     def _get_cors_headers(self, environ: Dict) -> Dict[str, str]:
         """Get CORS headers for the response."""
-        origin = environ.get("HTTP_ORIGIN", "*")
-        # Allow requests from Tauri and localhost
-        allowed_origins = [
-            "http://tauri.localhost",
-            "https://tauri.localhost",
-            "tauri://localhost",
-            "http://localhost",
-            "https://localhost",
-            "http://127.0.0.1",
-            "https://127.0.0.1",
-        ]
-        # Also allow any localhost port
-        if origin and (origin in allowed_origins or
-                       origin.startswith("http://localhost:") or
-                       origin.startswith("http://127.0.0.1:") or
-                       origin.startswith("https://localhost:") or
-                       origin.startswith("https://127.0.0.1:")):
-            allow_origin = origin
-        else:
-            allow_origin = "*"
+        origin = environ.get("HTTP_ORIGIN", "")
+        if not is_allowed_origin(origin, environ):
+            # SECURITY: never "*" — a foreign site must not read local responses
+            # (e.g. /api/wizard/llm on 127.0.0.1:8467 returns API keys).
+            return {}
+        allow_origin = origin
 
         return {
             "Access-Control-Allow-Origin": allow_origin,
@@ -1802,6 +1841,12 @@ class HTTPWorker:
                 response_headers = [(k, v) for k, v in cors_headers.items()]
                 start_response(status_line, response_headers)
                 return [b""]
+
+            blocked = csrf_rejection(environ)
+            if blocked:
+                status, headers, body = blocked
+                start_response(f"{status} Forbidden", list(headers.items()))
+                return [body]
 
             # Add session to environ
             if self._session_manager:
@@ -2926,9 +2971,9 @@ code { font-family: var(--font-mono); font-size: var(--text-xs); background: var
     $cstate.textContent = 'connecting…';
     try {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      // WS worker default port 8100; allow override via ?ws=host:port
+      // local WS worker port 8468 (ws_worker.port); allow override via ?ws=host:port
       const wsTarget = new URLSearchParams(location.search).get('ws')
-        || (location.hostname + ':8100');
+        || (location.hostname + ':8468');
       ws = new WebSocket(`${proto}//${wsTarget}/ws?channel=sys.topology`);
       ws.onopen = () => { $cstate.textContent = 'live'; banner('Connected', null); };
       ws.onmessage = (ev) => {

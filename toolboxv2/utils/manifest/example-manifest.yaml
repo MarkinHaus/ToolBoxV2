@@ -126,7 +126,7 @@ workers:
   websocket:
     - name: ws_main
       host: "127.0.0.1"
-      port: 8100
+      port: 8468               # one local WS port (Tauri, FastTB, worker manager)
       max_connections: 10000
       ping_interval: 30
       ping_timeout: 10

@@ -456,6 +456,10 @@ jobs:
           # (proc-macro) — im CI-Checkout existiert es nicht (Build-Artefakt) -> Stub setzen
           mkdir -p toolboxv2/dist
           [ -f toolboxv2/dist/index.html ] || echo '<!doctype html><title>stub</title>' > toolboxv2/dist/index.html
+      - name: Fetch uv sidecar (bundle.externalBin binaries/uv)
+        shell: bash
+        run: bash scripts/fetch_uv_sidecar.sh "${{ matrix.target_triple }}"
+
       - name: Run installer unit tests (Linux only)
         if: matrix.os == 'ubuntu-latest'
         working-directory: ./toolboxv2/simple-core/src-tauri

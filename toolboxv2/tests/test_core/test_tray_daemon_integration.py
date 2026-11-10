@@ -355,10 +355,10 @@ class TestProfileDefaults(unittest.TestCase):
             self.assertIn(profile_name, PROFILE_DEFAULTS,
                           f"Profile '{profile_name}' missing in PROFILE_DEFAULTS")
 
-    def test_consumer_defaults_offline(self):
-        """Consumer: LC (local), kein nginx."""
+    def test_local_defaults_offline(self):
+        """Local: LC (local), kein nginx."""
         from toolboxv2.utils.clis.first_run import PROFILE_DEFAULTS
-        d = PROFILE_DEFAULTS["consumer"]
+        d = PROFILE_DEFAULTS["local"]
         self.assertEqual(d["database.mode"], "LC")
         self.assertFalse(d["nginx.enabled"])
 
@@ -376,10 +376,10 @@ class TestProfileDefaults(unittest.TestCase):
         self.assertTrue(d["app.debug"])
         self.assertEqual(d["database.mode"], "LC")
 
-    def test_homelab_starts_workers(self):
-        """Homelab: workers auto-start."""
+    def test_developer_starts_workers(self):
+        """Developer: workers auto-start."""
         from toolboxv2.utils.clis.first_run import PROFILE_DEFAULTS
-        d = PROFILE_DEFAULTS["homelab"]
+        d = PROFILE_DEFAULTS["developer"]
         self.assertTrue(d["autostart.enabled"])
         self.assertIn("workers", d["autostart.services"])
 

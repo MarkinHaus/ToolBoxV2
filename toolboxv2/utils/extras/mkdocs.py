@@ -40,8 +40,12 @@ from collections import defaultdict, Counter
 from tqdm import tqdm
 
 # Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+try:
+    from toolboxv2 import get_logger
+    logger = get_logger()
+except ImportError:
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
 
 # =============================================================================
 # DATA MODELS - Memory Efficient with __slots__

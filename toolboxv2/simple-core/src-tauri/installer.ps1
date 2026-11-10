@@ -20,6 +20,8 @@ param(
     [string]$Branch     = "master",
     [string]$Source     = "",          # github | registry
     [string]$Version    = "",          # nightly | latest | x.x.x
+    [string]$TbProfile  = "",          # local | server | developer -> tb -init <profile>
+    [string]$Ui         = "",          # after install: cli | browser | none
     [switch]$JsonOutput,
     [switch]$DryRun,
     [switch]$Uninstall,
@@ -59,14 +61,25 @@ $MODULES_OPTIONAL    = @("cli","web","desktop","isaa","exotic")
 # >&2 redirects fixed in installer.sh (fd2707bb).
 function Log   { param($m) Write-Host "[✓] $m" -ForegroundColor Green }
 function Info  { param($m) Write-Host "[→] $m" -ForegroundColor Cyan }
-function Warn  { param($m) Write-Host "[!] $m" -ForegroundColor Yellow }
-function Fail  { param($m) Write-Host "[✗] $m" -ForegroundColor Red; exit 1 }
+function Warn  { param($m) Write-Host "[!] $m" -ForegroundColor Yellow; JLog "warn" "" "warn" $m }
+function Fail  { param($m) Write-Host "[✗] $m" -ForegroundColor Red; JLog "error" "" "fail" $m; exit 1 }
 function Ask   { param($m) Write-Host "[?] $m" -ForegroundColor Magenta -NoNewline }
 function Step  { param($m) Write-Host "`n── $m ──────────────────────────────────" -ForegroundColor Blue }
+# JSON-Lines protocol (same as installer.sh): {"type":"progress"|"error"|"log"|"done",
+# phase, step, status, msg, pct 0..100, progress 0..1}. [Console]::Out bypasses the
+# pipeline, so `$v = Phase-Install` never captures protocol lines.
 function JLog  { param($phase, $step, $status, $msg, $pct = 0)
     if ($JsonOutput) {
+        $type = switch ($status) { "error" { "error" } "fail" { "error" } "warn" { "log" } default { "progress" } }
         $ts = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-        $obj = [ordered]@{ ts=$ts; phase=$phase; step=$step; status=$status; msg=$msg; pct=$pct }; Write-Host ($obj | ConvertTo-Json -Compress)
+        $obj = [ordered]@{ type=$type; ts=$ts; phase=$phase; step=$step; status=$status; msg="$msg"; pct=$pct; progress=[math]::Round($pct / 100, 2) }
+        [Console]::Out.WriteLine(($obj | ConvertTo-Json -Compress))
+    }
+}
+function JDone { param($version, $path, $prof)
+    if ($JsonOutput) {
+        $obj = [ordered]@{ type="done"; version="$version"; path="$path"; profile="$prof"; progress=1 }
+        [Console]::Out.WriteLine(($obj | ConvertTo-Json -Compress))
     }
 }
 function DryRun { if ($DryRun) { Warn "[dry-run] $args"; return $true } else { return $false } }
@@ -262,6 +275,8 @@ function Phase-Config {
         $script:OPT_MINIO     = (Get-YamlField $Config "optional.minio"           "false") -eq "true"
         $script:OPT_REGISTRY  = (Get-YamlField $Config "optional.registry"        "false") -eq "true"
         if (-not $AssumeYes)  { $AssumeYes = Get-YamlField $Config "assume" "" }   # yes|no|""(ask)
+        if (-not $TbProfile)  { $script:TbProfile = Get-YamlField $Config "profile" "" }
+        if (-not $Ui)         { $script:Ui        = Get-YamlField $Config "ui" "" }
         $script:AssumeYes     = $AssumeYes
     }
 
@@ -307,7 +322,18 @@ function Phase-Config {
         Log "Runtime: none required for $INSTALL_MODE mode"
     } else {
         $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
-        if ($uvCmd) {
+        # uv bundled with the Tauri app (sidecar) wins: no download, no PATH luck
+        if ($env:TB_UV_BIN -and (Test-Path $env:TB_UV_BIN)) {
+            # Copy into the install dir: tb.cmd/updates must not depend on the app bundle.
+            $script:UV_BIN = $env:TB_UV_BIN
+            if (-not (DryRun "copy bundled uv")) {
+                New-Item -ItemType Directory -Path "$INSTALL_PATH\bin" -Force | Out-Null
+                Copy-Item $env:TB_UV_BIN "$INSTALL_PATH\bin\uv.exe" -Force
+                $script:UV_BIN = "$INSTALL_PATH\bin\uv.exe"
+            }
+            $script:RUNTIME = "uv"
+            Log "Runtime: bundled uv at $UV_BIN"
+        } elseif ($uvCmd) {
             $script:UV_BIN  = $uvCmd.Source
             $script:RUNTIME = "uv"
             Log "Runtime: uv found at $UV_BIN"
@@ -326,7 +352,9 @@ function Phase-Config {
                 }
             }
 
-            if (-not $RUNTIME) {
+            if (-not $RUNTIME -and (DryRun "bootstrap uv")) {
+                $script:UV_BIN = "uv"; $script:RUNTIME = "uv"
+            } elseif (-not $RUNTIME) {
                 Info "No runtime found — bootstrapping uv..."
                 Invoke-RestMethod "https://astral.sh/uv/install.ps1" | Invoke-Expression
                 $uvCmd = Get-Command uv -ErrorAction SilentlyContinue
@@ -562,16 +590,17 @@ function Install-Uv {
     $env:UV_TOOL_DIR     = "$INSTALL_PATH\uv-tools"
     $env:UV_TOOL_BIN_DIR = "$INSTALL_PATH\bin"
     New-Item -ItemType Directory -Path $env:UV_TOOL_DIR, $env:UV_TOOL_BIN_DIR -Force | Out-Null
-    & $UV_BIN tool install $pkg --force
+    # Out-Host: uv output must not leak into the pipeline ($tbVersion = Phase-Install)
+    & $UV_BIN tool install $pkg --force | Out-Host
     if ($LASTEXITCODE -ne 0) { Fail "uv tool install failed (pkg=$pkg)" }
     Log "Installed: $pkg via uv"
 
-    Add-BinToPath "$INSTALL_PATH\bin"
+    Add-BinToPath "$INSTALL_PATH\bin" | Out-Null
 
-    $ver = (& "$INSTALL_PATH\bin\tb.exe" --version 2>$null) -replace "[^\d\.]","" | Select-Object -First 1
-    $result = "unknown"
-    if ($ver) { $result = $ver }
-    return $result
+    # Version straight from uv (tb --version needs a booted app)
+    $line = (& $UV_BIN tool list 2>$null) | Where-Object { $_ -match '^toolboxv2\s+v?([\d\.]+)' } | Select-Object -First 1
+    if ($line -and ($line -match '^toolboxv2\s+v?([\d\.]+)')) { return $Matches[1] }
+    return "unknown"
 }
 
 function Install-Venv {
@@ -829,27 +858,35 @@ Write-Host ""
 
 switch ($ACTION) {
     "install" {
+        JLog "discovery" "start" "running" "Detecting system" 2
         Phase-Discovery
         Invoke-InteractiveConfig
+        JLog "config" "start" "running" "Loading configuration" 4
         Phase-Config
+        JLog "preflight" "start" "running" "Checking prerequisites" 6
         Phase-Preflight
-        $tbVersion = if ($INSTALL_MODE -eq "uv" -and $RUNTIME -eq "venv") {
+        JLog "install" "start" "running" "Installing ToolBoxV2 ($INSTALL_MODE)" 8
+        # -DryRun: validate only, touch nothing
+        $tbVersion = if (DryRun "install ($INSTALL_MODE) -> $INSTALL_PATH") {
+            "dry-run"
+        } elseif ($INSTALL_MODE -eq "uv" -and $RUNTIME -eq "venv") {
             Install-Venv
         } else {
             Phase-Install
         }
-        Phase-WriteManifests $tbVersion
+        JLog "manifests" "write" "running" "Writing manifests" 85
+        if (-not (DryRun "write manifests")) { Phase-WriteManifests $tbVersion }
 
         # Phase 5: tb access
         $tbBin = "$INSTALL_PATH\bin\tb.exe"
         if ((Test-Path $tbBin) -and -not (DryRun "tb access")) {
-            JLog "install" "access" "running" "Setting up tb global access" 95
+            JLog "install" "access" "running" "Setting up tb global access" 90
             try {
                 & $tbBin access 2>$null
-                JLog "install" "access" "done" "tb accessible globally" 100
+                JLog "install" "access" "done" "tb accessible globally" 92
             } catch {
                 Warn "tb access command failed - PATH fallback active"
-                JLog "install" "access" "done" "tb accessible via PATH" 100
+                JLog "install" "access" "done" "tb accessible via PATH" 92
             }
         }
 
@@ -878,3 +915,33 @@ try {
   }
   Write-Host "[R14] Kanon-Kopie: $TB_CANON_DIR\tb.cmd"
 } catch { Write-Host "[R14] Kanon-Kopie fehlgeschlagen: $_" }
+
+# Phase 6 — Onboarding hand-off (same flow as `tb` first run); after R14 so the
+# canonical tb.exe exists.
+if ($ACTION -eq "install" -and -not $DryRun) {
+    $tbRun = @("$TB_CANON_DIR\tb.exe", "$INSTALL_PATH\Scripts\tb.exe", "$INSTALL_PATH\bin\tb.exe") |
+             Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $tbRun) {
+        Warn "tb not found - run 'tb' manually to finish setup"
+    } else {
+        if ($TbProfile) {
+            JLog "onboarding" "profile" "running" "Applying profile $TbProfile" 95
+            # Success = tb's JSON result {"ok": true}; older tb ignores unknown -init with exit 0.
+            $initOut = (& $tbRun -init $TbProfile 2>&1 | Out-String)
+            Write-Host $initOut
+            if ($initOut -match '"ok":\s*true') { JLog "onboarding" "profile" "done" "Profile $TbProfile applied" 98 }
+            else { Warn "Could not apply profile $TbProfile (tb too old?) - run 'tb -init onboard'" }
+        }
+        $uiMode = if ($Ui) { $Ui } elseif ($JsonOutput -or -not [Environment]::UserInteractive) { "none" } else { "cli" }
+        switch ($uiMode) {
+            "cli"     { if (-not $TbProfile) { & $tbRun -init onboard } }
+            "browser" {
+                JLog "onboarding" "ui" "running" "Opening onboarding in the browser" 99
+                Start-Process -FilePath $tbRun -ArgumentList "-init","web" -WindowStyle Hidden
+                Info "Onboarding opens in your browser: http://127.0.0.1:8467"
+            }
+            default   { }
+        }
+    }
+}
+if ($ACTION -eq "install") { JDone $tbVersion $INSTALL_PATH $TbProfile }

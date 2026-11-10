@@ -83,6 +83,14 @@ MODEL_INFO: dict[str, dict] = {
     "moonshot/kimi-k3": {"ctx": 1_000_000, "tools": True},
     "minimax/minimax-m3": {"ctx": 1_000_000, "tools": True},
 
+    # -------------------------------------------------
+    # Cactus Compute Needle (local on-device tool-caller)
+    # Tool calling only (no free text); small context window.
+    # -------------------------------------------------
+    "needle/needle3": {"ctx": 4_096, "tools": True},
+    "needle/needle2": {"ctx": 4_096, "tools": True},
+    "needle/": {"ctx": 4_096, "tools": True},
+
     # Wildcards — Prefix Match
     "ollama/": {"ctx": 262_144, "tools": True},
     "openrouter/": {"ctx": 262_144, "tools": True},

@@ -959,7 +959,7 @@ async def create_share_link(self, request: RequestData, file_path: str | None = 
     # Include the filename in the URL so the browser can use it for download
     from pathlib import Path
     filename = Path(file_path).name
-    base_url = os.getenv("APP_BASE_URL", "http://localhost:8000")
+    base_url = os.getenv("APP_BASE_URL", "http://localhost:8467")
     share_access_path = f"/api/{MOD_NAME}/open_shared?share_id={share_id}&filename={filename}"  # Include filename
     full_share_link = str(base_url).rstrip('/') + share_access_path
 

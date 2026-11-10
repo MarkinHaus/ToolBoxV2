@@ -52,6 +52,7 @@ class SubprocessKernel:
     def __init__(self):
         self._gateway: Callable | None = None
         self._get_names: Callable | None = None
+        self._get_tool_docs: Callable | None = None
         self._show: Callable | None = None
         self._cap_check: Callable[[str], bool] | None = None
         self._proc: asyncio.subprocess.Process | None = None
@@ -72,9 +73,11 @@ class SubprocessKernel:
         get_tool_names: Callable,   # () -> list[str]
         show: Callable,             # (bytes, mime, caption) -> media_ref dict
         cap_check: Callable[[str], bool] | None = None,  # (cap) -> bool for import/fs
+        get_tool_docs: Callable | None = None,  # () -> {name: doc}
     ) -> None:
         self._gateway = gateway
         self._get_names = get_tool_names
+        self._get_tool_docs = get_tool_docs
         self._show = show
         self._cap_check = cap_check or (lambda cap: False)
 
@@ -130,8 +133,9 @@ class SubprocessKernel:
                 value = await self._gateway(msg["name"], msg.get("args") or {})
             elif rpc == "tool.search":
                 names = self._get_names() if self._get_names else []
+                docs = self._get_tool_docs() if self._get_tool_docs else {}
                 q = (msg.get("query") or "").lower()
-                value = [n for n in names if q in n.lower()][: msg.get("k", 8)]
+                value = [(n, docs.get(n) or "") for n in names if q in n.lower()][: msg.get("k", 8)]
             elif rpc == "import.check":
                 name = msg.get("name", "")
                 top = name.split(".")[0]
@@ -151,6 +155,14 @@ class SubprocessKernel:
                 Path(path).parent.mkdir(parents=True, exist_ok=True)
                 Path(path).write_text(msg.get("data", ""), "utf-8")
                 value = len(msg.get("data", ""))
+            elif rpc == "fs.stat":
+                path = msg.get("path", "")
+                if not self._cap_allows(f"read:host:{path}"):
+                    raise PermissionError(f"read:host:{path} not granted")
+                p_ = Path(path)
+                value = {"exists": p_.exists(),
+                         "size": p_.stat().st_size if p_.exists() else 0,
+                         "mtime": p_.stat().st_mtime if p_.exists() else 0.0}
             elif rpc == "media.put":
                 data = base64.b64decode(msg.get("data_b64", ""))
                 part = self._show(data, msg.get("mime", "image/png"),
@@ -209,7 +221,14 @@ class SubprocessKernel:
         names = self._get_names() if self._get_names else []
         if not names:
             return ""
-        sigs = [f"tools.{n}(...)" for n in names[:20]]
+        docs = self._get_tool_docs() if self._get_tool_docs else {}
+        sigs: list[str] = []
+        for n in names[:20]:
+            doc = (docs.get(n) or "").strip().splitlines()
+            doc = doc[0][:100] if doc else ""
+            sigs.append(f"tools.{n}(...)")
+            if doc:
+                sigs.append(" " * 16 + doc)
         return "# tools\n" + "\n".join(sigs)
 
     # ------------------------------------------------------------ lifecycle

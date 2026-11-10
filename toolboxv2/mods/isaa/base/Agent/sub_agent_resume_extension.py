@@ -109,6 +109,53 @@ class SubAgentResumeExtension:
 
         return response, should_mark_resumable
 
+    async def _resume_page_sub_agent(
+        self, sub_agent_id: str, state, additional_iterations: int,
+        additional_budget: int, context: Optional[str],
+    ) -> str:
+        """Resume-Pfad fuer Sub-Agents, die nativ auf der PageEngine laufen."""
+        from datetime import datetime
+        from toolboxv2.mods.isaa.base.Agent.sub_agent import SubAgentResult, SubAgentStatus
+
+        try:
+            await self._sub_agent_manager.resume_page(
+                state, additional_iterations, additional_budget, context
+            )
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            state.status = SubAgentStatus.FAILED
+            state.result = f"Resume failed: {str(e)}"
+            return f"ERROR: Resume fehlgeschlagen: {str(e)}"
+
+        final_response = state.result or ""
+        if state.status == SubAgentStatus.MAX_ITERATIONS:
+            success_msg = f"⏱️ Wieder Max-Iterations erreicht (total: {state.iterations_used})"
+        elif state.status == SubAgentStatus.COMPLETED:
+            success_msg = "✅ Sub-Agent erfolgreich fortgesetzt und abgeschlossen"
+        else:
+            success_msg = f"❌ Sub-Agent fehlgeschlagen: {state.error}"
+
+        duration = (datetime.now() - state.started_at).total_seconds() if state.started_at else 0.0
+        self._sub_agent_manager._completed[sub_agent_id] = SubAgentResult(
+            id=sub_agent_id, success=state.status == SubAgentStatus.COMPLETED,
+            status=state.status, result=final_response, error=state.error,
+            output_dir=state.output_dir, files_written=state.files_written,
+            tokens_used=state.tokens_used, duration_seconds=duration, task=state.task,
+            max_iterations_reached=(state.status == SubAgentStatus.MAX_ITERATIONS),
+            resumable=state.resumable, iterations_used=state.iterations_used,
+            execution_context=state.execution_context,
+        )
+        files_str = ', '.join(state.files_written[:5])
+        return (
+            f"{success_msg}\n"
+            f"Output: {state.output_dir}\n"
+            f"Iterations: {state.iterations_used}\n"
+            f"Tokens: {state.tokens_used}\n"
+            f"Files: {files_str}\n\n"
+            f"Result: {final_response[:500]}"
+        )
+
     async def _tool_resume_sub_agent(
         self,
         sub_agent_id: str,
@@ -137,6 +184,11 @@ class SubAgentResumeExtension:
         ctx = getattr(state, 'execution_context', None)
         if not ctx:
             return f"ERROR: Sub-Agent '{sub_agent_id}' hat keinen erhaltenen Context"
+
+        if getattr(state, "runtime", "v3") == "page":
+            return await self._resume_page_sub_agent(
+                sub_agent_id, state, additional_iterations, additional_budget, context
+            )
 
         try:
             state.status = SubAgentStatus.RUNNING

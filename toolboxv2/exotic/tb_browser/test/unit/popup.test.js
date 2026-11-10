@@ -10,7 +10,7 @@ const chrome = require('../mocks/chrome');
 class PopupLogic {
   constructor() {
     this.settings = { backend: 'local', customBackendUrl: '', username: null, jwt: null, isAuthenticated: false, agentName: 'speed' };
-    this.apiBase = 'http://localhost:8080';
+    this.apiBase = 'http://localhost:8467';
     this.isConnected = false;
     this._promptLib = null;
     this._allPrompts = [];
@@ -20,12 +20,12 @@ class PopupLogic {
 
   applySettings() {
     switch (this.settings.backend) {
-      case 'local':   this.apiBase = 'http://localhost:8080'; break;
-      case 'tauri':   this.apiBase = 'http://localhost:5000'; break;
+      case 'local':   this.apiBase = 'http://localhost:8467'; break;
+      case 'tauri':   this.apiBase = 'http://localhost:8467'; break;
       case 'native':  this.apiBase = null; break;
       case 'remote':  this.apiBase = 'https://simplecore.app'; break;
-      case 'custom':  this.apiBase = this.settings.customBackendUrl || 'http://localhost:8080'; break;
-      default:        this.apiBase = 'http://localhost:8080';
+      case 'custom':  this.apiBase = this.settings.customBackendUrl || 'http://localhost:8467'; break;
+      default:        this.apiBase = 'http://localhost:8467';
     }
   }
 
@@ -117,8 +117,8 @@ beforeEach(() => chrome._reset());
 
 describe('applySettings', () => {
   const cases = [
-    ['local',  'http://localhost:8080'],
-    ['tauri',  'http://localhost:5000'],
+    ['local',  'http://localhost:8467'],
+    ['tauri',  'http://localhost:8467'],
     ['native', null],
     ['remote', 'https://simplecore.app'],
     ['custom', 'http://my.server:1234'],
@@ -131,11 +131,11 @@ describe('applySettings', () => {
     expect(p.apiBase).toBe(expected);
   });
 
-  test('unknown backend defaults to localhost:8080', () => {
+  test('unknown backend defaults to localhost:8467', () => {
     const p = new PopupLogic();
     p.settings.backend = 'UNKNOWN';
     p.applySettings();
-    expect(p.apiBase).toBe('http://localhost:8080');
+    expect(p.apiBase).toBe('http://localhost:8467');
   });
 });
 
@@ -145,7 +145,7 @@ describe('loadSettings / saveSettings', () => {
     const p = new PopupLogic();
     await p.loadSettings();
     expect(p.settings.username).toBe('markin');
-    expect(p.apiBase).toBe('http://localhost:5000');
+    expect(p.apiBase).toBe('http://localhost:8467');
   });
 
   test('saveSettings persists to sync storage', async () => {

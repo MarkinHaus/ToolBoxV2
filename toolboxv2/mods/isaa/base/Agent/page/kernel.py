@@ -38,6 +38,34 @@ class _ToolEntry:
     description: str = ""
 
 
+class _VFS:
+    """Minimaler root-gefangener Datei-Sandbox: read/write/stat unter ``root``."""
+
+    def __init__(self, root: Path):
+        self.root = Path(root).resolve()
+
+    def _resolve(self, rel: str) -> Path:
+        p = (self.root / rel).resolve()
+        p.relative_to(self.root)  # anti-escape
+        return p
+
+    def read(self, rel: str) -> str:
+        return self._resolve(rel).read_text("utf-8")
+
+    def write(self, rel: str, data: str) -> int:
+        p = self._resolve(rel)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(data, "utf-8")
+        return len(data)
+
+    def stat(self, rel: str) -> dict:
+        p = self._resolve(rel)
+        if not p.exists():
+            return {"exists": False, "size": 0, "mtime": 0.0}
+        st = p.stat()
+        return {"exists": True, "size": st.st_size, "mtime": st.st_mtime}
+
+
 class _ProxyToolManager:
     """Duck-Type für AgentToolProxy: braucht get_function() und _registry.
 
@@ -45,9 +73,29 @@ class _ProxyToolManager:
     aus PageEngine). Dadurch ist die Capsule auch für Kernel-Code wirksam.
     """
 
-    def __init__(self, gateway: Callable, tool_names: Callable[[], list[str]]):
+    def __init__(self, gateway: Callable, tool_names: Callable[[], list[str]],
+                 get_tool_docs: Callable[[], dict] | None = None,
+                 search: Callable[[str, int], list] | None = None):
         self._gateway = gateway
         self._get_names = tool_names  # lambda -> aktuelle Liste
+        self._get_docs = get_tool_docs or (lambda: {})
+        self._search = search          # (query, k) -> [(name, doc)]  – BM25 der Engine
+
+    def search(self, query: str, k: int = 8) -> list:
+        """Engine-BM25 wenn gebunden, sonst Substring ueber Name UND Doc (alle Tokens)."""
+        if self._search is not None:
+            try:
+                return list(self._search(query, k))
+            except Exception:
+                pass  # defekter FTS-Query -> Fallback
+        docs = self._get_docs()
+        toks = query.lower().split()
+        out = []
+        for n in self._get_names():
+            hay = f"{n} {docs.get(n) or ''}".lower()
+            if all(t in hay for t in toks):
+                out.append((n, docs.get(n) or ""))
+        return out[:k]
 
     @property
     def _registry(self) -> dict[str, _ToolEntry]:
@@ -103,6 +151,9 @@ class InProcessKernel:
         cap_check: Callable | None = None,  # (cap) -> bool; ignored (trusted kernel)
         action_dispatch: Callable | None = None,   # async (name, args) -> str  — page actions
         actions_schema: list | None = None,        # [(name, desc, props, required), ...]
+        get_tool_docs: Callable | None = None,     # () -> {name: doc}
+        vfs_root: str | Path | None = None,        # root-gefangenes vfs fuer ns["vfs"]
+        search_tools: Callable | None = None,      # (query, k) -> [(name, doc)]  BM25 der Engine
     ) -> None:
         """Bindet den Kernel an die Engine.  Muss vor dem ersten run() aufgerufen werden.
 
@@ -119,7 +170,7 @@ class InProcessKernel:
             await tools("recall", query="x") # Fallback über die tools-Shim
         """
         self._show_sink = show
-        self._tool_manager = _ProxyToolManager(gateway, get_tool_names)
+        self._tool_manager = _ProxyToolManager(gateway, get_tool_names, get_tool_docs, search_tools)
         self._actions = (
             _KernelActions(action_dispatch, actions_schema or [])
             if action_dispatch is not None
@@ -135,6 +186,8 @@ class InProcessKernel:
             self.ns["actions"] = self._actions
             for name in self._actions.names():
                 self.ns[name] = self._actions.fn(name)
+        if vfs_root is not None:
+            self.ns["vfs"] = _VFS(vfs_root)
         self._builtin = set(self.ns)
 
     def _show(
@@ -232,13 +285,20 @@ class InProcessKernel:
             tool_names = self._tool_manager._get_names()
             if tool_names:
                 tool_sigs: list[str] = []
-                for name in tool_names[:20]:  # cap bei 20 damit P4 nicht volläuft
+                docs = self._tool_manager._get_docs()
+                for name in tool_names[:20]:  # cap bei 20 damit P4 nicht vollaeuft
                     fn = self._tool_manager.get_function(name)
+                    doc = (docs.get(name) or "").strip().splitlines()
+                    doc = doc[0][:100] if doc else ""
                     if fn is not None:
                         with contextlib.suppress(Exception):
                             tool_sigs.append(f"tools.{name}{inspect.signature(fn)}")
+                            if doc:
+                                tool_sigs.append(f"{' ' * 28}{doc}")
                             continue
                     tool_sigs.append(f"tools.{name}(...)")
+                    if doc:
+                        tool_sigs.append(f"{' ' * 20}{doc}")
                 parts.append("# tools\n" + "\n".join(tool_sigs))
 
         # 3. Page actions (yellow tools) callable directly in the kernel.
@@ -406,9 +466,7 @@ class _KernelTools:
 
     async def _search(self, query: str, k: int = 8):
         """Tool-Suche – gibt [(name, doc), ...] zurück."""
-        # _ProxyToolManager hat keinen Suchindex; die Namen reichen für den Kernel.
-        names = self._tm._get_names()
-        return [(n, "") for n in names if query.lower() in n.lower()][:k]
+        return self._tm.search(query, k)
 
     def __dir__(self):
         return list(self._tm._registry)
