@@ -17,6 +17,9 @@ pub struct InstallConfig {
     pub install_path: Option<String>,
     /// "uv" (default) | "source" | "docker"
     #[serde(default)]
+    /// "install" (default) | "update" (T13)
+    pub action: Option<String>,
+    #[serde(default)]
     pub mode: Option<String>,
     #[serde(default)]
     pub optional: Vec<String>,
@@ -67,7 +70,7 @@ pub fn config_to_yaml(cfg: &InstallConfig) -> String {
     // Tauri laeuft headless (kein stdin) -> Installer-Fragen sind unantwortbar.
     // assume: yes + action machen sh/ps1 voll non-interactive.
     yaml.push_str("assume: yes\n");
-    yaml.push_str("action: install\n");
+    yaml.push_str(&format!("action: {}\n", cfg.action.as_deref().unwrap_or("install")));
     for opt in optional_all {
         let on = cfg.optional.iter().any(|o| o == opt);
         yaml.push_str(&format!("optional.{}: {}\n", opt, on));
@@ -304,6 +307,7 @@ mod tests {
             profile: "consumer".into(),
             install_path: Some("C:\\Users\\x\\TB".into()),
             mode: None,
+            action: None,
             optional: vec!["nginx".into()],
         };
         let yaml = config_to_yaml(&cfg);
