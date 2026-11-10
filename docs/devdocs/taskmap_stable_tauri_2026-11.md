@@ -14,13 +14,14 @@ Am Ende läuft auf einem Windows-Rechner **ohne vorher installiertes ToolBoxV2**
 |---|---|---|
 | Z1 | Installation | SimpleCore-Setup installieren, App starten, Profil `local` wählen → Installation endet ohne Fehler |
 | Z2 | Start | Danach zeigt das Hauptfenster das Dashboard von `http://127.0.0.1:8467/` (kein Text „dist/index.html not found", kein Timeout) |
-| Z3 | Anmeldung | Ohne Eingabe als lokaler Admin angemeldet (kein Login-Formular) |
+| Z3 | Anmeldung | Erster Start verlangt die Anmeldung mit dem SimpleCore-Konto. Danach ist man auf diesem Gerät automatisch angemeldet, auch ohne Netz |
 | Z4 | ISAA | Dashboard → Tab „Lokal" → ISAA öffnet `/isaa`, eine Chat-Nachricht wird beantwortet |
 | Z5 | OBS | Dashboard → Tab „Lokal" → OBS öffnet `/obs` und zeigt Live-Daten des ISAA-Laufs |
 | Z6 | Neustart | App schließen und neu starten → direkt Dashboard, kein Onboarding |
-| Z7 | Update | Neuere App-Version wird gefunden und installiert; danach läuft der neue Kern, Profil und Daten sind erhalten |
+| Z7 | Update | Neuere App-Version wird gefunden und installiert; danach läuft der neue Kern, Profil, Konto und Daten sind erhalten |
+| Z8 | Daten auf allen Geräten | Zweites Gerät, gleiches Konto: bestehende Kontodaten (Data-API), Blobs und der globale ISAA-Ordner sind nach dem Login da; Änderungen wandern in beide Richtungen |
 
-Nicht Teil des Ziels: Konto-Login gegen `simplecore.app`, Linux/macOS-Abnahme, Punkt E (ein HTTP-Stack), README, Dead-Code, Installer-Konsolidierung, B2, B3, B9.
+Nicht Teil des Ziels: Sync von ISAA-Chatverläufen (heute keinem Nutzer zugeordnet), Linux/macOS-Abnahme, Punkt E (ein HTTP-Stack), README, Dead-Code, Installer-Konsolidierung, B2, B3, B9.
 
 ---
 
@@ -39,6 +40,18 @@ Nicht Teil des Ziels: Konto-Login gegen `simplecore.app`, Linux/macOS-Abnahme, P
 7. Keine Geheimnisse (Signaturschlüssel, API-Keys) in Dateien oder Commits.
 8. Zwei verschiedene `dist`-Ordner nicht verwechseln: `dist/` im Repo-Root = Python-Wheel, `toolboxv2/dist/` = Web-Frontend.
 9. Tasks mit Kennung **H** macht der Owner. Dort stoppen und warten.
+
+**Aufgaben des Owners** (der Agent stoppt an der genannten Stelle):
+
+| # | Was | Wann |
+|---|---|---|
+| H0 | LLM-API-Key eintragen | vor T10 |
+| H4 | MinIO auf `simplecore.app` konfigurieren und von außen per HTTPS erreichbar machen | nur wenn K0-P3 rot ist |
+| H5 | Server-Änderung aus S1 auf `simplecore.app` ausrollen | nach S1 |
+| H1 | Signaturschlüssel als GitHub-Secrets | vor T12 |
+| H2, H3 | `nightly.yml` anstoßen (zweimal) | in T14 |
+
+**Entscheidungen des Owners** (gelten, nicht neu verhandeln): Wheel im App-Bundle · Updater über GitHub (`nightly`) · Konto beim ersten Start Pflicht, danach automatische Anmeldung auf dem Gerät · vorhandene lokale Daten gehen ins Konto · Schlüssel liegt beim Konto auf dem Server · Sync-Umfang: Data-API-Daten, Blobs, globaler ISAA-Ordner.
 
 **Standard-Gate** (in jedem Task zusätzlich zum eigenen Gate):
 
@@ -63,7 +76,7 @@ Gemessen am 2026-11-10 unter Linux mit einem lokal gebauten Wheel. Windows ist *
 | F5 | `uv tool install "toolboxv2[web,isaa,cli] @ file:///<abs>/toolboxv2-0.1.28-py3-none-any.whl" --force` funktioniert (68 s, 580 MB). Danach `tb -init local` → `{"ok": true}`, Owner antwortet nach 4 s. | Gewählter Lieferweg trägt |
 | F6 | Manifest, `.data` und `.config` liegen in `site-packages/toolboxv2/`. Nach Reinstall ist `.data` **weg**. | Jedes Update löscht Nutzerdaten → T3 |
 | F7 | Das Repo-Manifest `toolboxv2/tb-manifest.yaml` ist eingecheckt mit `profile: developer` und wird ins Wheel gepackt. | Wheel-Installationen sehen nie „first run" → T3 |
-| F8 | `SessionManager.enable_local_trust` wird in `server_worker.py:1697` aufgerufen, ist aber nirgends definiert. Log: `Loopback trust not enabled`. | Keine Auto-Anmeldung → T9 |
+| F8 | `SessionManager.enable_local_trust` wird in `server_worker.py:1697` aufgerufen, ist aber nirgends definiert. Log: `Loopback trust not enabled`. | Keine Auto-Anmeldung → K2 |
 | F9 | `POST /tray/command` mit `{"command":"start_app","args":{"name":"isaa"}}` → `{"ok":true,"result":{"merged":true,"prefix":"/isaa","ws":true}}`, `/isaa` → 200. | ISAA-Mount funktioniert |
 | F10 | `litellm` steht in `features/isaa/feature.yaml`, fehlt aber im Extra `isaa` in `pyproject.toml`. | ISAA-Chat ohne LLM-Bibliothek → T4 |
 | F11 | OBS (`mods/isaa/extras/live_obs_server.py`, `app = FastTB(...)` Zeile 41) ist nicht in der App-Registry. | T11 |
@@ -71,16 +84,24 @@ Gemessen am 2026-11-10 unter Linux mit einem lokal gebauten Wheel. Windows ist *
 | F13 | `bundle.externalBin` verlangt `binaries/tb-worker`; laut Handoff B10 funktioniert dieses Binary nicht. `worker_manager.rs` erlaubt Endpoint `local` nur, wenn der Sidecar da ist. | T8 |
 | F14 | `launch.rs` wartet nach dem Start nur 25 s auf 8467. | Erster Start unter Windows kann länger dauern → T8 |
 | F15 | Tests und `import toolboxv2` schreiben Marker in den Arbeitsbaum (`features/*/.installed`, `logs/`, `.info/`). | T2 |
+| F16 | Lokale Anmeldung und SimpleCore-Konto schließen sich heute aus: mit `TOOLBOXV2_REMOTE_BASE` kein lokaler Admin (`CloudM/module.py:95`), ohne sie nur der Admin `root` mit Zufalls-ID. | K1–K3 |
+| F17 | SimpleCore-Login vom Gerät existiert für die CLI: `utils/clis/cli_oauth.py:65` öffnet die Login-Seite im Browser und erhält `token`, `refresh_token`, `user_id`, `username` über `127.0.0.1:8765`. | Wird in K3 wiederverwendet |
+| F18 | Ohne Nutzerschlüssel verschlüsseln `blobs.py:189–212` und `scoped_storage.py` mit dem **Geräteschlüssel**. | Anderes Gerät kann die Daten nicht lesen → S1, S2 |
+| F19 | Der Server gibt pro Konto MinIO-Zugangsdaten aus: `CloudM/UserDataAPI.py:1097`. Braucht `MINIO_ENDPOINT` auf dem Server — **nicht geprüft**. | K0-P3 |
+| F20 | `BlobStorage.sync()` (`blobs.py:1021`) gleicht lokal ↔ Cloud unter `{user_id}/` ab, ist aber nirgends an ein Konto angeschlossen. `toolbox.py:290` baut den Speicher im Server-Modus gegen `127.0.0.1:9000`. | S2, S4 |
+| F21 | Bestehende Serverdaten der Data-API sind mit dem Schlüssel des Servers verschlüsselt (Server-`UserContext` ohne `encryption_key`). | Nur über die API lesbar → S3 |
+| F22 | Der globale ISAA-Ordner ist `<data_dir>/Agents/VFS/global` (`power_vfs.py:110`), ein normaler Ordner. | S4 |
+| F23 | `utils/clis/cli_oauth.py` enthält ab Zeile 105 einen losen Textblock („WORKING AGREEMENT") als String im Modul; `local_cli.py:258` gibt die Login-Antwort samt Tokens per `print` aus. | Nicht anfassen; dem Owner gemeldet |
 
 ---
 
 ## 3. Reihenfolge
 
 ```
-T1 → T2 → T3 → T4 → T5 → T6 → T7 → T8 → T9 → T10 → T11 → H1 → T12 → T13 → T14
+T1 → T2 → T3 → T4 → T5 → T6 → T7 → T8 → K0 → K1 → K2 → K3 → K4 → T10 → T11 → S1 → H5 → S2 → S3 → S4 → S5 → H1 → T12 → T13 → T14
 ```
 
-Begründung, rückwärts vom Ziel: Update (T12/T13) braucht eine installierbare App (T6–T8). Die App braucht einen Installer, der das mitgelieferte Wheel nimmt (T5), und einen Kern, der mit diesem Wheel startet (T4) und dessen Zustand ein Update überlebt (T3). Anmeldung, ISAA und OBS (T9–T11) sind reine Kern-Themen und ohne Tauri prüfbar.
+Begründung, rückwärts vom Ziel: Update (T12/T13) braucht eine installierbare App (T6–T8). Die App braucht einen Installer, der das mitgelieferte Wheel nimmt (T5), und einen Kern, der mit diesem Wheel startet (T4) und dessen Zustand ein Update überlebt (T3). Konto (K0–K4), ISAA und OBS (T10, T11) sind reine Kern-Themen und ohne Tauri prüfbar. Der Sync (S1–S5) braucht das Konto und steht deshalb danach; er braucht außerdem eine Server-Änderung (H5).
 
 ---
 
@@ -271,7 +292,7 @@ In einem zweiten Fenster:
 | `dir "$env:LOCALAPPDATA\toolboxv2\tb-manifest.yaml"` | Datei existiert |
 | `dir "$env:LOCALAPPDATA\toolboxv2\.data"` | Ordner existiert |
 
-Workers danach stoppen. Die Installation für T9–T11 stehen lassen.
+Workers danach stoppen. Die Installation für K4, T10, T11 und S5 stehen lassen.
 
 **Wenn rot:** `/` liefert Text statt HTML → das Wheel wurde ohne `dist` gebaut, Schritt 1 des Skripts prüfen. `first_run:true` trotz Installer-Lauf → T3 Schritt 3 hat eine Aufrufstelle verfehlt; `git grep` wiederholen.
 
@@ -311,52 +332,163 @@ Erwartet: Tests bestanden; Build endet mit einem Setup unter `src-tauri\target\r
 
 ---
 
-### T9 — Lokale Auto-Anmeldung (F8)
+### K0 — Messung gegen `simplecore.app` (kein Code)
+
+**Ziel:** Vier Annahmen prüfen, auf denen K und S aufbauen. Ergebnisse in `docs/devdocs/probe_simplecore_2026-11.md` festhalten — **ohne** Tokens, Schlüssel oder Zugangsdaten (nur Statuscode, Feldnamen, Fehlermeldung).
+
+**Schritte**
+
+1. Token holen (öffnet den Browser, Owner meldet sich an):
+
+```powershell
+$env:TOOLBOXV2_REMOTE_BASE = "https://simplecore.app"
+python -c "import asyncio; from toolboxv2.utils.clis.cli_oauth import cli_remote_login; p = asyncio.run(cli_remote_login()); print(sorted(p.keys()) if p else None); open('probe_token.tmp','w').write(p['access_token'] if p else '')"
+$t = Get-Content probe_token.tmp
+```
+
+2. Vier Aufrufe, jeweils Statuscode und Feldnamen der Antwort notieren:
+
+| # | Aufruf | Frage |
+|---|---|---|
+| P1 | `curl -H "Authorization: Bearer $t" https://simplecore.app/api_user_data` | Welche Felder hat der Nutzerdatensatz? |
+| P2 | `curl -H "Authorization: Bearer $t" https://simplecore.app/api/CloudM.UserDataAPI/list_data` | Stimmt die URL-Form `/api/<Modul>/<Funktion>`? Wie sieht die Liste aus? |
+| P3 | `curl -H "Authorization: Bearer $t" https://simplecore.app/api/CloudM.UserDataAPI/get_secure_storage_credentials` | Gibt der Server MinIO-Zugangsdaten aus? Welche Felder (`endpoint`, `secure`, `buckets`, …)? |
+| P4 | `curl -H "Authorization: Bearer $t" "https://simplecore.app/api/CloudM.UserDataAPI/get_data?path=<ein Pfad aus P2>"` | In welcher Form kommen die Daten zurück? |
+
+3. `probe_token.tmp` löschen. Prüfen, dass die Datei nicht in `git status` auftaucht.
+
+**Gate / Entscheidung**
+
+| Ergebnis | Weiter |
+|---|---|
+| P1–P4 liefern 200 | K1 |
+| P2 liefert 404 | Stoppen. Die URL-Form ist eine ANNAHME; richtige Form beim Owner erfragen |
+| P3 meldet „MINIO_ENDPOINT not configured" oder einen anderen Fehler | K-Block normal fortsetzen; **S2 und S4 sind blockiert**, bis der Owner MinIO auf dem Server konfiguriert (H4). Melden |
+| P3 liefert `secure: false` oder einen `endpoint`, der nicht aus dem Internet erreichbar ist | Wie Zeile darüber |
+
+---
+
+### K1 — Gerätekonto: verknüpfen, merken, Altdaten übernehmen (F8, F16, F17)
+
+**Neue Datei:** `toolboxv2/mods/CloudM/auth/device_account.py`
+
+**Festlegungen**
+
+- „Gerätekonto" = das SimpleCore-Konto, das auf diesem Gerät angemeldet wurde.
+- Merker ist die Datei `<app.data_dir>/device_owner.json` mit genau diesen Feldern: `user_id`, `username`, `base_url`, `linked_at`, `migrated_from` (leer oder alte lokale ID). Keine Tokens, keine Schlüssel in dieser Datei.
+- Auf dem eigenen Gerät hat das Gerätekonto lokal `level = -1` (wie bisher der lokale Admin `root`). Dieses lokale Level wird nie an den Server gesendet.
+
+**Funktionen**
+
+1. `device_owner_file(app=None) -> Path`: `Path(app.data_dir) / "device_owner.json"`; ohne `app` → `get_app()`.
+2. `read_device_owner(app=None) -> Optional[dict]`: Datei lesen; bei fehlender oder ungültiger Datei `None`.
+3. `async link_account(app, payload: dict) -> UserData`:
+   1. `payload` muss `access_token` und `user_id` enthalten, sonst `ValueError`.
+   2. Tokens speichern **genau wie** `utils/clis/local_cli.py:259–267` (`s.username = ...`, `s._save_session_token(...)`, `await s.login()`); vorher `app.session.base` auf `TOOLBOXV2_REMOTE_BASE` setzen, Default `https://simplecore.app`. Schlägt `login()` fehl → `RuntimeError`, nichts weiter schreiben.
+   3. Lokalen Nutzerdatensatz laden (`_load_user(app, user_id)`) oder neu anlegen: `user_id` und `username` aus `payload`, `email` leer, `level = -1`, `settings = {"device_owner": True}`.
+   4. **Altdaten übernehmen:** `old = await _find_user_by_email(app, LOCAL_ADMIN_EMAIL)`. Wenn `old` existiert und `old.user_id != user_id`: jeden Schlüssel aus `old.settings` (außer `anonymous`, `local_admin`) und aus `old.mod_data` in den neuen Datensatz übernehmen, **wenn er dort noch nicht existiert** (Konto gewinnt bei Konflikt). Danach `_db_delete` für `AUTH_USER::<old.user_id>` und `AUTH_USER_EMAIL::<LOCAL_ADMIN_EMAIL>`. `migrated_from = old.user_id`.
+   5. `_save_user(app, user)`, dann `device_owner.json` schreiben.
+   6. Mehrfacher Aufruf mit demselben Konto ändert nichts (idempotent). Aufruf mit einem **anderen** Konto, während schon eines verknüpft ist → `RuntimeError("device already linked")`.
+4. `async unlink_account(app) -> None`: `device_owner.json` löschen und `await app.session.logout()`.
+
+**Test `toolboxv2/tests/test_core/test_device_account.py`** (unittest; `_db_set`, `_db_get`, `_db_get_raw`, `_db_delete` in `user_store` und `device_account` per `unittest.mock.patch` durch ein Dict ersetzen; `app.session` durch ein Mock, dessen `login()` `True` liefert; `app.data_dir` = Temp-Ordner):
+
+| Fall | Erwartet |
+|---|---|
+| Verknüpfen ohne lokalen Admin | Datei existiert, Nutzer mit `level -1` gespeichert |
+| Verknüpfen mit lokalem Admin, der `settings={"theme":"dark"}` und `mod_data={"m":{"a":1}}` hat | Neuer Nutzer hat beides, alter Datensatz und E-Mail-Index gelöscht, `migrated_from` gesetzt |
+| Konto hat `theme: light`, lokaler Admin `theme: dark` | bleibt `light` |
+| Zweiter Aufruf, gleiches Konto | keine Änderung, kein Fehler |
+| Zweiter Aufruf, anderes Konto | `RuntimeError` |
+| `login()` liefert `False` | `RuntimeError`, keine Datei |
+
+**Gate:** Standard-Gate + neuer Test `OK`.
+
+---
+
+### K2 — Automatische Anmeldung über das Gerätekonto (F8)
 
 **Dateien:** `toolboxv2/utils/workers/session.py`, `toolboxv2/utils/workers/server_worker.py`
 
 **Schritt 1 — `SessionManager` (session.py ab Zeile 524):**
 
-- In `__init__`: `self._local_trust_user = None`.
-- Neue Methode `enable_local_trust(self, user: dict) -> None`: speichert eine Kopie von `user`.
+- In `__init__`: `self._local_trust_provider = None`.
+- Neue Methode `enable_local_trust(self, provider) -> None`: `provider` ist eine Funktion ohne Argumente, die ein Dict (`user_id`, `username`, `level`) oder `None` liefert.
 - Neue Methode `_local_trust_session(self, environ, headers)`: gibt `None` zurück, außer **alle** Bedingungen gelten:
-  1. `self._local_trust_user` ist gesetzt.
+  1. Ein Provider ist gesetzt und liefert ein Dict mit nicht-leerer `user_id`.
   2. `environ.get("REMOTE_ADDR")` ist `127.0.0.1` oder `::1`.
   3. Keiner der Header `X-Forwarded-For`, `X-Real-Ip`, `Forwarded` ist vorhanden (Groß-/Kleinschreibung egal).
   4. Der Host aus `HTTP_HOST` (ohne Port) ist `127.0.0.1`, `localhost` oder `[::1]`.
-  Dann eine `SessionData` zurückgeben mit `user_id`, `user_name` (aus `username`), `level` aus dem Nutzer, `session_id="local-trust"`, `validated=True`, `anonymous=False`, `exp = jetzt + cookie_max_age`.
+  Dann eine `SessionData` zurückgeben mit `user_id`, `user_name`, `level`, `session_id="local-trust"`, `validated=True`, `anonymous=False`, `exp = jetzt + cookie_max_age`.
 - In `get_session_from_request` (Zeile 685) **und** `get_session_from_request_sync` (Zeile 738): direkt vor „4. Return anonymous" `_local_trust_session` aufrufen und dessen Ergebnis zurückgeben, wenn es nicht `None` ist.
 
-**Schritt 2 — Bedingung in `server_worker.py:1685–1690`:** Die Tauri-Installation setzt `environment: production`. Die Bedingung ändern auf: kein `TOOLBOXV2_REMOTE_BASE` **und** Profil ist `local` oder `developer`. Die Prüfung auf `environment` entfällt. Ein fehlendes Profil (`None`) zählt als nicht erlaubt.
+**Schritt 2 — `server_worker.py:1682–1700`:** Den ganzen Block ersetzen. Neu: Wenn das Profil `local` oder `developer` ist, `self._session_manager.enable_local_trust(provider)` aufrufen. `provider` liest `read_device_owner(self._app)` und gibt `{"user_id", "username", "level": -1}` oder `None` zurück; das Ergebnis darf 5 s zwischengespeichert werden. Die Bedingungen auf `TOOLBOXV2_REMOTE_BASE` und `environment` entfallen. `ensure_local_admin` wird hier **nicht** mehr aufgerufen. Profil `server` oder fehlendes Profil → kein Provider.
 
-**Schritt 3 — neuer Test `toolboxv2/tests/test_core/test_local_trust.py`:**
+**Schritt 3 — `mods/CloudM/module.py:93–109`:** Wenn `read_device_owner(self.app)` ein Konto liefert, `app.session.username`, `app.session.user_id`, `app.session.valid = True` daraus setzen und `app.session.base` **nicht** auf `None` setzen. Nur wenn kein Gerätekonto existiert, bleibt das bisherige Verhalten (lokaler Admin für die CLI).
+
+**Test `toolboxv2/tests/test_core/test_local_trust.py`** (unittest):
 
 | Fall | Erwartet |
 |---|---|
-| Trust aktiv, `REMOTE_ADDR=127.0.0.1`, `HTTP_HOST=127.0.0.1:8467` | Session des Admins, `anonymous False` |
-| Trust aktiv, `REMOTE_ADDR=192.168.1.5` | anonym |
-| Trust aktiv, Loopback, Header `X-Forwarded-For: 1.2.3.4` | anonym |
-| Trust aktiv, Loopback, `HTTP_HOST=evil.example` | anonym |
-| Trust nicht aktiv, Loopback | anonym |
+| Provider liefert Konto, `REMOTE_ADDR=127.0.0.1`, `HTTP_HOST=127.0.0.1:8467` | Session des Kontos, `anonymous False`, `validated True` |
+| Provider liefert Konto, `REMOTE_ADDR=192.168.1.5` | anonym |
+| Provider liefert Konto, Loopback, Header `X-Forwarded-For: 1.2.3.4` | anonym |
+| Provider liefert Konto, Loopback, `HTTP_HOST=evil.example` | anonym |
+| Provider liefert `None`, Loopback | anonym |
+| Kein Provider gesetzt, Loopback | anonym |
 
-**Gate:** Standard-Gate + neuer Test `OK`. Dann mit der Installation aus T6 (vorher `installer.ps1` mit dem neu gebauten Wheel erneut ausführen):
+**Gate:** Standard-Gate + beide neuen Tests `OK`. Im Worker-Log steht nicht mehr `Loopback trust not enabled`.
 
-```powershell
-& "$env:LOCALAPPDATA\toolboxv2\bin\tb.exe" workers start
-curl http://127.0.0.1:8467/api_user_data
-```
+**Nicht tun:** Keine Anmeldung für Nicht-Loopback-Anfragen. CSRF- und CORS-Regeln nicht anfassen.
 
-Erwartet: Antwort enthält den lokalen Admin (kein Fehler „nicht angemeldet"); im Worker-Log steht **nicht** mehr `Loopback trust not enabled`.
+---
 
-**Wenn rot:** Liefert `/api_user_data` trotz grünem Unit-Test „nicht angemeldet", dann im Log prüfen, ob `ensure_local_admin` einen Fehler wirft, und diesen Fehler melden. Stoppen.
+### K3 — Konto ist Pflicht: Zustand, API, Seite
 
-**Nicht tun:** Keine Anmeldung für Nicht-Loopback-Anfragen freigeben. CSRF- und CORS-Regeln nicht anfassen.
+**Schritt 1 — `utils/clis/first_run.py`, `onboarding_state()`:** Das Ergebnis bekommt zwei neue Felder: `needs_account` (`True`, wenn Profil `local` oder `developer` ist und `read_device_owner()` `None` liefert) und `account` (`username` des Gerätekontos oder `None`). Die Bedeutung von `first_run` bleibt unverändert.
+
+**Schritt 2 — `utils/workers/fast/wizard_api.py`:**
+
+- `GET /api/wizard/state` gibt zusätzlich `needs_account` und `account` zurück.
+- Neu `POST /api/wizard/account/start` (`auth=False`): startet **einen** Hintergrund-Thread, der `cli_remote_login()` ausführt (öffnet den Standard-Browser auf der Login-Seite von SimpleCore), danach `link_account(app, payload)`. Vorher `TOOLBOXV2_REMOTE_BASE` bzw. Default `https://simplecore.app` als `app.session.base` setzen. Läuft schon ein Thread: nichts Neues starten. Antwort `{"ok": true, "state": "waiting"}`.
+- Neu `GET /api/wizard/account/status` (`auth=False`): `{"state": "idle" | "waiting" | "linked" | "error", "error": <Text oder null>, "account": <username oder null>}`.
+- Beide neuen Routen nur für Loopback (dieselbe Prüfung wie in `local_ui.py:36`).
+
+**Schritt 3 — neue Datei `utils/workers/fast/account_page.py`:** Eine Konstante `ACCOUNT_PAGE_HTML` mit einer vollständigen, eigenständigen HTML-Seite (kein externes Skript, kein externes Stylesheet): Überschrift „Mit SimpleCore anmelden", ein Knopf, eine Statuszeile. Klick → `POST /api/wizard/account/start`, dann alle 2 s `GET /api/wizard/account/status`; bei `linked` → `location.replace('/')`; bei `error` → Fehlertext anzeigen und Knopf wieder aktivieren. HTML als Python-String, damit keine Paketdaten nötig sind.
+
+**Schritt 4 — `utils/workers/fast/local_ui.py`:**
+
+- Neue Route `GET /account` (`auth=False`): liefert `ACCOUNT_PAGE_HTML`.
+- Route `/` (Zeile 114): Reihenfolge 1. `first_run` → Setup-Seite (wie bisher), 2. sonst `needs_account` → `ACCOUNT_PAGE_HTML`, 3. sonst Dashboard.
+
+**Schritt 5 — Tests.** `test_wizard_api.py` und `test_wizard_e2e_http.py` ergänzen: Zustand mit Profil, ohne Gerätekonto → `needs_account true`, `/` liefert die Kontoseite; mit `device_owner.json` im Temp-Datenordner → `needs_account false`, `/` liefert das Dashboard. Bestehende Fälle, die nach gesetztem Profil das Dashboard erwarten, legen in ihrem `setUp` ein `device_owner.json` an (das ist die neue Voraussetzung, keine Abschwächung).
+
+**Gate:** Standard-Gate + `python -m pytest -q toolboxv2/tests/test_core/test_wizard_e2e_http.py` bestanden.
+
+**Nicht tun:** Keine Umgebungsvariable und kein Schalter, der die Kontopflicht umgeht.
+
+---
+
+### K4 — Abnahme Konto (manuell, mit der Installation aus T6)
+
+Wheel neu bauen, `installer.ps1` erneut ausführen, Workers starten.
+
+| Schritt | Erwartet |
+|---|---|
+| `curl http://127.0.0.1:8467/api/wizard/state` | `"first_run":false`, `"needs_account":true` |
+| Browser `http://127.0.0.1:8467/` | Kontoseite |
+| Knopf klicken, im geöffneten Browser bei SimpleCore anmelden | Seite springt auf das Dashboard |
+| `curl http://127.0.0.1:8467/api_user_data` | Datensatz des SimpleCore-Kontos (`user_id` wie bei P1 aus K0) |
+| Workers stoppen, **Netzwerk trennen**, Workers starten, `/` öffnen | Dashboard, angemeldet, keine Kontoseite |
+| `dir "$env:LOCALAPPDATA\toolboxv2\.data"` (rekursiv nach `device_owner.json` suchen) | Datei existiert, enthält kein Token |
+
+**Wenn rot:** Bleibt die Seite nach dem Login auf „waiting" → prüfen, ob Port 8765 (Rückkanal von `cli_oauth.py`) von einer Firewall blockiert wird; Befund melden, nicht den Port ändern.
 
 ---
 
 ### T10 — ISAA im Owner abnehmen
 
-**Voraussetzung (H0, Owner):** einen LLM-API-Key bereitstellen und über `tb -init onboard` (Frage 2) eintragen.
+**Voraussetzung:** K4 ist grün (Gerätekonto verknüpft). **H0 (Owner):** einen LLM-API-Key bereitstellen und über `tb -init onboard` (Frage 2) eintragen.
 
 **Schritte:** Kein Code, außer ein Gate ist rot.
 
@@ -417,6 +549,152 @@ Erwartet: `/tray/apps` listet `isaa` und `obs`; `"ok":true`; `200`. Im Browser z
 
 ---
 
+### S1 — Server: ein Schlüssel pro Konto (F18)
+
+**Entscheidung des Owners:** Der Schlüssel für synchronisierte Daten liegt beim Konto auf dem Server und wird nach dem Login an das Gerät gegeben.
+
+**Datei:** `toolboxv2/mods/CloudM/UserDataAPI.py`
+
+**Schritte**
+
+1. Neue Funktion mit demselben Dekorator wie `get_secure_storage_credentials` (Zeile 1096): `async def get_user_data_key(app, request)`.
+   - Nutzer über `_get_storage_provider(app, request)` bestimmen; ohne Nutzer → `Result.default_user_error(info="Nicht authentifiziert", exec_code=401)`.
+   - Schlüssel unter dem DB-Schlüssel `AUTH_USER_DATAKEY::<user_id>` lesen (`_db_get_raw` aus `auth/db_helpers.py`). Fehlt er: mit `Code.generate_symmetric_key()` (`utils/security/cryp.py:148`) erzeugen und mit `_db_set` speichern.
+   - Antwort `Result.ok(data={"key": <schlüssel>, "user_id": <user_id>})`.
+2. Der Schlüssel wird nie geloggt.
+
+**Test `toolboxv2/tests/test_core/test_user_data_key.py`** (unittest, DB wie in K1 durch ein Dict ersetzt, `_get_storage_provider` gepatcht):
+
+| Fall | Erwartet |
+|---|---|
+| Nutzer A, zwei Aufrufe | zweimal derselbe Schlüssel |
+| Nutzer A und Nutzer B | verschiedene Schlüssel |
+| nicht angemeldet | Fehler 401, kein Schlüssel |
+
+**Gate:** Standard-Gate + neuer Test `OK`.
+
+**H5 (Owner):** Diese Änderung auf `simplecore.app` ausrollen. Der Agent stoppt nach S1, bis der Owner bestätigt, dass `curl -H "Authorization: Bearer <token>" https://simplecore.app/api/CloudM.UserDataAPI/get_user_data_key` einen Schlüssel liefert.
+
+---
+
+### S2 — Gerät: Schlüssel und Zugangsdaten holen, Blob-Speicher auf das Konto stellen (F19, F20)
+
+**Voraussetzung:** K0-P3 war erfolgreich und H5 ist erledigt. Sonst stoppen.
+
+**Neue Datei:** `toolboxv2/mods/CloudM/auth/device_sync.py`
+
+**Funktionen**
+
+1. `async fetch_account_key(app) -> str`: `app.session.fetch("/api/CloudM.UserDataAPI/get_user_data_key")`; den Schlüssel lokal verschlüsselt ablegen — mit `BlobFile` im selben Speicher und mit demselben Geräteschlüssel wie die Tokens (`utils/system/session.py:129–160` als Vorlage, Blob-Name `device_data_key`).
+2. `load_cached_account_key(app) -> Optional[str]`: liest den abgelegten Schlüssel, ohne Netz.
+3. `async fetch_cloud_credentials(app) -> dict`: `app.session.fetch("/api/CloudM.UserDataAPI/get_secure_storage_credentials")`. Ergebnis **nicht** auf Platte speichern (kurzlebig).
+4. `build_account_blob_storage(app) -> Optional[BlobStorage]` (kein Netz): Wenn `read_device_owner(app)` und `load_cached_account_key(app)` beide etwas liefern: `BlobStorage(mode=StorageMode.OFFLINE, user_id=<Konto-ID>, encryption_key=<Schlüssel>, auto_sync=False)`. Sonst `None`.
+5. `attach_cloud(storage, creds) -> None`: `storage._cloud_minio = Minio(creds["endpoint"], access_key=..., secret_key=..., secure=creds["secure"])` und `storage.bucket` auf den privaten Bucket aus `creds` setzen. Die Feldnamen stehen im Messprotokoll aus K0-P3 — exakt diese verwenden.
+6. `migrate_local_blobs(old_storage, new_storage) -> int`: alle Blob-IDs aus `old_storage.list_blobs()` lesen, jeden mit `old_storage.read_blob(...)` entschlüsselt laden und mit `new_storage` neu schreiben. Rückgabe = Anzahl. (Grund: bisherige Blobs sind mit dem Geräteschlüssel verschlüsselt und wären sonst nach dem Umstellen unlesbar. Das ist zugleich die Übernahme der Altdaten.)
+
+**Verdrahtung**
+
+- `utils/toolbox.py:290`: Vor dem bestehenden Ausdruck `build_account_blob_storage(self)` versuchen; liefert es einen Speicher, wird er `self.root_blob_storage`. Sonst bleibt die Zeile wie sie ist.
+- `device_account.link_account` (K1), ganz am Ende: `fetch_account_key` → neuen Speicher bauen → `migrate_local_blobs(alter, neuer)` → `app.root_blob_storage = neuer`. Ein Fehler hier bricht das Verknüpfen **nicht** ab; er wird geloggt und im Kontostatus als Hinweis gemeldet.
+
+**Test `toolboxv2/tests/test_core/test_device_sync.py`** (unittest, Temp-Ordner, kein Netz):
+
+| Fall | Erwartet |
+|---|---|
+| Kein Gerätekonto | `build_account_blob_storage` → `None` |
+| Gerätekonto + Schlüssel im Cache | Speicher mit `user_id` = Konto-ID |
+| Blob „a" mit Geräteschlüssel geschrieben, dann `migrate_local_blobs` | Neuer Speicher liest „a" mit identischem Inhalt |
+| Zwei Speicher in zwei Temp-Ordnern mit **demselben** Kontoschlüssel: A schreibt Blob, Rohdaten nach B kopiert | B liest den Inhalt (beweist: Schlüssel ist nicht gerätegebunden) |
+
+**Gate:** Standard-Gate + neuer Test `OK`.
+
+**Wenn rot:** Weichen die Methodennamen von `BlobStorage` ab (`read_blob`, `list_blobs`, `create_blob`, `update_blob` stehen in `utils/extras/blobs.py:697–923`), dort die Signaturen lesen und exakt verwenden.
+
+---
+
+### S3 — Kontodaten über die Data-API laden und abgleichen (F21)
+
+**Grundsatz:** Daten der Data-API laufen **immer über HTTPS zum Server** (dort entschlüsselt der Server), nie direkt nach MinIO. Grund: Bestehende Serverdaten sind mit dem Schlüssel des Servers verschlüsselt.
+
+**Schritt 1 — Messung (kein Code).** Auf dem Gerät mit verknüpftem Konto prüfen und im Messprotokoll festhalten:
+
+| Frage | Wie prüfen |
+|---|---|
+| M1: Bleibt ein lokales `set_data(path="probe/a", data={"x":1}, scope="private")` nach einem Neustart der Workers lesbar? | `curl -X POST http://127.0.0.1:8467/api/CloudM.UserDataAPI/set_data ...`, Neustart, `get_data` |
+| M2: Dasselbe für `set_mod_data(source_mod="probe", data={"x":1})` / `get_mod_data` | wie M1 |
+
+**Schritt 2 — lokale Ablage.** Wenn M1 „nein" ergibt: in `UserDataAPI._get_storage_provider` (Zeile 358–389) für Geräte mit Gerätekonto `local_db_path = <app.data_dir>/user_data.db` übergeben und im `UserContext` `encryption_key` = Kontoschlüssel (`load_cached_account_key`) setzen. Dann M1 wiederholen → muss „ja" sein.
+
+**Schritt 3 — Abgleich in `device_sync.py`:**
+
+- `async pull_account_data(app) -> dict`: entfernt `list_data` (Scope `private`) aufrufen, für jeden Pfad entfernt `get_data`, Ergebnis lokal mit dem lokalen Speicher schreiben, wenn der Pfad lokal fehlt oder der entfernte Stand neuer ist. Rückgabe `{"downloaded": n}`.
+- `async push_account_data(app) -> dict`: lokal geänderte Einträge (`get_dirty_blobs()` der lokalen DB) per entferntem `set_data` hochladen und danach als synchron markieren. Rückgabe `{"uploaded": n}`.
+- `async sync_account_data(app) -> dict`: erst `push`, dann `pull`.
+- Die Form der Antworten steht im Messprotokoll (K0-P2, K0-P4) — exakt diese verwenden.
+
+**Schritt 4 — Mod-Daten.** Nur wenn M2 „ja" ergibt: entferntes `get_mod_data` / `set_mod_data` analog einbinden. Ergibt M2 „nein": **stoppen und melden**, nichts erfinden.
+
+**Test** (unittest, entfernte Aufrufe durch ein Mock von `app.session.fetch` ersetzt):
+
+| Fall | Erwartet |
+|---|---|
+| Entfernt 2 Einträge, lokal leer | `pull` lädt 2, beide lokal lesbar |
+| Lokal 1 geänderter Eintrag | `push` sendet genau 1 `set_data`, Eintrag danach nicht mehr „dirty" |
+| Entfernter Aufruf schlägt fehl (kein Netz) | kein Absturz, Rückgabe enthält `error`, lokale Daten unverändert |
+
+**Gate:** Standard-Gate + neuer Test `OK`.
+
+---
+
+### S4 — Blobs und der globale ISAA-Ordner (F20, F22)
+
+**Schritt 1 — Blob-Sync.** In `device_sync.py`: `async sync_blobs(app) -> dict`: `fetch_cloud_credentials` → `attach_cloud(app.root_blob_storage, creds)` → `app.root_blob_storage.sync()` (existiert, `blobs.py:1021`). Ohne Netz oder ohne Gerätekonto: `{"status": "skipped"}`.
+
+**Schritt 2 — globaler ISAA-Ordner.** Der Ordner ist `<app.data_dir>/Agents/VFS/global` (`mods/isaa/base/patch/power_vfs.py:110`). In `device_sync.py`:
+
+- `global_dir(app) -> Path`: genau dieser Pfad. `power_vfs` **nicht** importieren (zieht ISAA-Abhängigkeiten).
+- `export_global_folder(app) -> int`: jede Datei im Ordner (rekursiv) als Blob mit der ID `isaa/global/<relativer Pfad mit />` schreiben, wenn der Blob fehlt oder die Datei neuer ist als der Blob.
+- `import_global_folder(app) -> int`: jeden Blob mit Präfix `isaa/global/` als Datei schreiben, wenn die Datei fehlt oder der Blob neuer ist.
+- Pfade, die `..` enthalten oder absolut sind, werden übersprungen und geloggt.
+- Löschungen werden **nicht** übertragen (eine lokal gelöschte Datei kommt beim nächsten Import zurück). Dateien über 50 MB werden übersprungen und geloggt.
+
+**Schritt 3 — ein Einstieg.** `async sync_all(app) -> dict` in dieser Reihenfolge: `export_global_folder` → `sync_blobs` → `import_global_folder` → `sync_account_data`. Rückgabe: ein Dict mit den Teilergebnissen und `finished_at`.
+
+**Schritt 4 — Auslöser.**
+
+- Nach erfolgreichem `link_account` (K1): einmal `sync_all`.
+- Beim Start des Owner-Prozesses, wenn ein Gerätekonto existiert: einmal `sync_all` im Hintergrund; danach alle 10 Minuten.
+- Neu `POST /api/wizard/account/sync` (nur Loopback, nur mit Gerätekonto): stößt `sync_all` an und gibt das Ergebnis zurück. `GET /api/wizard/account/status` (K3) zeigt zusätzlich `last_sync`.
+- Ein Fehler im Sync darf den Owner-Prozess nie beenden.
+
+**Test** (unittest, zwei Temp-Ordner als „Gerät A" und „Gerät B", ein gemeinsamer Fake-Cloud-Speicher statt MinIO, gleicher Kontoschlüssel):
+
+| Fall | Erwartet |
+|---|---|
+| A legt `global/notes/a.txt` an, A `export`, Blob in die Fake-Cloud, B `import` | B hat `global/notes/a.txt` mit gleichem Inhalt |
+| Blob-ID `isaa/global/../x` | wird nicht geschrieben |
+| Kein Gerätekonto | `sync_all` → `skipped`, kein Fehler |
+
+**Gate:** Standard-Gate + neuer Test `OK`.
+
+---
+
+### S5 — Abnahme Sync (manuell, echtes Konto)
+
+Zwei Installationen desselben Kontos (zweiter Windows-Rechner oder zweites Windows-Benutzerkonto).
+
+| Schritt | Erwartet |
+|---|---|
+| Gerät 1: Datei `…\.data\<id>\Agents\VFS\global\probe.txt` anlegen, `curl -X POST -H "Origin: http://127.0.0.1:8467" http://127.0.0.1:8467/api/wizard/account/sync` | Antwort ohne `error`, mindestens 1 Upload |
+| Gerät 2: frisch installieren, mit demselben Konto anmelden | Nach dem Login existiert `probe.txt` mit gleichem Inhalt |
+| Gerät 2: `get_data` für einen Pfad aus K0-P2 lokal aufrufen | Liefert die bestehenden Kontodaten |
+| Gerät 2: lokal `set_data(path="probe/b", ...)`, Sync auslösen; Gerät 1: Sync auslösen, `get_data("probe/b")` | Gleicher Inhalt |
+| Gerät 1: Netz trennen, App neu starten | Startet angemeldet, `probe.txt` weiter lesbar |
+
+**Wenn rot:** Gerät 2 kann Blobs nicht entschlüsseln → der Kontoschlüssel wurde nicht geholt oder nicht verwendet; S2 prüfen. Zugriff auf MinIO verweigert → Bucket-Name oder Präfix passt nicht zu den ausgegebenen Rechten; mit dem Messprotokoll K0-P3 vergleichen.
+
+---
+
 ### H1 — Signaturschlüssel (Owner)
 
 Der Agent stoppt hier, bis der Owner bestätigt:
@@ -470,7 +748,7 @@ Der Agent stoppt hier, bis der Owner bestätigt:
 3. bei Fehler: loggen und normal weiter (alter Kern startet).
 Danach läuft die bestehende Logik unverändert.
 
-**Gate:** `cargo test --lib` bestanden. Manuell: `tb_version` in `%LOCALAPPDATA%\toolboxv2\install.manifest` von Hand auf `0.0.1` setzen, App starten → Log `install.log` zeigt einen Update-Lauf, danach steht dort wieder `0.1.29`; `curl http://127.0.0.1:8467/api/wizard/state` zeigt weiter `"profile":"local"`, `first_run:false`.
+**Gate:** `cargo test --lib` bestanden. Manuell: `tb_version` in `%LOCALAPPDATA%\toolboxv2\install.manifest` von Hand auf `0.0.1` setzen, App starten → Log `install.log` zeigt einen Update-Lauf, danach steht dort wieder `0.1.29`; `curl http://127.0.0.1:8467/api/wizard/state` zeigt weiter `"profile":"local"`, `first_run:false`, `needs_account:false`.
 
 **Wenn rot:** Scheitert das Update mit „Datei wird verwendet", läuft noch ein `tb`-Prozess — die Wartezeit in Punkt 1 prüfen, nicht `--force` oder Prozess-Kill einbauen.
 
@@ -482,10 +760,10 @@ Danach läuft die bestehende Logik unverändert.
 
 1. Alles committen und pushen. Der Owner stößt `nightly.yml` an (**H2**).
 2. Auf einem Windows-Konto ohne `%LOCALAPPDATA%\toolboxv2` das Nightly-Setup installieren.
-3. Punkte Z1–Z6 aus Abschnitt 0 durchgehen.
+3. Punkte Z1–Z6 aus Abschnitt 0 durchgehen; Z8 nach dem Ablauf von S5 mit der Nightly-App wiederholen.
 4. Der Owner stößt `nightly.yml` ein zweites Mal an (**H3**). App neu starten → Z7: Update wird installiert, App startet neu; `install.manifest` zeigt die neue Version; ISAA-Chatverlauf und Profil sind erhalten.
 
-**Gate:** Tabelle Z1–Z7 vollständig mit „ok" oder genauer Fehlermeldung ausgefüllt an den Owner melden.
+**Gate:** Tabelle Z1–Z8 vollständig mit „ok" oder genauer Fehlermeldung ausgefüllt an den Owner melden.
 
 **Wenn rot**
 
@@ -494,7 +772,8 @@ Danach läuft die bestehende Logik unverändert.
 | Installer-Fenster meldet Fehler | `logs\install.log` neben der App-EXE lesen → T5/T6 |
 | Fehlerseite „installed-stopped-timeout" | `%LOCALAPPDATA%\ToolBoxV2\app\logs\workers_start.log` lesen → T4/T8 |
 | Onboarding erscheint erneut | T3 |
-| Login-Formular erscheint | T9 |
+| Kontoseite erscheint nach dem ersten Login erneut | K1/K2 |
+| Daten fehlen auf dem zweiten Gerät | S2–S4 |
 | Kein Update gefunden | Prüfen, ob `latest.json` im Release `nightly` liegt und die Version höher ist → T12 |
 
 ---
@@ -511,9 +790,16 @@ Danach läuft die bestehende Logik unverändert.
 | MinIO-Verbindungsversuche auf `localhost:9000` im Profil `local` | Warnungen im Log | Ignorieren, solange Z2 in unter 120 s erfüllt ist |
 | Kein privater Signaturschlüssel vorhanden | H1 | Neues Schlüsselpaar; bereits verteilte Apps können dann nicht aktualisiert werden |
 | CI-Windows-Runner scheitert an `fetch_uv_sidecar.sh` (Handoff V2) | H2 | Log des Schritts lesen, nur diesen Schritt reparieren |
+| `simplecore.app` gibt keine MinIO-Zugangsdaten aus | K0-P3 | S2 und S4 blockiert bis H4; Konto und Data-API-Sync (S3) gehen trotzdem |
+| MinIO des Servers ist von außen nicht per HTTPS erreichbar | K0-P3, S5 | Wie oben; Owner-Entscheidung |
+| Kurzlebige MinIO-Zugangsdaten laufen während eines Syncs ab | Fehler im Sync-Ergebnis | Vor jedem `sync_blobs` neu holen (so in S4 vorgesehen) |
+| Gleiche Daten auf zwei Geräten geändert | S5 | Bestehendes Verhalten: lokale Änderung wird hochgeladen, sonst gewinnt der neuere Stand. Keine Zusammenführung |
+| Lokale Blobs nach dem Umstellen auf den Kontoschlüssel unlesbar | S2-Test | `migrate_local_blobs` vor dem Umschalten |
+| Rückkanal-Port 8765 des Logins belegt oder blockiert | K4 | Melden; Port nicht ändern |
+| Nutzer verliert Zugang zum Konto | — | Lokale Daten bleiben lesbar (Schlüssel liegt im Geräte-Cache); kein Code in dieser Session |
 
 ---
 
 ## 6. Bewusst offen (nicht anfassen)
 
-Handoff B2, B3, B4, B5, B6, B7, B9; V5; Punkt E; Abschnitt 4 des Handoffs komplett. Dazu neu: `launch.rs` kennt unter Linux/macOS den Installationspfad nicht (`tb_candidates` deckt nur Windows ab); stabiler Update-Kanal über `release.yml`; Entwicklerprofil in der Tauri-App (Source-Installation braucht Git).
+Handoff B2, B3, B4, B5, B6, B7, B9; V5; Punkt E; Abschnitt 4 des Handoffs komplett. Dazu neu: ISAA-Chatverläufe pro Nutzer speichern und synchronisieren (`isaa/ui/chat_store.py` kennt keine Nutzer-ID); Löschungen im globalen Ordner übertragen; Abmelden/Kontowechsel in der Oberfläche; bestehende Serverdaten auf den Kontoschlüssel umstellen; `launch.rs` kennt unter Linux/macOS den Installationspfad nicht (`tb_candidates` deckt nur Windows ab); stabiler Update-Kanal über `release.yml`; Entwicklerprofil in der Tauri-App (Source-Installation braucht Git).
