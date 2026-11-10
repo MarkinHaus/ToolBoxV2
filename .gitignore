@@ -132,3 +132,10 @@ ENV/
 
 /llm-gateway/data/*
 /toolboxv2/.config.yaml
+
+# ToolBox runtime state (T2/F15)
+/.info/
+/logs/
+/toolboxv2/.info/
+/toolboxv2/features_packed/
+/toolboxv2/features/*/.installed
