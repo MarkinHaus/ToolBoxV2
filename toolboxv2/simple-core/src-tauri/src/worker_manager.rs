@@ -285,12 +285,9 @@ impl WorkerManager {
         self.endpoint = match endpoint {
             "local" => {
                 // Only allow local if sidecar is available
-                if self.sidecar_available {
+                
                     ApiEndpoint::Local
-                } else {
-                    log::warn!("Sidecar not available, staying on remote API");
-                    ApiEndpoint::Remote
-                }
+                
             }
             "remote" => ApiEndpoint::Remote,
             url => ApiEndpoint::HomeServer(url.to_string()),

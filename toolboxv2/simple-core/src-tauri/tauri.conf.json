@@ -52,7 +52,6 @@
       "wheels/*"
     ],
     "externalBin": [
-      "binaries/tb-worker",
       "binaries/uv"
     ],
     "android": {

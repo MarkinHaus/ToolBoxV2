@@ -915,7 +915,7 @@ async fn bootstrap_target() -> LaunchTarget {
         if let Err(e) = launch::start_background() {
             log::warn!("[Launch] background start failed: {}", e);
         }
-        if launch::wait_until_running(&base, 25).await {
+        if launch::wait_until_running(&base, 120).await {
             let route = launch::target_route(&base).await;
             return LaunchTarget::LocalUi { url: format!("{}{}", base, route) };
         }

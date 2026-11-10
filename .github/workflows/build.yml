@@ -440,22 +440,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev
 
-      - name: Setup Python for Worker
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install ToolBoxV2 for Worker Build
-        shell: bash
-        run: |
-          pip install --upgrade pip
-          pip install pyinstaller
-          pip install -e .
-
-                # tauri::generate_context! benoetigt frontendDist (../../dist) schon zur COMPILE-Zeit
-          # (proc-macro) — im CI-Checkout existiert es nicht (Build-Artefakt) -> Stub setzen
-          mkdir -p toolboxv2/dist
-          [ -f toolboxv2/dist/index.html ] || echo '<!doctype html><title>stub</title>' > toolboxv2/dist/index.html
       - name: Fetch uv sidecar (bundle.externalBin binaries/uv)
         shell: bash
         run: bash scripts/fetch_uv_sidecar.sh "${{ matrix.target_triple }}"
@@ -464,50 +448,6 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         working-directory: ./toolboxv2/simple-core/src-tauri
         run: "cargo test --lib installer::"
-
-      - name: Create Worker Wrapper Binary
-        shell: bash
-        run: |
-          # Create binaries directory
-          mkdir -p ./toolboxv2/simple-core/src-tauri/binaries
-          # Create the worker runner script
-          cat > worker_runner.py << 'PYEOF'
-          #!/usr/bin/env python3
-          """ToolBoxV2 Worker Runner - Sidecar for Tauri Desktop App"""
-          import sys
-          import os
-          import argparse
-
-          def main():
-              parser = argparse.ArgumentParser(description='ToolBoxV2 HTTP Worker')
-              parser.add_argument('--http-port', type=int, default=5000)
-              parser.add_argument('--ws-port', type=int, default=5001)
-              parser.add_argument('--mode', type=str, default='tauri')
-              args, unknown = parser.parse_known_args()
-
-              try:
-                  from toolboxv2.utils.workers.server_worker import run_http_worker
-                  run_http_worker(port=args.http_port, ws_port=args.ws_port, mode=args.mode)
-              except ImportError as e:
-                  print(f"Error: toolboxv2 not installed: {e}", file=sys.stderr)
-                  sys.exit(1)
-
-          if __name__ == "__main__":
-              main()
-          PYEOF
-
-          # Build with PyInstaller
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            pyinstaller --onefile --name "tb-worker-${{ matrix.target_triple }}" --console worker_runner.py
-            cp dist/tb-worker-${{ matrix.target_triple }}.exe ./toolboxv2/simple-core/src-tauri/binaries/
-          else
-            pyinstaller --onefile --name "tb-worker-${{ matrix.target_triple }}" worker_runner.py
-            cp dist/tb-worker-${{ matrix.target_triple }} ./toolboxv2/simple-core/src-tauri/binaries/
-            chmod +x ./toolboxv2/simple-core/src-tauri/binaries/tb-worker-${{ matrix.target_triple }}
-          fi
-
-          echo "Created worker binary: tb-worker-${{ matrix.target_triple }}"
-          ls -la ./toolboxv2/simple-core/src-tauri/binaries/
 
       - name: Install frontend dependencies
         working-directory: ./toolboxv2
