@@ -688,8 +688,21 @@ class LiveHandler:
 # =============================================================================
 
 
+_scanner_started = False
+
+
+def ensure_started() -> None:
+    """Startet den Disk-Scanner genau einmal (idempotent, fuer App-Mount ohne main())."""
+    global _scanner_started
+    if _scanner_started:
+        return
+    _scanner_started = True
+    start_disk_scanner(str(Path(get_app().data_dir) / "Agents"))
+
+
 @app.get("/")
 async def index():
+    ensure_started()
     return _HTML_TEMPLATE.replace("__VIEWER_CSS__", _VIEWER_CSS) \
                          .replace("__HOT_RELOAD__", app.hot_reload_script())
 
@@ -1316,7 +1329,7 @@ let reconnectDelay=500;
 function wsConnect(){
   const proto=location.protocol==='https:'?'wss:':'ws:';
   const wsPort=window.__TB_WS_PORT__ || '8468';
-  const url=proto+'//'+location.hostname+(wsPort?':'+wsPort:'')+'/ws/openLive';
+  const url=proto+'//'+location.hostname+(wsPort?':'+wsPort:'')+'/ws/obs/openLive';
   ws=new WebSocket(url);
   ws.onopen=()=>{
     const el=document.getElementById('conn-st');
@@ -1534,7 +1547,7 @@ async def main(host="127.0.0.1", port=7100, wit_static=True):
     if wit_static:
         start_disk_scanner(str(Path(get_app().data_dir) / "Agents"))
 
-    await app.serve_async(host=host, port=port, blocking=False, module_path="obs")
+    await app.serve_async(host=host, port=port, blocking=False, module_path="toolboxv2.mods.isaa.extras.live_obs_server")
 
 if __name__ == "__main__":
     main()
