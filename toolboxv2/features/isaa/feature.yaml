@@ -28,7 +28,7 @@ imports: []
 name: isaa
 requires:
 - core
-version: "0.1.28"
+version: "0.1.29"
 user_facing:
 - name: isaa
   function: ui
