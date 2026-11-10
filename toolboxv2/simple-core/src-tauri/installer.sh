@@ -347,6 +347,9 @@ phase_config() {
     local feat_line
     feat_line=$(grep -A1 "^features:" "$CONFIG_FILE" 2>/dev/null | tail -1 | tr -d ' []' | tr ',' ' ' || true)
     [ -n "$feat_line" ] && FEATURES="$feat_line"
+    # T5/F1: einfacher Config-Schluessel tb_features (kommagetrennt) ueberschreibt FEATURES
+    tb_features_cfg=$(yaml_get "$CONFIG_FILE" "tb_features" "")
+    [ -n "$tb_features_cfg" ] && FEATURES=$(echo "$tb_features_cfg" | tr ',' ' ')
   fi
 
   # Interactive fallback for each missing value
@@ -703,13 +706,29 @@ _install_native() {
   echo "$tb_version"
 }
 
-_install_uv() {
-  info "Installing via uv tool..."
-  local pkg="ToolBoxV2"
-  # Build extras string from features
+# T5/F2: Paket-Spezifikation; mit TB_WHEEL (existierende .whl) als PEP-508-Direct-Reference
+pkg_spec() {
   local extras
   extras=$(echo "$FEATURES" | tr ' ' '\n' | grep -v -E '^(core|mini)$' | sed '/^$/d' | paste -sd',' -)
-  [ -n "$extras" ] && pkg="ToolBoxV2[${extras}]"
+  if [ -n "${TB_WHEEL:-}" ] && [ -f "$TB_WHEEL" ]; then
+    if [ -n "$extras" ]; then
+      echo "ToolBoxV2[${extras}] @ file://${TB_WHEEL}"
+    else
+      echo "ToolBoxV2 @ file://${TB_WHEEL}"
+    fi
+  else
+    if [ -n "$extras" ]; then
+      echo "ToolBoxV2[${extras}]"
+    else
+      echo "ToolBoxV2"
+    fi
+  fi
+}
+
+_install_uv() {
+  info "Installing via uv tool..."
+  local pkg
+  pkg=$(pkg_spec)
 
   export UV_TOOL_DIR="${INSTALL_PATH}/uv-tools"
   export UV_TOOL_BIN_DIR="${INSTALL_PATH}/bin"
@@ -740,10 +759,8 @@ _install_venv() {
   local pip="${venv_path}/bin/pip"
   "$pip" install --upgrade pip -q
 
-  local pkg="ToolBoxV2"
-  local extras
-  extras=$(echo "$FEATURES" | tr ' ' '\n' | grep -v -E '^(core|mini)$' | sed '/^$/d' | paste -sd',' -)
-  [ -n "$extras" ] && pkg="ToolBoxV2[${extras}]"
+  local pkg
+  pkg=$(pkg_spec)
 
   "$pip" install "$pkg" -q
   log "Installed: ${pkg} in ${venv_path}"
@@ -943,8 +960,16 @@ action_update() {
       phase_write_manifests "$new_ver"
       ;;
     uv)
-      "$UV_BIN" tool upgrade ToolBoxV2
-      log "Updated via uv"
+      if [ -n "${TB_WHEEL:-}" ] && [ -f "$TB_WHEEL" ]; then
+        FEATURES=$(yaml_get "$manifest" "features" "core cli")
+        local new_ver
+        new_ver=$(_install_uv)
+        phase_write_manifests "$new_ver"
+        log "Updated via uv from wheel"
+      else
+        "$UV_BIN" tool upgrade ToolBoxV2
+        log "Updated via uv"
+      fi
       ;;
     docker)
       docker pull ghcr.io/markinhaus/toolboxv2:latest
@@ -1083,7 +1108,9 @@ main() {
 
       local tb_version="unknown"
       # Route to correct install function (--dry-run: validate only, touch nothing)
-      if dry "install (${INSTALL_MODE}) -> ${INSTALL_PATH}"; then
+      local _dry_pkg=""
+      case "$INSTALL_MODE" in uv|venv) _dry_pkg=" pkg=$(pkg_spec)";; esac
+      if dry "install (${INSTALL_MODE}) -> ${INSTALL_PATH}${_dry_pkg}"; then
         tb_version="dry-run"
       elif [ "$INSTALL_MODE" = "uv" ] && [ "$RUNTIME" = "venv" ]; then
         tb_version=$(_install_venv)

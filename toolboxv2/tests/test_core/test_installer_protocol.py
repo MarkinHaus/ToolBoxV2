@@ -18,7 +18,16 @@ INSTALLER = ROOT / "installer.sh"
 TAURI_COPY = ROOT / "toolboxv2" / "simple-core" / "src-tauri" / "installer.sh"
 
 
-@unittest.skipUnless(shutil.which("bash") and shutil.which("curl"), "bash/curl required")
+_WSL = False
+try:
+    _b = subprocess.run(["bash", "-c", "uname -r"], capture_output=True, text=True, timeout=15)
+    _WSL = "microsoft" in _b.stdout.lower()
+except Exception:
+    pass
+
+
+@unittest.skipUnless(shutil.which("bash") and shutil.which("curl") and not _WSL,
+                     "bash/curl required (WSL bash cannot see Windows paths)")
 class TestInstallerProtocol(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -104,3 +113,42 @@ class TestOnboardingUiSingleSource(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(not _WSL, "wheel dry-run probe uses Windows paths (WSL cannot see them)")
+class TestWheelAndFeaturesDryRun(unittest.TestCase):
+    """T5/F1-F3: tb_features aus Config + TB_WHEEL als Wheel-Quelle (dry run)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="tb_wheel_"))
+        (cls.tmp / "home").mkdir()
+        stub = cls.tmp / "bin" / "curl"
+        stub.parent.mkdir()
+        real_curl = shutil.which("curl")
+        stub.write_text("#!/usr/bin/env bash\n"
+                        'for a in "$@"; do case "$a" in https://1.1.1.1|https://github.com) exit 0;; esac; done\n'
+                        f'exec {real_curl} "$@"\n')
+        stub.chmod(0o755)
+        wheel = cls.tmp / "toolboxv2-9.9.9-py3-none-any.whl"
+        wheel.write_bytes(b"")
+        cfg = cls.tmp / "tb-install.yaml"
+        cfg.write_text(f"install_mode: uv\ninstall_path: {cls.tmp / 'tbhome'}\nprofile: developer\n"
+                       "environment: development\nassume: yes\naction: install\nui: none\n"
+                       "tb_features: cli,web,isaa\n")
+        env = {**os.environ, "HOME": str(cls.tmp / "home"), "TB_WHEEL": str(wheel),
+               "PATH": f"{stub.parent}{os.pathsep}{os.environ.get('PATH', '')}"}
+        cls.proc = subprocess.run(
+            ["bash", str(INSTALLER), "--json-output", "--config", str(cfg), "--dry-run"],
+            cwd=cls.tmp, env=env, capture_output=True, text=True, timeout=120,
+            stdin=subprocess.DEVNULL)
+
+    def test_exit_ok_and_json_only(self):
+        self.assertEqual(self.proc.returncode, 0, self.proc.stderr[-2000:])
+        events = [json.loads(l) for l in self.proc.stdout.splitlines() if l.strip()]
+        self.assertTrue(events)
+        self.assertEqual(events[-1]["type"], "done")
+
+    def test_dry_run_names_pkg_with_extras_and_file_url(self):
+        self.assertIn("ToolBoxV2[cli,web,isaa] @ file://", self.proc.stderr)
+        self.assertIn("toolboxv2-9.9.9-py3-none-any.whl", self.proc.stderr)

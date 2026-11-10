@@ -214,10 +214,12 @@ function Phase-Discovery {
         $foundInstalls += [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetDirectoryName($tbCmd.Source))
     }
 
-    # Check Docker
+    # Check Docker (daemon down must not abort discovery - PS 7.4 NativeCommandError guard)
     if (Get-Command docker -ErrorAction SilentlyContinue) {
-        $imgs = docker images --format "{{.Repository}}:{{.Tag}}" 2>$null | Select-String "toolboxv2"
-        if ($imgs) { Info "Docker TB image(s): $imgs" }
+        try {
+            $imgs = (docker images --format "{{.Repository}}:{{.Tag}}" 2>$null | Out-String) | Select-String "toolboxv2"
+            if ($imgs) { Info "Docker TB image(s): $imgs" }
+        } catch { }
     }
 
     if ($foundInstalls.Count -gt 0) {
@@ -277,6 +279,9 @@ function Phase-Config {
         if (-not $AssumeYes)  { $AssumeYes = Get-YamlField $Config "assume" "" }   # yes|no|""(ask)
         if (-not $TbProfile)  { $script:TbProfile = Get-YamlField $Config "profile" "" }
         if (-not $Ui)         { $script:Ui        = Get-YamlField $Config "ui" "" }
+        # T5/F1: Config-Schluessel tb_features (kommagetrennt) ueberschreibt FEATURES
+        $tbFeaturesCfg = Get-YamlField $Config "tb_features" ""
+        if ($tbFeaturesCfg) { $script:FEATURES = ($tbFeaturesCfg -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join " " }
         $script:AssumeYes     = $AssumeYes
     }
 
@@ -581,10 +586,20 @@ function Install-Native {
     return $info.Version
 }
 
+# T5/F2: Paket-Spezifikation; mit TB_WHEEL (existierende .whl) als PEP-508-Direct-Reference
+function Get-PkgSpec {
+    $extras = ($FEATURES -split " " | Where-Object { $_ -notmatch "^(core|mini)$" }) -join ","
+    $base = if ($extras) { "ToolBoxV2[$extras]" } else { "ToolBoxV2" }
+    if ($env:TB_WHEEL -and (Test-Path $env:TB_WHEEL)) {
+        $wheelUri = ([System.Uri](Resolve-Path $env:TB_WHEEL).Path).AbsoluteUri
+        return "$base @ $wheelUri"
+    }
+    return $base
+}
+
 function Install-Uv {
     Info "Installing via uv tool..."
-    $extras = ($FEATURES -split " " | Where-Object { $_ -notmatch "^(core|mini)$" }) -join ","
-    $pkg = if ($extras) { "ToolBoxV2[$extras]" } else { "ToolBoxV2" }
+    $pkg = Get-PkgSpec
 
     # Pin uv tool dirs to install path (parity: installer.sh fd2707bb)
     $env:UV_TOOL_DIR     = "$INSTALL_PATH\uv-tools"
@@ -609,8 +624,7 @@ function Install-Venv {
     & $PYTHON_BIN -m venv $venvPath
     $pip = "$venvPath\Scripts\pip.exe"
     & $pip install --upgrade pip -q
-    $extras = ($FEATURES -split " " | Where-Object { $_ -notmatch "^(core|mini)$" }) -join ","
-    $pkg = if ($extras) { "ToolBoxV2[$extras]" } else { "ToolBoxV2" }
+    $pkg = Get-PkgSpec
     & $pip install $pkg -q
 
     # Write wrapper
@@ -749,7 +763,16 @@ function Action-Update {
 
     switch ($INSTALL_MODE) {
         "native"  { $v = Install-Native; Phase-WriteManifests $v }
-        "uv"      { & $UV_BIN tool upgrade ToolBoxV2; Log "Updated via uv" }
+        "uv"      {
+            if ($env:TB_WHEEL -and (Test-Path $env:TB_WHEEL)) {
+                $script:FEATURES = Get-YamlField $manifest "features" "core cli"
+                $v = Install-Uv
+                Phase-WriteManifests $v
+                Log "Updated via uv from wheel"
+            } else {
+                & $UV_BIN tool upgrade ToolBoxV2; Log "Updated via uv"
+            }
+        }
         "docker"  { docker pull ghcr.io/markinhaus/toolboxv2:latest; Log "Updated Docker image" }
         "source"  {
             $script:SOURCE_FROM   = Get-YamlField $manifest "source_from" "git"
