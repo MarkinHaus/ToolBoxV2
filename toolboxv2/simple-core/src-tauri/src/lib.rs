@@ -699,6 +699,35 @@ fn subscribe_tray_events(app: tauri::AppHandle) {
     });
 }
 
+/// T12/F12: Update-Check 15s nach Start (nur Desktop, nie fatal).
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn spawn_update_check(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+        use tauri_plugin_updater::UpdaterExt;
+        let Ok(updater) = app.updater() else {
+            log::warn!("[Updater] updater unavailable");
+            return;
+        };
+        match updater.check().await {
+            Ok(Some(update)) => {
+                log::info!("[Updater] update {} available - installing", update.version);
+                if let Err(e) = update
+                    .download_and_install(|_, _| {}, || {})
+                    .await
+                {
+                    log::warn!("[Updater] install failed: {e}");
+                    return;
+                }
+                log::info!("[Updater] installed - restarting");
+                app.restart();
+            }
+            Ok(None) => log::info!("[Updater] app is up to date"),
+            Err(e) => log::warn!("[Updater] check failed: {e}"),
+        }
+    });
+}
+
 async fn apply_sse_frame(app: &tauri::AppHandle, frame: &str) {
     let data_line = match frame.lines().find_map(|l| l.strip_prefix("data: ")) {
         Some(s) => s,
@@ -1041,6 +1070,7 @@ pub fn run() {
                 Some(vec!["--minimized"]),
             )
         );
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
 
     builder
@@ -1174,6 +1204,8 @@ pub fn run() {
                 subscribe_tray_events(app.handle().clone());
                 // W1a: Bootstrap-Routing (local-ui vs installer.html vs Fehlerseite)
                 spawn_bootstrap(app.handle().clone());
+                // T12/F12: App-Update-Check nach dem Start
+                spawn_update_check(app.handle().clone());
             }
 
             #[cfg(any(target_os = "android", target_os = "ios"))]

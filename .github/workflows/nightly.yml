@@ -68,10 +68,22 @@ jobs:
           npm install --prefix ./simple-core
           npm run build
 
+      - name: Stamp nightly version (MSI-safe digits only after dash)
+        working-directory: ./toolboxv2
+        shell: bash
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          VER=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+          NIGHTLY="${VER}-${RUN_NUMBER}"
+          echo "Stamping ${NIGHTLY}"
+          node -e 'const fs=require("fs");const p="simple-core/src-tauri/tauri.conf.json";const c=JSON.parse(fs.readFileSync(p,"utf8"));c.version=process.env.NIGHTLY;fs.writeFileSync(p,JSON.stringify(c,null,2)+"\n");'
       - name: Build Tauri (nightly)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: ./toolboxv2/simple-core
           tauriScript: npx tauri
