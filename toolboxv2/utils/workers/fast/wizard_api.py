@@ -44,7 +44,8 @@ def _manifest_data() -> Dict[str, Any]:
     from toolboxv2.utils.manifest.loader import ManifestLoader
     from toolboxv2.utils.manifest.schema import TBManifest
 
-    loader = ManifestLoader(tb_root_dir)
+    from toolboxv2._state_dir import manifest_base_dir
+    loader = ManifestLoader(manifest_base_dir())
     if loader.exists():
         return loader.load().model_dump()
     return TBManifest().model_dump()
@@ -135,7 +136,8 @@ def register_wizard_routes(app) -> None:
             manifest = TBManifest(**draft)
         except Exception as e:
             return 400, {"error": f"invalid manifest draft: {e}"}
-        loader = ManifestLoader(tb_root_dir)
+        from toolboxv2._state_dir import manifest_base_dir
+        loader = ManifestLoader(manifest_base_dir())
         loader.save(manifest)
 
         env_out = {}

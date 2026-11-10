@@ -80,7 +80,8 @@ def _from_manifest() -> Tuple[Optional[str], Optional[int]]:
     try:
         from toolboxv2 import tb_root_dir
         from toolboxv2.utils.manifest.loader import ManifestLoader
-        loader = ManifestLoader(base_dir=str(tb_root_dir))
+        from toolboxv2._state_dir import manifest_base_dir
+        loader = ManifestLoader(base_dir=str(manifest_base_dir()))
         if not loader.manifest_path.exists():
             return None, None
         manifest = loader.load()

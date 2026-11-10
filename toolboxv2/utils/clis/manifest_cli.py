@@ -130,7 +130,8 @@ def cmd_show(args) -> int:
     from toolboxv2.utils.manifest import ManifestLoader
     from toolboxv2 import tb_root_dir
 
-    loader = ManifestLoader(tb_root_dir)
+    from toolboxv2._state_dir import manifest_base_dir
+    loader = ManifestLoader(manifest_base_dir())
 
     if not loader.exists():
         print_status("No tb-manifest.yaml found", "error")
@@ -178,7 +179,8 @@ def cmd_validate(args) -> int:
     from toolboxv2.utils.manifest import ManifestLoader
     from toolboxv2 import tb_root_dir
 
-    loader = ManifestLoader(tb_root_dir)
+    from toolboxv2._state_dir import manifest_base_dir
+    loader = ManifestLoader(manifest_base_dir())
 
     print_box_header("Manifest Validation", "✅")
 
@@ -217,7 +219,8 @@ def cmd_apply(args) -> int:
     from toolboxv2.utils.manifest import ManifestLoader, ConfigConverter
     from toolboxv2 import tb_root_dir
 
-    loader = ManifestLoader(tb_root_dir)
+    from toolboxv2._state_dir import manifest_base_dir
+    loader = ManifestLoader(manifest_base_dir())
 
     print_box_header("Apply Manifest", "🔄")
 
@@ -288,7 +291,8 @@ def cmd_init(args) -> int:
     from toolboxv2.utils.manifest.schema import Environment
     from toolboxv2 import tb_root_dir
 
-    loader = ManifestLoader(tb_root_dir)
+    from toolboxv2._state_dir import manifest_base_dir
+    loader = ManifestLoader(manifest_base_dir())
 
     print_box_header("Initialize Manifest", "📝")
 
@@ -916,7 +920,8 @@ def cmd_set(args) -> int:
     from toolboxv2 import tb_root_dir
     from toolboxv2.utils.manifest import ManifestLoader
 
-    loader = ManifestLoader(tb_root_dir)
+    from toolboxv2._state_dir import manifest_base_dir
+    loader = ManifestLoader(manifest_base_dir())
     if not loader.exists():
         print_status("No tb-manifest.yaml found — run 'tb manifest init' first", "error")
         return 1
@@ -971,7 +976,8 @@ def cmd_get(args) -> int:
     from toolboxv2 import tb_root_dir
     from toolboxv2.utils.manifest import ManifestLoader
 
-    loader = ManifestLoader(tb_root_dir)
+    from toolboxv2._state_dir import manifest_base_dir
+    loader = ManifestLoader(manifest_base_dir())
     if not loader.exists():
         print_status("No tb-manifest.yaml found", "error")
         return 1

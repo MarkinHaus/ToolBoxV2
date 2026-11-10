@@ -881,34 +881,7 @@ optional_installed: "$(
 EOF
   log "Written: ${INSTALL_PATH}/install.manifest"
 
-  # tb-manifest.yaml (only write if not already present)
-  local manifest_file="${INSTALL_PATH}/tb-manifest.yaml"
-  if [ ! -f "$manifest_file" ]; then
-    download "${GITHUB_RAW}/toolboxv2/utils/manifest/example-manifest.yaml" \
-             "${manifest_file}" 2>/dev/null || \
-    cat > "$manifest_file" << EOF
-manifest_version: "1.0.0"
-app:
-  name: ToolBoxV2
-  version: "${tb_version}"
-  instance_id: "${INSTANCE_ID}"
-  environment: ${ENVIRONMENT}
-  debug: false
-  log_level: INFO
-paths:
-  data_dir: "${INSTALL_PATH}/.data"
-  config_dir: "${INSTALL_PATH}/.config"
-  logs_dir: "${INSTALL_PATH}/logs"
-  mods_dir: "${INSTALL_PATH}/mods"
-  dist_dir: "${INSTALL_PATH}/dist"
-registry:
-  url: "${REGISTRY_URL}"
-  auto_update: false
-EOF
-    log "Written: ${manifest_file}"
-  else
-    info "tb-manifest.yaml already exists — skipping (run 'tb manifest apply' to update)"
-  fi
+  # tb-manifest.yaml: created by 'tb -init <profile>' (T3), not by the installer.
 
   # .env (only missing vars)
   local env_file="${INSTALL_PATH}/.env"

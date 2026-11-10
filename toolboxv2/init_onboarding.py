@@ -195,7 +195,8 @@ def build_manifest(profile: str = "mini", save: bool = True,
         services={"enabled": preset["services"]},
     )
     if save:
-        loader = ManifestLoader(str(path) if path else str(tb_root_dir))
+        from toolboxv2._state_dir import manifest_base_dir
+        loader = ManifestLoader(str(path) if path else str(manifest_base_dir()))
         if path:
             loader._manifest_path = Path(path)
         loader.save(manifest)
@@ -378,7 +379,8 @@ def init(profile: str = "mini",
 
     # 3) manifest: custom or profile default.
     from toolboxv2.utils.manifest import ManifestLoader, TBManifest
-    loader = ManifestLoader(str(tb_root_dir))
+    from toolboxv2._state_dir import manifest_base_dir
+    loader = ManifestLoader(str(manifest_base_dir()))
     if isinstance(manifest, dict):
         loader.save(TBManifest.model_validate(manifest))
     elif manifest:

@@ -706,31 +706,7 @@ optional_installed: "$($optInstalled -join ' ')"
 "@ | Set-Content "$INSTALL_PATH\install.manifest"
     Log "Written: $INSTALL_PATH\install.manifest"
 
-    $manifestFile = "$INSTALL_PATH\tb-manifest.yaml"
-    if (-not (Test-Path $manifestFile)) {
-        @"
-manifest_version: "1.0.0"
-app:
-  name: ToolBoxV2
-  version: "$TbVersion"
-  instance_id: "$INSTANCE_ID"
-  environment: $ENVIRONMENT
-  debug: false
-  log_level: INFO
-paths:
-  data_dir: "$INSTALL_PATH\.data"
-  config_dir: "$INSTALL_PATH\.config"
-  logs_dir: "$INSTALL_PATH\logs"
-  mods_dir: "$INSTALL_PATH\mods"
-  dist_dir: "$INSTALL_PATH\dist"
-registry:
-  url: "$REGISTRY_URL"
-  auto_update: false
-"@ | Set-Content $manifestFile
-        Log "Written: $manifestFile"
-    } else {
-        Info "tb-manifest.yaml exists — skipping (run 'tb manifest apply' to update)"
-    }
+    # tb-manifest.yaml: created by 'tb -init <profile>' (T3), not by the installer.
 
     $envFile = "$INSTALL_PATH\.env"
     if (-not (Test-Path $envFile)) {

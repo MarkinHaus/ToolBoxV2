@@ -201,7 +201,8 @@ def _get_profile() -> str | None:
     try:
         from toolboxv2 import tb_root_dir
         from toolboxv2.utils.manifest import ManifestLoader
-        loader = ManifestLoader(tb_root_dir)
+        from toolboxv2._state_dir import manifest_base_dir
+        loader = ManifestLoader(manifest_base_dir())
         if not loader.exists():
             return None
         manifest = loader.load()

@@ -355,7 +355,8 @@ def _build_docs_tools(app):
 def _build_manifest_tools(app):
     """Build manifest management tools."""
     tools = []
-    manifest_root = tb_root_dir
+    from toolboxv2._state_dir import manifest_base_dir
+    manifest_root = manifest_base_dir()
 
     async def manifest_show(section: str = None, as_json: bool = False) -> str:
         """Show manifest content, optionally a specific section."""

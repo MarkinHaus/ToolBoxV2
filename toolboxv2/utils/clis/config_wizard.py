@@ -1134,7 +1134,8 @@ def run_config_wizard(root_dir: Optional[Path] = None) -> int:
         from toolboxv2.utils.manifest.loader import ManifestLoader
         from toolboxv2.utils.manifest.schema import TBManifest
 
-        loader = ManifestLoader(root_dir)
+        from toolboxv2._state_dir import manifest_base_dir
+        loader = ManifestLoader(manifest_base_dir())
 
         if loader.exists():
             manifest = loader.load()

@@ -38,7 +38,8 @@ def onboarding_state() -> dict:
     try:
         from toolboxv2 import tb_root_dir
         from toolboxv2.utils.manifest import ManifestLoader
-        loader = ManifestLoader(tb_root_dir)
+        from toolboxv2._state_dir import manifest_base_dir
+        loader = ManifestLoader(manifest_base_dir())
         profile = loader.load().app.profile if loader.exists() else None
         profile = profile.value if profile is not None else None
     except Exception:
@@ -54,7 +55,8 @@ def apply_profile(profile: str) -> dict:
     from toolboxv2.utils.manifest.schema import TBManifest
 
     chosen = normalize_profile(profile)
-    loader = ManifestLoader(tb_root_dir)
+    from toolboxv2._state_dir import manifest_base_dir
+    loader = ManifestLoader(manifest_base_dir())
     if not loader.exists():
         loader.save(TBManifest())
 

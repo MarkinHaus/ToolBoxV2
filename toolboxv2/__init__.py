@@ -68,6 +68,14 @@ __email__ = 'Markinhausmanns@gmail.com'
 __init_cwd__ = init_cwd = Path.cwd()
 __tb_root_dir__ = tb_root_dir = Path(__file__).parent
 
+# T3/F6: Paket-Installationen halten Nutzerzustand ausserhalb von site-packages.
+try:
+    from ._state_dir import ensure_user_data_env
+    ensure_user_data_env()
+except Exception:
+    pass
+
+
 # ponytail: Nuitka standalone/onefile detection for writable data directory.
 # In standalone mode __file__ points inside dist/ (read-only if installed to Program Files).
 # In onefile mode __file__ points to ephemeral temp dir. Need persistent writable location.
@@ -227,7 +235,8 @@ def _should_auto_install(feature_name: str) -> bool:
     """
     try:
         from .utils.manifest.loader import ManifestLoader
-        loader = ManifestLoader(tb_root_dir)
+        from toolboxv2._state_dir import manifest_base_dir
+        loader = ManifestLoader(manifest_base_dir())
         if loader.exists():
             manifest = loader.load(resolve_env=False)
             return manifest.features.should_auto_install(feature_name)
