@@ -58,6 +58,10 @@ pub fn config_to_yaml(cfg: &InstallConfig) -> String {
     yaml.push_str("instance_id: tbv2_main\n");
     // installer.sh/ps1 run `tb -init <profile>` after install -> no CLI questions.
     yaml.push_str(&format!("profile: {}\n", canon_profile(&cfg.profile)));
+    // T5/F1: Feature-Set fuer uv-Installationen; developer baut aus Source.
+    if canon_profile(&cfg.profile) != "developer" {
+        yaml.push_str("tb_features: cli,web,isaa\n");
+    }
     // Tauri shows its own UI afterwards; never open a browser/CLI onboarding.
     yaml.push_str("ui: none\n");
     // Tauri laeuft headless (kein stdin) -> Installer-Fragen sind unantwortbar.
@@ -118,6 +122,25 @@ pub fn bundled_uv(exe: &std::path::Path) -> Option<std::path::PathBuf> {
     p.is_file().then_some(p)
 }
 
+/// T6/F4: gebuendeltes Kern-Wheel unter <resource_dir>/wheels finden
+/// (groesster Name gewinnt => neueste Version).
+fn bundled_wheel(resource_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut best: Option<std::path::PathBuf> = None;
+    let entries = std::fs::read_dir(resource_dir.join("wheels")).ok()?;
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if name.starts_with("toolboxv2-") && name.ends_with(".whl") {
+            let better = best
+                .as_ref()
+                .map_or(true, |b| name > b.file_name().map_or_else(String::new, |f| f.to_string_lossy().to_string()));
+            if better {
+                best = Some(e.path());
+            }
+        }
+    }
+    best
+}
+
 /// Kaltstart-Install: fuehrt den OS-Installer mit Wizard-Config aus und
 /// emittiert pro Protokoll-Zeile ein `install-event`. Sync-Command
 /// (Tauri trennt sync Commands auf einen Thread-Pool ab - der blocking
@@ -134,16 +157,13 @@ pub fn run_install(
     let yaml_path = std::env::temp_dir().join("tb-install.yaml");
     std::fs::write(&yaml_path, yaml).map_err(|e| format!("config write failed: {e}"))?;
 
-    let (shell, mut args) = {
-        // resource_dir: Bundle-Layout (installierte App); Dev-Run: None -> CWD.
-        let res_dir = app
-            .path()
-            .resource_dir()
-            .ok()
-            .map(|p| p.to_path_buf());
-        let (s, a) = script_args(res_dir.as_deref());
-        (s, a)
-    };
+    // resource_dir: Bundle-Layout (installierte App); Dev-Run: None -> CWD.
+    let res_dir = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|p| p.to_path_buf());
+    let (shell, mut args) = script_args(res_dir.as_deref());
     // R16-Fix: OS-spezifische Flags. PowerShell kennt NUR -JsonOutput/-Config
     // (Doppeldash = "Parameter nicht gefunden" -> exit 1, install.log-Beweis).
     if cfg!(windows) {
@@ -201,6 +221,12 @@ pub fn run_install(
     // Bundled uv -> no network bootstrap of uv/Python tooling (installer.sh/ps1 TB_UV_BIN).
     if let Some(uv) = std::env::current_exe().ok().as_deref().and_then(bundled_uv) {
         cmd.env("TB_UV_BIN", &uv);
+    }
+    // T6/F4: gebuendeltes Wheel als Paket-Quelle (installer.sh/ps1 pkg_spec).
+    if let Some(res) = res_dir.as_ref() {
+        if let Some(wheel) = bundled_wheel(res) {
+            cmd.env("TB_WHEEL", wheel);
+        }
     }
     let mut child = cmd
         .stdout(Stdio::piped())
@@ -288,6 +314,20 @@ mod tests {
         assert!(yaml.contains("instance_id: tbv2_main"));
         assert!(yaml.contains("profile: local"));
         assert!(yaml.contains("ui: none"));
+        assert!(yaml.contains("tb_features: cli,web,isaa"));
+    }
+
+    #[test]
+    fn bundled_wheel_found_in_resources() {
+        let d = std::env::temp_dir().join("tb_wheel_unit");
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        assert!(bundled_wheel(&d).is_none());
+        std::fs::write(d.join("toolboxv2-0.1.28-py3-none-any.whl"), b"x").unwrap();
+        std::fs::write(d.join("toolboxv2-0.1.29-py3-none-any.whl"), b"x").unwrap();
+        std::fs::write(d.join("other.whl"), b"x").unwrap();
+        let w = bundled_wheel(&d).unwrap();
+        assert!(w.ends_with("toolboxv2-0.1.29-py3-none-any.whl"));
     }
 
     #[test]

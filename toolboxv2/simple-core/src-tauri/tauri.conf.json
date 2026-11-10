@@ -48,7 +48,8 @@
       "hud.html",
       "installer.html",
       "installer.sh",
-      "installer.ps1"
+      "installer.ps1",
+      "wheels/*"
     ],
     "externalBin": [
       "binaries/tb-worker",
