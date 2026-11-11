@@ -1577,7 +1577,8 @@ async def interactive_user_dashboard():
             print_box_header("Save to .env File", "💾")
             print_box_footer()
 
-            env_file = Path(tb_root_dir.parent / ".env")
+            from toolboxv2._state_dir import env_file as _env_file
+            env_file = _env_file()
 
             print()
             print(f"  File: {env_file.absolute()}")
@@ -1594,12 +1595,13 @@ async def interactive_user_dashboard():
 
             if confirm == 'y':
                 try:
-                    with open(env_file, 'w') as f:
-                        for var_name, description, value in env_vars:
-                            current = os.getenv(var_name, value)
-                            if current:
-                                f.write(f"# {description}\n")
-                                f.write(f"{var_name}={current}\n\n")
+                    from toolboxv2.utils.clis.config_wizard import save_env_file
+                    updates = {}
+                    for var_name, description, value in env_vars:
+                        current = os.getenv(var_name, value)
+                        if current:
+                            updates[var_name] = current
+                    save_env_file(env_file, updates)
 
                     print()
                     print_status(f"Saved to {env_file}", "success")
@@ -1624,14 +1626,15 @@ async def interactive_user_dashboard():
             print_box_header("Reload from .env", "🔄")
             print_box_footer()
 
-            env_file = Path(tb_root_dir.parent / ".env")
+            from toolboxv2._state_dir import env_file as _env_file
+            env_file = _env_file()
 
             print()
             if not env_file.exists():
                 print_status(f".env file not found: {env_file.absolute()}", "warning")
             else:
                 try:
-                    load_dotenv(override=True)
+                    load_dotenv(str(env_file), override=True)
                     print_status("Environment variables reloaded", "success")
                 except Exception as e:
                     print_status(f"Error reloading: {e}", "error")

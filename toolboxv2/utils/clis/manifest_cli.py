@@ -949,18 +949,12 @@ def cmd_set(args) -> int:
         # Sync to .env if mapping exists
         env_key = _MANIFEST_TO_ENV.get(args.key)
         if env_key:
-            env_path = tb_root_dir.parent / ".env"
-            lines, found = [], False
-            if env_path.exists():
-                for line in env_path.read_text(encoding="utf-8").splitlines():
-                    if line.startswith(f"{env_key}="):
-                        lines.append(f"{env_key}={args.value}")
-                        found = True
-                    else:
-                        lines.append(line)
-            if not found:
-                lines.append(f"{env_key}={args.value}")
-            env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            from toolboxv2._state_dir import env_file as _env_file
+            from toolboxv2.utils.clis.config_wizard import load_existing_env, save_env_file
+            env_path = _env_file()
+            env_d = load_existing_env(env_path)
+            env_d[env_key] = str(args.value)
+            save_env_file(env_path, env_d)
             print_status(f".env: {env_key}={args.value}", "info")
 
         return 0

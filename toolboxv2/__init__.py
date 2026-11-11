@@ -107,7 +107,8 @@ VERSION = '0.1.28'
 __version__ = get_version_from_pyproject(str(tb_root_dir.parent / "pyproject.toml")) if get_version_from_pyproject is not None else VERSION
 ToolBox_over: str = "root"
 from dotenv import load_dotenv
-load_dotenv(str(__tb_root_dir__.parent/".env"))
+from ._state_dir import env_file as _env_file
+load_dotenv(str(_env_file()))
 # =============================================================================
 # Phase 1 — Feature Loader  (unpack ZIPs → .installed markers)
 # =============================================================================

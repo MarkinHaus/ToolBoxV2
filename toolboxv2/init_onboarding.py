@@ -63,72 +63,11 @@ _SECRET_KEYS = ("TB_JWT_SECRET", "TB_COOKIE_SECRET")
 
 
 def _writable_env_path() -> Path:
-    """First writable location for a persisted .env, in priority order."""
-    candidates = []
-    if os.getenv("TB_DATA_DIR"):
-        candidates.append(Path(os.environ["TB_DATA_DIR"]) / ".env")
-    try:  # R1: packaged installs must never persist secrets into site-packages
-        from toolboxv2._state_dir import is_packaged_install, user_state_dir
-        if is_packaged_install():
-            candidates.append(user_state_dir() / ".env")
-    except Exception:
-        pass
-    candidates.append(tb_root_dir.parent / ".env")   # repo / editable install
-    candidates.append(Path.cwd() / ".env")           # site-packages fallback
-    for p in candidates:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            # touch-test writability without clobbering existing content
-            if p.exists():
-                if os.access(p, os.W_OK):
-                    return p
-            else:
-                p.touch()
-                return p
-        except OSError:
-            continue
-    return Path.cwd() / ".env"  # ponytail: last resort, cwd is ~always writable
+    """R1 (V3): the one .env location -- delegate to _state_dir.env_file()."""
+    from toolboxv2._state_dir import env_file
+    return env_file()
 
 
-def _read_env_file(path: Path) -> dict[str, str]:
-    out: dict[str, str] = {}
-    if not path.exists():
-        return out
-    # RT1: installer may ship cp1252 .env (PS5.1 ANSI) - decode lossless, never crash
-    for line in path.read_text(encoding="utf-8", errors="surrogateescape").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        out[k.strip()] = v.split("#", 1)[0].strip().strip('"').strip("'")
-    return out
-
-
-def _append_env(path: Path, kv: Mapping[str, str]) -> None:
-    """Persist key/value pairs; empty existing lines are filled in place.
-
-    R1: installer .env files ship `TB_JWT_SECRET=` / `TB_COOKIE_SECRET=` as
-    empty lines -- skipping those keys would drop the generated secret and
-    re-key the device on every restart.
-    """
-    if not kv:
-        return
-    existing = _read_env_file(path)
-    lines = path.read_text(encoding="utf-8", errors="surrogateescape").splitlines() if path.exists() else []
-    written = set()
-    for i, line in enumerate(lines):
-        k, _, v = line.partition("=")
-        key = k.strip()
-        if key in kv and not existing.get(key) and key not in written:
-            lines[i] = f'{key}="{kv[key]}"'
-            written.add(key)
-    for k, v in kv.items():
-        if k not in written and not existing.get(k):
-            lines.append(f'{k}="{v}"')
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", errors="surrogateescape") as f:
-        for line in lines:
-            f.write(line + "\n")
 
 
 def _template_defaults() -> dict[str, str]:
@@ -168,19 +107,21 @@ def ensure_secret(persist: bool = True) -> str:
         if os.getenv(k):
             return os.environ[k]
 
+    from toolboxv2.utils.clis.config_wizard import load_existing_env, save_env_file
     env_path = _writable_env_path()
-    persisted = _read_env_file(env_path)
+    persisted = load_existing_env(env_path)
     for k in _SECRET_KEYS:
         if persisted.get(k):
-            os.environ.setdefault(k, persisted[k])
+            if not os.environ.get(k):  # R1 (V3): empty string counts as unset
+                os.environ[k] = persisted[k]
             return persisted[k]
 
     secret = secrets.token_hex(64)
     os.environ["TB_JWT_SECRET"] = secret
-    if not os.environ.get("TB_COOKIE_SECRET"):  # R1: empty string counts as unset
+    if not os.environ.get("TB_COOKIE_SECRET"):
         os.environ["TB_COOKIE_SECRET"] = secret
     if persist:
-        _append_env(env_path, {"TB_JWT_SECRET": secret, "TB_COOKIE_SECRET": secret})
+        save_env_file(env_path, {"TB_JWT_SECRET": secret, "TB_COOKIE_SECRET": secret})
     return secret
 
 
@@ -434,7 +375,11 @@ def _demo() -> None:
 
     # isolate: ephemeral data dir, clean secret env
     tmp = tempfile.mkdtemp(prefix="tb_init_demo_")
-    os.environ["TB_DATA_DIR"] = tmp
+    from unittest import mock
+    import toolboxv2._state_dir as _sd
+    os.environ["TB_INSTALL_DIR"] = tmp
+    _pkg_patch = mock.patch.object(_sd, "is_packaged_install", lambda: True)
+    _pkg_patch.start()  # R1 (V3): demo must not touch the real repo .env
     for k in _SECRET_KEYS:
         os.environ.pop(k, None)
 
@@ -454,6 +399,7 @@ def _demo() -> None:
     os.environ.pop("TB_JWT_SECRET"); os.environ.pop("TB_COOKIE_SECRET", None)
     s2 = ensure_secret(persist=True)
     assert s2 == s1, "secret must be stable across calls"
+    _pkg_patch.stop()
 
     # env layering: profile offline flag applied, caller override wins
     init(profile="colab", create_app=False, env={"APP_BASE_URL": "http://x:1"},

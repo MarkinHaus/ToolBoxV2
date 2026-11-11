@@ -741,7 +741,6 @@ MINIO_ACCESS_KEY=
 MINIO_SECRET_KEY=
 "@ | Set-Content $envFile
         Log "Written: $envFile"
-        Warn "Edit $envFile to set TB_JWT_SECRET and TB_COOKIE_SECRET before production use"
     }
 
     # Write TOOLBOX_HOME to user environment

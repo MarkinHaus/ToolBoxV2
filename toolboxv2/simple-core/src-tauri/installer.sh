@@ -919,7 +919,6 @@ MINIO_ACCESS_KEY=
 MINIO_SECRET_KEY=
 EOF
     log "Written: ${env_file}"
-    warn "Edit ${env_file} to set TB_JWT_SECRET and TB_COOKIE_SECRET before running in production"
   fi
 
   # Write TOOLBOX_HOME to shell profile

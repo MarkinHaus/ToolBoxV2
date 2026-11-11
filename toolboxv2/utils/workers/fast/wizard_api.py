@@ -143,9 +143,11 @@ def register_wizard_routes(app) -> None:
         env_out = {}
         if sess.get("env"):
             from toolboxv2.utils.clis.config_wizard import load_existing_env
-            env_out = load_existing_env(tb_root_dir / ".env")
+            from toolboxv2._state_dir import env_file as _env_file
+            _ep = _env_file()
+            env_out = load_existing_env(_ep)
             env_out.update(sess["env"])
-            save_env_file(tb_root_dir / ".env", env_out)
+            save_env_file(_ep, env_out)
 
         generated: List[str] = []
         data = _json(request)

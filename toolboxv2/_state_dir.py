@@ -32,6 +32,22 @@ def user_state_dir() -> Path:
     return Path(env) if env else _default_user_dir()
 
 
+def env_file() -> Path:
+    """R1 (V3): THE one .env path (single-file rule).
+
+    packaged install -> user_state_dir()/.env (TB_INSTALL_DIR or user dir)
+    source checkout  -> repository root .env (tb_root_dir seam, test-friendly)
+    TB_DATA_DIR and cwd are NOT .env locations.
+    """
+    if is_packaged_install():
+        return user_state_dir() / ".env"
+    tb = sys.modules.get("toolboxv2")
+    root = getattr(tb, "tb_root_dir", None)
+    if root is not None:
+        return Path(root).parent / ".env"
+    return Path(__file__).resolve().parent.parent / ".env"
+
+
 def ensure_user_data_env() -> None:
     """F6-Hook: bei Paket-Installationen .data/.config in den Nutzerordner lenken.
 
