@@ -89,5 +89,82 @@ class SaveLoadRoundtripTest(unittest.TestCase):
             self.assertEqual("C:\\tb", loaded["TOOLBOX_HOME"])
 
 
+class InlineCommentTest(unittest.TestCase):
+    """Reader == python-dotenv: a comment after an empty value is not a value."""
+
+    OLD_INSTALLER_LINE = "TB_JWT_SECRET=                    # REQUIRED: set before production use"
+
+    def test_reader_ignores_inline_comment_on_empty_value(self):
+        from toolboxv2.utils.clis.config_wizard import load_existing_env
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / ".env"
+            p.write_text(self.OLD_INSTALLER_LINE + "\nTB_ENV=production  # note\n"
+                         'QUOTED="a # b"\n', encoding="utf-8")
+            env = load_existing_env(p)
+            self.assertEqual("", env["TB_JWT_SECRET"])
+            self.assertEqual("production", env["TB_ENV"])
+            self.assertEqual("a # b", env["QUOTED"])
+
+    def test_reader_matches_dotenv_for_every_key(self):
+        from dotenv import dotenv_values
+        from toolboxv2.utils.clis.config_wizard import load_existing_env
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / ".env"
+            p.write_text("# head\nA=1\nB=\nC=   # c\nD='x y'\nE=\"q\"\nTOOLBOX_HOME=C:\\tb\n",
+                         encoding="utf-8")
+            expected = {k: v for k, v in dotenv_values(p, interpolate=False).items() if v is not None}
+            self.assertEqual(expected, load_existing_env(p))
+
+    def test_secret_is_generated_not_taken_from_comment(self):
+        """Regression: the comment text must never become the cookie/JWT secret."""
+        import re
+        from toolboxv2.init_onboarding import ensure_secret
+        import toolboxv2._state_dir as sd
+        saved = {k: os.environ.pop(k, None) for k in ("TB_JWT_SECRET", "TB_COOKIE_SECRET", "TB_INSTALL_DIR")}
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                env = Path(d) / ".env"
+                env.write_text('TB_ENV="production"\n' + self.OLD_INSTALLER_LINE + "\n"
+                               "TB_COOKIE_SECRET=                 # REQUIRED: set before production use\n",
+                               encoding="utf-8")
+                os.environ["TB_INSTALL_DIR"] = d
+                with mock.patch.object(sd, "is_packaged_install", lambda: True):
+                    s1 = ensure_secret(persist=True)
+                    self.assertRegex(s1, r"^[0-9a-f]{128}$")
+                    text = env.read_text(encoding="utf-8")
+                    self.assertIn(f"TB_JWT_SECRET={s1}", text)
+                    self.assertIn(f"TB_COOKIE_SECRET={s1}", text)
+                    self.assertNotIn("REQUIRED", text)
+                    os.environ.pop("TB_JWT_SECRET", None)
+                    os.environ.pop("TB_COOKIE_SECRET", None)
+                    self.assertEqual(s1, ensure_secret(persist=True))
+        finally:
+            for k, v in saved.items():
+                os.environ.pop(k, None)
+                if v is not None:
+                    os.environ[k] = v
+
+
+class SingleLoadPointTest(unittest.TestCase):
+    """The one .env is loaded exactly once (package __init__); no pathless load_dotenv()."""
+
+    def test_no_pathless_load_dotenv_in_core(self):
+        import re
+        import toolboxv2
+        root = Path(toolboxv2.tb_root_dir)
+        skip = ("tests", "mods" + os.sep + "isaa", "flows" + os.sep + "isaa", "node_modules")
+        hits = []
+        for py in root.rglob("*.py"):
+            rel = str(py.relative_to(root))
+            if any(rel.startswith(s) or (os.sep + s + os.sep) in (os.sep + rel) for s in skip):
+                continue
+            for n, line in enumerate(py.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
+                if re.search(r"^\s*load_dotenv\(", line):
+                    hits.append(f"{rel}:{n}: {line.strip()}")
+        allowed = [h for h in hits if "env_file" in h]
+        self.assertEqual(hits, allowed, "pathless/foreign load_dotenv(): " + "; ".join(hits))
+        self.assertEqual(1, sum(h.startswith("__init__.py:") for h in hits), hits)
+
+
 if __name__ == "__main__":
     unittest.main()

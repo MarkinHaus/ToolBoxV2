@@ -57,6 +57,17 @@ if sys.platform == "win32":
 # ── End window suppression ─────────────────────────────────────────────
 
 
+# State + environment first, before any toolboxv2 submodule is imported:
+#  1. packaged installs keep user state outside site-packages,
+#  2. THE one .env is loaded exactly once, here (see _state_dir.env_file()).
+from ._state_dir import ensure_user_data_env, env_file as _env_file
+try:
+    ensure_user_data_env()
+except Exception:
+    pass
+from dotenv import load_dotenv
+load_dotenv(str(_env_file()))
+
 try:
     from .utils.system.main_tool import MainTool, get_version_from_pyproject
 except ImportError:
@@ -67,13 +78,6 @@ __email__ = 'Markinhausmanns@gmail.com'
 
 __init_cwd__ = init_cwd = Path.cwd()
 __tb_root_dir__ = tb_root_dir = Path(__file__).parent
-
-# T3/F6: Paket-Installationen halten Nutzerzustand ausserhalb von site-packages.
-try:
-    from ._state_dir import ensure_user_data_env
-    ensure_user_data_env()
-except Exception:
-    pass
 
 
 # ponytail: Nuitka standalone/onefile detection for writable data directory.
@@ -106,9 +110,6 @@ os.makedirs(__tb_root_dir__ / 'dist', exist_ok=True)
 VERSION = '0.1.28'
 __version__ = get_version_from_pyproject(str(tb_root_dir.parent / "pyproject.toml")) if get_version_from_pyproject is not None else VERSION
 ToolBox_over: str = "root"
-from dotenv import load_dotenv
-from ._state_dir import env_file as _env_file
-load_dotenv(str(_env_file()))
 # =============================================================================
 # Phase 1 — Feature Loader  (unpack ZIPs → .installed markers)
 # =============================================================================

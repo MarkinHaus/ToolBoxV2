@@ -13,8 +13,6 @@ from pathlib import Path
 from platform import node, system
 from typing import List, Tuple
 
-from dotenv import load_dotenv
-
 import os
 import sys
 
@@ -23,10 +21,8 @@ import sys
 exit = sys.exit
 
 from toolboxv2 import tb_root_dir, _feature_enabled
-from toolboxv2._state_dir import env_file as _env_file
 from toolboxv2.utils.system.feature_manager import FeatureManager
 
-load_dotenv(str(_env_file()))
 from toolboxv2.flows import flows_dict as flows_dict_func
 try:
     from toolboxv2.setup_helper import run_command

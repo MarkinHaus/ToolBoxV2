@@ -27,16 +27,46 @@ def _default_user_dir() -> Path:
     return Path.home() / ".local" / "share" / "toolboxv2"
 
 
+def _installed_root():
+    """Install dir derived from where this package lives.
+
+    The installer (installer.sh / installer.ps1) puts the package under
+    <install>/uv-tools/... (uv mode) or <install>/.venv/... (venv mode) and
+    writes <install>/install.manifest. That marker is required, so a plain
+    project venv is never mistaken for an installation.
+    """
+    for parent in Path(__file__).resolve().parents:
+        if parent.name in ("uv-tools", ".venv"):
+            root = parent.parent
+            return root if (root / "install.manifest").is_file() else None
+    return None
+
+
 def user_state_dir() -> Path:
+    """THE install dir of a packaged install (one rule for installer + core).
+
+    TB_INSTALL_DIR wins, then the directory the installer actually used
+    (derived from the package location, so a custom path chosen in the
+    installer is found without any env var), then the per-user default.
+    """
     env = os.environ.get("TB_INSTALL_DIR", "").strip()
-    return Path(env) if env else _default_user_dir()
+    if env:
+        return Path(env)
+    return _installed_root() or _default_user_dir()
+
+
+def _source_root() -> Path:
+    """Source checkout: the package dir (tb_root_dir seam keeps tests patchable)."""
+    tb = sys.modules.get("toolboxv2")
+    root = getattr(tb, "tb_root_dir", None)
+    return Path(root) if root is not None else Path(__file__).parent
 
 
 def env_file() -> Path:
-    """R1 (V3): THE one .env path (single-file rule).
+    """THE one .env path.
 
-    packaged install -> user_state_dir()/.env (TB_INSTALL_DIR or user dir)
-    source checkout  -> repository root .env (tb_root_dir seam, test-friendly)
+    packaged install -> <install dir>/.env (the file the installer creates)
+    source checkout  -> repository root .env
     TB_DATA_DIR and cwd are NOT .env locations.
     """
     if is_packaged_install():
@@ -45,25 +75,29 @@ def env_file() -> Path:
     return Path(__file__).resolve().parent.parent / ".env"
 
 
-def data_root() -> Path:
-    """R2 (V3): THE one data root (single rule).
+def state_root() -> Path:
+    """THE one root that holds .data/, .config/ and .info/.
 
-    TB_DATA_DIR wins verbatim -- it is ALREADY the data dir (Docker mount
-    /data is mounted to it directly). packaged -> user_state_dir()/.data,
-    source -> tb_root_dir/.data. Never append another .data leaf.
+    TB_DATA_DIR (explicit, e.g. the Docker volume) -> packaged: install dir
+    -> source checkout: the package dir (unchanged historic layout).
+    Exactly one level of .data/.config/.info is appended below this root.
     """
     env = os.environ.get("TB_DATA_DIR", "").strip()
     if env:
         return Path(env)
     if is_packaged_install():
-        return user_state_dir() / ".data"
-    # source checkout: _state_dir.py lives in <repo>/toolboxv2/ -> repo root
-    return Path(__file__).resolve().parent.parent / ".data"
+        return user_state_dir()
+    return _source_root()
+
+
+def data_root() -> Path:
+    """<state root>/.data -- holds <app id>/, blob_cache/, cli_sessions/."""
+    return state_root() / ".data"
 
 
 def info_dir() -> Path:
-    """R2 (V3): .info lives inside the data root (pids, device key, services)."""
-    return data_root() / ".info"
+    """<state root>/.info -- pids, device key, services."""
+    return state_root() / ".info"
 
 
 def ensure_user_data_env() -> None:
@@ -86,10 +120,4 @@ def manifest_base_dir() -> Path:
         return Path(env)
     if is_packaged_install():
         return user_state_dir()
-    # Source-Checkout: ueber den tb_root_dir-Seam gehen, damit Tests
-    # mock.patch("toolboxv2.tb_root_dir") weiterhin greift.
-    tb = sys.modules.get("toolboxv2")
-    root = getattr(tb, "tb_root_dir", None)
-    if root is not None:
-        return Path(root)
-    return Path(__file__).parent
+    return _source_root()

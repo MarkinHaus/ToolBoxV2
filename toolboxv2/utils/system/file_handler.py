@@ -694,8 +694,8 @@ class FileHandlerV2:
     def _get_default_base_path(self) -> Path:
         """Get default base path for local storage."""
         try:
-            from toolboxv2 import tb_root_dir
-            return tb_root_dir
+            from toolboxv2._state_dir import state_root
+            return state_root()
         except ImportError:
             return Path.cwd()
 
@@ -711,7 +711,8 @@ class FileHandlerV2:
             # Auto-detect from manifest
             try:
                 from toolboxv2.utils.manifest.loader import ManifestLoader
-                loader = ManifestLoader(self.base_path)
+                from toolboxv2._state_dir import manifest_base_dir
+                loader = ManifestLoader(manifest_base_dir())
                 if loader.exists():
                     manifest = loader.load()
                     # Use cloud for CB (CLUSTER_BLOB) mode

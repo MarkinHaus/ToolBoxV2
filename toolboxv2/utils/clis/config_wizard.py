@@ -296,12 +296,15 @@ def load_existing_env(env_path: Path) -> Dict[str, str]:
     if not env_path.exists():
         return existing
 
+    # Parse with python-dotenv itself, so this reader and load_dotenv() can
+    # never disagree (inline "# comment" after an empty value is NOT a value).
+    from io import StringIO
+    from dotenv import dotenv_values
+
     content = env_path.read_text(encoding="utf-8", errors="surrogateescape")
-    for line in content.splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, _, value = line.partition("=")
-            existing[key.strip()] = value.strip().strip('"').strip("'")
+    for key, value in dotenv_values(stream=StringIO(content), interpolate=False).items():
+        if key and value is not None:
+            existing[key] = value
 
     return existing
 

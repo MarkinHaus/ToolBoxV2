@@ -14,11 +14,9 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from dotenv import load_dotenv
 
 from ..system.tb_logger import get_logger
 
-load_dotenv()
 
 
 def derive_aes_key(tb_r_key: str) -> bytes:

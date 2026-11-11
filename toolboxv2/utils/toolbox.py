@@ -20,8 +20,6 @@ from threading import Thread
 from types import ModuleType
 from typing import Any, Optional
 
-from dotenv import load_dotenv
-
 from .extras.db.mobile_db import create_mobile_db
 from .extras.mkdocs import add_to_app
 from ..utils.system.main_tool import get_version_from_pyproject
@@ -41,8 +39,6 @@ from .system.types import (
     ToolBoxInterfaces,
     WebSocketContext,
 )
-
-load_dotenv()
 
 
 class App(AppType, metaclass=Singleton):
@@ -74,7 +70,7 @@ class App(AppType, metaclass=Singleton):
 
         self.bg_tasks = []
 
-        # R2 (V3): prefix file lives in THE data root (no second rule)
+        # prefix file lives in <state root>/.data (one rule: _state_dir)
         from toolboxv2._state_dir import data_root as _data_root_fn
         lapp = str(_data_root_fn())
         _prefix_file = os.path.join(lapp, "last-app-prefix.txt")
@@ -114,14 +110,14 @@ class App(AppType, metaclass=Singleton):
         #    package dir. ponytail: one base var, proper os.path.join. Default
         #    stays start_dir so existing installs are unchanged; the <id> leaf
         #    is preserved so downstream `info_dir.replace(app.id, '')` still works.
-        from toolboxv2._state_dir import data_root as _data_root_fn
-        _data_root = str(_data_root_fn())
+        from toolboxv2._state_dir import state_root as _state_root_fn
+        _data_root = str(_state_root_fn())
         if "test" in prefix:
             if self.system_flag == "Darwin" or self.system_flag == "Linux":
                 start_dir = self.start_dir.replace("ToolBoxV2/toolboxv2", "toolboxv2")
             else:
                 start_dir = self.start_dir.replace("ToolBoxV2\\toolboxv2", "toolboxv2")
-            _root = str(_data_root_fn())
+            _root = os.getenv("TB_DATA_DIR") or start_dir
             self.data_dir = os.path.join(_root, ".data", "test")
             self.config_dir = os.path.join(_root, ".config", "test")
             self.info_dir = os.path.join(_root, ".info", "test")
