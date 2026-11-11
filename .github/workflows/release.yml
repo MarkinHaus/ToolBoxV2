@@ -388,18 +388,25 @@ jobs:
         working-directory: ./toolboxv2/simple-core/src-tauri
         run: cargo update
 
-      - name: Install Frontend Dependencies
-        working-directory: ./toolboxv2
+      # Web UI + core wheel + BUILD_ID into src-tauri/wheels (same script as build.yml)
+      - name: Build web UI and core wheel for the bundle
+        shell: bash
         run: |
-          npm install
-          npm install --prefix ./web
-          cd simple-core && npm install && cd ..
-          npm run build
+          python -m pip install --upgrade pip
+          python -m pip install -e . build
+          bash scripts/build_wheel_for_tauri.sh
+
+      - name: Install Tauri CLI dependencies
+        working-directory: ./toolboxv2
+        run: npm install --prefix ./simple-core
 
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Tauri v2 variable names; the repository secrets keep their names.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         with:
           projectPath: ./toolboxv2/simple-core
           tauriScript: npx tauri
