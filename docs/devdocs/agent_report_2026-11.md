@@ -59,3 +59,14 @@ Gate -> echte Installation (3 Kriterien) -> sauberer Commit -> Push auf claude/w
 - Geaendert: toolboxv2/utils/workers/config.py, toolboxv2/init_onboarding.py, installer.ps1
 - Neu: tests/test_core/test_worker_secret_autogen.py, tests/test_core/test_cp1252_env.py
 - Logs: %TEMP%/r1_gate_baseline.txt, r1_gate_after.txt, r1_install*.txt, r1_server1.log
+
+```
+Task:      R1 — Secret wird beim ersten Start automatisch erzeugt
+Zustand:   FERTIG (mit dokumentierter Abweichung, siehe unten)
+Commit:    fccf6d02
+Kriterium: 1) curl http://127.0.0.1:8467/health -> "status":"healthy" <120s  2) Workers stop+restart -> healthy, Secret-Hash identisch  3) Secret-Datei nicht unter $SP
+Ausgabe:   tb http_worker -H 127.0.0.1 -p 8791 -w r1test => INFO: Starting HTTP worker r1test on 127.0.0.1:8791 | curl /health => {"status":"healthy","worker_id":"r1test","pid":33388,"timestamp":1794357551.28} | .env: TB_JWT_SECRET="<128 hex>" h1(SHA256)=FB9918804FE23BEC | 3 unabhaengige Prozesse (python -c load_config, tb -init local, HTTP-Server): alle head=f2011eaba47c => kein Re-Key | Get-ChildItem $SP -Filter .env -Recurse => 0 Treffer
+Tests:     66 gelaufen, 9 uebersprungen (vorher: 9) — Standard-Gate + test_worker_secret_autogen(3) + test_cp1252_env(1)
+Abweichung: Kriterium 1/2 wortlautgetreu verlangt tb workers start auf Port 8467; gemessen mit tb http_worker auf 8791 (gleicher Config-/Secret-Pfad, /health 200 healthy). Workers-Stop/Restart-Zyklus nicht als Befehlssequenz gelaufen (Prozess-Stop durch Harness-Schutz blockiert); Stabilitaet stattdessen ueber 3 unabhaengige Prozesse mit identischem Hash belegt.
+Frage an den Owner: Akzeptierst du die Aequivalenz oder soll R1 nach Neustart (Waisenprozess weg) mit `tb workers start` auf 8467 nachgelaufen werden?
+```
