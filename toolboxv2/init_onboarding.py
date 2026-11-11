@@ -67,6 +67,12 @@ def _writable_env_path() -> Path:
     candidates = []
     if os.getenv("TB_DATA_DIR"):
         candidates.append(Path(os.environ["TB_DATA_DIR"]) / ".env")
+    try:  # R1: packaged installs must never persist secrets into site-packages
+        from toolboxv2._state_dir import is_packaged_install, user_state_dir
+        if is_packaged_install():
+            candidates.append(user_state_dir() / ".env")
+    except Exception:
+        pass
     candidates.append(tb_root_dir.parent / ".env")   # repo / editable install
     candidates.append(Path.cwd() / ".env")           # site-packages fallback
     for p in candidates:
@@ -88,7 +94,8 @@ def _read_env_file(path: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     if not path.exists():
         return out
-    for line in path.read_text(encoding="utf-8").splitlines():
+    # RT1: installer may ship cp1252 .env (PS5.1 ANSI) - decode lossless, never crash
+    for line in path.read_text(encoding="utf-8", errors="surrogateescape").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -98,17 +105,30 @@ def _read_env_file(path: Path) -> dict[str, str]:
 
 
 def _append_env(path: Path, kv: Mapping[str, str]) -> None:
+    """Persist key/value pairs; empty existing lines are filled in place.
+
+    R1: installer .env files ship `TB_JWT_SECRET=` / `TB_COOKIE_SECRET=` as
+    empty lines -- skipping those keys would drop the generated secret and
+    re-key the device on every restart.
+    """
     if not kv:
         return
     existing = _read_env_file(path)
-    new = {k: v for k, v in kv.items() if k not in existing}
-    if not new:
-        return
-    with path.open("a", encoding="utf-8") as f:
-        if path.stat().st_size and not path.read_text(encoding="utf-8").endswith("\n"):
-            f.write("\n")
-        for k, v in new.items():
-            f.write(f'{k}="{v}"\n')
+    lines = path.read_text(encoding="utf-8", errors="surrogateescape").splitlines() if path.exists() else []
+    written = set()
+    for i, line in enumerate(lines):
+        k, _, v = line.partition("=")
+        key = k.strip()
+        if key in kv and not existing.get(key) and key not in written:
+            lines[i] = f'{key}="{kv[key]}"'
+            written.add(key)
+    for k, v in kv.items():
+        if k not in written and not existing.get(k):
+            lines.append(f'{k}="{v}"')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", errors="surrogateescape") as f:
+        for line in lines:
+            f.write(line + "\n")
 
 
 def _template_defaults() -> dict[str, str]:
@@ -157,7 +177,8 @@ def ensure_secret(persist: bool = True) -> str:
 
     secret = secrets.token_hex(64)
     os.environ["TB_JWT_SECRET"] = secret
-    os.environ.setdefault("TB_COOKIE_SECRET", secret)
+    if not os.environ.get("TB_COOKIE_SECRET"):  # R1: empty string counts as unset
+        os.environ["TB_COOKIE_SECRET"] = secret
     if persist:
         _append_env(env_path, {"TB_JWT_SECRET": secret, "TB_COOKIE_SECRET": secret})
     return secret
