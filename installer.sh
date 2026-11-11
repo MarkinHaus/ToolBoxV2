@@ -348,6 +348,7 @@ phase_config() {
     feat_line=$(grep -A1 "^features:" "$CONFIG_FILE" 2>/dev/null | tail -1 | tr -d ' []' | tr ',' ' ' || true)
     [ -n "$feat_line" ] && FEATURES="$feat_line"
     # T5/F1: einfacher Config-Schluessel tb_features (kommagetrennt) ueberschreibt FEATURES
+    tb_features_cfg=""
     tb_features_cfg=$(yaml_get "$CONFIG_FILE" "tb_features" "")
     [ -n "$tb_features_cfg" ] && FEATURES=$(echo "$tb_features_cfg" | tr ',' ' ')
   fi

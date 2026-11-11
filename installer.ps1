@@ -280,7 +280,8 @@ function Phase-Config {
         if (-not $TbProfile)  { $script:TbProfile = Get-YamlField $Config "profile" "" }
         if (-not $Ui)         { $script:Ui        = Get-YamlField $Config "ui" "" }
         # T5/F1: Config-Schluessel tb_features (kommagetrennt) ueberschreibt FEATURES
-        $tbFeaturesCfg = Get-YamlField $Config "tb_features" ""
+        $tbFeaturesCfg = ""
+        if ($Config) { $tbFeaturesCfg = Get-YamlField $Config "tb_features" "" }
         if ($tbFeaturesCfg) { $script:FEATURES = ($tbFeaturesCfg -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join " " }
         $script:AssumeYes     = $AssumeYes
     }
