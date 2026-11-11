@@ -388,8 +388,8 @@ phase_config() {
   echo "  Included (always): ${G}mini core${NC}"
   echo "  Optional modules:"
   local sel_features="$FEATURES"
-  if [ -n "$ASSUME_YES" ]; then
-    # non-interactive: konfigurierte Module aktivieren, Rest skippen
+  if [ -n "$ASSUME_YES" ] && [ -z "$tb_features_cfg" ]; then
+    # R3: non-interactive ohne tb_features in Config -> bekannte Module aktivieren
     for feat in $MODULES_OPTIONAL; do
       echo "$sel_features" | grep -qw "$feat" || sel_features="$sel_features $feat"
     done
@@ -418,7 +418,7 @@ phase_config() {
   # Install path
   local default_path
   default_path=$(os_default_path)
-  if [ -z "$INSTALL_PATH" ]; then
+  if [ -z "$INSTALL_PATH" ] && [ -z "$ASSUME_YES" ]; then
     ask "Custom install path? Leave empty for default (${C}${default_path}${NC}): "
     read -r custom_path || custom_path=""  # EOF/piped-sicher
     INSTALL_PATH="${custom_path:-$default_path}"

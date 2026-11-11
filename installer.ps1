@@ -438,8 +438,8 @@ function Invoke-InteractiveConfig {
     Write-Host ""
     Write-Host "  Included (always): mini core"
     $selFeatures = $FEATURES
-    if ($AssumeYes -eq "yes") {
-        # non-interactive: konfigurierte Module aktivieren, Rest skippen
+    if ($AssumeYes -eq "yes" -and -not $tbFeaturesCfg) {
+        # R3: non-interactive ohne tb_features in Config -> bekannte Module aktivieren
         foreach ($feat in $MODULES_OPTIONAL) {
             if ($selFeatures -notmatch "\b${feat}\b") { $selFeatures += " $feat" }
         }
@@ -462,7 +462,8 @@ function Invoke-InteractiveConfig {
         $script:ENVIRONMENT = Prompt-Default "Environment (development|production|staging)" $ENVIRONMENT
     }
 
-    if (-not $INSTALL_PATH) {
+    if (-not $INSTALL_PATH -and $AssumeYes -ne "yes") {
+        # R3: non-interactive (assume: yes) frägt keine Pfade
         $default = Get-DefaultPath
         Ask "Custom install path? Leave empty for default ($default) : "
         $cp = Read-Host

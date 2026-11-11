@@ -63,7 +63,7 @@ pub fn config_to_yaml(cfg: &InstallConfig) -> String {
     yaml.push_str(&format!("profile: {}\n", canon_profile(&cfg.profile)));
     // T5/F1: Feature-Set fuer uv-Installationen; developer baut aus Source.
     if canon_profile(&cfg.profile) != "developer" {
-        yaml.push_str("tb_features: cli,web,isaa\n");
+        yaml.push_str("tb_features: cli,web,isaa,desktop\n");
     }
     // Tauri shows its own UI afterwards; never open a browser/CLI onboarding.
     yaml.push_str("ui: none\n");
@@ -318,7 +318,7 @@ mod tests {
         assert!(yaml.contains("instance_id: tbv2_main"));
         assert!(yaml.contains("profile: local"));
         assert!(yaml.contains("ui: none"));
-        assert!(yaml.contains("tb_features: cli,web,isaa"));
+        assert!(yaml.contains("tb_features: cli,web,isaa,desktop"));
     }
 
     #[test]
