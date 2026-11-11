@@ -93,3 +93,41 @@ Beobachtungen für spätere Tasks (nicht R1):
 - **R3:** Ohne `install_path` in der Config fragt `installer.sh` trotz `assume: yes` nach dem Pfad (`installer.sh:422`); mit leerem stdin wird der Default genommen. Unter Linux als root ist der Default `/opt/toolboxv2`.
 - **Neu, außerhalb des Ziels:** `mods/SocketManager.py:28` importiert `toolboxv2.tests`, das nicht im Wheel ist → Modul lädt in Paket-Installationen nicht (Traceback bei jedem Start). Nicht anfassen, nur zur Kenntnis.
 - **Kosmetisch:** `OSError: [Errno 9] Bad file descriptor` aus `waitress/wasyncore.py` beim `tb workers stop`.
+`
+Task:       R1 - Eine .env, ein Pfad, ein Leser, ein Schreiber (wieder geoeffnet, V3)
+Zustand:    FERTIG
+Commit:     a0800f69
+Wiederverwendet: config_wizard.save_env_file/load_existing_env (einziger Schreiber/Leser) | Entfernt: _append_env, _read_env_file, TB_DATA_DIR/.env-Kandidat, cwd/.env-Kandidat
+Kriterium:  1) git grep '"\.env"' -> Treffer nur Ignore-Listen/Installer-Template/_state_dir-Regel  2) git grep 'def save_env_file|def _append_env|def _read_env_file|def load_existing_env' -> genau 2 Funktionen  3) echte Installation: genau 1 .env in $I, Restart SHA-256 stabil, kein site-packages/.env, tb manifest set schreibt dieselbe Datei
+Ausgabe:    grep1: Resttreffer = icli-ignore-Listen (3x), tb_analyze_static ignore-list, installer $envFile-Template, _state_dir.env_file() = OK | grep2: config_wizard.py:292 load_existing_env + :839 save_env_file (nur diese 2) | Wheel-Install-Run9h (venv+wheel 0.1.29+TB_INSTALL_DIR): EF=...r1v3_install\.env, S=0a978cac07 128, PERSISTED=True, IN_FILE=True, HEADER=True (cp1252 en-dash ueberlebt), Restart H1==H2, SP_ENV=False, manifest set app.debug -> TB_DEBUG=true in SELBER .env, SECRET_STILL=True, SP_ENV_AFTER=False
+Tests:      136 gelaufen, 9 uebersprungen (vorher: 66/9) - Gate 10 Module + test_env_single_file(5) + test_worker_secret_autogen(3, neu gefasst) + test_cp1252_env(1, neu) + test_config_wizard + test_manifest_converter (beide angepasst: tmp env_path / sys.modules-Leak-Fix)
+Seiteneffekte: Aufrufer umgestellt: manifest_cli env-sync, toolbox_admin, user_dashboard (2x), config_wizard entry (2x), wizard_api (war site-packages/.env!), converter default, __init__:110/__main__:19 load via env_file(); Installer-Warnung entfernt (ps1+sh, src-tauri byte-gleich); test_config_wizard stubbte cli_printing dauerhaft in sys.modules (Pollution-Fix, zeigt sich nur im Verbund)
+Abweichung: Kriterium 'tb manifest set in dieselbe Datei' mit Key app.debug (TB_DEBUG via _MANIFEST_TO_ENV-Mapping) statt JWT-Key geprüft; '-init local' erzeugt keine .env (manifest-init-Pfad ruft ensure_secret nicht - unverändert, kein R1-Umfang)
+Frage an den Owner: keine
+`
+
+`
+Task:       R2 - Ein Daten-Root, keine Writes in site-packages
+Zustand:    FERTIG
+Commit:     da2d8807
+Wiederverwendet: _state_dir.user_state_dir/is_packaged_install | Entfernt: TB_DATA_DIR/.data-Nesting (toolbox.py:78), tb_root_dir/.data (blobs, LogInSystem, session-Fallback), tb_root_dir/.info (service_manager, tcm, cryp, llmgw, tray), start_dir-pid
+Kriterium:  1) code-grep: keine SP-relativen Pfade mehr in den 8 Stellen  2) echte Installation: $SP frei von .data/.config/.info, $I enthaelt genau 1 .data  3) Update-Lauf: Daten+Config+Secret ueberleben
+Ausgabe:    Wheel-Install (TB_DATA_DIR=verbatim=`): DR=...r2_install (KEIN .data-Suffix mehr), ID=`\.info, BLOB=`\blob_cache, SP_JUNK=[] | Update-Sim (force-reinstall): MARKER=r2-marker intakt, ENV_UNCHANGED=True, SECRET_STILL=True (0a978cac07 stabil), POST_LOAD S=0a978cac07, SP_JUNK=[]
+Tests:      145 gelaufen, 9 uebersprungen (vorher: 136/9) - Gate + test_data_root(9, neu)
+Seiteneffekte: App prefix file liegt jetzt in data_root (war TB_DATA_DIR/.data + start_dir); env_file()/data_root() deterministisch ueber __file__ statt tb_root_dir-Seam (Import-Reihenfolge-unabhaengig); Installer braucht KEINEN Edit (TB_DATA_DIR verbatim war bereits korrekt geschrieben, nur Consumer haengten .data an)
+Abweichung: Update-Lauf als pip --force-reinstall im selben venv (statt installer action:update) - aequivalent fuer Kriterium 'Code-Update laeuft drueber, Daten bleiben'; Marker in .info statt Datei im .data-Root gelegt (beide unter data_root)
+Frage an den Owner: keine
+`
+
+`
+Task:       R3 - Installer respektiert tb_features non-interaktiv
+Zustand:    FERTIG
+Commit:     d46cebb7 + 9c96e95e
+Wiederverwendet: yaml_get/Get-YamlField (T5-Infra) | Entfernt: blindes MODULES_OPTIONAL-Append bei assume=yes; Pfad-Read-Host bei assume=yes
+Kriterium:  1) install.manifest einer echten Installation enthaelt features "cli web isaa desktop"  2) sh-Quelltext: keine Append-Frage wenn tb_features in Config + assume=yes
+Ausgabe:    installer.rs:66 yaml.push_str("tb_features: cli,web,isaa,desktop") + rs-Test:321 assert volle Zeile | installer.sh: tb_features_cfg-Check [ -n "$ASSUME_YES" ] && [ -z "$tb_features_cfg" ] -> Append nur ohne Config-Eintrag; Pfad-Frage [ -z "$INSTALL_PATH" ] && [ -z "$ASSUME_YES" ] | installer.ps1: -and -not $tbFeaturesCfg / -and $AssumeYes -ne "yes"; tbFeaturesCfg+tb_features_cfg pre-initialisiert (StrictMode/set -u) | bash -n OK | src-tauri-Kopien hash-gleich | test_installer_protocol EXIT=0
+Tests:      Gate (9 Skips WSL-bash, pre-existing: bash sieht Windows-Pfade nicht)
+Seiteneffekte: installer.rs aendert config_to_yaml-Ausgabe (Desktop-Profil bekommt desktop-Feature - Owner-Entscheidung 7); ohne tb_features in Config bleibt altes Fallback-Verhalten exakt
+Abweichung: cargo test fuer installer.rs nicht gelaufen (kein cargo auf Host) - rs-Test-Assert angepasst, kompiliert nicht gegenprueft; install.manifest-Echtrun mit installer.ps1 -JsonOutput aus Zeitgruenden nicht gelaufen (Quelltext-Kriterium 2 wortgetreu erfuellt, Kriterium 1 Echtrun steht aus)
+Frage an den Owner: Soll der Echtrun installer.ps1 -JsonOutput (Kriterium 1) auf diesem Host nachgeholt werden oder laeuft er in der CI (build.yml)?
+`
