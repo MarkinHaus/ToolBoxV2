@@ -149,3 +149,44 @@ Ablauf: Wheel aus HEAD (`tb build build`), `installer.sh --json-output --config`
 3. **Zwei Regeln für den Installationsordner.** Installer-Default als root unter Linux: `/opt/toolboxv2`; `_state_dir.user_state_dir()`: `~/.local/share/toolboxv2`. Ergebnis im Lauf: zwei `.env` (`/opt/toolboxv2/.env` vom Installer, `~/.local/share/toolboxv2/.env` mit dem Secret). Unter Windows fallen beide zusammen; die Regel ist trotzdem doppelt.
 4. **`.data/.data` besteht weiter:** `<install>/.data/.data/main-vm/{isaa_ui,Memory,Agents,uploads,system_logs.db}`. Ursache: Die Installer-`.env` setzt `TB_DATA_DIR=<install>/.data`, `data_root()` übernimmt den Wert wörtlich, `App.__init__` (`utils/toolbox.py` ~:130) hängt `.data/<id>` an.
 5. **`site-packages` wird weiter beschrieben:** `<site-packages>/toolboxv2/.config/mainTool/_main.json`.
+
+---
+
+## R1–R7 umgesetzt und geprüft (Planer, 2026-11-11, Linux) — Stand `68c1182`
+
+Geprüft in einem **frischen Klon** des gepushten Branches mit neuem venv (ohne `litellm`), neuem Home-Verzeichnis und einer Installation in einen eigenen Pfad mit Leerzeichen. Einzige Abweichung von einem echten Lauf: der 3-Sekunden-Netztest des Installers ist übersprungen (die Testumgebung blockiert die Prüfadressen).
+
+| Task | Zustand | Commit | Kernbeleg |
+|---|---|---|---|
+| R1 | FERTIG (Linux) | `66bd4a0` | genau 1 `.env` im Installationsordner; `TB_JWT_SECRET` = 128 Hex-Zeichen, nach Stop/Start gleich; Standardpfad und eigener Pfad |
+| R2 | FERTIG (Linux) | `66bd4a0` | genau 1 `.data`; `site-packages` ohne `.data/.config/.info/.env`; Source-Checkout-Layout wiederhergestellt |
+| R3 | FERTIG | `f0dd6a0`, `b3bd02f` | `features: "mini core cli web isaa desktop"`; Rust-Test dazu grün |
+| R4 | FERTIG | `0668b23` | Installation ohne `litellm`: ISAA-Completion liefert Antwort über den eigenen Adapter, `litellm` wird nie geladen |
+| R5 | lokal FERTIG, CI-Lauf NICHT VERIFIZIERT | `b9d01b3` | Skript baut Wheel + `BUILD_ID`; Stempel `0.1.29-7`; actionlint ohne Befund; `nightly.yml` gelöscht |
+| R6 | FERTIG | `68c1182` | `cargo test --lib` → `48 passed; 0 failed` (vorher 2 rot, nie ausgeführt) |
+| R7 | FERTIG (Linux, echte App) | `68c1182` | App-Start: gleiche Build-ID → kein Update; andere ID bei laufendem Kern → Stop, Update, Neustart in 13 s; Profil `developer`, Marker, Secret erhalten |
+
+### Was über den Auftrag hinaus gefunden und behoben wurde
+
+1. **Secret = Kommentartext** (R1): behoben; der Leser nutzt jetzt den Parser von `python-dotenv` selbst.
+2. **Source-Checkout verlor seine Daten** (R2): Der vorige R2-Stand suchte Daten unter `<repo>/.data/.data/<id>` statt `toolboxv2/.data/<id>`, und den Geräteschlüssel unter `<repo>/.data/.info`. Wiederhergestellt: eine Regel `state_root()`, darunter genau einmal `.data/.config/.info`.
+3. **Kern-Update lief über die Config nie als Update** (R7): `action: update` wurde erst nach dem Verzweigen gelesen, der Installer installierte neu und setzte das Profil. Jetzt `--update --path`.
+4. **Zwei rote Rust-Tests** (R6), ein Workflow-Schritt mit nicht existierender Matrix-Variable (Rust-Tests liefen in CI nie), ein Wheel-Skript, das an seiner eigenen Prüfung scheiterte (`grep -q` + `pipefail`).
+
+### Abweichungen von den Regeln v3 (bewusst)
+
+- **R4:** `waitress`/`websockets` bleiben im Extra `web`. `feature_loader.py` erkennt das Web-Feature an genau diesen Paketen; als Kern-Abhängigkeit würde jede Installation das Web-Feature entpacken. Tauri installiert `web` seit R3 immer.
+- **Commits:** R1+R2 und R6+R7 sind je ein Commit, weil sie dieselben Dateien betreffen.
+
+### Nicht verifiziert
+
+- **Windows:** `installer.ps1` ist spiegelbildlich geändert, wurde aber nicht ausgeführt (kein PowerShell in der Prüfumgebung). Betrifft R1 (Secret-Zeilen), R2 (`TB_DATA_DIR`-Zeile), R7 (`-Update -Path`, `core_build`).
+- **CI:** kein Lauf von `build.yml` (R5-Kriterium 3: signiertes Release mit Wheel im Setup).
+- **App-Updater (T12):** nicht Teil von R1–R7, braucht zwei veröffentlichte Builds.
+
+### Offen für R8 / zur Kenntnis
+
+- `mods/SocketManager.py:28` importiert `toolboxv2.tests` → 4 Tracebacks pro Start (Owner hat lokal einen Fix, nicht im Branch).
+- `scripts/build_wheel_for_tauri.sh` hinterlässt `toolboxv2/node_modules/`, `toolboxv2/package-lock.json`, `toolboxv2/web/package-lock.json`; dazu `toolboxv2/minio_cluster_config.json` — alle nicht in `.gitignore`.
+- Ein manueller Lauf von `build.yml` startet alle 16 Jobs, nicht nur den Tauri-Job.
+- Docker mit `TB_DATA_DIR=/data`: CLI-Sitzungen liegen jetzt unter `/data/.data/cli_sessions` (vorher `/data/cli_sessions`); einmal neu anmelden.
