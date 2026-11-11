@@ -119,6 +119,37 @@ class InstalledRootTest(unittest.TestCase):
             self.assertEqual(self.tmp / "forced", sd.user_state_dir())
 
 
+class PublishedInstallDirTest(unittest.TestCase):
+    """The core tells the Tauri shell where it is installed (core update, custom path)."""
+
+    def test_packaged_core_publishes_install_dir(self):
+        import json
+        import toolboxv2._state_dir as sd
+        from toolboxv2.utils.workers.fast import endpoint
+        saved = os.environ.get("TB_INSTALL_DIR")
+        with tempfile.TemporaryDirectory() as d:
+            target = Path(d) / "local_ui.json"
+            os.environ["TB_INSTALL_DIR"] = str(Path(d) / "my install")
+            try:
+                with mock.patch.object(sd, "is_packaged_install", lambda: True), \
+                        mock.patch.object(endpoint, "endpoint_file", lambda: target):
+                    self.assertEqual(target, endpoint.publish_endpoint("127.0.0.1", 8467))
+                data = json.loads(target.read_text(encoding="utf-8"))
+                self.assertEqual(str(Path(d) / "my install"), data["install_dir"])
+                self.assertEqual(8467, data["port"])
+                with mock.patch.object(sd, "is_packaged_install", lambda: False), \
+                        mock.patch.object(endpoint, "endpoint_file", lambda: target):
+                    endpoint.publish_endpoint("127.0.0.1", 8467)
+                self.assertNotIn("install_dir", json.loads(target.read_text(encoding="utf-8")),
+                                 "a source checkout is not an installation")
+            finally:
+                os.environ.pop("TB_INSTALL_DIR", None)
+                if saved is not None:
+                    os.environ["TB_INSTALL_DIR"] = saved
+                for k in ("TB_LOCAL_UI_HOST", "TB_LOCAL_UI_PORT"):
+                    os.environ.pop(k, None)
+
+
 class SitePackagesCleanTest(unittest.TestCase):
     """R2: packaged code must not write .data/.config/.info into site-packages."""
 

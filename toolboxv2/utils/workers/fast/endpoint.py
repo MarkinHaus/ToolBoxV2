@@ -206,6 +206,14 @@ def publish_endpoint(host: Optional[str] = None, port: Optional[int] = None,
         "ws_url": f"ws://{host}:{int(ws_port)}",
         "pid": os.getpid(),
     }
+    # Packaged installs also publish where they live, so the Tauri shell finds
+    # <install_dir>/install.manifest even for a custom install path (core update).
+    try:
+        from toolboxv2._state_dir import is_packaged_install, user_state_dir
+        if is_packaged_install():
+            payload["install_dir"] = str(user_state_dir())
+    except Exception:
+        pass
     try:
         target = endpoint_file()
         target.parent.mkdir(parents=True, exist_ok=True)

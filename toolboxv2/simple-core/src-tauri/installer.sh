@@ -102,6 +102,7 @@ UV_BIN=""
 PYTHON_BIN=""
 REGISTRY_REACHABLE=false
 ACTION="install" # install | update | uninstall
+FOUND_INSTALL=""  # first existing installation seen by phase_discovery
 
 # ── Args ─────────────────────────────────────────────────────
 CONFIG_FILE=""
@@ -282,6 +283,7 @@ phase_discovery() {
   fi
 
   if [ ${#found_installs[@]} -gt 0 ]; then
+    FOUND_INSTALL="${found_installs[0]}"
     echo ""
     warn "Existing ToolBoxV2 installation(s) found:"
     for p in "${found_installs[@]}"; do
@@ -870,6 +872,10 @@ phase_write_manifests() {
   local tb_version="$1"
   step "Phase 4 — Writing Manifests & Env"
 
+  # Build id of the installed core (sha256 of the bundled wheel, handed in by
+  # the Tauri app as TB_CORE_BUILD). Read BEFORE the manifest is rewritten.
+  local core_build="${TB_CORE_BUILD:-$(yaml_get "${INSTALL_PATH}/install.manifest" "core_build" "")}"
+
   # install.manifest
   cat > "${INSTALL_PATH}/install.manifest" << EOF
 installer_version: "${INSTALLER_VERSION}"
@@ -879,6 +885,7 @@ source_from: "${SOURCE_FROM}"
 source_branch: "${SOURCE_BRANCH}"
     # ^ master is the active branch
 tb_version: "${tb_version}"
+core_build: "${core_build}"
 toolbox_home: "${INSTALL_PATH}"
 bin_path: "${INSTALL_PATH}/bin/tb"
 src_path: "${INSTALL_PATH}/src"
@@ -958,11 +965,24 @@ action_update() {
       ;;
     uv)
       if [ -n "${TB_WHEEL:-}" ] && [ -f "$TB_WHEEL" ]; then
-        FEATURES=$(yaml_get "$manifest" "features" "core cli")
+        # Keep what the installation was made with: the one manifest writer
+        # (phase_write_manifests) rewrites the file from these variables.
+        SOURCE_FROM=$(yaml_get "$manifest" "source_from" "$SOURCE_FROM")
+        SOURCE_BRANCH=$(yaml_get "$manifest" "source_branch" "$SOURCE_BRANCH")
+        FEATURES=$(yaml_get "$manifest" "features" "core cli" | tr ' ' '\n' \
+          | grep -v -E '^(core|mini)$' | sed '/^$/d' | paste -sd' ' -)
+        local opt_installed
+        opt_installed=" $(yaml_get "$manifest" "optional_installed" "") "
+        case "$opt_installed" in *" nginx "*)    OPT_NGINX=true ;; esac
+        case "$opt_installed" in *" docker "*)   OPT_DOCKER=true ;; esac
+        case "$opt_installed" in *" ollama "*)   OPT_OLLAMA=true ;; esac
+        case "$opt_installed" in *" minio "*)    OPT_MINIO=true ;; esac
+        case "$opt_installed" in *" registry "*) OPT_REGISTRY=true ;; esac
         local new_ver
         new_ver=$(_install_uv)
         phase_write_manifests "$new_ver"
         log "Updated via uv from wheel"
+        jdone "$new_ver" "$INSTALL_PATH" ""
       else
         "$UV_BIN" tool upgrade ToolBoxV2
         log "Updated via uv"
@@ -1131,7 +1151,12 @@ main() {
       jdone "$tb_version" "$INSTALL_PATH" "$TB_PROFILE"
       ;;
     update)
+      jlog discovery start running "Detecting system" 2
       phase_discovery
+      # --update without --path: the installation discovery found (one rule)
+      [ -n "$INSTALL_PATH" ] || INSTALL_PATH="${FOUND_INSTALL:-}"
+      [ -n "$INSTALL_PATH" ] || fail "No installation found to update (use --path)"
+      jlog install start running "Updating ToolBoxV2" 8
       action_update
       ;;
     uninstall)

@@ -105,6 +105,7 @@ $UV_BIN           = ""
 $PYTHON_BIN       = ""
 $REGISTRY_REACHABLE = $false
 $ACTION           = "install"
+$FOUND_INSTALL    = ""   # first existing installation seen by Phase-Discovery
 
 if ($Uninstall) { $ACTION = "uninstall" }
 if ($Update)    { $ACTION = "update" }
@@ -223,6 +224,7 @@ function Phase-Discovery {
     }
 
     if ($foundInstalls.Count -gt 0) {
+        $script:FOUND_INSTALL = $foundInstalls[0]
         Write-Host ""
         Warn "Existing ToolBoxV2 installation(s) found:"
         foreach ($p in $foundInstalls) {
@@ -704,6 +706,11 @@ function Phase-WriteManifests {
     if ($OPT_MINIO)    { $optInstalled += "minio" }
     if ($OPT_REGISTRY) { $optInstalled += "registry" }
 
+    # Build id of the installed core (sha256 of the bundled wheel, handed in by
+    # the Tauri app as TB_CORE_BUILD). Read BEFORE the manifest is rewritten.
+    $coreBuild = $env:TB_CORE_BUILD
+    if (-not $coreBuild) { $coreBuild = Get-YamlField "$INSTALL_PATH\install.manifest" "core_build" "" }
+
     @"
 installer_version: "$INSTALLER_VERSION"
 installed_at: "$timestamp"
@@ -711,6 +718,7 @@ install_mode: "$INSTALL_MODE"
 source_from: "$SOURCE_FROM"
 source_branch: "$SOURCE_BRANCH"
 tb_version: "$TbVersion"
+core_build: "$coreBuild"
 toolbox_home: "$INSTALL_PATH"
 bin_path: "$INSTALL_PATH\bin\tb.exe"
 src_path: "$INSTALL_PATH\src"
@@ -764,10 +772,22 @@ function Action-Update {
         "native"  { $v = Install-Native; Phase-WriteManifests $v }
         "uv"      {
             if ($env:TB_WHEEL -and (Test-Path $env:TB_WHEEL)) {
-                $script:FEATURES = Get-YamlField $manifest "features" "core cli"
+                # Keep what the installation was made with: the one manifest writer
+                # (Phase-WriteManifests) rewrites the file from these variables.
+                $script:SOURCE_FROM   = Get-YamlField $manifest "source_from" $SOURCE_FROM
+                $script:SOURCE_BRANCH = Get-YamlField $manifest "source_branch" $SOURCE_BRANCH
+                $script:FEATURES = ((Get-YamlField $manifest "features" "core cli") -split " " |
+                    Where-Object { $_ -and ($_ -notmatch "^(core|mini)$") }) -join " "
+                $optInstalled = (Get-YamlField $manifest "optional_installed" "") -split " "
+                if ($optInstalled -contains "nginx")    { $script:OPT_NGINX    = $true }
+                if ($optInstalled -contains "docker")   { $script:OPT_DOCKER   = $true }
+                if ($optInstalled -contains "ollama")   { $script:OPT_OLLAMA   = $true }
+                if ($optInstalled -contains "minio")    { $script:OPT_MINIO    = $true }
+                if ($optInstalled -contains "registry") { $script:OPT_REGISTRY = $true }
                 $v = Install-Uv
                 Phase-WriteManifests $v
                 Log "Updated via uv from wheel"
+                JDone $v $INSTALL_PATH ""
             } else {
                 & $UV_BIN tool upgrade ToolBoxV2; Log "Updated via uv"
             }
@@ -885,7 +905,15 @@ switch ($ACTION) {
 
         Print-Summary $tbVersion
     }
-    "update"    { Phase-Discovery; Phase-Config; Action-Update }
+    "update"    {
+        JLog "discovery" "start" "running" "Detecting system" 2
+        Phase-Discovery
+        # -Update without -Path: the installation discovery found (one rule)
+        if (-not $INSTALL_PATH) { $script:INSTALL_PATH = $script:FOUND_INSTALL }
+        if (-not $INSTALL_PATH) { Fail "No installation found to update (use -Path)" }
+        JLog "install" "start" "running" "Updating ToolBoxV2" 8
+        Action-Update
+    }
     "uninstall" { Phase-Discovery; Action-Uninstall }
 }
 

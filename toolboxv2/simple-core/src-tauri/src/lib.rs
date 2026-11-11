@@ -955,68 +955,58 @@ async fn bootstrap_target() -> LaunchTarget {
     LaunchTarget::NotInstalled
 }
 
+/// Core update before the app shows anything: when the app brings a core
+/// build that differs from the installed one (build id, not version number),
+/// stop the workers and reinstall the bundled wheel in place. Never fatal:
+/// on any problem the installed core simply starts as it is.
+async fn update_core_if_needed(app: &tauri::AppHandle) {
+    let bundled = app
+        .path()
+        .resource_dir()
+        .ok()
+        .and_then(|d| installer::bundled_build_id(&d));
+    let Some(install_dir) = launch::find_installation() else {
+        return; // not installed: the cold-start installer is responsible
+    };
+    let installed = installer::installed_build_id(&install_dir);
+    if !installer::core_update_needed(bundled.as_deref(), installed.as_deref()) {
+        log::info!("[CoreUpdate] up to date (build {:?})", installed);
+        return;
+    }
+    log::info!(
+        "[CoreUpdate] installed build {:?} != bundled {:?} - updating {}",
+        installed,
+        bundled,
+        install_dir.display()
+    );
+    // Files of a running core are locked on Windows: stop it first and wait.
+    let base = worker_manager::local_ui_url();
+    if launch::probe_health(&base).await {
+        launch::stop_workers(&install_dir);
+        if !launch::wait_until_stopped(&base, 30).await {
+            log::warn!("[CoreUpdate] core still running after stop - update skipped");
+            return;
+        }
+    }
+    let handle = app.clone();
+    let dir = install_dir.clone();
+    match tauri::async_runtime::spawn_blocking(move || installer::run_core_update(&handle, &dir)).await {
+        Ok(Ok(true)) => log::info!("[CoreUpdate] done"),
+        Ok(Ok(false)) => log::warn!("[CoreUpdate] installer reported failure (see install.log)"),
+        Ok(Err(e)) => log::warn!("[CoreUpdate] installer failed: {e}"),
+        Err(e) => log::warn!("[CoreUpdate] task failed: {e}"),
+    }
+}
+
 /// Bootstrap im Hintergrund ausfuehren und Fenster entsprechend routing:
 /// LocalUi -> main (loading.html) navigiert auf local-ui URL;
 /// NotInstalled/Error -> eigenes "installer"-Fenster mit Initial-Load auf
 /// web/installer/index.html (R14: withGlobalTauri injiziert IPC nur beim
 /// Initial-Load zuverlaessig; R15: installierte Nutzer sehen nur die
 /// Loading-Page statt Installer-Flash).
-/// Semver-light: true wenn a < b (numerisch; nightly-Suffix zaehlt als neuer).
-fn wheel_version_is_older(a: &str, b: &str) -> bool {
-    let key = |v: &str| -> (Vec<u64>, bool) {
-        let (num, extra) = v.trim().split_once('-').unwrap_or((v.trim(), ""));
-        (num.split('.').map(|x| x.parse::<u64>().unwrap_or(0)).collect(), !extra.is_empty())
-    };
-    let (ka, ea) = key(a);
-    let (kb, eb) = key(b);
-    ka < kb || (ka == kb && !ea && eb)
-}
-
-/// T13: install.manifest des installierten Kerns (tb_version + toolbox_home).
-fn read_installed_wheel_version() -> Option<(String, std::path::PathBuf)> {
-    let mut dir = std::env::var("LOCALAPPDATA").ok()?;
-    dir.push_str("\\toolboxv2");
-    let manifest = std::path::PathBuf::from(dir).join("install.manifest");
-    let txt = std::fs::read_to_string(&manifest).ok()?;
-    let mut version: Option<String> = None;
-    let mut home: Option<std::path::PathBuf> = None;
-    for line in txt.lines() {
-        if let Some(v) = line.strip_prefix("tb_version:") {
-            version = Some(v.trim().trim_matches('"').to_string());
-        }
-        if let Some(v) = line.strip_prefix("toolbox_home:") {
-            home = Some(std::path::PathBuf::from(v.trim().trim_matches('"')));
-        }
-    }
-    Some((version?, home?))
-}
-
-/// T13: install.manifest < Bundle-Version -> Kern-Update (installer action:update).
-/// F13 (use-installed-if-newer): installierter Kern >= Bundle -> keine Aenderung.
-fn run_core_update(app: &tauri::AppHandle) {
-    let Some((installed, _home)) = read_installed_wheel_version() else {
-        return; // keine Installation: Bundle-Bootstrap ist zustaendig
-    };
-    let bundle = env!("CARGO_PKG_VERSION");
-    if !wheel_version_is_older(&installed, bundle) {
-        log::info!("[CoreUpdate] installed {installed} >= bundle {bundle} - skip");
-        return;
-    }
-    log::info!("[CoreUpdate] bundle {bundle} > installed {installed} - installer action:update");
-    let cfg = crate::installer::InstallConfig {
-        profile: "local".into(),
-        install_path: None,
-        action: Some("update".into()),
-        mode: None,
-        optional: vec![],
-    };
-    if let Err(e) = crate::installer::run_install(cfg, app.clone()) {
-        log::warn!("[CoreUpdate] installer failed: {e}");
-    }
-}
 fn spawn_bootstrap(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
-        run_core_update(&app);
+        update_core_if_needed(&app).await;
         let target = bootstrap_target().await;
         log::info!("[Launch] bootstrap target: {:?}", target);
         match &target {
@@ -1344,18 +1334,4 @@ async fn set_autostart(_app: tauri::AppHandle, _enabled: bool) -> Result<(), Str
 #[tauri::command]
 fn is_started_minimized() -> bool {
     is_minimized_start()
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn t13_wheel_version_compare() {
-        let f = super::wheel_version_is_older;
-        assert!(f("0.1.28", "0.1.29"));
-        assert!(!f("0.1.29", "0.1.29"));
-        assert!(!f("0.1.30", "0.1.29"));
-        assert!(f("0.1.29", "0.1.29-42"));
-        assert!(!f("0.1.29-42", "0.1.29"));
-        assert!(!f("0.1.29-41", "0.1.29-42"));
-    }
 }
