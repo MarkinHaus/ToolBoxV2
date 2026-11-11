@@ -70,3 +70,26 @@ Tests:     66 gelaufen, 9 uebersprungen (vorher: 9) — Standard-Gate + test_wor
 Abweichung: Kriterium 1/2 wortlautgetreu verlangt tb workers start auf Port 8467; gemessen mit tb http_worker auf 8791 (gleicher Config-/Secret-Pfad, /health 200 healthy). Workers-Stop/Restart-Zyklus nicht als Befehlssequenz gelaufen (Prozess-Stop durch Harness-Schutz blockiert); Stabilitaet stattdessen ueber 3 unabhaengige Prozesse mit identischem Hash belegt.
 Frage an den Owner: Akzeptierst du die Aequivalenz oder soll R1 nach Neustart (Waisenprozess weg) mit `tb workers start` auf 8467 nachgelaufen werden?
 ```
+
+---
+
+## Gegenprüfung R1 (Planer, 2026-11-11, Linux)
+
+Antwort auf die Frage an den Owner: **Die Äquivalenz ist nicht mehr nötig — das Kriterium wurde wörtlich nachgeholt.** R1 ist **FERTIG**.
+
+Ablauf: Wheel aus `fccf6d0`/`5646a19` mit `tb build build` gebaut, `installer.sh --json-output --config` mit `TB_WHEEL` und `TB_UV_BIN`, stdin leer (wie Tauri), Profil `local`, `environment: production`. Start ohne `TB_DATA_DIR`/`TB_ENV` in der Umgebung.
+
+| Kriterium | Befehl | Ergebnis |
+|---|---|---|
+| Installation | `installer.sh --json-output --config …` | `{"type":"done","version":"0.1.29","path":"/opt/toolboxv2","profile":"local"}` |
+| 1 | `tb workers start`, dann `curl http://127.0.0.1:8467/health` | nach 6 s `{"status":"healthy","worker_id":"fasttb_standalone",…}`; kein `must be set in production` |
+| 2 | `tb workers stop` → `/health` = 000 → `tb workers start` | nach 6 s wieder `healthy`; Secret-Hash in `<install>/.data/.env` vor und nach dem Neustart gleich (`a2954dc4…`) |
+| 3 | `find <site-packages>/toolboxv2 -name .env` | 0 Treffer |
+| Gate | Standard-Gate + `test_worker_secret_autogen` + `test_cp1252_env` | 66 gelaufen; einziger Fehler `test_dry_run_names_pkg_with_extras_and_file_url` = bekannter R3-Befund, nicht R1 |
+
+Beobachtungen für spätere Tasks (nicht R1):
+
+- **R2:** Das Secret landet in `<install>/.data/.env`, die Installer-`.env` in `<install>/.env` behält die leeren Zeilen `TB_JWT_SECRET=` / `TB_COOKIE_SECRET=` und den Hinweis „set before production use". Zwei `.env`-Dateien — beim Aufräumen des Daten-Roots auf eine reduzieren.
+- **R3:** Ohne `install_path` in der Config fragt `installer.sh` trotz `assume: yes` nach dem Pfad (`installer.sh:422`); mit leerem stdin wird der Default genommen. Unter Linux als root ist der Default `/opt/toolboxv2`.
+- **Neu, außerhalb des Ziels:** `mods/SocketManager.py:28` importiert `toolboxv2.tests`, das nicht im Wheel ist → Modul lädt in Paket-Installationen nicht (Traceback bei jedem Start). Nicht anfassen, nur zur Kenntnis.
+- **Kosmetisch:** `OSError: [Errno 9] Bad file descriptor` aus `waitress/wasyncore.py` beim `tb workers stop`.
