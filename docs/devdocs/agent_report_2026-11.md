@@ -131,3 +131,21 @@ Seiteneffekte: installer.rs aendert config_to_yaml-Ausgabe (Desktop-Profil bekom
 Abweichung: cargo test fuer installer.rs nicht gelaufen (kein cargo auf Host) - rs-Test-Assert angepasst, kompiliert nicht gegenprueft; install.manifest-Echtrun mit installer.ps1 -JsonOutput aus Zeitgruenden nicht gelaufen (Quelltext-Kriterium 2 wortgetreu erfuellt, Kriterium 1 Echtrun steht aus)
 Frage an den Owner: Soll der Echtrun installer.ps1 -JsonOutput (Kriterium 1) auf diesem Host nachgeholt werden oder laeuft er in der CI (build.yml)?
 `
+
+---
+
+## Gegenprüfung R1–R3 (Planer, 2026-11-11, Linux, Stand `d6d3481`)
+
+Ablauf: Wheel aus HEAD (`tb build build`), `installer.sh --json-output --config` mit `TB_WHEEL`/`TB_UV_BIN`, stdin leer, Profil `local`, `tb_features: cli,web,isaa,desktop`, `environment: production`; danach `tb workers start`, `start_app isaa/obs`, `tb workers stop`, erneuter Start. Tests: Gate + `test_data_root`, `test_env_single_file`, `test_config_wizard`, `test_manifest_converter`, `test_wizard_e2e_http` → alle grün (146 + 64 + 18).
+
+| Task | Urteil | Befund |
+|---|---|---|
+| R3 | **FERTIG** (Rust-Teil NICHT VERIFIZIERT) | `install.manifest` → `features: "mini core cli web isaa desktop"`, Paket `ToolBoxV2[cli,web,isaa,desktop]`, keine Pfad-Frage. `cargo test` lief nicht |
+| R1 | **NICHT FERTIG — Sicherheitslücke** | siehe 1–3 |
+| R2 | **NICHT FERTIG** | siehe 4–5 |
+
+1. **Secret = Kommentartext (kritisch).** In der Anordnung, in der die Installer-`.env` auch die Kern-`.env` ist (Windows: beide `%LOCALAPPDATA%\toolboxv2`; nachgestellt mit `TB_INSTALL_DIR=<install>`), liefert `ensure_secret()` den String `'# REQUIRED: set before production use'`. Ursache: Die Installer-Zeile lautet `TB_JWT_SECRET=                    # REQUIRED: set before production use`; `config_wizard.load_existing_env` entfernt Inline-Kommentare nicht und liest den Kommentar als Wert; `ensure_secret` hält ihn für ein vorhandenes Secret. Folge: identisches, öffentlich bekanntes Cookie-/JWT-Secret auf jeder Installation. Die „SHA-256 stabil"-Belege vergleichen die unveränderte Zeile, nicht ein erzeugtes Secret.
+2. **Weitere `.env`-Ladepunkte bestehen.** `load_dotenv()` ohne Pfad (sucht aufwärts ab der Datei und findet die Installer-`.env`): `mods/DB/tb_adapter.py:20`, `utils/toolbox.py:45`, `utils/security/cryp.py:21`, `utils/workers/server_worker.py:3222`. Das R1-Kriterium per `git grep '"\.env"'` erfasst diese nicht.
+3. **Zwei Regeln für den Installationsordner.** Installer-Default als root unter Linux: `/opt/toolboxv2`; `_state_dir.user_state_dir()`: `~/.local/share/toolboxv2`. Ergebnis im Lauf: zwei `.env` (`/opt/toolboxv2/.env` vom Installer, `~/.local/share/toolboxv2/.env` mit dem Secret). Unter Windows fallen beide zusammen; die Regel ist trotzdem doppelt.
+4. **`.data/.data` besteht weiter:** `<install>/.data/.data/main-vm/{isaa_ui,Memory,Agents,uploads,system_logs.db}`. Ursache: Die Installer-`.env` setzt `TB_DATA_DIR=<install>/.data`, `data_root()` übernimmt den Wert wörtlich, `App.__init__` (`utils/toolbox.py` ~:130) hängt `.data/<id>` an.
+5. **`site-packages` wird weiter beschrieben:** `<site-packages>/toolboxv2/.config/mainTool/_main.json`.
