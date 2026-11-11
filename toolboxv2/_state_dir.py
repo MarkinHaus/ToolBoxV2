@@ -41,11 +41,29 @@ def env_file() -> Path:
     """
     if is_packaged_install():
         return user_state_dir() / ".env"
-    tb = sys.modules.get("toolboxv2")
-    root = getattr(tb, "tb_root_dir", None)
-    if root is not None:
-        return Path(root).parent / ".env"
+    # source checkout: _state_dir.py lives in <repo>/toolboxv2/ -> repo root
     return Path(__file__).resolve().parent.parent / ".env"
+
+
+def data_root() -> Path:
+    """R2 (V3): THE one data root (single rule).
+
+    TB_DATA_DIR wins verbatim -- it is ALREADY the data dir (Docker mount
+    /data is mounted to it directly). packaged -> user_state_dir()/.data,
+    source -> tb_root_dir/.data. Never append another .data leaf.
+    """
+    env = os.environ.get("TB_DATA_DIR", "").strip()
+    if env:
+        return Path(env)
+    if is_packaged_install():
+        return user_state_dir() / ".data"
+    # source checkout: _state_dir.py lives in <repo>/toolboxv2/ -> repo root
+    return Path(__file__).resolve().parent.parent / ".data"
+
+
+def info_dir() -> Path:
+    """R2 (V3): .info lives inside the data root (pids, device key, services)."""
+    return data_root() / ".info"
 
 
 def ensure_user_data_env() -> None:

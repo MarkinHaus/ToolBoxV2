@@ -402,7 +402,8 @@ def _fetch_service_status() -> dict:
     """Read PID files from service_manager, check liveness."""
     try:
         from toolboxv2 import tb_root_dir
-        pids_dir = tb_root_dir / ".info" / "pids"
+        from toolboxv2._state_dir import info_dir
+        pids_dir = info_dir() / "pids"
     except Exception:
         return {}
     if not pids_dir.exists():

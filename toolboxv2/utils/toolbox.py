@@ -74,8 +74,9 @@ class App(AppType, metaclass=Singleton):
 
         self.bg_tasks = []
 
-        # ponytail: prefix file follows TB_DATA_DIR like the other dirs.
-        lapp = os.path.join(os.getenv("TB_DATA_DIR") or dir_name, ".data")
+        # R2 (V3): prefix file lives in THE data root (no second rule)
+        from toolboxv2._state_dir import data_root as _data_root_fn
+        lapp = str(_data_root_fn())
         _prefix_file = os.path.join(lapp, "last-app-prefix.txt")
 
         if not prefix:
@@ -113,13 +114,14 @@ class App(AppType, metaclass=Singleton):
         #    package dir. ponytail: one base var, proper os.path.join. Default
         #    stays start_dir so existing installs are unchanged; the <id> leaf
         #    is preserved so downstream `info_dir.replace(app.id, '')` still works.
-        _data_root = os.getenv("TB_DATA_DIR") or self.start_dir
+        from toolboxv2._state_dir import data_root as _data_root_fn
+        _data_root = str(_data_root_fn())
         if "test" in prefix:
             if self.system_flag == "Darwin" or self.system_flag == "Linux":
                 start_dir = self.start_dir.replace("ToolBoxV2/toolboxv2", "toolboxv2")
             else:
                 start_dir = self.start_dir.replace("ToolBoxV2\\toolboxv2", "toolboxv2")
-            _root = os.getenv("TB_DATA_DIR") or start_dir
+            _root = str(_data_root_fn())
             self.data_dir = os.path.join(_root, ".data", "test")
             self.config_dir = os.path.join(_root, ".config", "test")
             self.info_dir = os.path.join(_root, ".info", "test")
@@ -150,10 +152,12 @@ class App(AppType, metaclass=Singleton):
 
         self.print(f"Starting ToolBox as {prefix} from :", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
-        pid_file = os.path.join(f"{self.start_dir}",".info","pids",f"{args.modi}-{self.REFIX}.pid")
+        from toolboxv2._state_dir import info_dir as _info_dir_fn
+        pids_root = os.path.join(str(_info_dir_fn()), "pids")
+        pid_file = os.path.join(pids_root, f"{args.modi}-{self.REFIX}.pid")
         app_pid = str(os.getpid())
-        if not os.path.exists(os.path.join(f"{self.start_dir}",".info","pids")):
-            os.makedirs(os.path.join(f"{self.start_dir}",".info","pids"), exist_ok=True)
+        if not os.path.exists(pids_root):
+            os.makedirs(pids_root, exist_ok=True)
         with open(pid_file, "w", encoding="utf8") as f:
             f.write(app_pid)
 

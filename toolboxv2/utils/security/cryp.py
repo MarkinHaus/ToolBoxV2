@@ -40,7 +40,8 @@ def get_or_create_device_key():
     DEVICE_KEY_DIR = os.getenv("DEVICE_KEY_DIR", None)
     if DEVICE_KEY_DIR is None:
         from toolboxv2 import tb_root_dir
-        DEVICE_KEY_DIR = str(tb_root_dir / ".info")
+        from toolboxv2._state_dir import info_dir
+        DEVICE_KEY_DIR = str(info_dir())
     DEVICE_KEY_PATH = os.path.join(DEVICE_KEY_DIR, "device.enc")
 
     def ensure_device_key_dir_exists():
