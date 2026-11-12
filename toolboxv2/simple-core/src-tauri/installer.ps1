@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env pwsh
+﻿﻿#!/usr/bin/env pwsh
 
 # ============================================================
 # ToolBoxV2 Installer v1.0.1 — Windows (PowerShell 5+)
@@ -292,6 +292,12 @@ function Phase-Config {
         if ($Config) { $script:tbFeaturesCfg = Get-YamlField $Config "tb_features" "" }
         if ($script:tbFeaturesCfg) { $script:FEATURES = ($script:tbFeaturesCfg -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join " " }
         $script:AssumeYes     = $AssumeYes
+    }
+
+    # B3-R9: kein Pfad angegeben -> Default wie installer.sh (os_default_path)
+    if (-not $INSTALL_PATH) {
+        $script:INSTALL_PATH = Join-Path $env:LOCALAPPDATA "toolboxv2"
+        Info "No install path given - using default: $INSTALL_PATH"
     }
 
     # 1. Install path

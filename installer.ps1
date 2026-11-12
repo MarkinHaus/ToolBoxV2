@@ -294,6 +294,12 @@ function Phase-Config {
         $script:AssumeYes     = $AssumeYes
     }
 
+    # B3-R9: kein Pfad angegeben -> Default wie installer.sh (os_default_path)
+    if (-not $INSTALL_PATH) {
+        $script:INSTALL_PATH = Join-Path $env:LOCALAPPDATA "toolboxv2"
+        Info "No install path given - using default: $INSTALL_PATH"
+    }
+
     # 1. Install path
     Info "Checking install path: $INSTALL_PATH"
     Check-DiskSpace $INSTALL_PATH
