@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 
 # ============================================================
 # ToolBoxV2 Installer v1.0.1 — Windows (PowerShell 5+)

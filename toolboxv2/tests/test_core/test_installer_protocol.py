@@ -103,6 +103,25 @@ class TestInstallerProtocol(unittest.TestCase):
                          "src-tauri/installer.sh drifted from installer.sh")
 
 
+class TestPowerShellInstallerCopies(unittest.TestCase):
+    """installer.ps1 exists twice: repo root and the copy Tauri bundles. The app
+    ships the copy, so a fix made only in the root file never reaches users."""
+
+    PS1 = ROOT / "installer.ps1"
+    PS1_TAURI = ROOT / "toolboxv2" / "simple-core" / "src-tauri" / "installer.ps1"
+
+    def test_tauri_bundle_copy_in_sync(self):
+        self.assertEqual(self.PS1.read_bytes(), self.PS1_TAURI.read_bytes(),
+                         "src-tauri/installer.ps1 drifted from installer.ps1")
+
+    def test_utf8_bom_present(self):
+        """Windows PowerShell 5.1 (what the Tauri app runs) reads a script without
+        a BOM as ANSI; the file contains non-ASCII characters, so it needs the BOM."""
+        raw = self.PS1.read_bytes()
+        self.assertTrue(any(b > 127 for b in raw[3:]), "file is pure ASCII - BOM rule obsolete")
+        self.assertEqual(b"\xef\xbb\xbf", raw[:3], "installer.ps1 lost its UTF-8 BOM")
+
+
 class TestOnboardingUiSingleSource(unittest.TestCase):
     def test_web_copy_matches_tauri_bundle(self):
         web = ROOT / "toolboxv2" / "web" / "installer" / "index.html"
