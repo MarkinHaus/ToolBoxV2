@@ -528,6 +528,21 @@ jobs:
           prerelease: true
           args: ${{ matrix.args }}
 
+      # Every run keeps its installers as a downloadable artifact, so a branch or
+      # pull-request build can be installed and tested before anything is released.
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: simplecore-${{ matrix.target_triple }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            toolboxv2/simple-core/src-tauri/target/**/release/bundle/nsis/*.exe
+            toolboxv2/simple-core/src-tauri/target/**/release/bundle/msi/*.msi
+            toolboxv2/simple-core/src-tauri/target/**/release/bundle/dmg/*.dmg
+            toolboxv2/simple-core/src-tauri/target/**/release/bundle/deb/*.deb
+            toolboxv2/simple-core/src-tauri/target/**/release/bundle/appimage/*.AppImage
+
   # ============================================================================
   # ANDROID BUILD TEST (Tauri Mobile)
   # ============================================================================
