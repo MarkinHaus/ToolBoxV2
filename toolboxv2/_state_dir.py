@@ -100,6 +100,11 @@ def info_dir() -> Path:
     return state_root() / ".info"
 
 
+def pids_dir() -> Path:
+    """<state root>/.info/pids -- PID-Dateien fuer Services/Hintergrund-Apps."""
+    return info_dir() / "pids"
+
+
 def ensure_user_data_env() -> None:
     """F6-Hook: bei Paket-Installationen .data/.config in den Nutzerordner lenken.
 

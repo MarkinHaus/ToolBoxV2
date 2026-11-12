@@ -145,3 +145,5 @@ ENV/
 /toolboxv2/package-lock.json
 /toolboxv2/web/package-lock.json
 /toolboxv2/minio_cluster_config.json
+
+toolboxv2/features/exotic/requirements.txt

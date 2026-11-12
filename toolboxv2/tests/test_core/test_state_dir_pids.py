@@ -52,10 +52,12 @@ class TestPidsDir(unittest.TestCase):
         self.assertNotIn('abspath + "\\\\.info', src,
                          "__main__ baut .info noch aus Paket-abspath")
         self.assertIn("pids_dir", src)
+        compile(src, "__main__.py", "exec")
         gca = (Path(toolboxv2.__file__).parent / "utils" / "system" / "getting_and_closing_app.py").read_text(encoding="utf-8")
         self.assertNotIn("{app.start_dir}", gca.split("pid_file")[1][:100])
 
 
 if __name__ == "__main__":
     unittest.main()
+
 

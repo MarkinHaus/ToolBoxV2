@@ -38,8 +38,8 @@ function HttpGet {
     $r = @{ code = 0; body = "" }
     try {
         $req = [System.Net.HttpWebRequest]::Create($Url)
-        $req.Timeout = 5000
-        $req.ReadWriteTimeout = 5000
+        $req.Timeout = 15000
+        $req.ReadWriteTimeout = 15000
         $resp = $req.GetResponse()
         $r.code = [int]$resp.StatusCode
         $sr = New-Object System.IO.StreamReader($resp.GetResponseStream())

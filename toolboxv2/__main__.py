@@ -1482,7 +1482,7 @@ async def setup_app(ov_name=None, App=TbApp):
 
     data_folder = abspath + "\\.data\\"
     config_folder = abspath + "\\.config\\"
-    info_folder = str(info_dir()) + "\"
+    info_folder = str(info_dir()) + "\\"
 
     os.makedirs(info_folder, exist_ok=True)
 
@@ -1528,7 +1528,7 @@ async def setup_app(ov_name=None, App=TbApp):
         )
 
     abspath = os.path.dirname(os.path.abspath(__file__))
-    info_folder = str(pids_dir()) + "\"
+    info_folder = str(pids_dir()) + "\\"
     os.makedirs(info_folder, exist_ok=True)
     if not args.sysPrint and not (
         args.debug or args.background_application_runner or args.install or args.kill
@@ -1752,7 +1752,7 @@ async def main(App=TbApp, do_exit=True):
     __version__ = get_version_from_pyproject()
 
     abspath = os.path.dirname(os.path.abspath(__file__))
-    info_folder = str(pids_dir()) + "\"
+    info_folder = str(pids_dir()) + "\\"
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
 
     # =================== FIX: Manifest-Aware Auto-Login ===================
