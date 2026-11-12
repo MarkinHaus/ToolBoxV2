@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env pwsh
+#!/usr/bin/env pwsh
 
 # ============================================================
 # ToolBoxV2 Installer v1.0.1 — Windows (PowerShell 5+)
@@ -94,6 +94,7 @@ $INSTALL_PATH     = $Path
 $ENVIRONMENT      = "development"
 $INSTANCE_ID      = "tbv2_main"
 $FEATURES         = "core cli"
+$script:tbFeaturesCfg = ""   # R9-BUG1: StrictMode-Default, wird evtl. von Config ueberschrieben
 $OPT_NGINX        = $false
 $OPT_DOCKER       = $false
 $OPT_OLLAMA       = $false
@@ -235,9 +236,14 @@ function Phase-Discovery {
         Write-Host ""
         if ($ACTION -eq "install") {
             if ($AssumeYes -eq "yes") {
-                $script:ACTION       = "update"
-                $script:INSTALL_PATH = $foundInstalls[0]
-                Info "assume=yes -> updating existing installation at $INSTALL_PATH"
+                # R9-BUG2: expliziter -Path gewinnt; nur ohne -Path auf bestehende Installation updaten
+                if ($INSTALL_PATH) {
+                    Info "assume=yes with explicit -Path -> fresh install at $INSTALL_PATH"
+                } else {
+                    $script:ACTION       = "update"
+                    $script:INSTALL_PATH = $foundInstalls[0]
+                    Info "assume=yes -> updating existing installation at $INSTALL_PATH"
+                }
             } else {
                 if (Confirm-User "Update existing installation?") {
                     $script:ACTION       = "update"
@@ -278,13 +284,13 @@ function Phase-Config {
         $script:OPT_OLLAMA    = (Get-YamlField $Config "optional.ollama"          "false") -eq "true"
         $script:OPT_MINIO     = (Get-YamlField $Config "optional.minio"           "false") -eq "true"
         $script:OPT_REGISTRY  = (Get-YamlField $Config "optional.registry"        "false") -eq "true"
-        if (-not $AssumeYes)  { $AssumeYes = Get-YamlField $Config "assume" "" }   # yes|no|""(ask)
+        if (-not $AssumeYes)  { $script:AssumeYes = Get-YamlField $Config "assume" "" }   # yes|no|""(ask)
         if (-not $TbProfile)  { $script:TbProfile = Get-YamlField $Config "profile" "" }
         if (-not $Ui)         { $script:Ui        = Get-YamlField $Config "ui" "" }
         # T5/F1: Config-Schluessel tb_features (kommagetrennt) ueberschreibt FEATURES
-        $tbFeaturesCfg = ""
-        if ($Config) { $tbFeaturesCfg = Get-YamlField $Config "tb_features" "" }
-        if ($tbFeaturesCfg) { $script:FEATURES = ($tbFeaturesCfg -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join " " }
+        $script:tbFeaturesCfg = ""
+        if ($Config) { $script:tbFeaturesCfg = Get-YamlField $Config "tb_features" "" }
+        if ($script:tbFeaturesCfg) { $script:FEATURES = ($script:tbFeaturesCfg -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join " " }
         $script:AssumeYes     = $AssumeYes
     }
 
@@ -441,7 +447,7 @@ function Invoke-InteractiveConfig {
     Write-Host ""
     Write-Host "  Included (always): mini core"
     $selFeatures = $FEATURES
-    if ($AssumeYes -eq "yes" -and -not $tbFeaturesCfg) {
+    if ($AssumeYes -eq "yes" -and -not $script:tbFeaturesCfg) {
         # R3: non-interactive ohne tb_features in Config -> bekannte Module aktivieren
         foreach ($feat in $MODULES_OPTIONAL) {
             if ($selFeatures -notmatch "\b${feat}\b") { $selFeatures += " $feat" }
@@ -617,7 +623,7 @@ function Install-Uv {
     Add-BinToPath "$INSTALL_PATH\bin" | Out-Null
 
     # Version straight from uv (tb --version needs a booted app)
-    $uvOut = & $UV_BIN tool list 2>&1 | ForEach-Object { "$_" }   # IB1: stderr-safe (PS5.1 NativeCommandError)
+    $uvOut = & cmd /c "`"$UV_BIN`" tool list 2>&1"   # IB2: stderr-merge; Zeilen-Array (kein Out-String: ^-Regex je Zeile)
     $line = $uvOut | Where-Object { $_ -match '^toolboxv2\s+v?([\d\.]+)' } | Select-Object -First 1
     if ($line -and ($line -match '^toolboxv2\s+v?([\d\.]+)')) { return $Matches[1] }
     return "unknown"
@@ -685,7 +691,7 @@ function Install-Source {
     }
     Pop-Location
 
-    $ver = (& "$INSTALL_PATH\bin\tb.cmd" --version 2>&1 | ForEach-Object { "$_" }) -replace "[^\d\.]","" | Select-Object -First 1
+    $ver = (& cmd /c "`"$INSTALL_PATH\bin\tb.cmd`" --version 2>&1") -replace "[^\d\.]","" | Where-Object { $_ } | Select-Object -First 1
     $result = "dev"
     if ($ver) { $result = $ver }
     return $result
@@ -873,9 +879,9 @@ switch ($ACTION) {
     "install" {
         JLog "discovery" "start" "running" "Detecting system" 2
         Phase-Discovery
-        Invoke-InteractiveConfig
         JLog "config" "start" "running" "Loading configuration" 4
         Phase-Config
+        Invoke-InteractiveConfig
         JLog "preflight" "start" "running" "Checking prerequisites" 6
         Phase-Preflight
         JLog "install" "start" "running" "Installing ToolBoxV2 ($INSTALL_MODE)" 8
