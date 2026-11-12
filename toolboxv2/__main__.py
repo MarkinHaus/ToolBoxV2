@@ -2624,6 +2624,10 @@ def main_runner():
                         return
 
                 elif runner_name and not app.alive and runner_name != "default":
+                    # `tb --version` prints the version and closes the app inside
+                    # main(); there is nothing left to run, and no runner to start.
+                    if any(a in sys.argv for a in ("-v", "--version", "--get-version")):
+                        return
                     if not '-bg' in sys.argv:
                         raise ValueError(f"FIX DAS SOFORT WENN RUNNER {runner_name} muss {app.alive=} == TRUE sein")
                     await app.a_exit()
