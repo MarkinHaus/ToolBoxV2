@@ -21,6 +21,7 @@ import sys
 exit = sys.exit
 
 from toolboxv2 import tb_root_dir, _feature_enabled
+from toolboxv2._state_dir import info_dir, pids_dir
 from toolboxv2.utils.system.feature_manager import FeatureManager
 
 from toolboxv2.flows import flows_dict as flows_dict_func
@@ -1481,7 +1482,7 @@ async def setup_app(ov_name=None, App=TbApp):
 
     data_folder = abspath + "\\.data\\"
     config_folder = abspath + "\\.config\\"
-    info_folder = abspath + "\\.info\\"
+    info_folder = str(info_dir()) + "\"
 
     os.makedirs(info_folder, exist_ok=True)
 
@@ -1527,7 +1528,7 @@ async def setup_app(ov_name=None, App=TbApp):
         )
 
     abspath = os.path.dirname(os.path.abspath(__file__))
-    info_folder = abspath + "\\.info\\pids\\"
+    info_folder = str(pids_dir()) + "\"
     os.makedirs(info_folder, exist_ok=True)
     if not args.sysPrint and not (
         args.debug or args.background_application_runner or args.install or args.kill
@@ -1751,7 +1752,7 @@ async def main(App=TbApp, do_exit=True):
     __version__ = get_version_from_pyproject()
 
     abspath = os.path.dirname(os.path.abspath(__file__))
-    info_folder = abspath + "\\.info\\pids\\"
+    info_folder = str(pids_dir()) + "\"
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
 
     # =================== FIX: Manifest-Aware Auto-Login ===================
