@@ -14,6 +14,11 @@ MUST_IGNORE = [
     "toolboxv2/features_packed/",                # Build-Output Feature-Packer
     "toolboxv2/features/isaa/.installed",        # Feature-Install-Marker
     "toolboxv2/features/cli/.installed",
+    # R8a: Rueckstaende des Wheel-Skripts / eines Worker-Starts
+    "toolboxv2/node_modules/",
+    "toolboxv2/package-lock.json",
+    "toolboxv2/web/package-lock.json",
+    "toolboxv2/minio_cluster_config.json",
 ]
 
 # Getrackte Dateien, die trotz aehnlicher Namen NICHT ignoriert werden duerfen:
@@ -39,7 +44,13 @@ def test_tracked_files_still_tracked():
         assert r.returncode != 0, f"getrackte Datei wuerde neu ignoriert: {p}"
 
 def test_tracked_ignored_baseline_frozen():
-    # Vor T2 bekannt ignoriert-getrackt: genau diese 3 Altlasten. Mehr = Regression.
+    # Bekannt ignoriert-getrackt: genau diese Altlasten. Mehr = Regression.
+    # wheels/.gitkeep seit R7 (dir-Marker unter dem ignorierten wheels/).
     ci = set(_git("ls-files", "-ci", "--exclude-standard").stdout.splitlines())
-    expected = {"init.config", "llm-gateway/data/config.json", "toolboxv2/tbjs/dist/tbjs.css"}
+    expected = {
+        "init.config",
+        "llm-gateway/data/config.json",
+        "toolboxv2/simple-core/src-tauri/wheels/.gitkeep",
+        "toolboxv2/tbjs/dist/tbjs.css",
+    }
     assert ci == expected, f"Baseline verschoben: neu={ci - expected}, weg={expected - ci}"

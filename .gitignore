@@ -139,3 +139,9 @@ ENV/
 /toolboxv2/.info/
 /toolboxv2/features_packed/
 /toolboxv2/features/*/.installed
+
+# R8a: Wheel-Skript-Rueckstaende + Worker-Laufzeit (build_wheel_for_tauri.sh)
+/toolboxv2/node_modules/
+/toolboxv2/package-lock.json
+/toolboxv2/web/package-lock.json
+/toolboxv2/minio_cluster_config.json
