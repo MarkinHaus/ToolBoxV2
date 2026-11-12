@@ -2827,17 +2827,105 @@ import re
 # Regex-Guardrail: Blockiert typische Kill-Kommandos als UX-Leitsystem (Word-Boundaries)
 import re
 DANGEROUS_KILL_PATTERN = re.compile(
-    r"\b(kill|pkill|killall|taskkill|tskill)\b|Stop-Process|\bGet-Process\b.*\|\s*Stop-Process",
+    r"\b(kill|pkill|killall|taskkill|tskill|spps)\b|Stop-Process|\bGet-Process\b.*\|\s*Stop-Process"
+    r"|\.Kill\(\)|\bwmic\b.*\b(delete|terminate)\b",
     re.IGNORECASE
 )
 
+def _harness_lineage() -> set:
+    """The harness process and EVERY ancestor of it (launcher exe, venv python
+    redirector, uv/tb wrapper, terminal shell, ...). Killing any of them — or
+    killing 'all children' of any of them — takes the harness down."""
+    pids = {os.getpid(), os.getppid(), HARNESS_PID, HARNESS_PPID}
+    try:
+        pids.update(p.pid for p in psutil.Process(os.getpid()).parents())
+    except (psutil.Error, OSError):
+        pass
+    return pids
+
+
 def _get_protected_pids() -> set:
     """Gibt alle PIDs zurück, die unter keinen Umständen gekillt werden dürfen."""
-    pids = {HARNESS_PID, HARNESS_PPID}
+    pids = _harness_lineage()
     for session in _session_store.values():
         if session.process and session.process.poll() is None:
             pids.add(session.process.pid)
     return pids
+
+
+def _session_owner(proc: "psutil.Process") -> Optional[str]:
+    """
+    Label of the shell session a process was started from, else None.
+
+    kill-process is scoped to those processes: (a) a descendant of a live
+    session shell, or (b) a detached / orphaned process that still carries the
+    session marker in its environment (set for every session shell and
+    inherited by everything started in it).
+    """
+    for s_label, sess in _session_store.items():
+        if not sess.process or sess.process.poll() is not None:
+            continue
+        try:
+            if any(a.pid == sess.process.pid for a in proc.parents()):
+                return s_label
+        except (psutil.Error, OSError):
+            continue
+    try:
+        env = proc.environ()
+    except (psutil.Error, OSError):
+        return None
+    marker = env.get("__TB_SESSION_ID__")
+    # a harness that itself runs inside a tb shell passes the marker on to
+    # all of its own helper processes — those are not session processes
+    if marker and marker != os.environ.get("__TB_SESSION_ID__"):
+        return env.get("__TB_SESSION_LABEL__") or "?"
+    return None
+
+
+def _kill_session_process(target_pid: int) -> dict:
+    """Kills ONE process + its subtree, if (and only if) that is safe."""
+    protected = _get_protected_pids()
+    if target_pid in protected:
+        return {
+            "pid": target_pid, "success": False, "error": "PROTECTED_PROCESS",
+            "stderr": f"PID {target_pid} belongs to the Agent Harness, one of its parent "
+                      f"processes or the active shell infrastructure and cannot be killed.",
+        }
+    try:
+        target_proc = psutil.Process(target_pid)
+        owner = _session_owner(target_proc)
+        if owner is None:
+            return {
+                "pid": target_pid, "success": False, "error": "NOT_A_SESSION_PROCESS",
+                "stderr": f"PID {target_pid} was not started from one of your shell sessions. "
+                          f"kill-process only terminates processes shown by 'list-processes'.",
+            }
+        target_children = target_proc.children(recursive=True)
+        # never tear down a subtree that contains the harness / a session shell
+        hit = sorted(c.pid for c in target_children if c.pid in protected)
+        if hit:
+            return {
+                "pid": target_pid, "success": False, "error": "PROTECTED_PROCESS",
+                "stderr": f"PID {target_pid} is a parent of protected process(es) {hit} "
+                          f"(Agent Harness / shell infrastructure) and cannot be killed.",
+            }
+        for sub in target_children:
+            try:
+                sub.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        target_proc.kill()
+        return {
+            "pid": target_pid, "success": True, "session": owner,
+            "info": f"Process {target_pid} and all sub-children were terminated.",
+        }
+    except psutil.NoSuchProcess:
+        return {"pid": target_pid, "success": False, "error": "PROCESS_NOT_FOUND",
+                "stderr": f"PID {target_pid} does not exist."}
+    except psutil.AccessDenied:
+        return {"pid": target_pid, "success": False, "error": "ACCESS_DENIED",
+                "stderr": f"Not permitted to kill PID {target_pid}."}
+
 
 def _shell_json(payload: dict) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
@@ -2852,6 +2940,7 @@ def _shell_float(value: Any, default: float) -> float:
 
 
 def shell_tool_function(
+    reason: str = "",
     command: Optional[str] = None,
     session_id: Optional[str] = "A",
     user_input: Optional[str] = None,
@@ -2897,8 +2986,11 @@ def shell_tool_function(
       (e.g., 'reset-session' for current session, or 'reset-session A').
     - 'list-processes': Lists all active subprocesses spawned across your
       sessions (returns PID, name, cmdline, status).
-    - 'kill-process <PID>': Safely terminates a specific process and its entire
-      subtree (e.g., 'kill-process 1234').
+    - 'kill-process <PID> [<PID> ...]': Safely terminates one or more processes
+      and their entire subtrees (e.g., 'kill-process 1234' or
+      'kill-process 1234 5678'). Only processes started from your shell
+      sessions (see 'list-processes') can be killed; the Agent Harness and
+      its parent processes are always refused.
 
     PROCESS TERMINATION RULES:
     - DO NOT execute raw OS kill commands (`pkill`, `kill`, `taskkill`, `killall`,
@@ -2908,6 +3000,7 @@ def shell_tool_function(
     - If a session is completely hung or unresponsive: Call 'reset-session'.
 
     Args:
+        reason: Reason for the action
         command: Shell command (may be multiline) or a Special Meta-Command.
                  None = poll the session for new output.
         session_id: 'A' | 'B' | 'C' (max 3 sessions, default 'A')
@@ -2995,44 +3088,28 @@ def shell_tool_function(
 
         return _shell_json({"success": True, "processes": processes})
 
-    # Gezielter und sicherer Kill
+    # Gezielter und sicherer Kill — ein oder mehrere PIDs:
+    #   kill-process 12 34 | kill-process 12, 34 | kill-process 12; kill-process 34
     if meta.split()[:1] == ["kill-process"]:
-        parts = meta.split()
-        if len(parts) < 2 or not parts[1].isdigit():
-            return json.dumps({"success": False, "error": "Usage: kill-process <PID>"}, ensure_ascii=False)
-
-        target_pid = int(parts[1])
-        protected = _get_protected_pids()
-
-        if target_pid in protected:
-            return json.dumps({
+        tokens = [t for t in re.split(r"[\s,;]+", meta) if t and t != "kill-process"]
+        if not tokens or not all(t.isdigit() for t in tokens):
+            return _shell_json({
                 "success": False,
-                "error": "PROTECTED_PROCESS",
-                "stderr": f"PID {target_pid} belongs to the Agent Harness or active shell infrastructure and cannot be killed."
-            }, ensure_ascii=False)
-
-        try:
-            target_proc = psutil.Process(target_pid)
-            target_children = target_proc.children(recursive=True)
-            for sub in target_children:
-                try:
-                    sub.kill()
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-            target_proc.kill()
-
-            return json.dumps({
-                "success": True,
-                "info": f"Process {target_pid} and all sub-children were terminated."
-            }, ensure_ascii=False)
-        except psutil.NoSuchProcess:
-            return json.dumps(
-                {"success": False, "error": "PROCESS_NOT_FOUND", "stderr": f"PID {target_pid} does not exist."},
-                ensure_ascii=False)
-        except psutil.AccessDenied:
-            return json.dumps(
-                {"success": False, "error": "ACCESS_DENIED", "stderr": f"Not permitted to kill PID {target_pid}."},
-                ensure_ascii=False)
+                "error": "Usage: kill-process <PID> [<PID> ...]",
+                "stderr": "kill-process is a meta-command: it takes only PIDs "
+                          "(e.g. 'kill-process 1234 5678') and cannot be combined "
+                          "with shell commands. Nothing was killed.",
+            })
+        results = [_kill_session_process(int(t)) for t in dict.fromkeys(tokens)]
+        if len(results) == 1:
+            single = dict(results[0])
+            single.pop("pid", None)
+            return json.dumps(single, ensure_ascii=False)
+        return _shell_json({
+            "success": all(r["success"] for r in results),
+            "killed": [r["pid"] for r in results if r["success"]],
+            "results": results,
+        })
 
     # -------------------------------------------------------------------------
     # 2. UX-GUARDRAIL (Blockiert rohe Kill-Befehle im Skript)
@@ -3043,7 +3120,7 @@ def shell_tool_function(
             "error": "RAW_KILL_FORBIDDEN",
             "stderr": (
                 "Direct process killing via shell commands is blocked to protect the Agent Harness. "
-                "Use 'list-processes' to view running tasks, 'kill-process <PID>' to terminate a specific process, "
+                "Use with in the shell as command : 'list-processes' to view running tasks, 'kill-process <PID>' to terminate a specific process, "
                 "or 'reset-session' if the session is completely hanging."
             )
         })

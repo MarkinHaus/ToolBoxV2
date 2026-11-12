@@ -299,6 +299,137 @@ class TestSessions(ShellToolTestCase):
         self.assertFalse(os.path.exists(path))
 
 
+@posix_only
+class TestKillProcess(ShellToolTestCase):
+    """kill-process must never be able to take the agent harness down."""
+
+    def _start_sleepers(self, n, label="A"):
+        sh(command="\n".join(["sleep 60 &"] * n), session_id=label)
+        pids = [p["pid"] for p in sh(command="list-processes")["processes"]
+                if p["name"] == "sleep" and p["session"] == label]
+        self.assertEqual(len(pids), n)
+        return pids
+
+    def test_multi_pid_exactly_as_the_agent_called_it(self):
+        import psutil
+        a, b, c = self._start_sleepers(3)
+        r = sh(command=f"kill-process {a}; kill-process {b}; kill-process {c}", session_id="C")
+        self.assertTrue(r["success"], r)
+        self.assertEqual(r["killed"], [a, b, c])
+        time.sleep(0.3)
+        for pid in (a, b, c):
+            self.assertFalse(psutil.pid_exists(pid) and
+                             psutil.Process(pid).status() != psutil.STATUS_ZOMBIE)
+
+    def test_multi_pid_other_separators(self):
+        a, b, c, d = self._start_sleepers(4)
+        self.assertEqual(sh(command=f"kill-process {a} {b}")["killed"], [a, b])
+        self.assertEqual(sh(command=f"kill-process {c}, {d}")["killed"], [c, d])
+
+    def test_mixed_results_are_reported_per_pid(self):
+        import os
+        (a,) = self._start_sleepers(1)
+        r = sh(command=f"kill-process {a} {os.getpid()} 4999999")
+        self.assertFalse(r["success"])
+        self.assertEqual(r["killed"], [a])
+        self.assertEqual([x["error"] for x in r["results"][1:]],
+                         ["PROTECTED_PROCESS", "PROCESS_NOT_FOUND"])
+
+    def test_cannot_be_combined_with_shell_commands(self):
+        (a,) = self._start_sleepers(1)
+        r = sh(command=f"kill-process {a}; echo done")
+        self.assertFalse(r["success"])
+        self.assertIn("Usage", r["error"])
+        self.assertIn("Nothing was killed", r["stderr"])
+        self.assertEqual(len(self._pids_alive([a])), 1)
+
+    def _pids_alive(self, pids):
+        import psutil
+        return [p for p in pids if psutil.pid_exists(p)]
+
+    def test_harness_and_all_its_ancestors_are_protected(self):
+        import os
+        import psutil
+        lineage = [os.getpid()] + [p.pid for p in psutil.Process().parents()]
+        self.assertGreaterEqual(len(lineage), 2)
+        for pid in lineage:
+            if pid == 0:
+                continue
+            r = sh(command=f"kill-process {pid}")
+            self.assertEqual(r["error"], "PROTECTED_PROCESS", (pid, r))
+
+    def test_session_shell_is_protected(self):
+        sh(command="echo x")
+        pid = sh(command="list-sessions")["sessions"][0]["pid"]
+        self.assertEqual(sh(command=f"kill-process {pid}")["error"], "PROTECTED_PROCESS")
+
+    def test_foreign_process_is_refused(self):
+        import subprocess
+        import sys
+        foreign = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            r = sh(command=f"kill-process {foreign.pid}")
+            self.assertEqual(r["error"], "NOT_A_SESSION_PROCESS")
+            self.assertIsNone(foreign.poll())
+        finally:
+            foreign.kill()
+            foreign.wait()
+
+    def test_detached_session_process_is_still_killable(self):
+        """Orphan of a reset session: recognised via the session env marker."""
+        import subprocess
+        import sys
+        env = dict(isaa_module.os.environ, __TB_SESSION_ID__="some-old-session",
+                   __TB_SESSION_LABEL__="B")
+        orphan = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], env=env)
+        try:
+            r = sh(command=f"kill-process {orphan.pid}")
+            self.assertTrue(r["success"], r)
+            self.assertEqual(r["session"], "B")
+            orphan.wait(timeout=3)
+        finally:
+            if orphan.poll() is None:
+                orphan.kill()
+
+    def test_killing_the_harness_grandparent_does_not_kill_the_harness(self):
+        """
+        Reproduces the crash: launcher -> wrapper -> harness (the usual
+        `tb.exe -> venv python -> python` chain). The old code only protected
+        harness + direct parent, accepted the launcher PID and then killed
+        'all its children' — i.e. the harness itself.
+        """
+        import os
+        import subprocess
+        import sys
+        import tempfile
+        d = tempfile.mkdtemp()
+        out = os.path.join(d, "result.json")
+        harness = os.path.join(d, "harness.py")
+        with open(harness, "w") as f:
+            f.write(
+                "import sys\n"
+                "from toolboxv2.mods.isaa.module import shell_tool_function\n"
+                "r = shell_tool_function(command='kill-process ' + sys.argv[1])\n"
+                "open(sys.argv[2], 'w').write(r)\n"
+            )
+        wrapper = ("import subprocess, sys; "
+                   "sys.exit(subprocess.call([sys.executable] + sys.argv[1:]))")
+        launcher = ("import os, subprocess, sys; "
+                    "sys.exit(subprocess.call([sys.executable, '-c', sys.argv[1], "
+                    "sys.argv[2], str(os.getpid()), sys.argv[3]]))")
+        rc = subprocess.call([sys.executable, "-c", launcher, wrapper, harness, out],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+        self.assertEqual(rc, 0, "launcher chain was killed")
+        self.assertTrue(os.path.exists(out), "harness died before returning a result")
+        with open(out) as f:
+            self.assertEqual(json.load(f)["error"], "PROTECTED_PROCESS")
+
+    def test_kill_guardrail_aliases(self):
+        for cmd in ("spps -Id 1", "(Get-Process -Id 5).Kill()",
+                    "wmic process where processid=5 delete"):
+            self.assertEqual(sh(command=cmd)["error"], "RAW_KILL_FORBIDDEN", cmd)
+
+
 class TestMarkerPlumbing(ShellToolTestCase):
     """Shell-specific invoke lines (PowerShell / cmd cannot run on this host,
     so at least pin their shape and the parsing of what they emit)."""
