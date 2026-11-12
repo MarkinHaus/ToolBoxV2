@@ -152,8 +152,9 @@ def dist_dir() -> Optional[Path]:
         from toolboxv2 import tb_root_dir
         root = Path(str(tb_root_dir))
         try:
+            from toolboxv2._state_dir import manifest_base_dir
             from toolboxv2.utils.manifest.loader import ManifestLoader
-            loader = ManifestLoader(base_dir=str(root))
+            loader = ManifestLoader(base_dir=str(manifest_base_dir()))
             if loader.manifest_path.exists():
                 raw = loader.load().paths.dist_dir
                 if raw and "${" not in raw:
