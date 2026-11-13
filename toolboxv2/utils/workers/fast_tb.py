@@ -620,7 +620,16 @@ connect();
         fp = "/" + fallback_prefix.strip("/")
         conflicts = self.mount_conflicts(other, fp)
         if conflicts:
-            return conflicts
+            adopt = self._adoptable_conflicts(other, fp, conflicts)
+            if adopt is None:
+                return conflicts
+            # B4b: gleiche Modul-App hat die Routen schon eingehangen
+            # (z.B. Auto-Mount vor Source-Registrierung) -> uebernehmen
+            for r in adopt:
+                try:
+                    self._routes.remove(r)
+                except ValueError:
+                    pass
 
         if source in self._mounted_sources:
             self.unmount_app(source)
@@ -661,6 +670,41 @@ connect();
         }
         self._index_dirty = True
         return []
+
+    def _adoptable_conflicts(self, other: "FastTB", fp: str,
+                             conflicts: List[str]):
+        """Prueft, ob alle Konflikte von derselben Modul-App stammen.
+
+        Rueckgabe: Liste der zu entfernenden Owner-Routen (Adoption)
+        oder None, wenn mind. ein Konflikt fremd ist.
+        """
+        eff = {}
+        for r in other._routes:
+            p = fp if r.path == "/" else r.path
+            eff[(r.method, p)] = getattr(r.handler, "__module__", "")
+        own = {}
+        for r in self._routes:
+            own.setdefault((r.method, r.path), r)
+        remove = []
+        for c in conflicts:
+            try:
+                method, path = c.split(" ", 1)
+            except ValueError:
+                return None
+            r_own = own.get((method, path))
+            if r_own is None:
+                return None
+            mod_oth = eff.get((method, path))
+            mod_own = getattr(r_own.handler, "__module__", "")
+            if r_own.handler is not None and any(
+                    r.handler is r_own.handler for r in other._routes):
+                remove.append(r_own)
+                continue
+            if mod_oth and mod_own and mod_oth == mod_own:
+                remove.append(r_own)
+                continue
+            return None
+        return remove
 
     def unmount_app(self, source: str) -> bool:
         """Remove all routes/static mounts a source contributed. Enables clean
