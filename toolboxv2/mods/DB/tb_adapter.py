@@ -3,7 +3,6 @@ import os
 from abc import ABC
 from typing import Any, Optional
 
-from dotenv import load_dotenv
 
 from toolboxv2 import FileHandler, MainTool, Result, get_app
 from toolboxv2.utils.security.cryp import Code
@@ -17,7 +16,6 @@ from .types import AuthenticationTypes, DatabaseModes
 Name = "DB"
 export = get_app(from_="DB.EXPORT").tb
 
-load_dotenv(verbose=True)
 
 def pre_function(*args, **kwargs) -> tuple[list, dict]:
     # Verarbeitung der args mit der encode_code-Methode

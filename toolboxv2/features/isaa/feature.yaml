@@ -28,7 +28,7 @@ imports: []
 name: isaa
 requires:
 - core
-version: "0.1.28"
+version: "0.1.29"
 user_facing:
 - name: isaa
   function: ui
@@ -39,3 +39,13 @@ user_facing:
     module: toolboxv2.mods.isaa.ui.app
     attr: app
     prefix: isaa
+
+- name: obs
+  function: ui
+  label: OBS
+  icon: monitoring
+  description: Live-Beobachtung der Agenten
+  mount:
+    module: toolboxv2.mods.isaa.extras.live_obs_server
+    attr: app
+    prefix: obs

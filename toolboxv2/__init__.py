@@ -57,6 +57,17 @@ if sys.platform == "win32":
 # ── End window suppression ─────────────────────────────────────────────
 
 
+# State + environment first, before any toolboxv2 submodule is imported:
+#  1. packaged installs keep user state outside site-packages,
+#  2. THE one .env is loaded exactly once, here (see _state_dir.env_file()).
+from ._state_dir import ensure_user_data_env, env_file as _env_file
+try:
+    ensure_user_data_env()
+except Exception:
+    pass
+from dotenv import load_dotenv
+load_dotenv(str(_env_file()))
+
 try:
     from .utils.system.main_tool import MainTool, get_version_from_pyproject
 except ImportError:
@@ -67,6 +78,7 @@ __email__ = 'Markinhausmanns@gmail.com'
 
 __init_cwd__ = init_cwd = Path.cwd()
 __tb_root_dir__ = tb_root_dir = Path(__file__).parent
+
 
 # ponytail: Nuitka standalone/onefile detection for writable data directory.
 # In standalone mode __file__ points inside dist/ (read-only if installed to Program Files).
@@ -98,8 +110,6 @@ os.makedirs(__tb_root_dir__ / 'dist', exist_ok=True)
 VERSION = '0.1.28'
 __version__ = get_version_from_pyproject(str(tb_root_dir.parent / "pyproject.toml")) if get_version_from_pyproject is not None else VERSION
 ToolBox_over: str = "root"
-from dotenv import load_dotenv
-load_dotenv(str(__tb_root_dir__.parent/".env"))
 # =============================================================================
 # Phase 1 — Feature Loader  (unpack ZIPs → .installed markers)
 # =============================================================================
@@ -227,7 +237,8 @@ def _should_auto_install(feature_name: str) -> bool:
     """
     try:
         from .utils.manifest.loader import ManifestLoader
-        loader = ManifestLoader(tb_root_dir)
+        from toolboxv2._state_dir import manifest_base_dir
+        loader = ManifestLoader(manifest_base_dir())
         if loader.exists():
             manifest = loader.load(resolve_env=False)
             return manifest.features.should_auto_install(feature_name)

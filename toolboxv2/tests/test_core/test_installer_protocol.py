@@ -18,7 +18,16 @@ INSTALLER = ROOT / "installer.sh"
 TAURI_COPY = ROOT / "toolboxv2" / "simple-core" / "src-tauri" / "installer.sh"
 
 
-@unittest.skipUnless(shutil.which("bash") and shutil.which("curl"), "bash/curl required")
+_WSL = False
+try:
+    _b = subprocess.run(["bash", "-c", "uname -r"], capture_output=True, text=True, timeout=15)
+    _WSL = "microsoft" in _b.stdout.lower()
+except Exception:
+    pass
+
+
+@unittest.skipUnless(shutil.which("bash") and shutil.which("curl") and not _WSL,
+                     "bash/curl required (WSL bash cannot see Windows paths)")
 class TestInstallerProtocol(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -94,6 +103,25 @@ class TestInstallerProtocol(unittest.TestCase):
                          "src-tauri/installer.sh drifted from installer.sh")
 
 
+class TestPowerShellInstallerCopies(unittest.TestCase):
+    """installer.ps1 exists twice: repo root and the copy Tauri bundles. The app
+    ships the copy, so a fix made only in the root file never reaches users."""
+
+    PS1 = ROOT / "installer.ps1"
+    PS1_TAURI = ROOT / "toolboxv2" / "simple-core" / "src-tauri" / "installer.ps1"
+
+    def test_tauri_bundle_copy_in_sync(self):
+        self.assertEqual(self.PS1.read_bytes(), self.PS1_TAURI.read_bytes(),
+                         "src-tauri/installer.ps1 drifted from installer.ps1")
+
+    def test_utf8_bom_present(self):
+        """Windows PowerShell 5.1 (what the Tauri app runs) reads a script without
+        a BOM as ANSI; the file contains non-ASCII characters, so it needs the BOM."""
+        raw = self.PS1.read_bytes()
+        self.assertTrue(any(b > 127 for b in raw[3:]), "file is pure ASCII - BOM rule obsolete")
+        self.assertEqual(b"\xef\xbb\xbf", raw[:3], "installer.ps1 lost its UTF-8 BOM")
+
+
 class TestOnboardingUiSingleSource(unittest.TestCase):
     def test_web_copy_matches_tauri_bundle(self):
         web = ROOT / "toolboxv2" / "web" / "installer" / "index.html"
@@ -102,5 +130,120 @@ class TestOnboardingUiSingleSource(unittest.TestCase):
                          "web/installer/index.html drifted from src-tauri/installer.html")
 
 
+@unittest.skipUnless(shutil.which("bash") and not _WSL, "needs bash with native paths")
+class TestCoreUpdateInPlace(unittest.TestCase):
+    """`--update --path` as the Tauri app calls it for a core update: reinstall
+    the bundled wheel, record the build id, keep everything else."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="tb_update_"))
+        cls.install = cls.tmp / "my install"
+        (cls.install / "bin").mkdir(parents=True)
+        (cls.tmp / "home").mkdir()
+        cls.uv_log = cls.tmp / "uv.log"
+        uv = cls.install / "bin" / "uv"
+        uv.write_text("#!/usr/bin/env bash\n"
+                      f'echo "$@" >> "{cls.uv_log}"\n'
+                      'if [ "$1 $2" = "tool list" ]; then echo "toolboxv2 v9.9.9"; fi\n'
+                      'if [ "$1 $2 $3" = "tool dir --bin" ]; then echo "$UV_TOOL_BIN_DIR"; fi\n'
+                      "exit 0\n")
+        uv.chmod(0o755)
+        (cls.install / "install.manifest").write_text(
+            'installer_version: "1.0.0"\n'
+            'install_mode: "uv"\n'
+            'source_from: "git"\n'
+            'source_branch: "master"\n'
+            'tb_version: "0.0.1"\n'
+            'core_build: "old-build"\n'
+            f'toolbox_home: "{cls.install}"\n'
+            'runtime: "uv"\n'
+            'python_path: ""\n'
+            f'uv_path: "{uv}"\n'
+            'features: "mini core cli web isaa desktop"\n'
+            'optional_installed: "minio"\n', encoding="utf-8")
+        cls.env_before = 'TB_ENV="production"\nTB_JWT_SECRET=abc\n'
+        (cls.install / ".env").write_text(cls.env_before, encoding="utf-8")
+        (cls.install / "tb-manifest.yaml").write_text("app:\n  profile: developer\n", encoding="utf-8")
+        wheel = cls.tmp / "toolboxv2-9.9.9-py3-none-any.whl"
+        wheel.write_bytes(b"")
+        cls.wheel = wheel
+        env = {**os.environ, "HOME": str(cls.tmp / "home"), "TB_WHEEL": str(wheel),
+               "TB_CORE_BUILD": "new-build"}
+        for k in ("TB_INSTALL_DIR", "TOOLBOX_HOME"):
+            env.pop(k, None)
+        cls.proc = subprocess.run(
+            ["bash", str(INSTALLER), "--json-output", "--update", "--yes", "--path", str(cls.install)],
+            cwd=cls.tmp, env=env, capture_output=True, text=True, timeout=120,
+            stdin=subprocess.DEVNULL)
+        cls.manifest = (cls.install / "install.manifest").read_text(encoding="utf-8")
+
+    def test_exit_ok_and_done_event(self):
+        self.assertEqual(self.proc.returncode, 0, self.proc.stderr[-2000:])
+        events = [json.loads(l) for l in self.proc.stdout.splitlines() if l.strip()]
+        self.assertEqual(events[-1]["type"], "done")
+        self.assertEqual(events[-1]["version"], "9.9.9")
+        self.assertEqual(events[-1]["path"], str(self.install))
+        self.assertEqual(events[-1]["profile"], "", "an update applies no profile")
+
+    def test_wheel_reinstalled_with_the_installed_features(self):
+        log = self.uv_log.read_text(encoding="utf-8")
+        self.assertIn(f"tool install ToolBoxV2[cli,web,isaa,desktop] @ file://{self.wheel} --force", log)
+
+    def test_manifest_records_new_build_and_keeps_the_rest(self):
+        self.assertIn('core_build: "new-build"', self.manifest)
+        self.assertIn('tb_version: "9.9.9"', self.manifest)
+        self.assertIn('install_mode: "uv"', self.manifest)
+        self.assertIn('features: "mini core cli web isaa desktop"', self.manifest,
+                      "features must not grow on every update")
+        self.assertIn('optional_installed: "minio"', self.manifest)
+
+    def test_profile_and_env_untouched(self):
+        self.assertEqual(self.env_before, (self.install / ".env").read_text(encoding="utf-8"))
+        self.assertEqual("app:\n  profile: developer\n",
+                         (self.install / "tb-manifest.yaml").read_text(encoding="utf-8"))
+        self.assertNotIn("-init", self.uv_log.read_text(encoding="utf-8"))
+        self.assertNotIn("Applying profile", self.proc.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(not _WSL, "wheel dry-run probe uses Windows paths (WSL cannot see them)")
+class TestWheelAndFeaturesDryRun(unittest.TestCase):
+    """T5/F1-F3: tb_features aus Config + TB_WHEEL als Wheel-Quelle (dry run)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="tb_wheel_"))
+        (cls.tmp / "home").mkdir()
+        stub = cls.tmp / "bin" / "curl"
+        stub.parent.mkdir()
+        real_curl = shutil.which("curl")
+        stub.write_text("#!/usr/bin/env bash\n"
+                        'for a in "$@"; do case "$a" in https://1.1.1.1|https://github.com) exit 0;; esac; done\n'
+                        f'exec {real_curl} "$@"\n')
+        stub.chmod(0o755)
+        wheel = cls.tmp / "toolboxv2-9.9.9-py3-none-any.whl"
+        wheel.write_bytes(b"")
+        cfg = cls.tmp / "tb-install.yaml"
+        cfg.write_text(f"install_mode: uv\ninstall_path: {cls.tmp / 'tbhome'}\nprofile: developer\n"
+                       "environment: development\nassume: yes\naction: install\nui: none\n"
+                       "tb_features: cli,web,isaa\n")
+        env = {**os.environ, "HOME": str(cls.tmp / "home"), "TB_WHEEL": str(wheel),
+               "PATH": f"{stub.parent}{os.pathsep}{os.environ.get('PATH', '')}"}
+        cls.proc = subprocess.run(
+            ["bash", str(INSTALLER), "--json-output", "--config", str(cfg), "--dry-run"],
+            cwd=cls.tmp, env=env, capture_output=True, text=True, timeout=120,
+            stdin=subprocess.DEVNULL)
+
+    def test_exit_ok_and_json_only(self):
+        self.assertEqual(self.proc.returncode, 0, self.proc.stderr[-2000:])
+        events = [json.loads(l) for l in self.proc.stdout.splitlines() if l.strip()]
+        self.assertTrue(events)
+        self.assertEqual(events[-1]["type"], "done")
+
+    def test_dry_run_names_pkg_with_extras_and_file_url(self):
+        self.assertIn("ToolBoxV2[cli,web,isaa] @ file://", self.proc.stderr)
+        self.assertIn("toolboxv2-9.9.9-py3-none-any.whl", self.proc.stderr)

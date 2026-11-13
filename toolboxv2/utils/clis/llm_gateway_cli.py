@@ -41,7 +41,8 @@ def get_gateway_dir() -> Path:
 def get_pids_dir() -> Path:
     """Get PIDs directory"""
     from toolboxv2 import tb_root_dir
-    pids_dir = tb_root_dir / ".info" / "pids"
+    from toolboxv2._state_dir import info_dir
+    pids_dir = info_dir() / "pids"
     pids_dir.mkdir(parents=True, exist_ok=True)
     return pids_dir
 

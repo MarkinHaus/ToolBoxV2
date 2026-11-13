@@ -156,6 +156,81 @@ pub async fn wait_until_running(base: &str, max_secs: u64) -> bool {
     false
 }
 
+/// Where a core installation can be: the dir the core published itself
+/// (custom path), then the installers' defaults (installer.sh os_default_path /
+/// installer.ps1 Get-DefaultPath).
+pub fn install_dir_candidates() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if let Some(p) = crate::worker_manager::published_install_dir() {
+        v.push(p);
+    }
+    if let Ok(p) = std::env::var("TB_INSTALL_DIR") {
+        if !p.trim().is_empty() {
+            v.push(PathBuf::from(p));
+        }
+    }
+    if cfg!(target_os = "windows") {
+        if let Ok(la) = std::env::var("LOCALAPPDATA") {
+            v.push(PathBuf::from(la).join("toolboxv2"));
+        }
+    } else if let Some(home) = dirs::home_dir() {
+        if cfg!(target_os = "macos") {
+            v.push(home.join("Library").join("Application Support").join("toolboxv2"));
+        }
+        v.push(home.join(".local").join("share").join("toolboxv2"));
+        v.push(PathBuf::from("/opt/toolboxv2"));
+    }
+    v
+}
+
+/// First candidate that really is an installation (has install.manifest).
+pub fn find_installation_in(candidates: &[PathBuf]) -> Option<PathBuf> {
+    candidates
+        .iter()
+        .find(|p| p.join("install.manifest").is_file())
+        .cloned()
+}
+
+pub fn find_installation() -> Option<PathBuf> {
+    find_installation_in(&install_dir_candidates())
+}
+
+/// `<install_dir>/bin/tb workers stop` (blocking, output discarded). Falls back
+/// to the discovered tb when the install dir has no bin/tb.
+pub fn stop_workers(install_dir: &std::path::Path) {
+    let name = if cfg!(target_os = "windows") { "tb.exe" } else { "tb" };
+    let local = install_dir.join("bin").join(name);
+    let tb = if local.is_file() { Some(local) } else { discover_tb() };
+    let Some(tb) = tb else {
+        log::warn!("[Launch] stop_workers: tb not found");
+        return;
+    };
+    let mut cmd = Command::new(&tb);
+    cmd.args(["workers", "stop"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    if let Err(e) = cmd.status() {
+        log::warn!("[Launch] {} workers stop failed: {e}", tb.display());
+    }
+}
+
+/// Pollt health bis max_secs. True sobald NICHT mehr erreichbar.
+pub async fn wait_until_stopped(base: &str, max_secs: u64) -> bool {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(max_secs);
+    while tokio::time::Instant::now() < deadline {
+        if !probe_health(base).await {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+    }
+    false
+}
+
 /// Ziel-Route auf der local-ui bestimmen: first_run -> /setup, sonst /.
 ///
 /// Bei JEGLICHER Unsicherheit (Timeout, 4xx/5xx, JSON-Fehler, fehlendes Feld)
@@ -192,6 +267,19 @@ pub async fn target_route(base: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_installation_needs_the_manifest() {
+        let base = std::env::temp_dir().join("tb_find_install_unit");
+        let _ = std::fs::remove_dir_all(&base);
+        let empty = base.join("empty");
+        let real = base.join("custom dir");
+        std::fs::create_dir_all(&empty).unwrap();
+        std::fs::create_dir_all(&real).unwrap();
+        assert_eq!(find_installation_in(&[empty.clone(), real.clone()]), None);
+        std::fs::write(real.join("install.manifest"), "install_mode: \"uv\"\n").unwrap();
+        assert_eq!(find_installation_in(&[empty, real.clone()]), Some(real));
+    }
 
     #[test]
     fn tb_on_path_does_not_panic() {

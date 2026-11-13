@@ -355,7 +355,8 @@ def _build_docs_tools(app):
 def _build_manifest_tools(app):
     """Build manifest management tools."""
     tools = []
-    manifest_root = tb_root_dir
+    from toolboxv2._state_dir import manifest_base_dir
+    manifest_root = manifest_base_dir()
 
     async def manifest_show(section: str = None, as_json: bool = False) -> str:
         """Show manifest content, optionally a specific section."""
@@ -462,18 +463,12 @@ def _build_manifest_tools(app):
             }
             env_key = _MANIFEST_TO_ENV.get(key)
             if env_key:
-                env_path = manifest_root.parent / ".env"
-                lines, found = [], False
-                if env_path.exists():
-                    for line in env_path.read_text(encoding="utf-8").splitlines():
-                        if line.startswith(f"{env_key}="):
-                            lines.append(f"{env_key}={value}")
-                            found = True
-                        else:
-                            lines.append(line)
-                if not found:
-                    lines.append(f"{env_key}={value}")
-                env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                from toolboxv2._state_dir import env_file as _env_file
+                from toolboxv2.utils.clis.config_wizard import load_existing_env, save_env_file
+                env_path = _env_file()
+                env_d = load_existing_env(env_path)
+                env_d[env_key] = str(value)
+                save_env_file(env_path, env_d)
                 result += f" | .env synced: {env_key}={value}"
 
             return result

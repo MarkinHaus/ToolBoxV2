@@ -8,6 +8,7 @@ import time
 from ..extras.Style import Style
 from .tb_logger import get_logger
 from .types import AppArgs, AppType
+from toolboxv2._state_dir import pids_dir
 
 registered_apps: list[AppType | None] = [None]
 
@@ -105,7 +106,7 @@ async def a_save_closing_app():
     if app.start_dir != "test":
         os.chdir(app.start_dir)
 
-    pid_file = f"{app.start_dir}\\.info\\pids\\{app.args_sto.modi}-{app.REFIX}.pid"
+    pid_file = str(pids_dir() / f"{app.args_sto.modi}-{app.REFIX}.pid")
     if os.path.exists(pid_file):
         os.remove(pid_file)
 

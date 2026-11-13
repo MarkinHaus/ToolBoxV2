@@ -340,7 +340,8 @@ def load_host_manifest():
     from toolboxv2.utils.manifest.loader import ManifestLoader
     try:
         from toolboxv2 import tb_root_dir
-        loader = ManifestLoader(tb_root_dir)
+        from toolboxv2._state_dir import manifest_base_dir
+        loader = ManifestLoader(manifest_base_dir())
     except Exception:
         loader = ManifestLoader()
     if not loader.exists():

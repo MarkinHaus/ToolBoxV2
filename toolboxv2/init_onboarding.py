@@ -63,52 +63,11 @@ _SECRET_KEYS = ("TB_JWT_SECRET", "TB_COOKIE_SECRET")
 
 
 def _writable_env_path() -> Path:
-    """First writable location for a persisted .env, in priority order."""
-    candidates = []
-    if os.getenv("TB_DATA_DIR"):
-        candidates.append(Path(os.environ["TB_DATA_DIR"]) / ".env")
-    candidates.append(tb_root_dir.parent / ".env")   # repo / editable install
-    candidates.append(Path.cwd() / ".env")           # site-packages fallback
-    for p in candidates:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            # touch-test writability without clobbering existing content
-            if p.exists():
-                if os.access(p, os.W_OK):
-                    return p
-            else:
-                p.touch()
-                return p
-        except OSError:
-            continue
-    return Path.cwd() / ".env"  # ponytail: last resort, cwd is ~always writable
+    """R1 (V3): the one .env location -- delegate to _state_dir.env_file()."""
+    from toolboxv2._state_dir import env_file
+    return env_file()
 
 
-def _read_env_file(path: Path) -> dict[str, str]:
-    out: dict[str, str] = {}
-    if not path.exists():
-        return out
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        out[k.strip()] = v.split("#", 1)[0].strip().strip('"').strip("'")
-    return out
-
-
-def _append_env(path: Path, kv: Mapping[str, str]) -> None:
-    if not kv:
-        return
-    existing = _read_env_file(path)
-    new = {k: v for k, v in kv.items() if k not in existing}
-    if not new:
-        return
-    with path.open("a", encoding="utf-8") as f:
-        if path.stat().st_size and not path.read_text(encoding="utf-8").endswith("\n"):
-            f.write("\n")
-        for k, v in new.items():
-            f.write(f'{k}="{v}"\n')
 
 
 def _template_defaults() -> dict[str, str]:
@@ -148,18 +107,21 @@ def ensure_secret(persist: bool = True) -> str:
         if os.getenv(k):
             return os.environ[k]
 
+    from toolboxv2.utils.clis.config_wizard import load_existing_env, save_env_file
     env_path = _writable_env_path()
-    persisted = _read_env_file(env_path)
+    persisted = load_existing_env(env_path)
     for k in _SECRET_KEYS:
         if persisted.get(k):
-            os.environ.setdefault(k, persisted[k])
+            if not os.environ.get(k):  # R1 (V3): empty string counts as unset
+                os.environ[k] = persisted[k]
             return persisted[k]
 
     secret = secrets.token_hex(64)
     os.environ["TB_JWT_SECRET"] = secret
-    os.environ.setdefault("TB_COOKIE_SECRET", secret)
+    if not os.environ.get("TB_COOKIE_SECRET"):
+        os.environ["TB_COOKIE_SECRET"] = secret
     if persist:
-        _append_env(env_path, {"TB_JWT_SECRET": secret, "TB_COOKIE_SECRET": secret})
+        save_env_file(env_path, {"TB_JWT_SECRET": secret, "TB_COOKIE_SECRET": secret})
     return secret
 
 
@@ -195,7 +157,8 @@ def build_manifest(profile: str = "mini", save: bool = True,
         services={"enabled": preset["services"]},
     )
     if save:
-        loader = ManifestLoader(str(path) if path else str(tb_root_dir))
+        from toolboxv2._state_dir import manifest_base_dir
+        loader = ManifestLoader(str(path) if path else str(manifest_base_dir()))
         if path:
             loader._manifest_path = Path(path)
         loader.save(manifest)
@@ -378,7 +341,8 @@ def init(profile: str = "mini",
 
     # 3) manifest: custom or profile default.
     from toolboxv2.utils.manifest import ManifestLoader, TBManifest
-    loader = ManifestLoader(str(tb_root_dir))
+    from toolboxv2._state_dir import manifest_base_dir
+    loader = ManifestLoader(str(manifest_base_dir()))
     if isinstance(manifest, dict):
         loader.save(TBManifest.model_validate(manifest))
     elif manifest:
@@ -411,7 +375,11 @@ def _demo() -> None:
 
     # isolate: ephemeral data dir, clean secret env
     tmp = tempfile.mkdtemp(prefix="tb_init_demo_")
-    os.environ["TB_DATA_DIR"] = tmp
+    from unittest import mock
+    import toolboxv2._state_dir as _sd
+    os.environ["TB_INSTALL_DIR"] = tmp
+    _pkg_patch = mock.patch.object(_sd, "is_packaged_install", lambda: True)
+    _pkg_patch.start()  # R1 (V3): demo must not touch the real repo .env
     for k in _SECRET_KEYS:
         os.environ.pop(k, None)
 
@@ -431,6 +399,7 @@ def _demo() -> None:
     os.environ.pop("TB_JWT_SECRET"); os.environ.pop("TB_COOKIE_SECRET", None)
     s2 = ensure_secret(persist=True)
     assert s2 == s1, "secret must be stable across calls"
+    _pkg_patch.stop()
 
     # env layering: profile offline flag applied, caller override wins
     init(profile="colab", create_app=False, env={"APP_BASE_URL": "http://x:1"},

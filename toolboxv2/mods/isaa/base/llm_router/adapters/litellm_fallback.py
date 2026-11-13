@@ -21,7 +21,17 @@ class LiteLLMFallbackAdapter(ProviderAdapter):
 
     def _ensure(self):
         if self._litellm is None:
-            import litellm
+            try:
+                import litellm
+            except ImportError as e:
+                # litellm is an optional emergency fallback, not a dependency.
+                raise ProviderError(
+                    "litellm is not installed. It is only needed as a fallback for "
+                    "providers without a native adapter (model needs a known prefix "
+                    "such as 'openrouter/', 'anthropic/', 'zai/'). "
+                    "Install it with: pip install litellm",
+                    status_code=0, body=str(e), model="",
+                ) from e
             litellm.drop_params = True
             self._litellm = litellm
 

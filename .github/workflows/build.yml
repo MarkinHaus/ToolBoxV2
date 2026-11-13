@@ -9,6 +9,8 @@ on:
       - main
       - develop
   pull_request:
+  # Manual run for any branch: builds AND publishes the app (see tauri-test).
+  workflow_dispatch:
 
 env:
   PYTHON_VERSION_DEFAULT: "3.11"
@@ -399,10 +401,30 @@ jobs:
                   include-hidden-files: true
 
 
-  tauri-test:
-    name: Tauri Build Test (${{ matrix.platform }})
+  # The desktop app is published to the release tag `nightly` (the updater's
+  # source, tauri.conf.json plugins.updater.endpoints) on a push to master and
+  # on a manual run. Pull requests and other branches only build.
+  tauri-publish-prepare:
+    name: Reset nightly release
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
     permissions:
       contents: write
+    steps:
+      - name: Delete old nightly release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete nightly --cleanup-tag -y -R "$GITHUB_REPOSITORY" || true
+
+  tauri-test:
+    name: Tauri Build (${{ matrix.platform }})
+    needs: [tauri-publish-prepare]
+    # run after the prepare job, or without it when nothing is published
+    if: always() && (needs.tauri-publish-prepare.result == 'success' || needs.tauri-publish-prepare.result == 'skipped')
+    permissions:
+      contents: write
+    env:
+      PUBLISH: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/master')) && 'true' || 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -429,6 +451,11 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION_DEFAULT }}
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -440,96 +467,81 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev
 
-      - name: Setup Python for Worker
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install ToolBoxV2 for Worker Build
-        shell: bash
-        run: |
-          pip install --upgrade pip
-          pip install pyinstaller
-          pip install -e .
-
-                # tauri::generate_context! benoetigt frontendDist (../../dist) schon zur COMPILE-Zeit
-          # (proc-macro) — im CI-Checkout existiert es nicht (Build-Artefakt) -> Stub setzen
-          mkdir -p toolboxv2/dist
-          [ -f toolboxv2/dist/index.html ] || echo '<!doctype html><title>stub</title>' > toolboxv2/dist/index.html
       - name: Fetch uv sidecar (bundle.externalBin binaries/uv)
         shell: bash
         run: bash scripts/fetch_uv_sidecar.sh "${{ matrix.target_triple }}"
 
-      - name: Run installer unit tests (Linux only)
-        if: matrix.os == 'ubuntu-latest'
-        working-directory: ./toolboxv2/simple-core/src-tauri
-        run: "cargo test --lib installer::"
-
-      - name: Create Worker Wrapper Binary
+      # Web UI + core wheel + BUILD_ID into src-tauri/wheels (one script, also
+      # used by release.yml). Builds toolboxv2/dist, which cargo needs below.
+      - name: Build web UI and core wheel for the bundle
         shell: bash
         run: |
-          # Create binaries directory
-          mkdir -p ./toolboxv2/simple-core/src-tauri/binaries
-          # Create the worker runner script
-          cat > worker_runner.py << 'PYEOF'
-          #!/usr/bin/env python3
-          """ToolBoxV2 Worker Runner - Sidecar for Tauri Desktop App"""
-          import sys
-          import os
-          import argparse
+          python -m pip install --upgrade pip
+          python -m pip install -e . build
+          bash scripts/build_wheel_for_tauri.sh
 
-          def main():
-              parser = argparse.ArgumentParser(description='ToolBoxV2 HTTP Worker')
-              parser.add_argument('--http-port', type=int, default=5000)
-              parser.add_argument('--ws-port', type=int, default=5001)
-              parser.add_argument('--mode', type=str, default='tauri')
-              args, unknown = parser.parse_known_args()
-
-              try:
-                  from toolboxv2.utils.workers.server_worker import run_http_worker
-                  run_http_worker(port=args.http_port, ws_port=args.ws_port, mode=args.mode)
-              except ImportError as e:
-                  print(f"Error: toolboxv2 not installed: {e}", file=sys.stderr)
-                  sys.exit(1)
-
-          if __name__ == "__main__":
-              main()
-          PYEOF
-
-          # Build with PyInstaller
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            pyinstaller --onefile --name "tb-worker-${{ matrix.target_triple }}" --console worker_runner.py
-            cp dist/tb-worker-${{ matrix.target_triple }}.exe ./toolboxv2/simple-core/src-tauri/binaries/
-          else
-            pyinstaller --onefile --name "tb-worker-${{ matrix.target_triple }}" worker_runner.py
-            cp dist/tb-worker-${{ matrix.target_triple }} ./toolboxv2/simple-core/src-tauri/binaries/
-            chmod +x ./toolboxv2/simple-core/src-tauri/binaries/tb-worker-${{ matrix.target_triple }}
-          fi
-
-          echo "Created worker binary: tb-worker-${{ matrix.target_triple }}"
-          ls -la ./toolboxv2/simple-core/src-tauri/binaries/
-
-      - name: Install frontend dependencies
+      - name: Install Tauri CLI dependencies
         working-directory: ./toolboxv2
-        run: |
-          npm install
-          npm install --prefix ./web
-          npm install --prefix ./simple-core
-          npm run build
+        run: npm install --prefix ./simple-core
 
-      - name: Build Tauri (dry-run)
+      - name: Run Rust unit tests (Linux only)
+        if: matrix.platform == 'ubuntu-22.04'
+        working-directory: ./toolboxv2/simple-core/src-tauri
+        run: cargo test --lib
+
+      # Published builds get <version>-<run number> (digits only after the dash:
+      # MSI requirement) so the updater sees every build as newer. Builds that
+      # are not published carry no updater artifacts and need no signing key.
+      - name: Configure bundle (version stamp / updater artifacts)
+        shell: bash
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          VER=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+          [ -n "$VER" ] || { echo "version not found in pyproject.toml" >&2; exit 1; }
+          export STAMP="${VER}-${RUN_NUMBER}"
+          node -e '
+            const fs = require("fs");
+            const p = "toolboxv2/simple-core/src-tauri/tauri.conf.json";
+            const c = JSON.parse(fs.readFileSync(p, "utf8"));
+            if (process.env.PUBLISH === "true") { c.version = process.env.STAMP; }
+            else { c.bundle.createUpdaterArtifacts = false; }
+            fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+            console.log("version", c.version, "updaterArtifacts", c.bundle.createUpdaterArtifacts);
+          '
+
+      - name: Build Tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Tauri v2 variable names; the repository secrets keep their names.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.PUBLISH == 'true' && secrets.TAURI_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.PUBLISH == 'true' && secrets.TAURI_KEY_PASSWORD || '' }}
         with:
           projectPath: ./toolboxv2/simple-core
           tauriScript: npx tauri
-          tagName: simple-v__VERSION__
-          releaseName: 'App v__VERSION__'
-          releaseBody: 'CI Test Build'
-          releaseDraft: true
+          # empty tagName = build only, nothing is released
+          tagName: ${{ env.PUBLISH == 'true' && 'nightly' || '' }}
+          releaseName: 'Nightly Build'
+          releaseBody: 'Latest build of the desktop app (source of the in-app updater).'
+          releaseDraft: false
           prerelease: true
           args: ${{ matrix.args }}
+
+      # Every run keeps its installers as a downloadable artifact, so a branch or
+      # pull-request build can be installed and tested before anything is released.
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: simplecore-${{ matrix.target_triple }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            toolboxv2/simple-core/src-tauri/target/**/release/bundle/nsis/*.exe
+            toolboxv2/simple-core/src-tauri/target/**/release/bundle/msi/*.msi
+            toolboxv2/simple-core/src-tauri/target/**/release/bundle/dmg/*.dmg
+            toolboxv2/simple-core/src-tauri/target/**/release/bundle/deb/*.deb
+            toolboxv2/simple-core/src-tauri/target/**/release/bundle/appimage/*.AppImage
 
   # ============================================================================
   # ANDROID BUILD TEST (Tauri Mobile)

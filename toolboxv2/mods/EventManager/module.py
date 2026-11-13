@@ -11,12 +11,25 @@ from enum import Enum
 from typing import Any
 
 from toolboxv2 import MainTool, Result, Spinner, get_app, get_logger
-from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils.brodcast.client import start_client
 from toolboxv2.utils.brodcast.server import make_known
 from toolboxv2.utils.daemon import DaemonUtil
 from toolboxv2.utils.proxy import ProxyUtil
 from toolboxv2.utils.system.session import get_local_ip
+
+def async_test(coro):
+    def wrapper(*args, **kwargs):
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(coro(*args, **kwargs))
+            # Alle pending tasks noch drainieren
+            pending = asyncio.all_tasks(loop)
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            return result
+        finally:
+            loop.close()
+    return wrapper
 
 Name = "EventManager"
 version = "0.0.3"

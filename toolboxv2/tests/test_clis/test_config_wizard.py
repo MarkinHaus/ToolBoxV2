@@ -55,6 +55,9 @@ _spec = importlib.util.spec_from_file_location(
 _wiz = importlib.util.module_from_spec(_spec)
 sys.modules["toolboxv2.utils.clis.config_wizard"] = _wiz
 _spec.loader.exec_module(_wiz)
+# R1: restore sys.modules -- the stub must not leak into other tests
+# (cli_worker_manager imports print_table_header from the REAL cli_printing).
+sys.modules.pop("toolboxv2.utils.clis.cli_printing", None)
 
 from toolboxv2.utils.clis.config_wizard import (  # noqa: E402
     parse_env_template,

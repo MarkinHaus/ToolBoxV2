@@ -36,6 +36,13 @@ fn published_endpoint() -> Option<Value> {
     serde_json::from_str::<Value>(&raw).ok()
 }
 
+/// Install dir the running core published (`install_dir` in local_ui.json,
+/// written by utils/workers/fast/endpoint.py). Covers a custom install path.
+pub fn published_install_dir() -> Option<std::path::PathBuf> {
+    published_endpoint()
+        .and_then(|v| v.get("install_dir").and_then(|d| d.as_str()).map(std::path::PathBuf::from))
+}
+
 /// Host of the local UI: TB_LOCAL_UI_HOST -> local_ui.json -> 127.0.0.1
 pub fn resolve_local_ui_host() -> String {
     if let Ok(h) = std::env::var("TB_LOCAL_UI_HOST") {
@@ -285,12 +292,9 @@ impl WorkerManager {
         self.endpoint = match endpoint {
             "local" => {
                 // Only allow local if sidecar is available
-                if self.sidecar_available {
+                
                     ApiEndpoint::Local
-                } else {
-                    log::warn!("Sidecar not available, staying on remote API");
-                    ApiEndpoint::Remote
-                }
+                
             }
             "remote" => ApiEndpoint::Remote,
             url => ApiEndpoint::HomeServer(url.to_string()),
@@ -386,8 +390,9 @@ mod tests {
         let mut manager = WorkerManager::new();
         manager.sidecar_available = false;
         manager.set_endpoint("local");
-        // Should fallback to remote since sidecar not available
-        assert_eq!(manager.endpoint, ApiEndpoint::Remote);
+        // Local is always allowed: the core usually runs outside the app
+        // (`tb workers start`), there is no bundled worker sidecar any more.
+        assert_eq!(manager.endpoint, ApiEndpoint::Local);
     }
 
     #[test]

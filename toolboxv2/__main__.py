@@ -13,11 +13,6 @@ from pathlib import Path
 from platform import node, system
 from typing import List, Tuple
 
-from dotenv import load_dotenv
-
-
-load_dotenv()
-
 import os
 import sys
 
@@ -26,7 +21,9 @@ import sys
 exit = sys.exit
 
 from toolboxv2 import tb_root_dir, _feature_enabled
+from toolboxv2._state_dir import info_dir, pids_dir
 from toolboxv2.utils.system.feature_manager import FeatureManager
+
 from toolboxv2.flows import flows_dict as flows_dict_func
 try:
     from toolboxv2.setup_helper import run_command
@@ -201,7 +198,8 @@ def _get_profile() -> str | None:
     try:
         from toolboxv2 import tb_root_dir
         from toolboxv2.utils.manifest import ManifestLoader
-        loader = ManifestLoader(tb_root_dir)
+        from toolboxv2._state_dir import manifest_base_dir
+        loader = ManifestLoader(manifest_base_dir())
         if not loader.exists():
             return None
         manifest = loader.load()
@@ -1484,7 +1482,7 @@ async def setup_app(ov_name=None, App=TbApp):
 
     data_folder = abspath + "\\.data\\"
     config_folder = abspath + "\\.config\\"
-    info_folder = abspath + "\\.info\\"
+    info_folder = str(info_dir()) + "\\"
 
     os.makedirs(info_folder, exist_ok=True)
 
@@ -1530,7 +1528,7 @@ async def setup_app(ov_name=None, App=TbApp):
         )
 
     abspath = os.path.dirname(os.path.abspath(__file__))
-    info_folder = abspath + "\\.info\\pids\\"
+    info_folder = str(pids_dir()) + "\\"
     os.makedirs(info_folder, exist_ok=True)
     if not args.sysPrint and not (
         args.debug or args.background_application_runner or args.install or args.kill
@@ -1754,7 +1752,7 @@ async def main(App=TbApp, do_exit=True):
     __version__ = get_version_from_pyproject()
 
     abspath = os.path.dirname(os.path.abspath(__file__))
-    info_folder = abspath + "\\.info\\pids\\"
+    info_folder = str(pids_dir()) + "\\"
     pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
 
     # =================== FIX: Manifest-Aware Auto-Login ===================
@@ -2627,6 +2625,10 @@ def main_runner():
                         return
 
                 elif runner_name and not app.alive and runner_name != "default":
+                    # `tb --version` prints the version and closes the app inside
+                    # main(); there is nothing left to run, and no runner to start.
+                    if any(a in sys.argv for a in ("-v", "--version", "--get-version")):
+                        return
                     if not '-bg' in sys.argv:
                         raise ValueError(f"FIX DAS SOFORT WENN RUNNER {runner_name} muss {app.alive=} == TRUE sein")
                     await app.a_exit()

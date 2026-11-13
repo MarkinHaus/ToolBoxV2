@@ -137,7 +137,7 @@ class TestConfigConverter:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             converter = ConfigConverter(manifest, Path(tmpdir))
-            added = converter.append_missing_env_vars()
+            added = converter.append_missing_env_vars(Path(tmpdir) / ".env")
 
             env_path = Path(tmpdir) / ".env"
             assert env_path.exists()
@@ -154,7 +154,7 @@ class TestConfigConverter:
                 f.write("MINIO_ENDPOINT=my-custom-endpoint\n")
 
             converter = ConfigConverter(manifest, Path(tmpdir))
-            added = converter.append_missing_env_vars()
+            added = converter.append_missing_env_vars(Path(tmpdir) / ".env")
 
             # MINIO_ENDPOINT should NOT be in added (it already exists)
             assert "MINIO_ENDPOINT" not in added
@@ -177,7 +177,7 @@ class TestConfigConverter:
 
             converter = ConfigConverter(manifest, Path(tmpdir))
             converter.apply_all()
-            converter.append_missing_env_vars()
+            converter.append_missing_env_vars(Path(tmpdir) / ".env")
 
             # Original content should still be there
             with open(env_path) as f:

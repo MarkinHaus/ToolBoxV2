@@ -76,7 +76,7 @@ def _auto_mount_features(fast_app: FastTB):
                              continue
 
                         # mount_app expects (other_app, prefix, source)
-                        fast_app.mount_app(sub_app, prefix, source=f"feature:{data.get('name', 'unknown')}")
+                        fast_app.mount_app(sub_app, prefix, source=f"app:{data.get('name', 'unknown')}")
                         print(f"[local_ui] Mounted {data.get('name', 'unknown')} at {prefix}")
                     except Exception as e:
                         print(f"[local_ui] Failed to mount feature {data.get('name')}: {e}")

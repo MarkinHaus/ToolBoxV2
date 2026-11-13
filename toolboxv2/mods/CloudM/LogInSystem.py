@@ -40,11 +40,10 @@ AUTH_MODULE = "CloudM.Auth"
 
 def _get_cli_session_storage_dir():
     """Get unified storage directory for CLI sessions."""
-    from pathlib import Path
-    from toolboxv2 import tb_root_dir
+    from toolboxv2._state_dir import data_root
 
-    # Use toolbox data directory for consistent storage
-    storage_dir = tb_root_dir / ".data" / "cli_sessions"
+    # R2 (V3): session storage lives in the one data root
+    storage_dir = data_root() / "cli_sessions"
     storage_dir.mkdir(parents=True, exist_ok=True)
     return str(storage_dir)
 

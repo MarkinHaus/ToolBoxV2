@@ -80,7 +80,8 @@ def _from_manifest() -> Tuple[Optional[str], Optional[int]]:
     try:
         from toolboxv2 import tb_root_dir
         from toolboxv2.utils.manifest.loader import ManifestLoader
-        loader = ManifestLoader(base_dir=str(tb_root_dir))
+        from toolboxv2._state_dir import manifest_base_dir
+        loader = ManifestLoader(base_dir=str(manifest_base_dir()))
         if not loader.manifest_path.exists():
             return None, None
         manifest = loader.load()
@@ -151,8 +152,9 @@ def dist_dir() -> Optional[Path]:
         from toolboxv2 import tb_root_dir
         root = Path(str(tb_root_dir))
         try:
+            from toolboxv2._state_dir import manifest_base_dir
             from toolboxv2.utils.manifest.loader import ManifestLoader
-            loader = ManifestLoader(base_dir=str(root))
+            loader = ManifestLoader(base_dir=str(manifest_base_dir()))
             if loader.manifest_path.exists():
                 raw = loader.load().paths.dist_dir
                 if raw and "${" not in raw:
@@ -205,6 +207,14 @@ def publish_endpoint(host: Optional[str] = None, port: Optional[int] = None,
         "ws_url": f"ws://{host}:{int(ws_port)}",
         "pid": os.getpid(),
     }
+    # Packaged installs also publish where they live, so the Tauri shell finds
+    # <install_dir>/install.manifest even for a custom install path (core update).
+    try:
+        from toolboxv2._state_dir import is_packaged_install, user_state_dir
+        if is_packaged_install():
+            payload["install_dir"] = str(user_state_dir())
+    except Exception:
+        pass
     try:
         target = endpoint_file()
         target.parent.mkdir(parents=True, exist_ok=True)

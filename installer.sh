@@ -102,6 +102,7 @@ UV_BIN=""
 PYTHON_BIN=""
 REGISTRY_REACHABLE=false
 ACTION="install" # install | update | uninstall
+FOUND_INSTALL=""  # first existing installation seen by phase_discovery
 
 # ── Args ─────────────────────────────────────────────────────
 CONFIG_FILE=""
@@ -282,6 +283,7 @@ phase_discovery() {
   fi
 
   if [ ${#found_installs[@]} -gt 0 ]; then
+    FOUND_INSTALL="${found_installs[0]}"
     echo ""
     warn "Existing ToolBoxV2 installation(s) found:"
     for p in "${found_installs[@]}"; do
@@ -347,6 +349,10 @@ phase_config() {
     local feat_line
     feat_line=$(grep -A1 "^features:" "$CONFIG_FILE" 2>/dev/null | tail -1 | tr -d ' []' | tr ',' ' ' || true)
     [ -n "$feat_line" ] && FEATURES="$feat_line"
+    # T5/F1: einfacher Config-Schluessel tb_features (kommagetrennt) ueberschreibt FEATURES
+    tb_features_cfg=""
+    tb_features_cfg=$(yaml_get "$CONFIG_FILE" "tb_features" "")
+    [ -n "$tb_features_cfg" ] && FEATURES=$(echo "$tb_features_cfg" | tr ',' ' ')
   fi
 
   # Interactive fallback for each missing value
@@ -385,8 +391,8 @@ phase_config() {
   echo "  Included (always): ${G}mini core${NC}"
   echo "  Optional modules:"
   local sel_features="$FEATURES"
-  if [ -n "$ASSUME_YES" ]; then
-    # non-interactive: konfigurierte Module aktivieren, Rest skippen
+  if [ -n "$ASSUME_YES" ] && [ -z "$tb_features_cfg" ]; then
+    # R3: non-interactive ohne tb_features in Config -> bekannte Module aktivieren
     for feat in $MODULES_OPTIONAL; do
       echo "$sel_features" | grep -qw "$feat" || sel_features="$sel_features $feat"
     done
@@ -415,7 +421,7 @@ phase_config() {
   # Install path
   local default_path
   default_path=$(os_default_path)
-  if [ -z "$INSTALL_PATH" ]; then
+  if [ -z "$INSTALL_PATH" ] && [ -z "$ASSUME_YES" ]; then
     ask "Custom install path? Leave empty for default (${C}${default_path}${NC}): "
     read -r custom_path || custom_path=""  # EOF/piped-sicher
     INSTALL_PATH="${custom_path:-$default_path}"
@@ -703,13 +709,29 @@ _install_native() {
   echo "$tb_version"
 }
 
-_install_uv() {
-  info "Installing via uv tool..."
-  local pkg="ToolBoxV2"
-  # Build extras string from features
+# T5/F2: Paket-Spezifikation; mit TB_WHEEL (existierende .whl) als PEP-508-Direct-Reference
+pkg_spec() {
   local extras
   extras=$(echo "$FEATURES" | tr ' ' '\n' | grep -v -E '^(core|mini)$' | sed '/^$/d' | paste -sd',' -)
-  [ -n "$extras" ] && pkg="ToolBoxV2[${extras}]"
+  if [ -n "${TB_WHEEL:-}" ] && [ -f "$TB_WHEEL" ]; then
+    if [ -n "$extras" ]; then
+      echo "ToolBoxV2[${extras}] @ file://${TB_WHEEL}"
+    else
+      echo "ToolBoxV2 @ file://${TB_WHEEL}"
+    fi
+  else
+    if [ -n "$extras" ]; then
+      echo "ToolBoxV2[${extras}]"
+    else
+      echo "ToolBoxV2"
+    fi
+  fi
+}
+
+_install_uv() {
+  info "Installing via uv tool..."
+  local pkg
+  pkg=$(pkg_spec)
 
   export UV_TOOL_DIR="${INSTALL_PATH}/uv-tools"
   export UV_TOOL_BIN_DIR="${INSTALL_PATH}/bin"
@@ -740,10 +762,8 @@ _install_venv() {
   local pip="${venv_path}/bin/pip"
   "$pip" install --upgrade pip -q
 
-  local pkg="ToolBoxV2"
-  local extras
-  extras=$(echo "$FEATURES" | tr ' ' '\n' | grep -v -E '^(core|mini)$' | sed '/^$/d' | paste -sd',' -)
-  [ -n "$extras" ] && pkg="ToolBoxV2[${extras}]"
+  local pkg
+  pkg=$(pkg_spec)
 
   "$pip" install "$pkg" -q
   log "Installed: ${pkg} in ${venv_path}"
@@ -852,6 +872,10 @@ phase_write_manifests() {
   local tb_version="$1"
   step "Phase 4 — Writing Manifests & Env"
 
+  # Build id of the installed core (sha256 of the bundled wheel, handed in by
+  # the Tauri app as TB_CORE_BUILD). Read BEFORE the manifest is rewritten.
+  local core_build="${TB_CORE_BUILD:-$(yaml_get "${INSTALL_PATH}/install.manifest" "core_build" "")}"
+
   # install.manifest
   cat > "${INSTALL_PATH}/install.manifest" << EOF
 installer_version: "${INSTALLER_VERSION}"
@@ -861,6 +885,7 @@ source_from: "${SOURCE_FROM}"
 source_branch: "${SOURCE_BRANCH}"
     # ^ master is the active branch
 tb_version: "${tb_version}"
+core_build: "${core_build}"
 toolbox_home: "${INSTALL_PATH}"
 bin_path: "${INSTALL_PATH}/bin/tb"
 src_path: "${INSTALL_PATH}/src"
@@ -881,34 +906,7 @@ optional_installed: "$(
 EOF
   log "Written: ${INSTALL_PATH}/install.manifest"
 
-  # tb-manifest.yaml (only write if not already present)
-  local manifest_file="${INSTALL_PATH}/tb-manifest.yaml"
-  if [ ! -f "$manifest_file" ]; then
-    download "${GITHUB_RAW}/toolboxv2/utils/manifest/example-manifest.yaml" \
-             "${manifest_file}" 2>/dev/null || \
-    cat > "$manifest_file" << EOF
-manifest_version: "1.0.0"
-app:
-  name: ToolBoxV2
-  version: "${tb_version}"
-  instance_id: "${INSTANCE_ID}"
-  environment: ${ENVIRONMENT}
-  debug: false
-  log_level: INFO
-paths:
-  data_dir: "${INSTALL_PATH}/.data"
-  config_dir: "${INSTALL_PATH}/.config"
-  logs_dir: "${INSTALL_PATH}/logs"
-  mods_dir: "${INSTALL_PATH}/mods"
-  dist_dir: "${INSTALL_PATH}/dist"
-registry:
-  url: "${REGISTRY_URL}"
-  auto_update: false
-EOF
-    log "Written: ${manifest_file}"
-  else
-    info "tb-manifest.yaml already exists — skipping (run 'tb manifest apply' to update)"
-  fi
+  # tb-manifest.yaml: created by 'tb -init <profile>' (T3), not by the installer.
 
   # .env (only missing vars)
   local env_file="${INSTALL_PATH}/.env"
@@ -917,11 +915,8 @@ EOF
 # ToolBoxV2 Environment — generated by installer
 TOOLBOX_HOME="${INSTALL_PATH}"
 TB_INSTALL_DIR="${INSTALL_PATH}"
-TB_DATA_DIR="${INSTALL_PATH}/.data"
 TB_DIST_DIR="${INSTALL_PATH}/dist"
 TB_ENV="${ENVIRONMENT}"
-TB_JWT_SECRET=                    # REQUIRED: set before production use
-TB_COOKIE_SECRET=                 # REQUIRED: set before production use
 TOOLBOXV2_BASE=localhost
 TOOLBOXV2_BASE_PORT=8000
 MINIO_ENDPOINT=
@@ -929,7 +924,6 @@ MINIO_ACCESS_KEY=
 MINIO_SECRET_KEY=
 EOF
     log "Written: ${env_file}"
-    warn "Edit ${env_file} to set TB_JWT_SECRET and TB_COOKIE_SECRET before running in production"
   fi
 
   # Write TOOLBOX_HOME to shell profile
@@ -970,8 +964,29 @@ action_update() {
       phase_write_manifests "$new_ver"
       ;;
     uv)
-      "$UV_BIN" tool upgrade ToolBoxV2
-      log "Updated via uv"
+      if [ -n "${TB_WHEEL:-}" ] && [ -f "$TB_WHEEL" ]; then
+        # Keep what the installation was made with: the one manifest writer
+        # (phase_write_manifests) rewrites the file from these variables.
+        SOURCE_FROM=$(yaml_get "$manifest" "source_from" "$SOURCE_FROM")
+        SOURCE_BRANCH=$(yaml_get "$manifest" "source_branch" "$SOURCE_BRANCH")
+        FEATURES=$(yaml_get "$manifest" "features" "core cli" | tr ' ' '\n' \
+          | grep -v -E '^(core|mini)$' | sed '/^$/d' | paste -sd' ' -)
+        local opt_installed
+        opt_installed=" $(yaml_get "$manifest" "optional_installed" "") "
+        case "$opt_installed" in *" nginx "*)    OPT_NGINX=true ;; esac
+        case "$opt_installed" in *" docker "*)   OPT_DOCKER=true ;; esac
+        case "$opt_installed" in *" ollama "*)   OPT_OLLAMA=true ;; esac
+        case "$opt_installed" in *" minio "*)    OPT_MINIO=true ;; esac
+        case "$opt_installed" in *" registry "*) OPT_REGISTRY=true ;; esac
+        local new_ver
+        new_ver=$(_install_uv)
+        phase_write_manifests "$new_ver"
+        log "Updated via uv from wheel"
+        jdone "$new_ver" "$INSTALL_PATH" ""
+      else
+        "$UV_BIN" tool upgrade ToolBoxV2
+        log "Updated via uv"
+      fi
       ;;
     docker)
       docker pull ghcr.io/markinhaus/toolboxv2:latest
@@ -1037,11 +1052,6 @@ print_summary() {
   echo -e "  1. Reload shell:  ${BOLD}source ~/.bashrc${NC} (or open new terminal)"
   echo -e "  2. First run:     ${BOLD}tb${NC}"
   echo -e "  3. Check status:  ${BOLD}tb status${NC}"
-  if grep -q "TB_JWT_SECRET=$" "${INSTALL_PATH}/.env" 2>/dev/null; then
-    echo ""
-    echo -e "  ${Y}[!] Set secrets before production:${NC}"
-    echo -e "      ${BOLD}${INSTALL_PATH}/.env${NC}"
-  fi
   echo ""
 }
 
@@ -1110,7 +1120,9 @@ main() {
 
       local tb_version="unknown"
       # Route to correct install function (--dry-run: validate only, touch nothing)
-      if dry "install (${INSTALL_MODE}) -> ${INSTALL_PATH}"; then
+      local _dry_pkg=""
+      case "$INSTALL_MODE" in uv|venv) _dry_pkg=" pkg=$(pkg_spec)";; esac
+      if dry "install (${INSTALL_MODE}) -> ${INSTALL_PATH}${_dry_pkg}"; then
         tb_version="dry-run"
       elif [ "$INSTALL_MODE" = "uv" ] && [ "$RUNTIME" = "venv" ]; then
         tb_version=$(_install_venv)
@@ -1139,7 +1151,12 @@ main() {
       jdone "$tb_version" "$INSTALL_PATH" "$TB_PROFILE"
       ;;
     update)
+      jlog discovery start running "Detecting system" 2
       phase_discovery
+      # --update without --path: the installation discovery found (one rule)
+      [ -n "$INSTALL_PATH" ] || INSTALL_PATH="${FOUND_INSTALL:-}"
+      [ -n "$INSTALL_PATH" ] || fail "No installation found to update (use --path)"
+      jlog install start running "Updating ToolBoxV2" 8
       action_update
       ;;
     uninstall)

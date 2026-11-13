@@ -94,6 +94,7 @@ $INSTALL_PATH     = $Path
 $ENVIRONMENT      = "development"
 $INSTANCE_ID      = "tbv2_main"
 $FEATURES         = "core cli"
+$script:tbFeaturesCfg = ""   # R9-BUG1: StrictMode-Default, wird evtl. von Config ueberschrieben
 $OPT_NGINX        = $false
 $OPT_DOCKER       = $false
 $OPT_OLLAMA       = $false
@@ -105,6 +106,7 @@ $UV_BIN           = ""
 $PYTHON_BIN       = ""
 $REGISTRY_REACHABLE = $false
 $ACTION           = "install"
+$FOUND_INSTALL    = ""   # first existing installation seen by Phase-Discovery
 
 if ($Uninstall) { $ACTION = "uninstall" }
 if ($Update)    { $ACTION = "update" }
@@ -214,13 +216,16 @@ function Phase-Discovery {
         $foundInstalls += [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetDirectoryName($tbCmd.Source))
     }
 
-    # Check Docker
+    # Check Docker (daemon down must not abort discovery - PS 7.4 NativeCommandError guard)
     if (Get-Command docker -ErrorAction SilentlyContinue) {
-        $imgs = docker images --format "{{.Repository}}:{{.Tag}}" 2>$null | Select-String "toolboxv2"
-        if ($imgs) { Info "Docker TB image(s): $imgs" }
+        try {
+            $imgs = (docker images --format "{{.Repository}}:{{.Tag}}" 2>$null | Out-String) | Select-String "toolboxv2"
+            if ($imgs) { Info "Docker TB image(s): $imgs" }
+        } catch { }
     }
 
     if ($foundInstalls.Count -gt 0) {
+        $script:FOUND_INSTALL = $foundInstalls[0]
         Write-Host ""
         Warn "Existing ToolBoxV2 installation(s) found:"
         foreach ($p in $foundInstalls) {
@@ -231,9 +236,14 @@ function Phase-Discovery {
         Write-Host ""
         if ($ACTION -eq "install") {
             if ($AssumeYes -eq "yes") {
-                $script:ACTION       = "update"
-                $script:INSTALL_PATH = $foundInstalls[0]
-                Info "assume=yes -> updating existing installation at $INSTALL_PATH"
+                # R9-BUG2: expliziter -Path gewinnt; nur ohne -Path auf bestehende Installation updaten
+                if ($INSTALL_PATH) {
+                    Info "assume=yes with explicit -Path -> fresh install at $INSTALL_PATH"
+                } else {
+                    $script:ACTION       = "update"
+                    $script:INSTALL_PATH = $foundInstalls[0]
+                    Info "assume=yes -> updating existing installation at $INSTALL_PATH"
+                }
             } else {
                 if (Confirm-User "Update existing installation?") {
                     $script:ACTION       = "update"
@@ -274,10 +284,20 @@ function Phase-Config {
         $script:OPT_OLLAMA    = (Get-YamlField $Config "optional.ollama"          "false") -eq "true"
         $script:OPT_MINIO     = (Get-YamlField $Config "optional.minio"           "false") -eq "true"
         $script:OPT_REGISTRY  = (Get-YamlField $Config "optional.registry"        "false") -eq "true"
-        if (-not $AssumeYes)  { $AssumeYes = Get-YamlField $Config "assume" "" }   # yes|no|""(ask)
+        if (-not $AssumeYes)  { $script:AssumeYes = Get-YamlField $Config "assume" "" }   # yes|no|""(ask)
         if (-not $TbProfile)  { $script:TbProfile = Get-YamlField $Config "profile" "" }
         if (-not $Ui)         { $script:Ui        = Get-YamlField $Config "ui" "" }
+        # T5/F1: Config-Schluessel tb_features (kommagetrennt) ueberschreibt FEATURES
+        $script:tbFeaturesCfg = ""
+        if ($Config) { $script:tbFeaturesCfg = Get-YamlField $Config "tb_features" "" }
+        if ($script:tbFeaturesCfg) { $script:FEATURES = ($script:tbFeaturesCfg -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join " " }
         $script:AssumeYes     = $AssumeYes
+    }
+
+    # B3-R9: kein Pfad angegeben -> Default wie installer.sh (os_default_path)
+    if (-not $INSTALL_PATH) {
+        $script:INSTALL_PATH = Join-Path $env:LOCALAPPDATA "toolboxv2"
+        Info "No install path given - using default: $INSTALL_PATH"
     }
 
     # 1. Install path
@@ -433,8 +453,8 @@ function Invoke-InteractiveConfig {
     Write-Host ""
     Write-Host "  Included (always): mini core"
     $selFeatures = $FEATURES
-    if ($AssumeYes -eq "yes") {
-        # non-interactive: konfigurierte Module aktivieren, Rest skippen
+    if ($AssumeYes -eq "yes" -and -not $script:tbFeaturesCfg) {
+        # R3: non-interactive ohne tb_features in Config -> bekannte Module aktivieren
         foreach ($feat in $MODULES_OPTIONAL) {
             if ($selFeatures -notmatch "\b${feat}\b") { $selFeatures += " $feat" }
         }
@@ -457,7 +477,8 @@ function Invoke-InteractiveConfig {
         $script:ENVIRONMENT = Prompt-Default "Environment (development|production|staging)" $ENVIRONMENT
     }
 
-    if (-not $INSTALL_PATH) {
+    if (-not $INSTALL_PATH -and $AssumeYes -ne "yes") {
+        # R3: non-interactive (assume: yes) frägt keine Pfade
         $default = Get-DefaultPath
         Ask "Custom install path? Leave empty for default ($default) : "
         $cp = Read-Host
@@ -581,10 +602,20 @@ function Install-Native {
     return $info.Version
 }
 
+# T5/F2: Paket-Spezifikation; mit TB_WHEEL (existierende .whl) als PEP-508-Direct-Reference
+function Get-PkgSpec {
+    $extras = ($FEATURES -split " " | Where-Object { $_ -notmatch "^(core|mini)$" }) -join ","
+    $base = if ($extras) { "ToolBoxV2[$extras]" } else { "ToolBoxV2" }
+    if ($env:TB_WHEEL -and (Test-Path $env:TB_WHEEL)) {
+        $wheelUri = ([System.Uri](Resolve-Path $env:TB_WHEEL).Path).AbsoluteUri
+        return "$base @ $wheelUri"
+    }
+    return $base
+}
+
 function Install-Uv {
     Info "Installing via uv tool..."
-    $extras = ($FEATURES -split " " | Where-Object { $_ -notmatch "^(core|mini)$" }) -join ","
-    $pkg = if ($extras) { "ToolBoxV2[$extras]" } else { "ToolBoxV2" }
+    $pkg = Get-PkgSpec
 
     # Pin uv tool dirs to install path (parity: installer.sh fd2707bb)
     $env:UV_TOOL_DIR     = "$INSTALL_PATH\uv-tools"
@@ -598,7 +629,8 @@ function Install-Uv {
     Add-BinToPath "$INSTALL_PATH\bin" | Out-Null
 
     # Version straight from uv (tb --version needs a booted app)
-    $line = (& $UV_BIN tool list 2>$null) | Where-Object { $_ -match '^toolboxv2\s+v?([\d\.]+)' } | Select-Object -First 1
+    $uvOut = & cmd /c "`"$UV_BIN`" tool list 2>&1"   # IB2: stderr-merge; Zeilen-Array (kein Out-String: ^-Regex je Zeile)
+    $line = $uvOut | Where-Object { $_ -match '^toolboxv2\s+v?([\d\.]+)' } | Select-Object -First 1
     if ($line -and ($line -match '^toolboxv2\s+v?([\d\.]+)')) { return $Matches[1] }
     return "unknown"
 }
@@ -609,8 +641,7 @@ function Install-Venv {
     & $PYTHON_BIN -m venv $venvPath
     $pip = "$venvPath\Scripts\pip.exe"
     & $pip install --upgrade pip -q
-    $extras = ($FEATURES -split " " | Where-Object { $_ -notmatch "^(core|mini)$" }) -join ","
-    $pkg = if ($extras) { "ToolBoxV2[$extras]" } else { "ToolBoxV2" }
+    $pkg = Get-PkgSpec
     & $pip install $pkg -q
 
     # Write wrapper
@@ -666,7 +697,7 @@ function Install-Source {
     }
     Pop-Location
 
-    $ver = (& "$INSTALL_PATH\bin\tb.cmd" --version 2>$null) -replace "[^\d\.]","" | Select-Object -First 1
+    $ver = (& cmd /c "`"$INSTALL_PATH\bin\tb.cmd`" --version 2>&1") -replace "[^\d\.]","" | Where-Object { $_ } | Select-Object -First 1
     $result = "dev"
     if ($ver) { $result = $ver }
     return $result
@@ -687,6 +718,11 @@ function Phase-WriteManifests {
     if ($OPT_MINIO)    { $optInstalled += "minio" }
     if ($OPT_REGISTRY) { $optInstalled += "registry" }
 
+    # Build id of the installed core (sha256 of the bundled wheel, handed in by
+    # the Tauri app as TB_CORE_BUILD). Read BEFORE the manifest is rewritten.
+    $coreBuild = $env:TB_CORE_BUILD
+    if (-not $coreBuild) { $coreBuild = Get-YamlField "$INSTALL_PATH\install.manifest" "core_build" "" }
+
     @"
 installer_version: "$INSTALLER_VERSION"
 installed_at: "$timestamp"
@@ -694,6 +730,7 @@ install_mode: "$INSTALL_MODE"
 source_from: "$SOURCE_FROM"
 source_branch: "$SOURCE_BRANCH"
 tb_version: "$TbVersion"
+core_build: "$coreBuild"
 toolbox_home: "$INSTALL_PATH"
 bin_path: "$INSTALL_PATH\bin\tb.exe"
 src_path: "$INSTALL_PATH\src"
@@ -706,43 +743,16 @@ optional_installed: "$($optInstalled -join ' ')"
 "@ | Set-Content "$INSTALL_PATH\install.manifest"
     Log "Written: $INSTALL_PATH\install.manifest"
 
-    $manifestFile = "$INSTALL_PATH\tb-manifest.yaml"
-    if (-not (Test-Path $manifestFile)) {
-        @"
-manifest_version: "1.0.0"
-app:
-  name: ToolBoxV2
-  version: "$TbVersion"
-  instance_id: "$INSTANCE_ID"
-  environment: $ENVIRONMENT
-  debug: false
-  log_level: INFO
-paths:
-  data_dir: "$INSTALL_PATH\.data"
-  config_dir: "$INSTALL_PATH\.config"
-  logs_dir: "$INSTALL_PATH\logs"
-  mods_dir: "$INSTALL_PATH\mods"
-  dist_dir: "$INSTALL_PATH\dist"
-registry:
-  url: "$REGISTRY_URL"
-  auto_update: false
-"@ | Set-Content $manifestFile
-        Log "Written: $manifestFile"
-    } else {
-        Info "tb-manifest.yaml exists — skipping (run 'tb manifest apply' to update)"
-    }
+    # tb-manifest.yaml: created by 'tb -init <profile>' (T3), not by the installer.
 
     $envFile = "$INSTALL_PATH\.env"
     if (-not (Test-Path $envFile)) {
         @"
-# ToolBoxV2 Environment — generated by installer
+# ToolBoxV2 Environment - generated by installer (ASCII only: dotenv reads utf-8)
 TOOLBOX_HOME=$INSTALL_PATH
 TB_INSTALL_DIR=$INSTALL_PATH
-TB_DATA_DIR=$INSTALL_PATH\.data
 TB_DIST_DIR=$INSTALL_PATH\dist
 TB_ENV=$ENVIRONMENT
-TB_JWT_SECRET=                    # REQUIRED: set before production use
-TB_COOKIE_SECRET=                 # REQUIRED: set before production use
 TOOLBOXV2_BASE=localhost
 TOOLBOXV2_BASE_PORT=8000
 MINIO_ENDPOINT=
@@ -750,7 +760,6 @@ MINIO_ACCESS_KEY=
 MINIO_SECRET_KEY=
 "@ | Set-Content $envFile
         Log "Written: $envFile"
-        Warn "Edit $envFile to set TB_JWT_SECRET and TB_COOKIE_SECRET before production use"
     }
 
     # Write TOOLBOX_HOME to user environment
@@ -773,7 +782,28 @@ function Action-Update {
 
     switch ($INSTALL_MODE) {
         "native"  { $v = Install-Native; Phase-WriteManifests $v }
-        "uv"      { & $UV_BIN tool upgrade ToolBoxV2; Log "Updated via uv" }
+        "uv"      {
+            if ($env:TB_WHEEL -and (Test-Path $env:TB_WHEEL)) {
+                # Keep what the installation was made with: the one manifest writer
+                # (Phase-WriteManifests) rewrites the file from these variables.
+                $script:SOURCE_FROM   = Get-YamlField $manifest "source_from" $SOURCE_FROM
+                $script:SOURCE_BRANCH = Get-YamlField $manifest "source_branch" $SOURCE_BRANCH
+                $script:FEATURES = ((Get-YamlField $manifest "features" "core cli") -split " " |
+                    Where-Object { $_ -and ($_ -notmatch "^(core|mini)$") }) -join " "
+                $optInstalled = (Get-YamlField $manifest "optional_installed" "") -split " "
+                if ($optInstalled -contains "nginx")    { $script:OPT_NGINX    = $true }
+                if ($optInstalled -contains "docker")   { $script:OPT_DOCKER   = $true }
+                if ($optInstalled -contains "ollama")   { $script:OPT_OLLAMA   = $true }
+                if ($optInstalled -contains "minio")    { $script:OPT_MINIO    = $true }
+                if ($optInstalled -contains "registry") { $script:OPT_REGISTRY = $true }
+                $v = Install-Uv
+                Phase-WriteManifests $v
+                Log "Updated via uv from wheel"
+                JDone $v $INSTALL_PATH ""
+            } else {
+                & $UV_BIN tool upgrade ToolBoxV2; Log "Updated via uv"
+            }
+        }
         "docker"  { docker pull ghcr.io/markinhaus/toolboxv2:latest; Log "Updated Docker image" }
         "source"  {
             $script:SOURCE_FROM   = Get-YamlField $manifest "source_from" "git"
@@ -839,11 +869,6 @@ function Print-Summary {
     Write-Host "  1. Restart terminal (PATH updated)"
     Write-Host "  2. First run:    tb"
     Write-Host "  3. Check status: tb status"
-    if (Select-String -Path "$INSTALL_PATH\.env" -Pattern "TB_JWT_SECRET=$" -ErrorAction SilentlyContinue) {
-        Write-Host ""
-        Write-Host "  [!] Set secrets before production:" -ForegroundColor Yellow
-        Write-Host "      $INSTALL_PATH\.env"
-    }
     Write-Host ""
 }
 
@@ -860,9 +885,9 @@ switch ($ACTION) {
     "install" {
         JLog "discovery" "start" "running" "Detecting system" 2
         Phase-Discovery
-        Invoke-InteractiveConfig
         JLog "config" "start" "running" "Loading configuration" 4
         Phase-Config
+        Invoke-InteractiveConfig
         JLog "preflight" "start" "running" "Checking prerequisites" 6
         Phase-Preflight
         JLog "install" "start" "running" "Installing ToolBoxV2 ($INSTALL_MODE)" 8
@@ -882,7 +907,7 @@ switch ($ACTION) {
         if ((Test-Path $tbBin) -and -not (DryRun "tb access")) {
             JLog "install" "access" "running" "Setting up tb global access" 90
             try {
-                & $tbBin access 2>$null
+                & cmd /c "`"$tbBin`" access 2>&1" | Out-Null   # IB2: native stderr-merge (PS5.1 EAP=Stop safe)
                 JLog "install" "access" "done" "tb accessible globally" 92
             } catch {
                 Warn "tb access command failed - PATH fallback active"
@@ -892,7 +917,15 @@ switch ($ACTION) {
 
         Print-Summary $tbVersion
     }
-    "update"    { Phase-Discovery; Phase-Config; Action-Update }
+    "update"    {
+        JLog "discovery" "start" "running" "Detecting system" 2
+        Phase-Discovery
+        # -Update without -Path: the installation discovery found (one rule)
+        if (-not $INSTALL_PATH) { $script:INSTALL_PATH = $script:FOUND_INSTALL }
+        if (-not $INSTALL_PATH) { Fail "No installation found to update (use -Path)" }
+        JLog "install" "start" "running" "Updating ToolBoxV2" 8
+        Action-Update
+    }
     "uninstall" { Phase-Discovery; Action-Uninstall }
 }
 
@@ -927,7 +960,7 @@ if ($ACTION -eq "install" -and -not $DryRun) {
         if ($TbProfile) {
             JLog "onboarding" "profile" "running" "Applying profile $TbProfile" 95
             # Success = tb's JSON result {"ok": true}; older tb ignores unknown -init with exit 0.
-            $initOut = (& $tbRun -init $TbProfile 2>&1 | Out-String)
+            $initOut = (& cmd /c "`"$tbRun`" -init $TbProfile 2>&1" | Out-String)  # IB2: native stderr-merge (PS5.1 EAP=Stop safe)
             Write-Host $initOut
             if ($initOut -match '"ok":\s*true') { JLog "onboarding" "profile" "done" "Profile $TbProfile applied" 98 }
             else { Warn "Could not apply profile $TbProfile (tb too old?) - run 'tb -init onboard'" }
