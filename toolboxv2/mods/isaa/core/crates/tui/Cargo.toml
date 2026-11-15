@@ -1,0 +1,14 @@
+[package]
+name = "isaa-tui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+isaa-core = { path = "../core" }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+tracing = { workspace = true }
