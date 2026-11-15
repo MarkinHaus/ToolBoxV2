@@ -98,25 +98,32 @@ class Tools(MainTool, FileHandler):
 
         if not is_remote and not is_server:
             try:
+                from .auth.device_account import read_device_owner
                 from .auth.local_admin import ensure_local_admin
-                user = await ensure_local_admin(self.app)
-                self._apply_local_admin_to_session(user)
+                provider = read_device_owner(self.app)
+                if provider is None:
+                    admin = await ensure_local_admin(self.app)
+                    provider = {"user_id": admin.user_id,
+                                "username": admin.username}
+                self._apply_local_admin_to_session(provider)
             except Exception as e:
                 self.logger.warning(f"local_admin init skipped: {e}")
         else:
             # Remote/server: keep the existing remote-login behaviour.
             await self.app.session.login()
 
-    def _apply_local_admin_to_session(self, user) -> None:
+    def _apply_local_admin_to_session(self, provider: dict) -> None:
         """Mark app.session as the local root without any remote round-trip.
 
-        The local session never talks to a remote validate_session endpoint;
-        it is authoritative on the owner's machine (level -1). Tokens stay
-        remote-only — none are minted or stored here.
+        provider: user_id/username of the linked device account
+        (device_owner.json) or, if not yet linked, the local admin.
+        The local session never talks to a remote validate_session
+        endpoint; it is authoritative on the owner's machine (level
+        -1). Tokens stay remote-only - none are minted or stored here.
         """
         s = self.app.session
-        s.username = user.username
-        s.user_id = user.user_id
+        s.username = provider.get("username", "")
+        s.user_id = provider.get("user_id", "")
         s.valid = True
         # No remote base for a purely local session — prevents accidental
         # remote validate_session calls on later login() attempts.

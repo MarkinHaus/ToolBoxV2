@@ -1689,11 +1689,16 @@ class HTTPWorker:
             if profile is None or profile.value != "server":
                 try:
                     import asyncio
+                    from toolboxv2.mods.CloudM.auth.device_account import read_device_owner
                     from toolboxv2.mods.CloudM.auth.local_admin import ensure_local_admin
-                    user = asyncio.new_event_loop().run_until_complete(
-                        ensure_local_admin(self._app)
-                    )
-                    self._session_manager.enable_local_trust(user.to_dict())
+                    provider = read_device_owner(self._app)
+                    if provider is None:
+                        user = asyncio.new_event_loop().run_until_complete(
+                            ensure_local_admin(self._app)
+                        )
+                        provider = {"user_id": user.user_id,
+                                    "username": user.username}
+                    self._session_manager.enable_local_trust(provider)
                 except RuntimeError as e:
                     logger.warning(f"Loopback trust not enabled (event loop busy): {e}")
                 except Exception as e:

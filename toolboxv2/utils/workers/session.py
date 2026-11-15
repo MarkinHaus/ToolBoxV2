@@ -569,6 +569,11 @@ class SessionManager:
         self.cookie_max_age = cookie_max_age
         self._api_keys: Dict[str, SessionData] = {}
         self._pending_updates: Dict[str, SessionData] = {}
+
+        # WP1 K2: loopback device owner - unauthenticated local requests
+        # run as the linked device account. Set only via enable_local_trust
+        # at trusted call sites (local installs, never remote/server).
+        self._device_trust: Optional[dict] = None
     # =========================================================================
     # Session Creation
     # =========================================================================
@@ -732,7 +737,9 @@ class SessionManager:
             if cookie_session.is_authenticated or not cookie_session.anonymous:
                 return cookie_session
 
-        # 4. Return anonymous
+        # 4. Device trust (loopback owner) or anonymous
+        if self._device_trust is not None:
+            return self._device_trust_session(self._device_trust)
         return SessionData.anonymous()
 
     def get_session_from_request_sync(
@@ -780,7 +787,9 @@ class SessionManager:
             if cookie_session.is_authenticated or not cookie_session.anonymous:
                 return cookie_session
 
-        # 4. Return anonymous
+        # 4. Device trust (loopback owner) or anonymous
+        if self._device_trust is not None:
+            return self._device_trust_session(self._device_trust)
         return SessionData.anonymous()
 
     # =========================================================================
@@ -947,6 +956,30 @@ class SessionManager:
     def clear_pending_updates(self):
         """Clear all pending session updates."""
         self._pending_updates.clear()
+
+    # =========================================================================
+    # Local Device Trust (WP1 K2)
+    # =========================================================================
+
+    def enable_local_trust(self, provider: Optional[dict]) -> None:
+        """Trust unauthenticated requests from this machine as the device owner.
+
+        provider: dict with user_id and username of the local admin or the
+        linked device account (from device_owner.json). None disables trust.
+        Call sites must guarantee local-only context (no remote base,
+        non-server profile) - the trust itself is not loopback-checked.
+        """
+        self._device_trust = provider
+
+    def _device_trust_session(self, provider: dict) -> SessionData:
+        """Build the owner session served to unauthenticated local requests."""
+        return SessionData.authenticated_session(
+            user_id=provider.get("user_id", ""),
+            user_name=provider.get("username", ""),
+            level=AccessLevel.ADMIN,
+            session_id="device_" + provider.get("user_id", "a"),
+            trusted_device=True,
+        )
 
 
 # ============================================================================
