@@ -15,6 +15,7 @@ from .state import _is_blacklisted
 
 
 def _generate_access_token(user_id: str, username: str, level: int, provider: str = "", email: str = "") -> str:
+    now = time.time()  # one clock read: exp is exactly iat + lifetime
     payload = {
         "sub": user_id,
         "user_id": user_id,  # alias for cloudm_client compatibility
@@ -23,19 +24,20 @@ def _generate_access_token(user_id: str, username: str, level: int, provider: st
         "level": level,
         "provider": provider,
         "type": "access",
-        "iat": time.time(),
-        "exp": time.time() + ACCESS_TOKEN_EXPIRY,
+        "iat": now,
+        "exp": now + ACCESS_TOKEN_EXPIRY,
         "jti": str(uuid.uuid4()),
     }
     return pyjwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
 def _generate_refresh_token(user_id: str) -> str:
+    now = time.time()  # one clock read: exp is exactly iat + lifetime
     payload = {
         "sub": user_id,
         "type": "refresh",
-        "iat": time.time(),
-        "exp": time.time() + REFRESH_TOKEN_EXPIRY,
+        "iat": now,
+        "exp": now + REFRESH_TOKEN_EXPIRY,
         "jti": str(uuid.uuid4()),
     }
     return pyjwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)

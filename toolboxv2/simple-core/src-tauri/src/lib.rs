@@ -699,6 +699,35 @@ fn subscribe_tray_events(app: tauri::AppHandle) {
     });
 }
 
+/// T12/F12: Update-Check 15s nach Start (nur Desktop, nie fatal).
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn spawn_update_check(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+        use tauri_plugin_updater::UpdaterExt;
+        let Ok(updater) = app.updater() else {
+            log::warn!("[Updater] updater unavailable");
+            return;
+        };
+        match updater.check().await {
+            Ok(Some(update)) => {
+                log::info!("[Updater] update {} available - installing", update.version);
+                if let Err(e) = update
+                    .download_and_install(|_, _| {}, || {})
+                    .await
+                {
+                    log::warn!("[Updater] install failed: {e}");
+                    return;
+                }
+                log::info!("[Updater] installed - restarting");
+                app.restart();
+            }
+            Ok(None) => log::info!("[Updater] app is up to date"),
+            Err(e) => log::warn!("[Updater] check failed: {e}"),
+        }
+    });
+}
+
 async fn apply_sse_frame(app: &tauri::AppHandle, frame: &str) {
     let data_line = match frame.lines().find_map(|l| l.strip_prefix("data: ")) {
         Some(s) => s,
@@ -915,7 +944,7 @@ async fn bootstrap_target() -> LaunchTarget {
         if let Err(e) = launch::start_background() {
             log::warn!("[Launch] background start failed: {}", e);
         }
-        if launch::wait_until_running(&base, 25).await {
+        if launch::wait_until_running(&base, 120).await {
             let route = launch::target_route(&base).await;
             return LaunchTarget::LocalUi { url: format!("{}{}", base, route) };
         }
@@ -926,6 +955,49 @@ async fn bootstrap_target() -> LaunchTarget {
     LaunchTarget::NotInstalled
 }
 
+/// Core update before the app shows anything: when the app brings a core
+/// build that differs from the installed one (build id, not version number),
+/// stop the workers and reinstall the bundled wheel in place. Never fatal:
+/// on any problem the installed core simply starts as it is.
+async fn update_core_if_needed(app: &tauri::AppHandle) {
+    let bundled = app
+        .path()
+        .resource_dir()
+        .ok()
+        .and_then(|d| installer::bundled_build_id(&d));
+    let Some(install_dir) = launch::find_installation() else {
+        return; // not installed: the cold-start installer is responsible
+    };
+    let installed = installer::installed_build_id(&install_dir);
+    if !installer::core_update_needed(bundled.as_deref(), installed.as_deref()) {
+        log::info!("[CoreUpdate] up to date (build {:?})", installed);
+        return;
+    }
+    log::info!(
+        "[CoreUpdate] installed build {:?} != bundled {:?} - updating {}",
+        installed,
+        bundled,
+        install_dir.display()
+    );
+    // Files of a running core are locked on Windows: stop it first and wait.
+    let base = worker_manager::local_ui_url();
+    if launch::probe_health(&base).await {
+        launch::stop_workers(&install_dir);
+        if !launch::wait_until_stopped(&base, 30).await {
+            log::warn!("[CoreUpdate] core still running after stop - update skipped");
+            return;
+        }
+    }
+    let handle = app.clone();
+    let dir = install_dir.clone();
+    match tauri::async_runtime::spawn_blocking(move || installer::run_core_update(&handle, &dir)).await {
+        Ok(Ok(true)) => log::info!("[CoreUpdate] done"),
+        Ok(Ok(false)) => log::warn!("[CoreUpdate] installer reported failure (see install.log)"),
+        Ok(Err(e)) => log::warn!("[CoreUpdate] installer failed: {e}"),
+        Err(e) => log::warn!("[CoreUpdate] task failed: {e}"),
+    }
+}
+
 /// Bootstrap im Hintergrund ausfuehren und Fenster entsprechend routing:
 /// LocalUi -> main (loading.html) navigiert auf local-ui URL;
 /// NotInstalled/Error -> eigenes "installer"-Fenster mit Initial-Load auf
@@ -934,6 +1006,7 @@ async fn bootstrap_target() -> LaunchTarget {
 /// Loading-Page statt Installer-Flash).
 fn spawn_bootstrap(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
+        update_core_if_needed(&app).await;
         let target = bootstrap_target().await;
         log::info!("[Launch] bootstrap target: {:?}", target);
         match &target {
@@ -1041,6 +1114,7 @@ pub fn run() {
                 Some(vec!["--minimized"]),
             )
         );
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
 
     builder
@@ -1174,6 +1248,8 @@ pub fn run() {
                 subscribe_tray_events(app.handle().clone());
                 // W1a: Bootstrap-Routing (local-ui vs installer.html vs Fehlerseite)
                 spawn_bootstrap(app.handle().clone());
+                // T12/F12: App-Update-Check nach dem Start
+                spawn_update_check(app.handle().clone());
             }
 
             #[cfg(any(target_os = "android", target_os = "ios"))]

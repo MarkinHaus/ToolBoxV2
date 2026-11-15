@@ -516,8 +516,8 @@ class BlobStorage:
         self.mode = mode
         self.bucket = bucket
         if storage_directory is None:
-            from toolboxv2 import tb_root_dir
-            storage_directory = str(tb_root_dir / ".data" /"blob_cache")
+            from toolboxv2._state_dir import data_root
+            storage_directory = str(data_root() / "blob_cache")
         self.storage_directory = os.path.expanduser(storage_directory)
         self.user_id = user_id or self._get_default_user_id()
         self.auto_sync = auto_sync

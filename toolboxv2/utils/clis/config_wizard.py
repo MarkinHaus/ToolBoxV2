@@ -290,18 +290,21 @@ def parse_env_template(template_path: Path) -> Dict[str, Tuple[str, str]]:
 
 
 def load_existing_env(env_path: Path) -> Dict[str, str]:
-    """Load existing .env file values."""
+    """R1 (V3): single .env reader; surrogateescape survives cp1252 leftovers."""
     existing: Dict[str, str] = {}
 
     if not env_path.exists():
         return existing
 
-    content = env_path.read_text(encoding="utf-8")
-    for line in content.splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, _, value = line.partition("=")
-            existing[key.strip()] = value.strip().strip('"').strip("'")
+    # Parse with python-dotenv itself, so this reader and load_dotenv() can
+    # never disagree (inline "# comment" after an empty value is NOT a value).
+    from io import StringIO
+    from dotenv import dotenv_values
+
+    content = env_path.read_text(encoding="utf-8", errors="surrogateescape")
+    for key, value in dotenv_values(stream=StringIO(content), interpolate=False).items():
+        if key and value is not None:
+            existing[key] = value
 
     return existing
 
@@ -837,19 +840,24 @@ def wizard_env_variables(root_dir: Path, existing_env: Dict[str, str],
 
 
 def save_env_file(env_path: Path, env_vars: Dict[str, str]):
-    """Save environment variables to .env file."""
+    """R1 (V3): single .env writer.
+
+    Fills EMPTY existing lines (e.g. installer's `TB_JWT_SECRET=`) in place,
+    preserves comments and order, round-trips cp1252 bytes via surrogateescape.
+    """
+    env_path.parent.mkdir(parents=True, exist_ok=True)
     lines = []
 
     # Read existing file to preserve comments and order
     if env_path.exists():
-        existing_content = env_path.read_text(encoding="utf-8")
+        existing_content = env_path.read_text(encoding="utf-8", errors="surrogateescape")
         existing_keys = set()
 
         for line in existing_content.splitlines():
             if line.strip() and not line.strip().startswith("#") and "=" in line:
                 key = line.split("=")[0].strip()
                 existing_keys.add(key)
-                # Update value if we have a new one
+                # Update value if we have a new one (also fills empty `KEY=` lines)
                 if key in env_vars:
                     lines.append(f"{key}={env_vars[key]}")
                 else:
@@ -874,7 +882,8 @@ def save_env_file(env_path: Path, env_vars: Dict[str, str]):
             if value:
                 lines.append(f"{key}={value}")
 
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    env_path.write_text("\n".join(lines) + "\n",
+                        encoding="utf-8", errors="surrogateescape")
 
 
 def wizard_advanced_agent(manifest_data: Dict[str, Any],
@@ -1134,7 +1143,8 @@ def run_config_wizard(root_dir: Optional[Path] = None) -> int:
         from toolboxv2.utils.manifest.loader import ManifestLoader
         from toolboxv2.utils.manifest.schema import TBManifest
 
-        loader = ManifestLoader(root_dir)
+        from toolboxv2._state_dir import manifest_base_dir
+        loader = ManifestLoader(manifest_base_dir())
 
         if loader.exists():
             manifest = loader.load()
@@ -1174,7 +1184,8 @@ def run_config_wizard(root_dir: Optional[Path] = None) -> int:
         section_header("LLM Provider Setup", 3, total_steps)
 
         template_path = root_dir / "env-template"
-        env_path = root_dir / ".env"
+        from toolboxv2._state_dir import env_file as _env_file
+        env_path = _env_file()
         existing_env = load_existing_env(env_path)
 
         for k, v in core_defaults.items():
@@ -1241,7 +1252,8 @@ def run_config_wizard(root_dir: Optional[Path] = None) -> int:
         section_header("Environment Variables", 6, total_steps)
 
         template_path = root_dir / "env-template"
-        env_path = root_dir / ".env"
+        from toolboxv2._state_dir import env_file as _env_file
+        env_path = _env_file()
 
         template_vars = parse_env_template(template_path)
         existing_env = load_existing_env(env_path)

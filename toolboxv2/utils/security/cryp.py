@@ -14,11 +14,9 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from dotenv import load_dotenv
 
 from ..system.tb_logger import get_logger
 
-load_dotenv()
 
 
 def derive_aes_key(tb_r_key: str) -> bytes:
@@ -40,7 +38,8 @@ def get_or_create_device_key():
     DEVICE_KEY_DIR = os.getenv("DEVICE_KEY_DIR", None)
     if DEVICE_KEY_DIR is None:
         from toolboxv2 import tb_root_dir
-        DEVICE_KEY_DIR = str(tb_root_dir / ".info")
+        from toolboxv2._state_dir import info_dir
+        DEVICE_KEY_DIR = str(info_dir())
     DEVICE_KEY_PATH = os.path.join(DEVICE_KEY_DIR, "device.enc")
 
     def ensure_device_key_dir_exists():

@@ -69,7 +69,8 @@ def _get_registry_url() -> str:
     try:
         from toolboxv2.utils.manifest.loader import ManifestLoader
         from toolboxv2 import tb_root_dir
-        loader = ManifestLoader(tb_root_dir)
+        from toolboxv2._state_dir import manifest_base_dir
+        loader = ManifestLoader(manifest_base_dir())
         if loader.exists():
             manifest = loader.load(resolve_env=True)
             return manifest.registry.url
@@ -84,7 +85,8 @@ def _get_cache_dir() -> Path:
     try:
         from toolboxv2.utils.manifest.loader import ManifestLoader
         from toolboxv2 import tb_root_dir
-        loader = ManifestLoader(tb_root_dir)
+        from toolboxv2._state_dir import manifest_base_dir
+        loader = ManifestLoader(manifest_base_dir())
         if loader.exists():
             manifest = loader.load(resolve_env=True)
             return Path(manifest.paths.registry_cache_dir)

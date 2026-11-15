@@ -41,7 +41,6 @@ if TYPE_CHECKING:
         Event,
         EventType,
     )
-# load_dotenv deferred to HTTPWorker.run()
 
 # requests deferred to get_location() — saves ~15 MB per worker
 
@@ -3218,8 +3217,6 @@ code { font-family: var(--font-mono); font-size: var(--text-xs); background: var
 
     def run(self, host: str = None, port: int = None, do_run=True):
         """Run the HTTP worker."""
-        from dotenv import load_dotenv
-        load_dotenv()
 
         host = host or self.config.http_worker.host
         port = port or self.config.http_worker.port

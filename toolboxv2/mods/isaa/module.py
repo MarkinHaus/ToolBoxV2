@@ -1886,11 +1886,16 @@ class Tools(MainTool):
                     "shell",
                     (f"Run shell commands in {detect_shell()} — up to 3 persistent "
                      f"labelled sessions session_id='A'|'B'|'C'. Multiline commands/"
-                     f"heredocs fully supported (script-file execution). Returns "
-                     f"EARLY once output is idle for idle_timeout s; the process "
-                     f"keeps running and further output is captured — fetch it by "
-                     f"calling with session_id only (no command). new_session=True "
-                     f"resets a session. Raising timeout is unnecessary."),
+                     f"heredocs fully supported (script-file execution). Returns as "
+                     f"soon as the command finishes (status='finished' + exit_code) "
+                     f"or EARLY once output is idle for idle_timeout s "
+                     f"(status='running'); the command keeps running and further "
+                     f"output is captured — fetch it by calling with session_id "
+                     f"only (no command). While a program is running in a session, "
+                     f"command/user_input are sent to its stdin (multi-turn CLI "
+                     f"tools); use another session label for parallel commands. "
+                     f"new_session=True resets a session. Raising timeout is "
+                     f"unnecessary."),
                     category=["local", "shell", "commands"],
                     flags={"shell": True, "detect_shell": True, "dangerous":True}
                 )
@@ -2520,8 +2525,18 @@ class ShellSession:
         self.err_queue = queue.Queue()
         self.active = True
 
+        # Completion tracking: every command gets a unique end-marker that
+        # carries its exit code. `_pending` holds the marker token of the
+        # command that is still running (None = shell is idle).
+        self._cmd_seq = 0
+        self._pending: Optional[str] = None
+        self._script_path: Optional[str] = None
+        self.last_exit_code: Optional[int] = None
+        self.marker_ok = False
+
         self._start_reader(self.process.stdout, self.out_queue)
         self._start_reader(self.process.stderr, self.err_queue)
+        self._probe_marker()
 
     def _start_reader(self, pipe, q):
         """Startet async Reader für non-blocking I/O"""
@@ -2529,7 +2544,10 @@ class ShellSession:
         def reader():
             try:
                 while True:
-                    chunk = pipe.read(1)
+                    # Unbuffered pipe: read(n) returns as soon as ANY data is
+                    # available (it does not wait for n bytes) — chunked reads
+                    # instead of 1 byte per queue item.
+                    chunk = pipe.read(65536)
                     if not chunk:
                         break
                     q.put(chunk)
@@ -2538,21 +2556,113 @@ class ShellSession:
 
         threading.Thread(target=reader, daemon=True).start()
 
-    def write(self, command: str):
+    def write(self, command: str, raw: bool = False):
         """
         Sendet Command 1:1 an Shell - KEINE Manipulation!
+
+        raw=True: nothing is stripped (input for interactive programs may be
+        an empty line, carry significant whitespace or end with a blank line).
         """
         if not self.process.stdin:
             return
 
         try:
-            cmd_str = command.strip()
+            # raw: byte-exact + ONE line ending (a trailing newline of the
+            # caller survives → blank line that closes a REPL block)
+            cmd_str = command if raw else command.strip()
             line_ending = "\r\n" if self.is_windows else "\n"
 
             self.process.stdin.write((cmd_str + line_ending).encode("utf-8"))
             self.process.stdin.flush()
-        except (IOError, BrokenPipeError):
+        except (IOError, BrokenPipeError, ValueError):
             self.active = False
+
+    # ------------------------------------------------------------------
+    # Script execution + end-marker
+    # ------------------------------------------------------------------
+
+    def _shell_kind(self) -> str:
+        low = detect_shell()[0].lower()
+        if "powershell" in low or "pwsh" in low:
+            return "powershell"
+        if low.endswith("cmd.exe") or low.endswith("cmd"):
+            return "cmd"
+        return "sh"
+
+    def _invoke_line(self, path: str, token: Optional[str]) -> str:
+        """
+        ONE stdin line that runs the script file in the CURRENT shell process
+        (dot-sourcing / call → exports, cd and session state persist) and then
+        prints `<token>:<exit code>`.
+
+        The marker is part of the SAME line as the invocation: the shell has
+        already consumed the whole line before the script starts, so an
+        interactive program inside the script can never swallow the marker
+        as its input.
+        """
+        kind = self._shell_kind()
+        if kind == "powershell":
+            run = f". '{path}'"
+            if not token:
+                return run
+            return (
+                "$global:LASTEXITCODE=0;$__tb_ok=$false;"
+                f"try{{{run};$__tb_ok=$?}}"
+                "catch{$__tb_ok=$false;[Console]::Error.WriteLine(($_|Out-String))};"
+                f"'{token}:'+$(if($LASTEXITCODE){{$LASTEXITCODE}}elseif($__tb_ok){{0}}else{{1}})"
+            )
+        if kind == "cmd":
+            run = f'call "{path}"'
+            if not token:
+                return run
+            # `call echo %^errorlevel%` = delayed expansion on an interactive line
+            return f"{run} & call echo {token}:%^errorlevel%"
+        run = f". '{path}'"
+        if not token:
+            return run
+        return f"{run}; printf '\\n{token}:%s\\n' \"$?\""
+
+    def _write_script(self, body: str) -> str:
+        import tempfile
+        suffix = {"powershell": ".ps1", "cmd": ".bat"}.get(self._shell_kind(), ".sh")
+        path = self._script_path
+        if not path or not path.endswith(suffix):
+            fd, path = tempfile.mkstemp(prefix=f"tb_shell_{self.id[:8]}_", suffix=suffix)
+            os.close(fd)
+            self._script_path = path
+        if body and not body.endswith("\n"):
+            body += "\n"
+        with open(path, "w", encoding="utf-8", newline="\r\n" if self.is_windows else "\n") as f:
+            f.write(body)
+        return path
+
+    def _next_token(self) -> str:
+        self._cmd_seq += 1
+        return f"__TB_DONE_{self.id[:8]}_{self._cmd_seq}__"
+
+    def _probe_marker(self):
+        """
+        Runs an empty script through the exact same invoke line used for real
+        commands and waits for its end-marker. Only if that round-trip works
+        is completion tracking enabled for this session; otherwise the session
+        falls back to pure idle detection (legacy behaviour). The startup
+        banner / first prompt of the shell is discarded on the way.
+        """
+        try:
+            token = self._next_token()
+            self._pending = token
+            self.write(self._invoke_line(self._write_script(""), token))
+            out = self.read_output(timeout=8.0 if self.is_windows else 3.0)
+            self.marker_ok = bool(out["done"])
+        except Exception:
+            self.marker_ok = False
+        self._pending = None
+        self.last_exit_code = None
+
+    @property
+    def busy(self) -> bool:
+        """True while a command started via exec_script has not finished."""
+        return self._pending is not None and self.process.poll() is None
 
     def exec_script(self, command: str):
         """
@@ -2561,36 +2671,31 @@ class ShellSession:
         through the shell's stdin, so heredocs / PowerShell blocks / indented
         scripts work identically on every platform.
         """
-        import tempfile
-        shell_exe, _ = detect_shell()
-        low = shell_exe.lower()
-        # Dot-sourcing / call: the script runs in the CURRENT shell process,
-        # so exports, cd and session state persist (a `bash script` subshell
-        # would silently drop them).
-        if "powershell" in low or "pwsh" in low:
-            suffix, invoke = ".ps1", lambda p: f". '{p}'"
-        elif low.endswith("cmd.exe") or low.endswith("cmd"):
-            suffix, invoke = ".bat", lambda p: f'call "{p}"'
-        else:
-            suffix, invoke = ".sh", lambda p: f". '{p}'"
-        path = getattr(self, "_script_path", None)
-        if not path or not path.endswith(suffix):
-            fd, path = tempfile.mkstemp(prefix=f"tb_shell_{self.id[:8]}_", suffix=suffix)
-            os.close(fd)
-            self._script_path = path
-        body = command if command.endswith("\n") else command + "\n"
-        with open(path, "w", encoding="utf-8", newline="\r\n" if self.is_windows else "\n") as f:
-            f.write(body)
-        self.write(invoke(path))
+        path = self._write_script(command)
+        token = self._next_token() if self.marker_ok else None
+        self._pending = token
+        self.last_exit_code = None
+        self.write(self._invoke_line(path, token))
+
+    def _strip_marker_noise(self, text: str) -> str:
+        """Drops lines that only exist because of the marker plumbing (e.g. the
+        invoke line echoed back by cmd.exe / PowerShell)."""
+        base = f"__TB_DONE_{self.id[:8]}_"
+        if base not in text:
+            return text
+        return "".join(l for l in text.splitlines(keepends=True) if base not in l)
 
     def read_output(self, timeout: float = 2.0, hard_timeout: float | None = None) -> Dict[str, Any]:
         """
-        Liest Output mit Idle-Erkennung.
+        Liest Output mit Completion- und Idle-Erkennung.
 
-        timeout       = IDLE-Fenster: return sobald so lange KEIN neuer Output kam
-        hard_timeout  = absolute Obergrenze (default: timeout * 3, alter Contract)
+        Return-Bedingungen (was zuerst eintritt):
+        - End-Marker des laufenden Commands gesehen  → done=True, exit_code
+        - timeout      = IDLE-Fenster: so lange kam KEIN neuer Output
+        - hard_timeout = absolute Obergrenze (default: timeout * 3)
+        - Shell-Prozess beendet
 
-        Läuft der Prozess danach weiter, sammeln die Reader-Threads weiteren
+        Läuft der Command danach weiter, sammeln die Reader-Threads weiteren
         Output in den Queues — er wird beim NÄCHSTEN read_output derselben
         Session geliefert (late output capture).
         """
@@ -2598,47 +2703,75 @@ class ShellSession:
         stderr_acc = bytearray()
 
         start_time = time.time()
-        last_data_time = time.time()
+        last_data_time = start_time
         hard_cap = hard_timeout if hard_timeout is not None else timeout * 3
 
-        # Initial wait für Command-Processing
-        time.sleep(0.15)
+        token = self._pending
+        marker_re = (
+            re.compile(rb"(?:\r?\n)?" + re.escape(token.encode()) + rb":(-?\d+)[ \t]*\r?\n")
+            if token else None
+        )
+        done = False
+        exit_code = None
+        scanned = 0
+
+        def drain() -> bool:
+            got = False
+            for q, acc in ((self.out_queue, stdout_acc), (self.err_queue, stderr_acc)):
+                while True:
+                    try:
+                        acc.extend(q.get_nowait())
+                        got = True
+                    except queue.Empty:
+                        break
+            return got
 
         while True:
-            got_data = False
+            if drain():
+                last_data_time = time.time()
 
-            try:
-                while not self.out_queue.empty():
-                    stdout_acc.extend(self.out_queue.get_nowait())
-                    got_data = True
-                    last_data_time = time.time()
-
-                while not self.err_queue.empty():
-                    stderr_acc.extend(self.err_queue.get_nowait())
-                    got_data = True
-                    last_data_time = time.time()
-            except queue.Empty:
-                pass
-
-            # Early stop: keine neuen Daten mehr → nicht den Timeout absitzen
-            if (time.time() - last_data_time) > timeout:
-                break
-
-            # Absolutes Timeout — der Prozess läuft ggf. weiter, Output wird
-            # von den Readern weiter gecaptured
-            if (time.time() - start_time) > hard_cap:
-                break
+            if marker_re is not None and len(stdout_acc) > scanned:
+                # only re-scan the tail (marker may be split across chunks)
+                m = marker_re.search(stdout_acc, max(0, scanned - len(token) - 32))
+                if m:
+                    done = True
+                    exit_code = int(m.group(1))
+                    del stdout_acc[m.start():m.end()]
+                    # stderr is a separate pipe and may lag behind the marker
+                    time.sleep(0.05)
+                    drain()
+                    break
+                scanned = len(stdout_acc)
 
             if self.process.poll() is not None:
+                # shell itself exited (e.g. `exit` inside the script) — give
+                # the reader threads a moment to deliver the final bytes
                 self.active = False
+                time.sleep(0.1)
+                drain()
                 break
 
-            time.sleep(0.05)
+            now = time.time()
+            # Early stop: keine neuen Daten mehr → nicht den Timeout absitzen
+            if (now - last_data_time) > timeout:
+                break
+            # Absolutes Timeout — der Prozess läuft ggf. weiter, Output wird
+            # von den Readern weiter gecaptured
+            if (now - start_time) > hard_cap:
+                break
+
+            time.sleep(0.02)
+
+        if done:
+            self._pending = None
+            self.last_exit_code = exit_code
 
         return {
-            "stdout": self._safe_decode(stdout_acc),
-            "stderr": self._safe_decode(stderr_acc),
+            "stdout": self._strip_marker_noise(self._safe_decode(stdout_acc)),
+            "stderr": self._strip_marker_noise(self._safe_decode(stderr_acc)),
             "is_alive": self.process.poll() is None,
+            "done": done,
+            "exit_code": exit_code,
         }
 
     def _safe_decode(self, data: bytearray) -> str:
@@ -2675,6 +2808,14 @@ class ShellSession:
                 except Exception:
                     pass
 
+        path = getattr(self, "_script_path", None)
+        if path:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            self._script_path = None
+
 
 # =============================================================================
 # TOOL FUNCTION - Verbesserte API
@@ -2686,19 +2827,120 @@ import re
 # Regex-Guardrail: Blockiert typische Kill-Kommandos als UX-Leitsystem (Word-Boundaries)
 import re
 DANGEROUS_KILL_PATTERN = re.compile(
-    r"\b(kill|pkill|killall|taskkill|tskill)\b|Stop-Process|\bGet-Process\b.*\|\s*Stop-Process",
+    r"\b(kill|pkill|killall|taskkill|tskill|spps)\b|Stop-Process|\bGet-Process\b.*\|\s*Stop-Process"
+    r"|\.Kill\(\)|\bwmic\b.*\b(delete|terminate)\b",
     re.IGNORECASE
 )
 
+def _harness_lineage() -> set:
+    """The harness process and EVERY ancestor of it (launcher exe, venv python
+    redirector, uv/tb wrapper, terminal shell, ...). Killing any of them — or
+    killing 'all children' of any of them — takes the harness down."""
+    pids = {os.getpid(), os.getppid(), HARNESS_PID, HARNESS_PPID}
+    try:
+        pids.update(p.pid for p in psutil.Process(os.getpid()).parents())
+    except (psutil.Error, OSError):
+        pass
+    return pids
+
+
 def _get_protected_pids() -> set:
     """Gibt alle PIDs zurück, die unter keinen Umständen gekillt werden dürfen."""
-    pids = {HARNESS_PID, HARNESS_PPID}
+    pids = _harness_lineage()
     for session in _session_store.values():
         if session.process and session.process.poll() is None:
             pids.add(session.process.pid)
     return pids
 
+
+def _session_owner(proc: "psutil.Process") -> Optional[str]:
+    """
+    Label of the shell session a process was started from, else None.
+
+    kill-process is scoped to those processes: (a) a descendant of a live
+    session shell, or (b) a detached / orphaned process that still carries the
+    session marker in its environment (set for every session shell and
+    inherited by everything started in it).
+    """
+    for s_label, sess in _session_store.items():
+        if not sess.process or sess.process.poll() is not None:
+            continue
+        try:
+            if any(a.pid == sess.process.pid for a in proc.parents()):
+                return s_label
+        except (psutil.Error, OSError):
+            continue
+    try:
+        env = proc.environ()
+    except (psutil.Error, OSError):
+        return None
+    marker = env.get("__TB_SESSION_ID__")
+    # a harness that itself runs inside a tb shell passes the marker on to
+    # all of its own helper processes — those are not session processes
+    if marker and marker != os.environ.get("__TB_SESSION_ID__"):
+        return env.get("__TB_SESSION_LABEL__") or "?"
+    return None
+
+
+def _kill_session_process(target_pid: int) -> dict:
+    """Kills ONE process + its subtree, if (and only if) that is safe."""
+    protected = _get_protected_pids()
+    if target_pid in protected:
+        return {
+            "pid": target_pid, "success": False, "error": "PROTECTED_PROCESS",
+            "stderr": f"PID {target_pid} belongs to the Agent Harness, one of its parent "
+                      f"processes or the active shell infrastructure and cannot be killed.",
+        }
+    try:
+        target_proc = psutil.Process(target_pid)
+        owner = _session_owner(target_proc)
+        if owner is None:
+            return {
+                "pid": target_pid, "success": False, "error": "NOT_A_SESSION_PROCESS",
+                "stderr": f"PID {target_pid} was not started from one of your shell sessions. "
+                          f"kill-process only terminates processes shown by 'list-processes'.",
+            }
+        target_children = target_proc.children(recursive=True)
+        # never tear down a subtree that contains the harness / a session shell
+        hit = sorted(c.pid for c in target_children if c.pid in protected)
+        if hit:
+            return {
+                "pid": target_pid, "success": False, "error": "PROTECTED_PROCESS",
+                "stderr": f"PID {target_pid} is a parent of protected process(es) {hit} "
+                          f"(Agent Harness / shell infrastructure) and cannot be killed.",
+            }
+        for sub in target_children:
+            try:
+                sub.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        target_proc.kill()
+        return {
+            "pid": target_pid, "success": True, "session": owner,
+            "info": f"Process {target_pid} and all sub-children were terminated.",
+        }
+    except psutil.NoSuchProcess:
+        return {"pid": target_pid, "success": False, "error": "PROCESS_NOT_FOUND",
+                "stderr": f"PID {target_pid} does not exist."}
+    except psutil.AccessDenied:
+        return {"pid": target_pid, "success": False, "error": "ACCESS_DENIED",
+                "stderr": f"Not permitted to kill PID {target_pid}."}
+
+
+def _shell_json(payload: dict) -> str:
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _shell_float(value: Any, default: float) -> float:
+    """LLM callers regularly pass None / strings for numeric args."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def shell_tool_function(
+    reason: str = "",
     command: Optional[str] = None,
     session_id: Optional[str] = "A",
     user_input: Optional[str] = None,
@@ -2712,14 +2954,29 @@ def shell_tool_function(
     Features:
     - Multiline commands & heredocs fully supported (the command runs from a
       script file — nothing multiline passes through the shell's stdin)
-    - Early stop: returns as soon as output was idle for idle_timeout s;
-      raising `timeout` is pointless — you never wait longer than output flows
-    - Late output capture: if a command keeps running, its further output is
-      collected and returned on your NEXT call to the SAME session (poll by
-      calling with session_id only, no command)
+    - Returns IMMEDIATELY when the command finishes: status='finished' plus
+      its real `exit_code` (`success` is true only for exit_code 0)
+    - Early stop for long runners: if the command is still running and
+      produced no output for idle_timeout s, the call returns with
+      status='running'; raising `timeout` is pointless
+    - Resume / late output capture: a running command keeps being captured.
+      Call again with session_id ONLY (no command) to fetch the new output;
+      the poll reports status='finished' + exit_code once it is done
+    - Multi-turn CLI tools (REPLs, installers, ssh, ...): while a program is
+      still running in a session, everything you send — `user_input` OR
+      `command` — goes straight to THAT program's stdin, turn by turn. To run
+      an independent shell command meanwhile use another session label; to
+      abort the program use 'reset-session'
     - Kernel-level tree containment: each session runs in an isolated process
       group / job object ensuring child processes are cleanly manageable
     - Pipes, operators, backslash paths, $env vars, interactive input
+
+    Result `status`:
+    - 'finished'          command completed → see exit_code
+    - 'running'           still running → poll with session_id only
+    - 'waiting_for_input' still running, looks like a prompt → send user_input
+    - 'idle'              poll, but nothing is running in that session
+    - 'unknown'           completion tracking unavailable for this shell
 
     Special Meta-Commands (pass as `command`):
     - 'list-sessions': View status of all active sessions ('A', 'B', 'C').
@@ -2729,8 +2986,11 @@ def shell_tool_function(
       (e.g., 'reset-session' for current session, or 'reset-session A').
     - 'list-processes': Lists all active subprocesses spawned across your
       sessions (returns PID, name, cmdline, status).
-    - 'kill-process <PID>': Safely terminates a specific process and its entire
-      subtree (e.g., 'kill-process 1234').
+    - 'kill-process <PID> [<PID> ...]': Safely terminates one or more processes
+      and their entire subtrees (e.g., 'kill-process 1234' or
+      'kill-process 1234 5678'). Only processes started from your shell
+      sessions (see 'list-processes') can be killed; the Agent Harness and
+      its parent processes are always refused.
 
     PROCESS TERMINATION RULES:
     - DO NOT execute raw OS kill commands (`pkill`, `kill`, `taskkill`, `killall`,
@@ -2740,6 +3000,7 @@ def shell_tool_function(
     - If a session is completely hung or unresponsive: Call 'reset-session'.
 
     Args:
+        reason: Reason for the action
         command: Shell command (may be multiline) or a Special Meta-Command.
                  None = poll the session for new output.
         session_id: 'A' | 'B' | 'C' (max 3 sessions, default 'A')
@@ -2752,15 +3013,39 @@ def shell_tool_function(
         JSON string with execution result
     """
 
-    if command == "list-sessions":
+    # `command` is None in poll / user_input mode — never call str methods on
+    # the raw argument.
+    command = command if isinstance(command, str) else None
+    meta = (command or "").strip()
+    has_command = bool(meta)
+    if user_input is not None and not isinstance(user_input, str):
+        user_input = str(user_input)
+    label = str(session_id or "A").strip().upper() or "A"
+    timeout = _shell_float(timeout, 60.0)
+    idle_timeout = _shell_float(idle_timeout, 2.0)
+
+    def bad_label(value: Any) -> str:
+        return _shell_json({
+            "success": False,
+            "stderr": f"unknown shell session '{value}' — max "
+                      f"{len(SHELL_SESSION_LABELS)} sessions, labels "
+                      f"{list(SHELL_SESSION_LABELS)}",
+        })
+
+    # -------------------------------------------------------------------------
+    # 1. META-COMMANDS
+    # -------------------------------------------------------------------------
+    if meta == "list-sessions":
         return list_sessions()
-    if command == "cleanup-sessions":
+    if meta == "cleanup-sessions":
         return cleanup_sessions()
 
     # In-Place Reset der Session (z.B. "reset-session" oder "reset-session A")
-    if command.startswith("reset-session"):
-        parts = command.split()
-        target_label = parts[1].upper() if len(parts) > 1 else session_id
+    if meta.split()[:1] == ["reset-session"]:
+        parts = meta.split()
+        target_label = parts[1].upper() if len(parts) > 1 else label
+        if target_label not in SHELL_SESSION_LABELS:
+            return bad_label(target_label)
         old_session = _session_store.pop(target_label, None)
         if old_session:
             old_session.terminate()
@@ -2768,15 +3053,15 @@ def shell_tool_function(
         # Instant-Respawn auf demselben Label
         new_sess = ShellSession(label=target_label)
         _session_store[target_label] = new_sess
-        return json.dumps({
+        return _shell_json({
             "success": True,
             "session_id": target_label,
             "info": f"Session '{target_label}' and all spawned subprocesses were forcibly terminated. A fresh shell is ready.",
             "status": "ready"
-        }, ensure_ascii=False, indent=2)
+        })
 
     # Prozesse auflisten, die von den Sessions gestartet wurden
-    if command == "list-processes":
+    if meta == "list-processes":
         protected = _get_protected_pids()
         processes = []
         for s_label, sess in _session_store.items():
@@ -2801,108 +3086,132 @@ def shell_tool_function(
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
 
-        return json.dumps({"success": True, "processes": processes}, ensure_ascii=False, indent=2)
+        return _shell_json({"success": True, "processes": processes})
 
-    # Gezielter und sicherer Kill mit TOCTOU-Schutz
-    if command.startswith("kill-process"):
-        parts = command.split()
-        if len(parts) < 2 or not parts[1].isdigit():
-            return json.dumps({"success": False, "error": "Usage: kill-process <PID>"}, ensure_ascii=False)
-
-        target_pid = int(parts[1])
-        protected = _get_protected_pids()
-
-        if target_pid in protected:
-            return json.dumps({
+    # Gezielter und sicherer Kill — ein oder mehrere PIDs:
+    #   kill-process 12 34 | kill-process 12, 34 | kill-process 12; kill-process 34
+    if meta.split()[:1] == ["kill-process"]:
+        tokens = [t for t in re.split(r"[\s,;]+", meta) if t and t != "kill-process"]
+        if not tokens or not all(t.isdigit() for t in tokens):
+            return _shell_json({
                 "success": False,
-                "error": "PROTECTED_PROCESS",
-                "stderr": f"PID {target_pid} belongs to the Agent Harness or active shell infrastructure and cannot be killed."
-            }, ensure_ascii=False)
-
-        try:
-            target_proc = psutil.Process(target_pid)
-            # TOCTOU-Guard: Nur Prozesse killen, die nach dem Session-Start erzeugt wurden
-            target_children = target_proc.children(recursive=True)
-            for sub in target_children:
-                try:
-                    sub.kill()
-                except psutil.NoSuchProcess:
-                    pass
-            target_proc.kill()
-
-            return json.dumps({
-                "success": True,
-                "info": f"Process {target_pid} and all sub-children were terminated."
-            }, ensure_ascii=False)
-        except psutil.NoSuchProcess:
-            return json.dumps(
-                {"success": False, "error": "PROCESS_NOT_FOUND", "stderr": f"PID {target_pid} does not exist."},
-                ensure_ascii=False)
+                "error": "Usage: kill-process <PID> [<PID> ...]",
+                "stderr": "kill-process is a meta-command: it takes only PIDs "
+                          "(e.g. 'kill-process 1234 5678') and cannot be combined "
+                          "with shell commands. Nothing was killed.",
+            })
+        results = [_kill_session_process(int(t)) for t in dict.fromkeys(tokens)]
+        if len(results) == 1:
+            single = dict(results[0])
+            single.pop("pid", None)
+            return json.dumps(single, ensure_ascii=False)
+        return _shell_json({
+            "success": all(r["success"] for r in results),
+            "killed": [r["pid"] for r in results if r["success"]],
+            "results": results,
+        })
 
     # -------------------------------------------------------------------------
     # 2. UX-GUARDRAIL (Blockiert rohe Kill-Befehle im Skript)
     # -------------------------------------------------------------------------
-    if DANGEROUS_KILL_PATTERN.search(command):
-        return json.dumps({
+    if has_command and user_input is None and DANGEROUS_KILL_PATTERN.search(command):
+        return _shell_json({
             "success": False,
             "error": "RAW_KILL_FORBIDDEN",
             "stderr": (
                 "Direct process killing via shell commands is blocked to protect the Agent Harness. "
-                "Use 'list-processes' to view running tasks, 'kill-process <PID>' to terminate a specific process, "
+                "Use with in the shell as command : 'list-processes' to view running tasks, 'kill-process <PID>' to terminate a specific process, "
                 "or 'reset-session' if the session is completely hanging."
             )
-        }, ensure_ascii=False, indent=2)
+        })
 
     # -------------------------------------------------------------------------
     # 3. REGULÄRE AUSFÜHRUNG
     # -------------------------------------------------------------------------
-
-    label = (session_id or "A").strip().upper()
     if label not in SHELL_SESSION_LABELS:
-        return json.dumps({
-            "success": False,
-            "stderr": f"unknown shell session '{session_id}' — max "
-                      f"{len(SHELL_SESSION_LABELS)} sessions, labels "
-                      f"{list(SHELL_SESSION_LABELS)}",
-        }, ensure_ascii=False)
+        return bad_label(session_id)
 
     # Session Management (persistent per label; new_session=True = reset)
+    msg_info = "Resumed session"
     session = _session_store.get(label)
-    if session is not None and (new_session or not session.active):
+    if session is not None and (new_session or not session.active
+                                or session.process.poll() is not None):
         session.terminate()
         _session_store.pop(label, None)
         session = None
         msg_info = "Session reset"
     if session is None:
+        if msg_info != "Session reset":
+            msg_info = "New session started"
         session = ShellSession(label=label)
         _session_store[label] = session
-        msg_info = locals().get("msg_info") or "New session started"
-    else:
-        msg_info = "Resumed session"
+
+    hard_cap = min(max(timeout, 1.0), 600.0)
+    idle = max(idle_timeout, 0.2)
+    late_output = None
+    sent_as_input = False
 
     # Command/Input Execution
-    if user_input:
-        session.write(user_input)          # raw line for interactive prompts
-    elif command:
-        session.exec_script(command)       # multiline-safe via script file
-
-    # Output Collection — idle-based early stop; poll mode drains fast.
-    hard_cap = min(max(float(timeout), 1.0), 600.0)
-    if command or user_input:
-        output = session.read_output(timeout=max(idle_timeout, 0.2), hard_timeout=hard_cap)
+    if user_input is not None:
+        # raw line for interactive prompts (an empty string = just Enter)
+        session.write(user_input, raw=True)
+        output = session.read_output(timeout=idle, hard_timeout=hard_cap)
+    elif has_command:
+        # Whatever is still queued belongs to an EARLIER command — collect it
+        # first so it is neither lost nor attributed to the new command.
+        # (non-blocking when idle; short grace period if a command is pending
+        # so one that is just finishing is not reported as busy)
+        pre = session.read_output(timeout=0.3 if session.busy else 0.0, hard_timeout=1.0)
+        if session.busy:
+            # A program is still running in this session (REPL, installer,
+            # ssh, any multi-turn CLI): the text is meant for IT, so it goes
+            # to its stdin 1:1 — same as user_input. Nothing is lost: output
+            # that was already queued is returned in front of the new output.
+            session.write(command, raw=True)
+            sent_as_input = True
+            output = session.read_output(timeout=idle, hard_timeout=hard_cap)
+            output["stdout"] = pre["stdout"] + output["stdout"]
+            output["stderr"] = pre["stderr"] + output["stderr"]
+        else:
+            if pre["stdout"].strip() or pre["stderr"].strip() or pre["done"]:
+                late_output = {"stdout": pre["stdout"].strip(), "stderr": pre["stderr"].strip()}
+                if pre["done"]:
+                    late_output["exit_code"] = pre["exit_code"]
+            session.exec_script(command)       # multiline-safe via script file
+            output = session.read_output(timeout=idle, hard_timeout=hard_cap)
+    elif session.busy:
+        # Poll / resume of a running command: wait like a normal call —
+        # returns at once when it completes or after `idle` s of silence.
+        output = session.read_output(timeout=idle, hard_timeout=hard_cap)
     else:
+        # Nothing running — just drain what is there.
         output = session.read_output(timeout=0.3, hard_timeout=1.5)
 
-    # Status Detection
-    status = "running" if output["is_alive"] else "finished"
-
     stdout_str = output["stdout"]
-    if status == "running" and stdout_str and not stdout_str.endswith(("\n", ">")):
-        status = "waiting_for_input"
+    exit_code = output["exit_code"]
+    shell_alive = output["is_alive"]
+
+    # Status Detection
+    if output["done"]:
+        status = "finished"
+    elif not shell_alive:
+        # the shell process itself is gone (`exit` in the script, crash, kill)
+        status = "finished"
+        exit_code = session.process.returncode
+        session.terminate()
+        _session_store.pop(label, None)
+    elif session.busy:
+        status = "running"
+        if stdout_str and not stdout_str.endswith(("\n", "\r")):
+            status = "waiting_for_input"
+    elif not session.marker_ok and (has_command or user_input is not None):
+        status = "unknown"
+    else:
+        status = "idle"
 
     # Result Assembly
     result = {
-        "success": True,
+        "success": exit_code == 0 if exit_code is not None else True,
         "session_id": label,
         "stdout": stdout_str.strip(),
         "stderr": output["stderr"].strip(),
@@ -2910,15 +3219,37 @@ def shell_tool_function(
         "info": msg_info,
         "system": session.system,
     }
+    if exit_code is not None:
+        result["exit_code"] = exit_code
+    if late_output:
+        result["late_output_of_previous_command"] = late_output
+    if sent_as_input:
+        result["info"] = (
+            "A program was still running in this session — `command` was sent "
+            "to its stdin as input (not started as a new shell command)."
+        )
     if status in ("running", "waiting_for_input"):
         result["note"] = (
-            f"Process keeps running — further output is being captured. Fetch it "
-            f"with shell(session_id='{label}') (no command). Raising timeout is "
-            f"unnecessary: the call already returns once output is idle for "
-            f"{idle_timeout:.1f}s."
+            f"Command is still running — further output is being captured. Fetch it "
+            f"with shell(session_id='{label}') (no command); that call also reports "
+            f"the exit_code once it finished. Raising timeout is unnecessary: the "
+            f"call returns as soon as the command ends or output is idle for "
+            f"{idle:.1f}s."
         )
+    elif status == "finished" and not shell_alive:
+        result["note"] = (
+            f"The shell process of session '{label}' exited (exit/crash). Session "
+            f"state (cwd, env) is lost — the next call starts a fresh shell."
+        )
+    elif status == "unknown":
+        result["note"] = (
+            "Completion tracking is unavailable for this shell: the command may "
+            f"still be running. Poll with shell(session_id='{label}') (no command)."
+        )
+    elif status == "idle":
+        result["note"] = "No command is running in this session."
 
-    return json.dumps(result, ensure_ascii=False, indent=2)
+    return _shell_json(result)
 
 
 # =============================================================================
@@ -2933,6 +3264,8 @@ def list_sessions() -> str:
             "session_id": sid,
             "system": session.system,
             "active": session.active,
+            "busy": session.busy,
+            "last_exit_code": session.last_exit_code,
             "pid": session.process.pid if session.process else None,
         }
         for sid, session in _session_store.items()

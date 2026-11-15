@@ -25,7 +25,20 @@ import requests
 from tqdm import tqdm
 
 from toolboxv2 import FileHandler, MainTool, Result, Style, get_app
-from toolboxv2.tests.a_util import async_test
+
+def async_test(coro):
+    def wrapper(*args, **kwargs):
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(coro(*args, **kwargs))
+            # Alle pending tasks noch drainieren
+            pending = asyncio.all_tasks(loop)
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            return result
+        finally:
+            loop.close()
+    return wrapper
 
 version = "0.1.9"
 Name = "SocketManager"

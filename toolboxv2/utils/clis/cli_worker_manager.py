@@ -760,9 +760,14 @@ class NginxManager:
         dst.parent.mkdir(parents=True, exist_ok=True)
         if dst.is_symlink() or dst.exists():
             return
-        os.symlink(src, dst)
-        logger.info(f"Symlink created: {dst} → {src}")
-
+        try:
+            os.symlink(src, dst)
+        except (OSError, NotImplementedError):
+            # Windows ohne DevMode/Admin: symlink unzulaessig -> Copy-Fallback
+            shutil.copyfile(src, dst)
+            logger.warning(f"Symlink denied - copied {src} to {dst}")
+            return
+        logger.info(f"Symlink created: {dst}")
     def test_config(self) -> bool:
         if not self._nginx_path:
             return False

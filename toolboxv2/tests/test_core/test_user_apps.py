@@ -47,6 +47,13 @@ class TestRegistry(unittest.TestCase):
         entry = next(e for e in data["user_facing"] if e["name"] == "isaa")
         self.assertEqual(entry["mount"]["module"], "toolboxv2.mods.isaa.ui.app")
 
+    def test_obs_feature_declares_lazy_app(self):
+        from toolboxv2 import tb_root_dir
+        data = yaml.safe_load((tb_root_dir / "features/isaa/feature.yaml").read_text(encoding="utf-8"))
+        entry = next(e for e in data["user_facing"] if e["name"] == "obs")
+        self.assertEqual(entry["mount"]["module"], "toolboxv2.mods.isaa.extras.live_obs_server")
+        self.assertEqual(entry["mount"]["prefix"], "obs")
+
 
 class _Owner:
     """Interface-level stand-in for a FastTB owner."""

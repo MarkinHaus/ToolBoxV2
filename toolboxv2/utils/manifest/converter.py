@@ -443,7 +443,8 @@ class ConfigConverter:
             List of variable names that were added
         """
         if env_path is None:
-            env_path = self.base_dir / ".env"
+            from toolboxv2._state_dir import env_file
+            env_path = env_file()
 
         # Get suggestions
         suggestions = self._suggest_env_vars()

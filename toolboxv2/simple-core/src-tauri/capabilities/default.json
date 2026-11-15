@@ -21,7 +21,6 @@
       "allow": [
         {
           "args": true,
-          "name": "binaries/tb-worker",
           "sidecar": true,
           "cwd": ""
         }

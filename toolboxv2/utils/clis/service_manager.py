@@ -229,9 +229,9 @@ class ServiceManager:
     """
 
     def __init__(self):
-        from toolboxv2 import tb_root_dir
-        self.pids_dir = tb_root_dir / ".info" / "pids"
-        self.config_path = tb_root_dir / ".info" / "services.json"
+        from toolboxv2._state_dir import info_dir
+        self.pids_dir = info_dir() / "pids"
+        self.config_path = info_dir() / "services.json"
         self.pids_dir.mkdir(parents=True, exist_ok=True)
 
     def load_config(self) -> Dict:

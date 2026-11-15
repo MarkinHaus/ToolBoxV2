@@ -396,7 +396,9 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config_data.setdefault("session", {}).setdefault("cookie_secure", True)
         config_data.setdefault("auth", {}).setdefault("ws_require_auth", True)
         if not config_data.get("session", {}).get("cookie_secret"):
-            raise ValueError("TB_COOKIE_SECRET must be set in production!")
+            # R1: auto-generate on first start instead of crashing fresh installs
+            from toolboxv2.init_onboarding import ensure_secret
+            config_data.setdefault("session", {})["cookie_secret"] = ensure_secret()
 
     if not config_data.get("data_dir"):
         if env_mode == "tauri":

@@ -107,10 +107,8 @@ class Session(metaclass=Singleton):
     def _init_storage(self) -> BlobStorage:
         """Initialize BlobStorage for CLI sessions."""
         # Use TB_DATA_DIR or fallback to relative .data
-        data_dir = os.environ.get("TB_DATA_DIR", None)
-        if not data_dir:
-            # Fallback logic identical to App setup
-            data_dir = str(Path(__file__).parent.parent.parent / ".data")
+        from toolboxv2._state_dir import data_root
+        data_dir = str(data_root())
 
         storage_path = Path(data_dir) / "cli_sessions"
         return BlobStorage(

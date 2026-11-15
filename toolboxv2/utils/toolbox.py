@@ -20,8 +20,6 @@ from threading import Thread
 from types import ModuleType
 from typing import Any, Optional
 
-from dotenv import load_dotenv
-
 from .extras.db.mobile_db import create_mobile_db
 from .extras.mkdocs import add_to_app
 from ..utils.system.main_tool import get_version_from_pyproject
@@ -41,8 +39,6 @@ from .system.types import (
     ToolBoxInterfaces,
     WebSocketContext,
 )
-
-load_dotenv()
 
 
 class App(AppType, metaclass=Singleton):
@@ -74,8 +70,9 @@ class App(AppType, metaclass=Singleton):
 
         self.bg_tasks = []
 
-        # ponytail: prefix file follows TB_DATA_DIR like the other dirs.
-        lapp = os.path.join(os.getenv("TB_DATA_DIR") or dir_name, ".data")
+        # prefix file lives in <state root>/.data (one rule: _state_dir)
+        from toolboxv2._state_dir import data_root as _data_root_fn
+        lapp = str(_data_root_fn())
         _prefix_file = os.path.join(lapp, "last-app-prefix.txt")
 
         if not prefix:
@@ -113,7 +110,8 @@ class App(AppType, metaclass=Singleton):
         #    package dir. ponytail: one base var, proper os.path.join. Default
         #    stays start_dir so existing installs are unchanged; the <id> leaf
         #    is preserved so downstream `info_dir.replace(app.id, '')` still works.
-        _data_root = os.getenv("TB_DATA_DIR") or self.start_dir
+        from toolboxv2._state_dir import state_root as _state_root_fn
+        _data_root = str(_state_root_fn())
         if "test" in prefix:
             if self.system_flag == "Darwin" or self.system_flag == "Linux":
                 start_dir = self.start_dir.replace("ToolBoxV2/toolboxv2", "toolboxv2")
@@ -150,16 +148,19 @@ class App(AppType, metaclass=Singleton):
 
         self.print(f"Starting ToolBox as {prefix} from :", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
-        pid_file = os.path.join(f"{self.start_dir}",".info","pids",f"{args.modi}-{self.REFIX}.pid")
+        from toolboxv2._state_dir import info_dir as _info_dir_fn
+        pids_root = os.path.join(str(_info_dir_fn()), "pids")
+        pid_file = os.path.join(pids_root, f"{args.modi}-{self.REFIX}.pid")
         app_pid = str(os.getpid())
-        if not os.path.exists(os.path.join(f"{self.start_dir}",".info","pids")):
-            os.makedirs(os.path.join(f"{self.start_dir}",".info","pids"), exist_ok=True)
+        if not os.path.exists(pids_root):
+            os.makedirs(pids_root, exist_ok=True)
         with open(pid_file, "w", encoding="utf8") as f:
             f.write(app_pid)
 
         self.manifest = None
         from toolboxv2.utils.manifest.loader import ManifestLoader
-        loader = ManifestLoader(self.start_dir)
+        from toolboxv2._state_dir import manifest_base_dir
+        loader = ManifestLoader(str(manifest_base_dir()))
         if not loader.exists():
             self.print("No manifest found — creating minimal default (profile: local)")
 

@@ -53,10 +53,12 @@ except ImportError as e:
 
 # Configuration
 EXECUTABLE_NAME = "tcm.exe" if platform.system() == "Windows" else "tcm"
-INSTANCES_ROOT_DIR = tb_root_dir / ".info" / "p2p_instances"
-CHAT_ROOMS_DIR = tb_root_dir / ".info" / "p2p_chat_rooms"
-FILE_TRANSFER_DIR = tb_root_dir / ".info" / "p2p_files"
-VOICE_CACHE_DIR = tb_root_dir / ".info" / "p2p_voice"
+from toolboxv2._state_dir import info_dir as _r2_info_dir
+
+INSTANCES_ROOT_DIR = _r2_info_dir() / "p2p_instances"
+CHAT_ROOMS_DIR = _r2_info_dir() / "p2p_chat_rooms"
+FILE_TRANSFER_DIR = _r2_info_dir() / "p2p_files"
+VOICE_CACHE_DIR = _r2_info_dir() / "p2p_voice"
 
 # Constants
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
