@@ -1,0 +1,64 @@
+"""account_page.py - minimal account-link page served by the local UI (WP1 K3).
+
+Self-contained HTML+JS: POSTs to /api/account/start with the chosen method
+and polls /api/account/status. Loopback-guarded via local_ui._ensure_local.
+"""
+
+_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ToolBoxV2 - Link account</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0f1115; color: #e6e6e6;
+         display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  .card { background: #1a1d24; padding: 2rem 2.5rem; border-radius: 12px; min-width: 320px; }
+  h1 { font-size: 1.2rem; margin-top: 0; }
+  button { display: block; width: 100%; margin: .5rem 0; padding: .6rem; border: 0;
+           border-radius: 8px; background: #4c8dff; color: #fff; font-size: 1rem; cursor: pointer; }
+  button:hover { background: #3a76e0; }
+  #status { margin-top: 1rem; font-size: .9rem; color: #9aa0a6; white-space: pre-line; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Link a SimpleCore account</h1>
+  <p style="color:#9aa0a6;font-size:.9rem">Optional. Keeps your local admin data and migrates
+     settings to the account. Tokens stay in the local token store.</p>
+  <button onclick="start('discord')">Discord</button>
+  <button onclick="start('google')">Google</button>
+  <button onclick="start('passkey')">Passkey</button>
+  <div id="status"></div>
+</div>
+<script>
+const status = document.getElementById('status');
+async function start(method) {
+  status.textContent = 'Opening login page ...';
+  try {
+    const r = await fetch('/api/account/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({method})
+    });
+    const d = await r.json();
+    if (r.ok && d.ok) {
+      status.textContent = 'Linked as ' + (d.username || d.user_id) +
+        (d.migrated_from ? '\\nMigrated local admin: ' + d.migrated_from : '');
+    } else {
+      status.textContent = 'Failed: ' + (d.error || r.status);
+    }
+  } catch (e) {
+    status.textContent = 'Failed: ' + e;
+  }
+}
+fetch('/api/account/status').then(r => r.json()).then(d => {
+  if (d.linked) status.textContent = 'Already linked as ' + (d.username || d.user_id);
+});
+</script>
+</body>
+</html>
+"""
+
+
+def account_page() -> str:
+    return _PAGE

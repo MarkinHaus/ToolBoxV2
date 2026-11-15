@@ -102,7 +102,9 @@ def register_wizard_routes(app) -> None:
         from toolboxv2.utils.clis.first_run import onboarding_state
         inst = onboarding_state()  # same source as CLI: manifest app.profile
         return {"first_run": inst["first_run"], "installed": inst["installed"],
-                "profile": profile or inst["profile"]}
+                "profile": profile or inst["profile"],
+                "needs_account": inst.get("needs_account", False),
+                "account": inst.get("account")}
 
     @app.post("/api/wizard/profile", auth=False)
     def wizard_set_profile(request: ParsedRequest):
@@ -161,3 +163,23 @@ def register_wizard_routes(app) -> None:
         return {"ok": True, "manifest": str(loader.manifest_path),
                 "env_saved": bool(env_out), "generated": generated,
                 "profile": profile, "first_run": False}
+    # --- Account link (WP1 K3) ------------------------------------------------
+    @app.get("/api/account/status", auth=False)
+    def account_status(request: ParsedRequest):
+        from toolboxv2.utils.clis.first_run import account_state
+        return account_state()
+
+    @app.post("/api/account/start", auth=False)
+    def account_start(request: ParsedRequest):
+        from toolboxv2.utils.clis.first_run import _start_account_link, account_state
+        data = _json(request)
+        method = data.get("method")
+        if method is not None and method not in ("discord", "google", "passkey"):
+            return 400, {"error": f"unknown method '{method}'"}
+        owner = _start_account_link(None, method=method)
+        if owner is None:
+            return 502, {"error": "remote login failed or timed out"}
+        st = account_state()
+        st["ok"] = True
+        return st
+

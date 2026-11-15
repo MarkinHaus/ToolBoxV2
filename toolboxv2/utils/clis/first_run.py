@@ -32,6 +32,46 @@ def normalize_profile(profile: Optional[str]) -> str:
     return ProfileType(p).value  # raises ValueError on unknown names
 
 
+def _read_device_owner(app=None):
+    """Best-effort device owner lookup (WP1 K1 marker, no tokens)."""
+    try:
+        from toolboxv2.mods.CloudM.auth.device_account import read_device_owner
+        return read_device_owner(app)
+    except Exception:
+        return None
+
+
+def _start_account_link(app=None, method=None, timeout=180.0):
+    """Run remote login + device link (WP1 K1). Returns owner dict or None."""
+    try:
+        import asyncio
+        if app is None:
+            from toolboxv2 import get_app
+            app = get_app("first_run.account_link")
+        from toolboxv2.utils.clis.cli_oauth import cli_remote_login
+        from toolboxv2.mods.CloudM.auth.device_account import link_account, read_device_owner
+        payload = asyncio.new_event_loop().run_until_complete(
+            cli_remote_login(method, timeout))
+        if not payload:
+            return None
+        asyncio.new_event_loop().run_until_complete(link_account(app, payload))
+        return read_device_owner(app)
+    except Exception:
+        return None
+
+
+def account_state(app=None) -> dict:
+    """Account-link status for UIs. Identity only - never tokens."""
+    owner = _read_device_owner(app)
+    if not owner:
+        return {"linked": False}
+    return {"linked": True,
+            "user_id": owner.get("user_id", ""),
+            "username": owner.get("username", ""),
+            "base_url": owner.get("base_url", ""),
+            "migrated_from": owner.get("migrated_from")}
+
+
 def onboarding_state() -> dict:
     """Single source for "first run?" (CLI, local web UI, wizard API):
     onboarding is done iff the manifest has app.profile."""
@@ -44,7 +84,10 @@ def onboarding_state() -> dict:
         profile = profile.value if profile is not None else None
     except Exception:
         profile = None
-    return {"installed": True, "first_run": profile is None, "profile": profile}
+    owner = _read_device_owner()
+    return {"installed": True, "first_run": profile is None, "profile": profile,
+            "needs_account": owner is not None,
+            "account": owner.get("username", "") if owner else None}
 
 
 def apply_profile(profile: str) -> dict:

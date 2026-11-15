@@ -133,6 +133,25 @@ async def root(request: ParsedRequest):
     return "ToolBox Local UI - dist/index.html not found."
 
 
+@app.get("/account", auth=False)
+async def account(request: ParsedRequest):
+    """Account-link page (WP1 K3). Loopback only."""
+    err = _ensure_local(request)
+    if err is not None:
+        return err
+    from toolboxv2.utils.workers.fast.account_page import account_page
+    from toolboxv2.utils.workers.fast_tb_handler import FastTBHandler
+    html = account_page()
+    import tempfile, os
+    fd, tmp = tempfile.mkstemp(suffix=".html")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(html)
+        return FastTBHandler._serve_static_file(tmp)
+    finally:
+        os.unlink(tmp)
+
+
 @app.get("/setup", auth=False)
 async def setup(request: ParsedRequest):
     """Re-run onboarding / change settings (wizard API) at any time."""

@@ -80,7 +80,7 @@ class TestApplyProfile(unittest.TestCase):
         from toolboxv2.utils.clis.first_run import apply_profile, onboarding_state
         self.assertTrue(onboarding_state()["first_run"])  # no manifest yet
         apply_profile("server")
-        self.assertEqual(onboarding_state(), {"installed": True, "first_run": False, "profile": "server"})
+        self.assertEqual(onboarding_state(), {"installed": True, "first_run": False, "profile": "server", "needs_account": False, "account": None})
 
     def test_local_ui_and_wizard_use_same_state(self):
         from toolboxv2.utils.clis.first_run import apply_profile
