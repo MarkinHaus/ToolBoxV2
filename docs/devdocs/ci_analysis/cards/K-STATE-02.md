@@ -23,7 +23,7 @@ python -m pytest toolboxv2/tests/test_isaa/test_base/test_agent/test_narrator.py
 python -m pytest toolboxv2/tests/ -q                                                   # Gesamtlauf: 9–10 rot
 ```
 
-**Vorher:** allein grün; im Gesamtlauf rot (CI, alle 11 Jobs)
+**Vorher:** allein grün; im Gesamtlauf rot (CI, alle 12 Jobs)
 
 **Probe-Fix:** kein Einzel-Fix (→ ARCH-01)
 

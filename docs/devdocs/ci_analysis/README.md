@@ -114,7 +114,7 @@ Mechanisch, aber mehrere Dateien oder viele Stellen; Muster ist getestet. Wer: I
 
 | Karte | Fix | Typ | IDs | Status | Ursache |
 |---|---|---|---|---|---|
-| [K-API-02](cards/K-API-02.md) | [FIX-17](fixes/FIX-17.md) | A | 46 | getestet | `vfs_view` ist jetzt eine Koroutine und `vfs_shell` hat die Signatur `(reason, command)`; die Tests rufen beide synchron bzw. mit einem Argument auf. |
+| [K-API-02](cards/K-API-02.md) | [FIX-17](fixes/FIX-17.md) | A | 46 | getestet | `vfs_view` ist jetzt eine Koroutine und `vfs_shell` hat die Signatur `(reason, command)`. Die Tests rufen beide noch synchron bzw. ohne `reason` auf – |
 | [K-API-15](cards/K-API-15.md) | [FIX-18](fixes/FIX-18.md) | B | 2 | ungetestet | Zwei Tests erwarten alte Vorgabeports: WebSocket 8100 (jetzt 8468) und MCP 8765 (jetzt 8791). |
 
 ### P3-VERALTET – Test veraltet (Schnittstelle absichtlich geändert) (107 IDs)
@@ -226,7 +226,7 @@ Rote IDs, die es nur mit den Probe-Fixes gibt (3; 314 IDs sind verschwunden):
 - `toolboxv2/tests/test_isaa/test_mem/test_hybrid_memory_realworld.py::TestHybridMemoryRealWorld::test_02_vector_search` (Katalog: K-FLAKY-01)
 - `toolboxv2/tests/test_mini/test_extras/test_analyser/test_profiler.py::TestE2EFunctionGraphDataIntegrity::test_call_chain_integrity` (**nicht im Katalog**)
 
-Lesehilfe: Die 18 verbleibenden sind erwartet. K-API-02: 13 = die `vfs_shell(reason, …)`-Stellen, die der Probe-Fix nicht anfasst, und 2 Wechsler zu K-API-09. K-API-03: 2 Wechsler zu K-API-04. K-MISS-02: 1 ID mit zweiter Ursache. K-STATE-01: 2 IDs, die als root ohnehin nicht über `/fake` scheitern. Die 3 neuen roten IDs sind sporadische Tests (Watcher, Vektorsuche, Profiler); `test_profiler.py::…::test_call_chain_integrity` gehört zur selben Datei wie die Profiler-IDs in K-FLAKY-01 und war in keinem CI-Job rot.
+Lesehilfe: Die 18 verbleibenden sind erwartet. K-API-02: 13 = die `vfs_shell(reason, …)`-Stellen, die dieser Lauf noch nicht enthielt (danach einzeln auf `master` @ `ed32daf` nachgeprüft und grün, s. Karte), und 2 Wechsler zu K-API-09. K-API-03: 2 Wechsler zu K-API-04. K-MISS-02: 1 ID mit zweiter Ursache. K-STATE-01: 2 IDs, die als root ohnehin nicht über `/fake` scheitern. Die 3 neuen roten IDs sind sporadische Tests (Watcher, Vektorsuche, Profiler); `test_profiler.py::…::test_call_chain_integrity` gehört zur selben Datei wie die Profiler-IDs in K-FLAKY-01 und war in keinem CI-Job rot.
 
 Einschränkungen: Der Teil-Lauf ist nicht der Gesamtlauf (andere Reihenfolge-Nachbarn); K-PY-01 ist nur unter 3.10 rot und hier deshalb 0/0 (Beleg in der Karte); K-STATE-01 ist als root nicht rot (Beleg in der Karte über `/sys/fake`). Ein vollständiger lokaler Gesamtlauf war in der Analyseumgebung zu langsam (einzelne ISAA-Dateien warten auf Netz-Zeitüberschreitungen).
 
@@ -293,6 +293,7 @@ Einschränkungen: Der Teil-Lauf ist nicht der Gesamtlauf (andere Reihenfolge-Nac
 | `fixes/` | 44 Fix-Aufträge, Nummer = Reihenfolge |
 | `architecture/` | ARCH-01 (globaler Testzustand), ARCH-02 (Installation, ISAA-Paket), ARCH-03 (optionale Abhängigkeiten) |
 | `raw/` | `<os>-<py>.txt` je Job (`ebed4d6`), `second_run_91d984a/`, `sporadic.txt` |
+| `prompts/` | Fünf eigenständige Start-Prompts für ISAA-Instanzen, aufsteigende Komplexität, ohne offene Owner-Fragen: 01 CI-Signal (FIX-01/02/06) · 02 minimale Fixes (FIX-07–16) · 03 VFS-Werkzeuge (FIX-17, FIX-18 Teil WS-Port) · 04 sporadische Tests (FIX-44) · 05 Windows/3.10 (FIX-35–38, 41–43). Dateilisten überschneiden sich nicht; jede Instanz arbeitet in einem eigenen git worktree und pusht nach `master` |
 | `gate.py` | Abnahme-Helfer: `python docs/devdocs/ci_analysis/gate.py [Pfad] [--card K-…]` meldet rote IDs außerhalb des Katalogs. Reines Hilfsskript, kein Produktcode |
 
 Befehle in den Karten sind für eine POSIX-Shell geschrieben und setzen `MOCK_EXTERNAL_SERVICES=true IS_OFFLINE_DB=true` voraus (PowerShell: `$env:MOCK_EXTERNAL_SERVICES="true"; $env:IS_OFFLINE_DB="true"`). `gate.py` setzt beide selbst.

@@ -5,13 +5,14 @@ Paket: **P2-AUTO-MEDIUM** (Mittlerer Fix, automatisch) · Fix-Typ: **A** · Kart
 ```
 Fix:           FIX-17  (aus Karte K-API-02)
 Voraussetzung: FIX-01, FIX-02 (ehrliches Signal und editierbare Installation), sonst keine
-Dateien:       toolboxv2/tests/test_isaa/test_base/test_agent/test_vfs/test_vfs_v2.py, test_vfs_shell_tool.py, test_vfs_shell_bullet_proof.py, test_vfs_shared_store_edits.py; toolboxv2/tests/test_isaa/test_base/test_agent/test_agent_session_tools.py; toolboxv2/tests/test_isaa/test_base/test_agent/test_self_agents_default_tool_set.py; toolboxv2/tests/test_isaa/test_base/test_agent/test_agent_fetures.py (nur vfs_shell-Aufrufe)   (nur diese ändern)
-Vorher lesen:  `vfs_shell_tool.py:437-450` und `:1188-1200`; in jeder Testdatei, wie `self.view`/`self.sh` gebaut werden
+Dateien:       toolboxv2/mods/isaa/base/Agent/flow_agent.py (nur Zeile 3613); toolboxv2/tests/test_isaa/test_base/test_agent/test_vfs/test_vfs_v2.py, test_vfs_shell_tool.py, test_vfs_shell_bullet_proof.py, test_vfs_shared_store_edits.py; toolboxv2/tests/test_isaa/test_base/test_agent/test_agent_session_tools.py   (nur diese ändern)
+Vorher lesen:  `vfs_shell_tool.py:437-450` und `:1188-1200`; `tool_manager.py:1080-1130` (`health_check_single`); `flow_agent.py:3608-3640` (`_TOOL_HEALTH_EXTENSIONS`); in jeder Testdatei, wie `self.view`/`self.sh` gebaut werden
 ```
 
 **Schritte:**
 
-1. In die vier vfs-Testdateien vor der ersten Klasse einfügen:
+1. `flow_agent.py:3613`: `"live_test_inputs": [{"command": "ls /"}],` → `"live_test_inputs": [{"reason": "health check", "command": "ls /"}],`. Sonst nichts in der Datei ändern (die Zeile `vfs_view` mit `/system_context.md` gehört zu einer anderen Karte).
+2. In die vier vfs-Testdateien vor der ersten `class`-Zeile einfügen:
 
 ```python
 def _sync_tool(fn):
@@ -29,15 +30,30 @@ def _sync_tool(fn):
             loop.close()
     return _run
 ```
-2. Dort jedes `make_vfs_view(<arg>)` (nicht den Import) durch `_sync_tool(make_vfs_view(<arg>))` ersetzen.
-3. `test_agent_session_tools.py` (async Tests): `self.view(...)`-Ergebnisse mit `await` holen; `self.sh("ls /")` → `self.sh("test", "ls /")` bzw. beim Bau von `self.sh` einen Wrapper `lambda cmd: sh("test", cmd)`.
-4. `test_self_agents_default_tool_set.py` und der vfs_shell-Gesundheitscheck: Aufruf mit `reason="health"` ergänzen.
+3. Dort jedes `make_vfs_view(<arg>)` – nicht die Import-Zeile – durch `_sync_tool(make_vfs_view(<arg>))` ersetzen (test_vfs_v2.py 5, test_vfs_shell_tool.py 1, test_vfs_shell_bullet_proof.py 2, test_vfs_shared_store_edits.py 1).
+4. `test_agent_session_tools.py`, Klasse `TestVFSToolContracts.setUp`: die zwei Zeilen
 
-**Nicht tun:** Produktcode nicht ändern (Signatur ist gewollt, s. Docstring). Keine Assertion abschwächen. Allgemein: kein `skip`, `xfail`, `continue-on-error`; keine Assertion abschwächen.
+```python
+        self.sh = make_vfs_shell(self.session)
+        self.view = make_vfs_view(self.session)
+```
+
+ersetzen durch
+
+```python
+        _sh = make_vfs_shell(self.session)
+        # vfs_shell(reason, command): reason is required since the VFS tool refactor
+        self.sh = lambda command: _sh("test", command)
+        self.view = make_vfs_view(self.session)  # coroutine function: await its result
+```
+
+und in derselben Klasse die drei Aufrufe `self.view(` zu `await self.view(` machen (`self._check(self.view(` → `self._check(await self.view(`, zweimal `r = self.view(` → `r = await self.view(`).
+
+**Nicht tun:** `vfs_shell_tool.py` nicht ändern (die neue Signatur ist gewollt). `test_self_agents_default_tool_set.py` und `test_agent_fetures.py` nicht ändern – sie werden durch Schritt 1 grün. Allgemein: kein `skip`, `xfail`, `continue-on-error`; keine Assertion abschwächen.
 
 **Abnahme:**
 
-- 46 IDs der Karte grün, außer den 2, die zu K-API-09 wechseln (`…close_others_does_not_close_system_files`, `…close_others_preserves_system_files`).
+- Repro-Befehle der Karte: erste Zeile genau 3 rot (`test_close_others_does_not_close_system_files`, `test_close_others_preserves_system_files`, `test_write_with_tabs`), zweite Zeile `2 passed`.
 - Gate: `python docs/devdocs/ci_analysis/gate.py` → `neue rote IDs: 0` (keine rote ID, die nicht in `catalog.csv` steht).
 
 **Rückfall:** wenn rot: stoppen, Ausgabe melden, nichts weiter ändern.

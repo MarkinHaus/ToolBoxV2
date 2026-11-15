@@ -14,7 +14,7 @@ Fix-Auftrag: FIX-07
 
 **Beleg:** `toolboxv2/tests/test_isaa/test_jobs/test_job_manager.py:49`; dasselbe Muster in 16 Testdateien. Verschmutzer z. B. `toolboxv2/tests/test_isaa/test_isaa_module.py:54-65` (`new_event_loop`/`set_event_loop`/`close`) und `toolboxv2/tests/a_util.py:10-22`. CI: `RuntimeError: Event loop is closed` (92) und `RuntimeError: There is no current event loop in thread 'MainThread'.` (68)
 
-**Hypothese:** Reihenfolge-Fehler, kein 3.12-Fehler: die 160 IDs schlagen in allen 11 Jobs fehl, auch unter 3.10. Jede der 10 Dateien ist einzeln grün. Sobald ein Test davor die aktuelle Schleife schließt (`loop.close()`) oder mit `asyncio.run()` abmeldet, liefert `get_event_loop()` eine geschlossene oder keine Schleife.
+**Hypothese:** Reihenfolge-Fehler, kein 3.12-Fehler: 159 der 160 IDs schlagen in allen 12 Jobs fehl, auch unter 3.10. Jede der 10 Dateien ist einzeln grün. Sobald ein Test davor die aktuelle Schleife schließt (`loop.close()`) oder mit `asyncio.run()` abmeldet, liefert `get_event_loop()` eine geschlossene oder keine Schleife.
 
 **Repro:**
 
