@@ -479,6 +479,7 @@ RUNNER_KEYS = [
     "build",
     "analyze",
     "docksh",
+    "depsy",
     "docker-image",
     "fl",
     "jsx",
@@ -927,7 +928,6 @@ def parse_args():
     # Handle runner commands early
     runner_keys = RUNNER_KEYS
     main_args, runner_name, runner_args = split_args_by_runner(sys.argv[1:], runner_keys)
-
     # Temporarily adjust sys.argv for main parsing
     if runner_name:
         original_argv = sys.argv.copy()
