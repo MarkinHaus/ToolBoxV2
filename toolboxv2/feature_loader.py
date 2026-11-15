@@ -315,9 +315,33 @@ def ensure_features_loaded() -> Dict[str, bool]:
     results = {}
     required = get_required_features()
 
+    # DEV-MODE GUARD: never unpack feature zips over a source checkout.
+    # In a source repo (pyproject.toml next to the package) the checked-out
+    # code IS the source of truth. Unpacking a stale features_packed/*.zip
+    # here silently reverts development work (proven: zip 0.1.27 from
+    # 30.06 overwrote ~120 files back to an old commit state in fresh
+    # checkouts like worktrees and CI runners).
+    dev_mode = (get_package_root().parent / "pyproject.toml").exists()
+    if os.getenv("TB_SKIP_FEATURE_UNPACK", "") not in ("", "0"):
+        # Explicit override: assume everything is fine, create markers only.
+        for feature_name in required:
+            feature_yaml = get_features_dir() / feature_name / "feature.yaml"
+            if feature_yaml.exists():
+                (get_features_dir() / feature_name / ".installed").touch()
+            results[feature_name] = True
+        return results
+
     for feature_name in required:
         if is_feature_installed(feature_name):
             results[feature_name] = True
+        elif dev_mode:
+            # Source checkout: marker only, never overwrite source files.
+            feature_yaml = get_features_dir() / feature_name / "feature.yaml"
+            if feature_yaml.exists():
+                (get_features_dir() / feature_name / ".installed").touch()
+                results[feature_name] = True
+            else:
+                results[feature_name] = False
         elif is_feature_packed(feature_name):
             results[feature_name] = unpack_feature(feature_name)
         else:
