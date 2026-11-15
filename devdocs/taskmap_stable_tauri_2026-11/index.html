@@ -1,0 +1,4368 @@
+
+<!doctype html>
+<html lang="de" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Modulares Python-Framework für Tools, Funktionen und komplette Anwendungen.">
+      
+      
+      
+        <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/devdocs/taskmap_stable_tauri_2026-11/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Task-Map — Stabile Tauri-Anwendung (Stand 2026-11-10) - ToolBoxV2 Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=IBM+Plex+Sans:300,300i,400,400i,700,700i%7CIBM+Plex+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"IBM Plex Sans";--md-code-font:"IBM Plex Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#task-map-stabile-tauri-anwendung-stand-2026-11-10" class="md-skip">
+          Zum Inhalt
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Kopfzeile">
+    <a href="../.." title="ToolBoxV2 Docs" class="md-header__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ToolBoxV2 Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Task-Map — Stabile Tauri-Anwendung (Stand 2026-11-10)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Suche" placeholder="Suche" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Suche">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Zurücksetzen" aria-label="Zurücksetzen" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Suche wird initialisiert
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Zum Repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    MarkinHaus/ToolBoxV2
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Hauptnavigation" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../foundations/onboarding/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../services/cli/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../mods/isaa/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  ISAA
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../mods/CloudM/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  CloudM
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../runtime/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Runtime
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../storage/ref_database/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Storage
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../frontend/tbjs/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Frontend
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../registry/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Infrastructure
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/toolboxv2/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ToolBoxV2 Docs" class="md-nav__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ToolBoxV2 Docs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Zum Repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    MarkinHaus/ToolBoxV2
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../foundations/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../foundations/first_run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run & Profile
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLIs & Flows
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CLIs & Flows
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flows/icli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    icli
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flows/minicli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MiniCLI & Macros
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flows/chain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chains (Flows)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flows/adaptive_prompt_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adaptive Prompt System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Module Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guidelines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coding Guidelines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mod_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mod Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docs_toolchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docs Toolchain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../mods/isaa/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ISAA
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ISAA
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents (FlowAgent)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/chains/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chains
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/jobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Full Reference (legacy)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../mods/CloudM/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CloudM
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CloudM
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/user_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/developer_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Auth System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/login_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Login System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/user_data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/mod_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mod Manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/folder_sync/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Folder Sync
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/dashboards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dashboards
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../runtime/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runtime
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/workers_core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workers (Core)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/service_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ServiceManager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/server_worker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Server Worker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/fast_tb_handler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FastTB Handler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/fasttb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FastTB
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/session_custom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Custom Sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/event_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Event Manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/ws_bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WS Bridge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/toolbox_integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Toolbox Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/tauri_integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tauri Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/debug_runner/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debug Runner
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Storage
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage/ref_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database Modes (LC/LR/RR/CB)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage/ref_blobdb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    BlobDB & Offline Fallback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage/blob_sharing_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blob Sharing API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage/blob_watch_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blob Watch API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Frontend
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Frontend
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../frontend/tbjs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    tbjs Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../frontend/tauri/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tauri App Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../frontend/p2p_rpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P2P RPC Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../frontend/tb_browser/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    tb_browser Extension
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../registry/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Infrastructure
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Infrastructure
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../registry/USER_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — User Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../registry/DEVELOPERS_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — Developers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../registry/CONTRIBUTORS_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — Contributors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../registry/API_REFERENCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../llm_gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM Gateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/toolboxv2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    toolboxv2 Core API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging & Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Inhaltsverzeichnis">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Inhaltsverzeichnis
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#0-ziel-und-abnahme" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0. Ziel und Abnahme
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-regeln-immer-gultig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Regeln (immer gültig)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-gemessene-fakten-nicht-neu-herleiten" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Gemessene Fakten (nicht neu herleiten)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-reihenfolge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Reihenfolge
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Tasks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Tasks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#t1-arbeitsumgebung-und-ausgangslage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        T1 — Arbeitsumgebung und Ausgangslage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#t2-arbeitsbaum-sauber-halten-f15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        T2 — Arbeitsbaum sauber halten (F15)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#t3-nutzerzustand-aus-dem-paketordner-holen-f6-f7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        T3 — Nutzerzustand aus dem Paketordner holen (F6, F7)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#t4-abhangigkeiten-vollstandig-machen-f2-f10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        T4 — Abhängigkeiten vollständig machen (F2, F10)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#t5-installer-nimmt-mitgeliefertes-wheel-und-die-richtigen-features-f1f3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        T5 — Installer nimmt mitgeliefertes Wheel und die richtigen Features (F1–F3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#t6-wheel-bauen-und-in-die-tauri-app-legen-f4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        T6 — Wheel bauen und in die Tauri-App legen (F4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#t7-eine-versionsnummer-fur-kern-und-app-f1-f12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        T7 — Eine Versionsnummer für Kern und App (F1, F12)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#t8-tauri-startet-ohne-tb-worker-und-wartet-lange-genug-f13-f14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        T8 — Tauri startet ohne tb-worker und wartet lange genug (F13, F14)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#k0-messung-gegen-simplecoreapp-kein-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        K0 — Messung gegen simplecore.app (kein Code)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#k1-geratekonto-verknupfen-merken-altdaten-ubernehmen-f8-f16-f17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        K1 — Gerätekonto: verknüpfen, merken, Altdaten übernehmen (F8, F16, F17)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#k2-automatische-anmeldung-uber-das-geratekonto-f8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        K2 — Automatische Anmeldung über das Gerätekonto (F8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#k3-konto-ist-pflicht-zustand-api-seite" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        K3 — Konto ist Pflicht: Zustand, API, Seite
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#k4-abnahme-konto-manuell-mit-der-installation-aus-t6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        K4 — Abnahme Konto (manuell, mit der Installation aus T6)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#t10-isaa-im-owner-abnehmen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        T10 — ISAA im Owner abnehmen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#t11-obs-als-app-im-owner-f11-b1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        T11 — OBS als App im Owner (F11, B1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#s1-server-ein-schlussel-pro-konto-f18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S1 — Server: ein Schlüssel pro Konto (F18)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#s2-gerat-schlussel-und-zugangsdaten-holen-blob-speicher-auf-das-konto-stellen-f19-f20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S2 — Gerät: Schlüssel und Zugangsdaten holen, Blob-Speicher auf das Konto stellen (F19, F20)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#s3-kontodaten-uber-die-data-api-laden-und-abgleichen-f21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S3 — Kontodaten über die Data-API laden und abgleichen (F21)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#s4-blobs-und-der-globale-isaa-ordner-f20-f22" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S4 — Blobs und der globale ISAA-Ordner (F20, F22)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#s5-abnahme-sync-manuell-echtes-konto" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        S5 — Abnahme Sync (manuell, echtes Konto)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#h1-signaturschlussel-owner" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        H1 — Signaturschlüssel (Owner)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#t12-app-update-uber-github-f12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        T12 — App-Update über GitHub (F12)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#t13-kern-update-beim-app-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        T13 — Kern-Update beim App-Start
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#t14-gesamtabnahme" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        T14 — Gesamtabnahme
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-risiken-die-unterwegs-auftreten-konnen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Risiken, die unterwegs auftreten können
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-bewusst-offen-nicht-anfassen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Bewusst offen (nicht anfassen)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/MarkinHaus/ToolBoxV2/edit/master/docs/devdocs/taskmap_stable_tauri_2026-11.md" title="Seite editieren" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="task-map-stabile-tauri-anwendung-stand-2026-11-10">Task-Map — Stabile Tauri-Anwendung (Stand 2026-11-10)<a class="headerlink" href="#task-map-stabile-tauri-anwendung-stand-2026-11-10" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>Basis: <code>master</code> @ <code>d1db5c9c</code>. Vorgänger: <code>handoff_onboarding_2026-11.md</code>.
+Zielgruppe: ein Coding-Agent, der <strong>lokal auf dem Windows-Rechner des Owners</strong> arbeitet.
+Diese Datei ist die einzige Arbeitsanweisung. Reihenfolge einhalten, nichts überspringen.</p>
+</blockquote>
+<hr />
+<h2 id="0-ziel-und-abnahme">0. Ziel und Abnahme<a class="headerlink" href="#0-ziel-und-abnahme" title="Permanent link">&para;</a></h2>
+<p>Am Ende läuft auf einem Windows-Rechner <strong>ohne vorher installiertes ToolBoxV2</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Abnahmepunkt</th>
+<th>Prüfung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Z1</td>
+<td>Installation</td>
+<td>SimpleCore-Setup installieren, App starten, Profil <code>local</code> wählen → Installation endet ohne Fehler</td>
+</tr>
+<tr>
+<td>Z2</td>
+<td>Start</td>
+<td>Danach zeigt das Hauptfenster das Dashboard von <code>http://127.0.0.1:8467/</code> (kein Text „dist/index.html not found", kein Timeout)</td>
+</tr>
+<tr>
+<td>Z3</td>
+<td>Anmeldung</td>
+<td>Erster Start verlangt die Anmeldung mit dem SimpleCore-Konto. Danach ist man auf diesem Gerät automatisch angemeldet, auch ohne Netz</td>
+</tr>
+<tr>
+<td>Z4</td>
+<td>ISAA</td>
+<td>Dashboard → Tab „Lokal" → ISAA öffnet <code>/isaa</code>, eine Chat-Nachricht wird beantwortet</td>
+</tr>
+<tr>
+<td>Z5</td>
+<td>OBS</td>
+<td>Dashboard → Tab „Lokal" → OBS öffnet <code>/obs</code> und zeigt Live-Daten des ISAA-Laufs</td>
+</tr>
+<tr>
+<td>Z6</td>
+<td>Neustart</td>
+<td>App schließen und neu starten → direkt Dashboard, kein Onboarding</td>
+</tr>
+<tr>
+<td>Z7</td>
+<td>Update</td>
+<td>Neuere App-Version wird gefunden und installiert; danach läuft der neue Kern, Profil, Konto und Daten sind erhalten</td>
+</tr>
+<tr>
+<td>Z8</td>
+<td>Daten auf allen Geräten</td>
+<td>Zweites Gerät, gleiches Konto: bestehende Kontodaten (Data-API), Blobs und der globale ISAA-Ordner sind nach dem Login da; Änderungen wandern in beide Richtungen</td>
+</tr>
+</tbody>
+</table>
+<p>Nicht Teil des Ziels: Sync von ISAA-Chatverläufen (heute keinem Nutzer zugeordnet), Linux/macOS-Abnahme, Punkt E (ein HTTP-Stack), README, Dead-Code, Installer-Konsolidierung, B2, B3, B9.</p>
+<hr />
+<h2 id="1-regeln-immer-gultig">1. Regeln (immer gültig)<a class="headerlink" href="#1-regeln-immer-gultig" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Arbeite nur auf dem Branch <code>claude/wizardly-cannon-o944j4</code>. Nie auf <code>master</code> pushen.</li>
+<li>Ein Task = ein Commit. Commit erst, wenn das <strong>Gate</strong> des Tasks grün ist.</li>
+<li>Ist ein Gate rot: Abschnitt „Wenn rot" des Tasks ausführen. Ist es danach noch rot: <strong>stoppen</strong>, Befehl + Ausgabe an den Owner melden. Nicht raten, nicht den nächsten Task beginnen.</li>
+<li>Nie einen Test löschen, überspringen oder abschwächen, um ein Gate grün zu bekommen.</li>
+<li>Kopien synchron halten (Tests erzwingen Byte-Gleichheit):</li>
+<li><code>installer.sh</code> ≡ <code>toolboxv2/simple-core/src-tauri/installer.sh</code></li>
+<li><code>installer.ps1</code> ≡ <code>toolboxv2/simple-core/src-tauri/installer.ps1</code></li>
+<li><code>toolboxv2/simple-core/src-tauri/installer.html</code> ≡ <code>toolboxv2/web/installer/index.html</code>
+   Immer die Root-Datei bearbeiten, dann in die Kopie kopieren.</li>
+<li>Keine Ports hart im Code. Quelle bleibt Config/Manifest (8467 HTTP, 8468 WS).</li>
+<li>Keine Geheimnisse (Signaturschlüssel, API-Keys) in Dateien oder Commits.</li>
+<li>Zwei verschiedene <code>dist</code>-Ordner nicht verwechseln: <code>dist/</code> im Repo-Root = Python-Wheel, <code>toolboxv2/dist/</code> = Web-Frontend.</li>
+<li>Tasks mit Kennung <strong>H</strong> macht der Owner. Dort stoppen und warten.</li>
+</ol>
+<p><strong>Aufgaben des Owners</strong> (der Agent stoppt an der genannten Stelle):</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Was</th>
+<th>Wann</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>H0</td>
+<td>LLM-API-Key eintragen</td>
+<td>vor T10</td>
+</tr>
+<tr>
+<td>H4</td>
+<td>MinIO auf <code>simplecore.app</code> konfigurieren und von außen per HTTPS erreichbar machen</td>
+<td>nur wenn K0-P3 rot ist</td>
+</tr>
+<tr>
+<td>H5</td>
+<td>Server-Änderung aus S1 auf <code>simplecore.app</code> ausrollen</td>
+<td>nach S1</td>
+</tr>
+<tr>
+<td>H1</td>
+<td>Signaturschlüssel als GitHub-Secrets</td>
+<td>vor T12</td>
+</tr>
+<tr>
+<td>H2, H3</td>
+<td><code>nightly.yml</code> anstoßen (zweimal)</td>
+<td>in T14</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Entscheidungen des Owners</strong> (gelten, nicht neu verhandeln): Wheel im App-Bundle · Updater über GitHub (<code>nightly</code>) · Konto beim ersten Start Pflicht, danach automatische Anmeldung auf dem Gerät · vorhandene lokale Daten gehen ins Konto · Schlüssel liegt beim Konto auf dem Server · Sync-Umfang: Data-API-Daten, Blobs, globaler ISAA-Ordner.</p>
+<p><strong>Standard-Gate</strong> (in jedem Task zusätzlich zum eigenen Gate):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">unittest</span> <span class="n">toolboxv2</span><span class="p">.</span><span class="n">tests</span><span class="p">.</span><span class="n">test_core</span><span class="p">.</span><span class="n">test_first_run_onboarding</span> <span class="n">toolboxv2</span><span class="p">.</span><span class="n">tests</span><span class="p">.</span><span class="n">test_core</span><span class="p">.</span><span class="n">test_user_apps</span> <span class="n">toolboxv2</span><span class="p">.</span><span class="n">tests</span><span class="p">.</span><span class="n">test_core</span><span class="p">.</span><span class="n">test_cors_policy</span> <span class="n">toolboxv2</span><span class="p">.</span><span class="n">tests</span><span class="p">.</span><span class="n">test_core</span><span class="p">.</span><span class="n">test_live_ui_owner</span> <span class="n">toolboxv2</span><span class="p">.</span><span class="n">tests</span><span class="p">.</span><span class="n">test_core</span><span class="p">.</span><span class="n">test_wizard_api</span> <span class="n">toolboxv2</span><span class="p">.</span><span class="n">tests</span><span class="p">.</span><span class="n">test_core</span><span class="p">.</span><span class="n">test_installer_protocol</span>
+</code></pre></div>
+<p>Erwartet: <code>OK</code>. Danach muss <code>git status --short</code> nur die Dateien des Tasks zeigen.</p>
+<hr />
+<h2 id="2-gemessene-fakten-nicht-neu-herleiten">2. Gemessene Fakten (nicht neu herleiten)<a class="headerlink" href="#2-gemessene-fakten-nicht-neu-herleiten" title="Permanent link">&para;</a></h2>
+<p>Gemessen am 2026-11-10 unter Linux mit einem lokal gebauten Wheel. Windows ist <strong>nicht</strong> gemessen.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Fakt</th>
+<th>Folge</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>F1</td>
+<td>PyPI <code>toolboxv2 0.1.28</code> (13.07.) enthält weder <code>wizard_api.py</code> noch <code>user_apps.py</code>. <code>master</code> trägt dieselbe Nummer.</td>
+<td>Installation von PyPI ergibt alten Kern → T5–T7</td>
+</tr>
+<tr>
+<td>F2</td>
+<td>Installer-Default <code>FEATURES="core cli"</code> → <code>ToolBoxV2[cli]</code>. <code>waitress</code> steckt nur im Extra <code>web</code>. Ohne <code>waitress</code> stirbt der Owner-Prozess (<code>ModuleNotFoundError</code>, <code>fast_tb.py:1029</code>).</td>
+<td>T4, T5</td>
+</tr>
+<tr>
+<td>F3</td>
+<td><code>installer.ps1</code> liest Features nie aus der Config. <code>installer.sh</code> liest sie nur aus der Zeile <strong>nach</strong> <code>features:</code> und löscht dabei Leerzeichen.</td>
+<td>T5</td>
+</tr>
+<tr>
+<td>F4</td>
+<td><code>tb build build</code> baut Wheel + Feature-ZIPs fehlerfrei (4 MB). Das Web-ZIP enthält <code>dist</code> nur, wenn vorher <code>npm run build</code> lief. Ohne <code>dist</code>: <code>/</code> liefert einen Text, <code>/setup</code> liefert 404.</td>
+<td>T6</td>
+</tr>
+<tr>
+<td>F5</td>
+<td><code>uv tool install "toolboxv2[web,isaa,cli] @ file:///&lt;abs&gt;/toolboxv2-0.1.28-py3-none-any.whl" --force</code> funktioniert (68 s, 580 MB). Danach <code>tb -init local</code> → <code>{"ok": true}</code>, Owner antwortet nach 4 s.</td>
+<td>Gewählter Lieferweg trägt</td>
+</tr>
+<tr>
+<td>F6</td>
+<td>Manifest, <code>.data</code> und <code>.config</code> liegen in <code>site-packages/toolboxv2/</code>. Nach Reinstall ist <code>.data</code> <strong>weg</strong>.</td>
+<td>Jedes Update löscht Nutzerdaten → T3</td>
+</tr>
+<tr>
+<td>F7</td>
+<td>Das Repo-Manifest <code>toolboxv2/tb-manifest.yaml</code> ist eingecheckt mit <code>profile: developer</code> und wird ins Wheel gepackt.</td>
+<td>Wheel-Installationen sehen nie „first run" → T3</td>
+</tr>
+<tr>
+<td>F8</td>
+<td><code>SessionManager.enable_local_trust</code> wird in <code>server_worker.py:1697</code> aufgerufen, ist aber nirgends definiert. Log: <code>Loopback trust not enabled</code>.</td>
+<td>Keine Auto-Anmeldung → K2</td>
+</tr>
+<tr>
+<td>F9</td>
+<td><code>POST /tray/command</code> mit <code>{"command":"start_app","args":{"name":"isaa"}}</code> → <code>{"ok":true,"result":{"merged":true,"prefix":"/isaa","ws":true}}</code>, <code>/isaa</code> → 200.</td>
+<td>ISAA-Mount funktioniert</td>
+</tr>
+<tr>
+<td>F10</td>
+<td><code>litellm</code> steht in <code>features/isaa/feature.yaml</code>, fehlt aber im Extra <code>isaa</code> in <code>pyproject.toml</code>.</td>
+<td>ISAA-Chat ohne LLM-Bibliothek → T4</td>
+</tr>
+<tr>
+<td>F11</td>
+<td>OBS (<code>mods/isaa/extras/live_obs_server.py</code>, <code>app = FastTB(...)</code> Zeile 41) ist nicht in der App-Registry.</td>
+<td>T11</td>
+</tr>
+<tr>
+<td>F12</td>
+<td><code>tauri.conf.json</code> hat <code>plugins.updater</code>, aber <code>tauri-plugin-updater</code> fehlt in <code>Cargo.toml</code> und <code>lib.rs</code>. App-Version ist fest <code>0.1.0</code>.</td>
+<td>Kein Update möglich → T12</td>
+</tr>
+<tr>
+<td>F13</td>
+<td><code>bundle.externalBin</code> verlangt <code>binaries/tb-worker</code>; laut Handoff B10 funktioniert dieses Binary nicht. <code>worker_manager.rs</code> erlaubt Endpoint <code>local</code> nur, wenn der Sidecar da ist.</td>
+<td>T8</td>
+</tr>
+<tr>
+<td>F14</td>
+<td><code>launch.rs</code> wartet nach dem Start nur 25 s auf 8467.</td>
+<td>Erster Start unter Windows kann länger dauern → T8</td>
+</tr>
+<tr>
+<td>F15</td>
+<td>Tests und <code>import toolboxv2</code> schreiben Marker in den Arbeitsbaum (<code>features/*/.installed</code>, <code>logs/</code>, <code>.info/</code>).</td>
+<td>T2</td>
+</tr>
+<tr>
+<td>F16</td>
+<td>Lokale Anmeldung und SimpleCore-Konto schließen sich heute aus: mit <code>TOOLBOXV2_REMOTE_BASE</code> kein lokaler Admin (<code>CloudM/module.py:95</code>), ohne sie nur der Admin <code>root</code> mit Zufalls-ID.</td>
+<td>K1–K3</td>
+</tr>
+<tr>
+<td>F17</td>
+<td>SimpleCore-Login vom Gerät existiert für die CLI: <code>utils/clis/cli_oauth.py:65</code> öffnet die Login-Seite im Browser und erhält <code>token</code>, <code>refresh_token</code>, <code>user_id</code>, <code>username</code> über <code>127.0.0.1:8765</code>.</td>
+<td>Wird in K3 wiederverwendet</td>
+</tr>
+<tr>
+<td>F18</td>
+<td>Ohne Nutzerschlüssel verschlüsseln <code>blobs.py:189–212</code> und <code>scoped_storage.py</code> mit dem <strong>Geräteschlüssel</strong>.</td>
+<td>Anderes Gerät kann die Daten nicht lesen → S1, S2</td>
+</tr>
+<tr>
+<td>F19</td>
+<td>Der Server gibt pro Konto MinIO-Zugangsdaten aus: <code>CloudM/UserDataAPI.py:1097</code>. Braucht <code>MINIO_ENDPOINT</code> auf dem Server — <strong>nicht geprüft</strong>.</td>
+<td>K0-P3</td>
+</tr>
+<tr>
+<td>F20</td>
+<td><code>BlobStorage.sync()</code> (<code>blobs.py:1021</code>) gleicht lokal ↔ Cloud unter <code>{user_id}/</code> ab, ist aber nirgends an ein Konto angeschlossen. <code>toolbox.py:290</code> baut den Speicher im Server-Modus gegen <code>127.0.0.1:9000</code>.</td>
+<td>S2, S4</td>
+</tr>
+<tr>
+<td>F21</td>
+<td>Bestehende Serverdaten der Data-API sind mit dem Schlüssel des Servers verschlüsselt (Server-<code>UserContext</code> ohne <code>encryption_key</code>).</td>
+<td>Nur über die API lesbar → S3</td>
+</tr>
+<tr>
+<td>F22</td>
+<td>Der globale ISAA-Ordner ist <code>&lt;data_dir&gt;/Agents/VFS/global</code> (<code>power_vfs.py:110</code>), ein normaler Ordner.</td>
+<td>S4</td>
+</tr>
+<tr>
+<td>F23</td>
+<td><code>utils/clis/cli_oauth.py</code> enthält ab Zeile 105 einen losen Textblock („WORKING AGREEMENT") als String im Modul; <code>local_cli.py:258</code> gibt die Login-Antwort samt Tokens per <code>print</code> aus.</td>
+<td>Nicht anfassen; dem Owner gemeldet</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="3-reihenfolge">3. Reihenfolge<a class="headerlink" href="#3-reihenfolge" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>T1 → T2 → T3 → T4 → T5 → T6 → T7 → T8 → K0 → K1 → K2 → K3 → K4 → T10 → T11 → S1 → H5 → S2 → S3 → S4 → S5 → H1 → T12 → T13 → T14
+</code></pre></div>
+<p>Begründung, rückwärts vom Ziel: Update (T12/T13) braucht eine installierbare App (T6–T8). Die App braucht einen Installer, der das mitgelieferte Wheel nimmt (T5), und einen Kern, der mit diesem Wheel startet (T4) und dessen Zustand ein Update überlebt (T3). Konto (K0–K4), ISAA und OBS (T10, T11) sind reine Kern-Themen und ohne Tauri prüfbar. Der Sync (S1–S5) braucht das Konto und steht deshalb danach; er braucht außerdem eine Server-Änderung (H5).</p>
+<hr />
+<h2 id="4-tasks">4. Tasks<a class="headerlink" href="#4-tasks" title="Permanent link">&para;</a></h2>
+<h3 id="t1-arbeitsumgebung-und-ausgangslage">T1 — Arbeitsumgebung und Ausgangslage<a class="headerlink" href="#t1-arbeitsumgebung-und-ausgangslage" title="Permanent link">&para;</a></h3>
+<p><strong>Schritte</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">git</span> <span class="n">fetch</span> <span class="n">origin</span> <span class="n">claude</span><span class="p">/</span><span class="n">wizardly-cannon-o944j4</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">git</span> <span class="n">checkout</span> <span class="n">claude</span><span class="p">/</span><span class="n">wizardly-cannon-o944j4</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">uv</span> <span class="n">venv</span> <span class="p">.</span><span class="n">venv</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="p">.</span><span class="n">venv</span><span class="p">\</span><span class="n">Scripts</span><span class="p">\</span><span class="n">activate</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">uv</span> <span class="n">pip</span> <span class="n">install</span> <span class="n">-e</span> <span class="s2">".[web,cli,core,isaa]"</span> <span class="n">litellm</span> <span class="n">pytest</span> <span class="n">pytest-asyncio</span> <span class="n">build</span>
+</code></pre></div>
+<p>Prüfe außerdem, dass vorhanden sind: <code>node --version</code> (≥ 20), <code>cargo --version</code>, <code>git --version</code>.</p>
+<p><strong>Gate:</strong> Standard-Gate → <code>OK</code>. <code>python -m pytest -q toolboxv2/tests/test_core/test_wizard_e2e_http.py</code> → alle bestanden.</p>
+<p><strong>Wenn rot:</strong> Ausgabe melden und stoppen. Nichts reparieren, was nicht in dieser Map steht.</p>
+<hr />
+<h3 id="t2-arbeitsbaum-sauber-halten-f15">T2 — Arbeitsbaum sauber halten (F15)<a class="headerlink" href="#t2-arbeitsbaum-sauber-halten-f15" title="Permanent link">&para;</a></h3>
+<p><strong>Datei:</strong> <code>.gitignore</code></p>
+<p><strong>Schritte:</strong> Diese Zeilen anhängen:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>toolboxv2/features/*/.installed
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>toolboxv2/features_packed/
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>toolboxv2/.info/
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>toolboxv2/minio_cluster_config.json
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>toolboxv2/simple-core/src-tauri/wheels/*.whl
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>/logs/
+</code></pre></div>
+<p><strong>Gate:</strong> Standard-Gate laufen lassen, dann <code>git status --short</code> → zeigt nur <code>.gitignore</code>.</p>
+<p><strong>Nicht tun:</strong> <code>toolboxv2/tb-manifest.yaml</code> nicht in <code>.gitignore</code> aufnehmen. Wenn ein Test sie verändert hat: <code>git checkout toolboxv2/tb-manifest.yaml</code>.</p>
+<hr />
+<h3 id="t3-nutzerzustand-aus-dem-paketordner-holen-f6-f7">T3 — Nutzerzustand aus dem Paketordner holen (F6, F7)<a class="headerlink" href="#t3-nutzerzustand-aus-dem-paketordner-holen-f6-f7" title="Permanent link">&para;</a></h3>
+<p><strong>Ziel:</strong> Bei einer Wheel-Installation liegen Manifest und Daten im Installationsordner des Nutzers, nicht in <code>site-packages</code>. Im Source-Checkout bleibt alles wie bisher.</p>
+<p><strong>Schritt 1 — neue Datei <code>toolboxv2/_state_dir.py</code></strong> (nur Standardbibliothek, keine <code>toolboxv2</code>-Importe):</p>
+<ul>
+<li><code>is_packaged_install() -&gt; bool</code>: <code>True</code>, wenn <code>"site-packages"</code> oder <code>"dist-packages"</code> in den Pfadteilen von <code>Path(__file__).resolve()</code> vorkommt.</li>
+<li><code>user_state_dir() -&gt; Path</code>: 1. Umgebungsvariable <code>TB_INSTALL_DIR</code>, wenn gesetzt und nicht leer. 2. sonst derselbe Standardpfad wie im Installer. Lies ihn ab aus <code>installer.sh</code> Zeilen 160–166 und <code>installer.ps1</code> Zeile 132 (Windows: <code>%LOCALAPPDATA%\toolboxv2</code>, Linux: <code>~/.local/share/toolboxv2</code>) und bilde ihn exakt nach.</li>
+<li><code>manifest_base_dir() -&gt; Path</code>: 1. Umgebungsvariable <code>TB_MANIFEST_DIR</code>, wenn gesetzt. 2. sonst <code>user_state_dir()</code>, wenn <code>is_packaged_install()</code>. 3. sonst <code>Path(__file__).parent</code>.</li>
+</ul>
+<p><strong>Schritt 2 — <code>toolboxv2/__init__.py</code>:</strong> Direkt nach Zeile 69 (<code>__tb_root_dir__ = tb_root_dir = ...</code>) einfügen: Wenn <code>is_packaged_install()</code> und <code>TB_DATA_DIR</code> nicht gesetzt ist, dann <code>os.environ["TB_DATA_DIR"] = str(user_state_dir())</code> und den Ordner anlegen. (<code>utils/toolbox.py:78</code> hängt selbst <code>.data</code> an.)</p>
+<p><strong>Schritt 3 — alle Manifest-Aufrufe umstellen.</strong> Finde sie mit:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">git</span> <span class="n">grep</span> <span class="n">-n</span> <span class="s2">"ManifestLoader("</span> <span class="p">--</span> <span class="s2">"toolboxv2/*.py"</span> <span class="s2">":!toolboxv2/tests"</span>
+</code></pre></div>
+<p>Bekannte Stellen: <code>__init__.py:230</code>, <code>feature_loader_registry.py:72</code> und <code>:87</code>, <code>init_onboarding.py:198</code> und <code>:381</code>, <code>utils/clis/first_run.py:41</code> und <code>:57</code>, <code>utils/workers/fast/endpoint.py:155</code>, <code>flows/mini/toolbox_admin.py:364/387/406</code>. Überall, wo <code>tb_root_dir</code> (auch als <code>str(...)</code> oder <code>base_dir=str(root)</code>) übergeben wird, stattdessen <code>manifest_base_dir()</code> übergeben. Stellen, die einen <strong>explizit übergebenen</strong> Pfad nutzen (<code>path</code>-Parameter), unverändert lassen. In <code>endpoint.py</code> bleibt die Auflösung relativer <code>dist_dir</code>-Werte gegen <code>tb_root_dir</code> unverändert.</p>
+<p><strong>Schritt 4 — Installer schreibt kein Manifest mehr.</strong> In <code>installer.sh</code> den Block „tb-manifest.yaml (only write if not already present)" (ab ca. Zeile 884 bis zum zugehörigen <code>fi</code>) entfernen. Das Gegenstück in <code>installer.ps1</code> suchen (<code>git grep -n "tb-manifest.yaml" installer.ps1</code>) und ebenfalls entfernen. Grund: <code>tb -init &lt;profile&gt;</code> legt das Manifest an; ein vom Installer geschriebenes Manifest würde jetzt das echte werden. Beide Dateien in die <code>src-tauri</code>-Kopien kopieren.</p>
+<p><strong>Schritt 5 — neuer Test <code>toolboxv2/tests/test_core/test_state_dir.py</code>:</strong></p>
+<ul>
+<li>Mit <code>TB_MANIFEST_DIR=&lt;tmp&gt;</code>: <code>onboarding_state()["first_run"]</code> ist <code>True</code>.</li>
+<li>Danach <code>apply_profile("local")</code>: <code>&lt;tmp&gt;/tb-manifest.yaml</code> existiert, <code>onboarding_state()</code> liefert <code>first_run False</code>, <code>profile "local"</code>.</li>
+<li>Die Datei <code>toolboxv2/tb-manifest.yaml</code> im Repo ist vor und nach dem Test byte-gleich.</li>
+<li>Ohne <code>TB_MANIFEST_DIR</code> im Source-Checkout: <code>manifest_base_dir()</code> ist gleich <code>tb_root_dir</code>.</li>
+</ul>
+<p><strong>Gate:</strong> Standard-Gate + <code>python -m unittest toolboxv2.tests.test_core.test_state_dir</code> → <code>OK</code>.</p>
+<p><strong>Wenn rot:</strong> Schlägt ein bestehender Test fehl, weil er das Manifest im Paketordner erwartet, dann setze in dessen <code>setUp</code> <code>TB_MANIFEST_DIR</code> auf ein Temp-Verzeichnis — die Prüfungen selbst nicht ändern.</p>
+<hr />
+<h3 id="t4-abhangigkeiten-vollstandig-machen-f2-f10">T4 — Abhängigkeiten vollständig machen (F2, F10)<a class="headerlink" href="#t4-abhangigkeiten-vollstandig-machen-f2-f10" title="Permanent link">&para;</a></h3>
+<p><strong>Datei:</strong> <code>pyproject.toml</code></p>
+<p><strong>Schritte</strong></p>
+<ol>
+<li>In <code>[project] dependencies</code> ergänzen: <code>"waitress&gt;=3.0.2"</code> und <code>"websockets&gt;=15.0.1"</code> (der Owner auf 8467 und der WS-Worker gehören zu jedem Profil).</li>
+<li>Im Extra <code>isaa</code> ergänzen: <code>"litellm"</code>.</li>
+</ol>
+<p><strong>Gate:</strong> Standard-Gate. Zusätzlich in einer frischen Umgebung:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">uv</span> <span class="n">venv</span> <span class="p">.</span><span class="n">venv-min</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">uv</span> <span class="n">pip</span> <span class="n">install</span> <span class="p">-</span><span class="n">-python</span> <span class="p">.</span><span class="n">venv-min</span> <span class="n">-e</span> <span class="p">.</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="p">.</span><span class="n">venv-min</span><span class="p">\</span><span class="n">Scripts</span><span class="p">\</span><span class="n">python</span> <span class="n">-c</span> <span class="s2">"import waitress, websockets; print('ok')"</span>
+</code></pre></div>
+<p>Erwartet: <code>ok</code>. Danach <code>.venv-min</code> löschen.</p>
+<hr />
+<h3 id="t5-installer-nimmt-mitgeliefertes-wheel-und-die-richtigen-features-f1f3">T5 — Installer nimmt mitgeliefertes Wheel und die richtigen Features (F1–F3)<a class="headerlink" href="#t5-installer-nimmt-mitgeliefertes-wheel-und-die-richtigen-features-f1f3" title="Permanent link">&para;</a></h3>
+<p><strong>Dateien:</strong> <code>installer.sh</code>, <code>installer.ps1</code> (danach in <code>src-tauri</code> kopieren)</p>
+<p><strong>Schritt 1 — Features aus der Config.</strong> Neuer einzeiliger Config-Schlüssel <code>tb_features</code>, Wert kommagetrennt, z. B. <code>tb_features: cli,web,isaa</code>.
+- <code>installer.sh</code>: im Config-Block (bei Zeile 340–350) lesen mit <code>yaml_get "$CONFIG_FILE" "tb_features" ""</code>; wenn nicht leer: Kommas durch Leerzeichen ersetzen und <code>FEATURES</code> setzen. Die alte <code>features:</code>-Logik bleibt.
+- <code>installer.ps1</code>: an der Stelle, an der <code>profile</code>/<code>ui</code> aus der Config gelesen werden, dasselbe mit <code>Get-YamlField</code> tun und <code>$script:FEATURES</code> setzen.</p>
+<p><strong>Schritt 2 — Wheel-Quelle.</strong> Neue Umgebungsvariable <code>TB_WHEEL</code> (absoluter Pfad zu einer <code>.whl</code>-Datei).
+- <code>installer.sh</code>, Funktion <code>_install_uv</code> (Zeile 706): Wenn <code>TB_WHEEL</code> gesetzt ist und die Datei existiert, dann lautet das Paket <code>toolboxv2[&lt;extras&gt;] @ file://&lt;TB_WHEEL&gt;</code> (ohne Extras: <code>toolboxv2 @ file://&lt;TB_WHEEL&gt;</code>). Sonst wie bisher.
+- <code>installer.ps1</code>, Funktion <code>Install-Uv</code> (Zeile 584): gleiches Verhalten. Die URL bilden mit <code>([System.Uri](Resolve-Path $env:TB_WHEEL).Path).AbsoluteUri</code> (ergibt <code>file:///C:/...</code>).
+- Gleiches für <code>_install_venv</code> / <code>Install-Venv</code>.</p>
+<p><strong>Schritt 3 — Update mit Wheel.</strong> In <code>action_update</code> (sh Zeile 957) und <code>Action-Update</code> (ps1 Zeile 765), Zweig <code>uv</code>: Wenn <code>TB_WHEEL</code> gesetzt ist, <code>FEATURES</code> aus <code>install.manifest</code> lesen (Schlüssel <code>features</code>), <code>_install_uv</code> / <code>Install-Uv</code> aufrufen und mit der zurückgegebenen Version <code>phase_write_manifests</code> (bzw. das ps1-Gegenstück) ausführen. Ohne <code>TB_WHEEL</code> bleibt <code>uv tool upgrade</code>.</p>
+<p><strong>Schritt 4 — Tests.</strong> In <code>toolboxv2/tests/test_core/test_installer_protocol.py</code> zwei Dry-Run-Fälle ergänzen (Muster der vorhandenen Fälle übernehmen): Config mit <code>tb_features: cli,web,isaa</code> und gesetztem <code>TB_WHEEL</code> auf eine leere Temp-Datei <code>toolboxv2-9.9.9-py3-none-any.whl</code> → die Ausgabe nennt das Paket mit <code>[cli,web,isaa]</code> und <code>file://</code>.</p>
+<p><strong>Gate</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">unittest</span> <span class="n">toolboxv2</span><span class="p">.</span><span class="n">tests</span><span class="p">.</span><span class="n">test_core</span><span class="p">.</span><span class="n">test_installer_protocol</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">powershell</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="o">-File</span> <span class="n">installer</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-JsonOutput</span> <span class="n">-Config</span> <span class="p">&lt;</span><span class="n">tmp</span><span class="p">&gt;\</span><span class="n">tb-install</span><span class="p">.</span><span class="n">yaml</span> <span class="n">-DryRun</span>
+</code></pre></div>
+<p>Erwartet: Test <code>OK</code>; der Dry-Run gibt nur JSON-Zeilen auf stdout aus und endet mit einer Zeile <code>"type":"done"</code>. (<code>&lt;tmp&gt;\tb-install.yaml</code> mit <code>install_mode: uv</code>, <code>profile: local</code>, <code>ui: none</code>, <code>assume: yes</code>, <code>action: install</code>, <code>tb_features: cli,web,isaa</code>.)</p>
+<p><strong>Wenn rot:</strong> Lehnt <code>uv</code> die <code>file:///</code>-URL unter Windows ab, dann stattdessen <code>uv tool install --from "&lt;TB_WHEEL&gt;" "toolboxv2[&lt;extras&gt;]"</code> verwenden und dieselbe Form in <code>installer.sh</code> übernehmen. Befund im Commit-Text nennen.</p>
+<hr />
+<h3 id="t6-wheel-bauen-und-in-die-tauri-app-legen-f4">T6 — Wheel bauen und in die Tauri-App legen (F4)<a class="headerlink" href="#t6-wheel-bauen-und-in-die-tauri-app-legen-f4" title="Permanent link">&para;</a></h3>
+<p><strong>Schritt 1 — Bauskript <code>scripts/build_wheel_for_tauri.sh</code></strong> (bash; unter Windows mit Git Bash ausführen), Inhalt in dieser Reihenfolge:</p>
+<ol>
+<li><code>cd toolboxv2 &amp;&amp; npm install &amp;&amp; npm install --prefix ./web &amp;&amp; npm run build &amp;&amp; cd ..</code></li>
+<li>Abbruch mit Fehler, wenn <code>toolboxv2/dist/index.html</code> fehlt oder kleiner als 500 Bytes ist (Schutz vor dem CI-Stub).</li>
+<li><code>rm -rf dist toolboxv2/features_packed</code></li>
+<li><code>tb build build</code></li>
+<li>Abbruch mit Fehler, wenn das Web-ZIP <code>toolboxv2/features_packed/tbv2-feature-web-*.zip</code> keinen Eintrag <code>dist/index.html</code> enthält (prüfen mit <code>python -m zipfile -l</code>).</li>
+<li><code>mkdir -p toolboxv2/simple-core/src-tauri/wheels</code>, alte <code>*.whl</code> dort löschen, <code>cp dist/toolboxv2-*.whl</code> dorthin.</li>
+</ol>
+<p><strong>Schritt 2 — Bundle.</strong> Datei <code>toolboxv2/simple-core/src-tauri/wheels/.gitkeep</code> anlegen. In <code>tauri.conf.json</code> unter <code>bundle.resources</code> ergänzen: <code>"wheels/*"</code>.</p>
+<p><strong>Schritt 3 — <code>installer.rs</code>.</strong>
+- Neue reine Funktion <code>bundled_wheel(resource_dir: &amp;Path) -&gt; Option&lt;PathBuf&gt;</code>: sucht in <code>&lt;resource_dir&gt;/wheels</code> Dateien, die mit <code>toolboxv2-</code> beginnen und auf <code>.whl</code> enden; gibt die mit dem alphabetisch größten Namen zurück.
+- In <code>run_install</code> direkt nach dem <code>TB_UV_BIN</code>-Block (Zeile 201–204): wenn <code>bundled_wheel(...)</code> etwas findet, <code>cmd.env("TB_WHEEL", pfad)</code>.
+- In <code>config_to_yaml</code>: für alle Profile außer <code>developer</code> die Zeile <code>tb_features: cli,web,isaa</code> schreiben.
+- Tests im selben Modul ergänzen: <code>bundled_wheel_found_in_resources</code> (Temp-Ordner mit zwei Wheels → das größere), und in <code>yaml_contains_canon_keys</code> die neue Zeile prüfen.</p>
+<p><strong>Schritt 4 — CI.</strong> In <code>.github/workflows/nightly.yml</code>, <code>release.yml</code> (Job „Tauri") und <code>build.yml</code>: nach dem Schritt, der <code>npm run build</code> ausführt, und vor dem Tauri-Build einen Schritt einfügen:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Build core wheel for bundle</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">        </span><span class="nt">shell</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bash</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">        </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">          </span><span class="no">pip install build</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">          </span><span class="no">bash scripts/build_wheel_for_tauri.sh</span>
+</code></pre></div>
+<p><strong>Gate</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">bash</span> <span class="n">scripts</span><span class="p">/</span><span class="n">build_wheel_for_tauri</span><span class="p">.</span><span class="n">sh</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="nb">dir </span><span class="n">toolboxv2</span><span class="p">\</span><span class="n">simple-core</span><span class="p">\</span><span class="n">src-tauri</span><span class="p">\</span><span class="n">wheels</span><span class="p">\*.</span><span class="n">whl</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="nb">cd </span><span class="n">toolboxv2</span><span class="p">\</span><span class="n">simple-core</span><span class="p">\</span><span class="n">src-tauri</span><span class="p">;</span> <span class="n">cargo</span> <span class="n">test</span> <span class="p">-</span><span class="n">-lib</span> <span class="n">installer</span><span class="p">::;</span> <span class="nb">cd </span><span class="p">..\..\..</span>
+</code></pre></div>
+<p>Erwartet: genau eine <code>.whl</code>-Datei; alle <code>installer::</code>-Tests bestanden. Plus Standard-Gate.</p>
+<p><strong>Zusatz-Gate (echte Installation aus dem Wheel, ohne Tauri):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nv">$env:TB_WHEEL</span> <span class="p">=</span> <span class="p">(</span><span class="nb">Resolve-Path</span> <span class="n">toolboxv2</span><span class="p">\</span><span class="n">simple-core</span><span class="p">\</span><span class="n">src-tauri</span><span class="p">\</span><span class="n">wheels</span><span class="p">\*.</span><span class="n">whl</span><span class="p">).</span><span class="n">Path</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">powershell</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="o">-File</span> <span class="n">installer</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-JsonOutput</span> <span class="n">-Config</span> <span class="p">&lt;</span><span class="n">tmp</span><span class="p">&gt;\</span><span class="n">tb-install</span><span class="p">.</span><span class="n">yaml</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="p">&amp;</span> <span class="s2">"$env:LOCALAPPDATA\toolboxv2\bin\tb.exe"</span> <span class="n">workers</span> <span class="nb">start</span>
+</code></pre></div>
+<p>In einem zweiten Fenster:</p>
+<table>
+<thead>
+<tr>
+<th>Aufruf</th>
+<th>Erwartet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>curl http://127.0.0.1:8467/health</code></td>
+<td><code>"status":"healthy"</code></td>
+</tr>
+<tr>
+<td><code>curl http://127.0.0.1:8467/api/wizard/state</code></td>
+<td><code>"first_run":false</code>, <code>"profile":"local"</code></td>
+</tr>
+<tr>
+<td><code>curl -s -o NUL -w "%{http_code} %{size_download}" http://127.0.0.1:8467/</code></td>
+<td><code>200</code> und mehr als 1000 Bytes</td>
+</tr>
+<tr>
+<td><code>curl -s -o NUL -w "%{http_code}" http://127.0.0.1:8467/setup</code></td>
+<td><code>200</code></td>
+</tr>
+<tr>
+<td><code>dir "$env:LOCALAPPDATA\toolboxv2\tb-manifest.yaml"</code></td>
+<td>Datei existiert</td>
+</tr>
+<tr>
+<td><code>dir "$env:LOCALAPPDATA\toolboxv2\.data"</code></td>
+<td>Ordner existiert</td>
+</tr>
+</tbody>
+</table>
+<p>Workers danach stoppen. Die Installation für K4, T10, T11 und S5 stehen lassen.</p>
+<p><strong>Wenn rot:</strong> <code>/</code> liefert Text statt HTML → das Wheel wurde ohne <code>dist</code> gebaut, Schritt 1 des Skripts prüfen. <code>first_run:true</code> trotz Installer-Lauf → T3 Schritt 3 hat eine Aufrufstelle verfehlt; <code>git grep</code> wiederholen.</p>
+<hr />
+<h3 id="t7-eine-versionsnummer-fur-kern-und-app-f1-f12">T7 — Eine Versionsnummer für Kern und App (F1, F12)<a class="headerlink" href="#t7-eine-versionsnummer-fur-kern-und-app-f1-f12" title="Permanent link">&para;</a></h3>
+<p><strong>Ziel:</strong> <code>0.1.29</code> überall, damit sich der Stand von PyPI <code>0.1.28</code> unterscheidet und App-Version = Kern-Version gilt.</p>
+<p><strong>Schritte:</strong> <code>git grep -n "0\.1\.28"</code> ausführen und in diesen Dateien auf <code>0.1.29</code> ändern: <code>pyproject.toml</code>, alle <code>toolboxv2/features/*/feature.yaml</code>. Zusätzlich <code>0.1.0</code> → <code>0.1.29</code> in <code>toolboxv2/simple-core/src-tauri/tauri.conf.json</code> (<code>version</code>), <code>toolboxv2/simple-core/src-tauri/Cargo.toml</code> (<code>[package] version</code>) und <code>toolboxv2/simple-core/package.json</code>. Treffer in Tests, Docs, Lock-Dateien und <code>tb-registry/</code> <strong>nicht</strong> ändern.</p>
+<p><strong>Gate:</strong> Standard-Gate. <code>bash scripts/build_wheel_for_tauri.sh</code> → Wheel heißt <code>toolboxv2-0.1.29-py3-none-any.whl</code>. <code>cargo test --lib</code> in <code>src-tauri</code> → bestanden.</p>
+<hr />
+<h3 id="t8-tauri-startet-ohne-tb-worker-und-wartet-lange-genug-f13-f14">T8 — Tauri startet ohne <code>tb-worker</code> und wartet lange genug (F13, F14)<a class="headerlink" href="#t8-tauri-startet-ohne-tb-worker-und-wartet-lange-genug-f13-f14" title="Permanent link">&para;</a></h3>
+<p><strong>Schritte</strong></p>
+<ol>
+<li><code>tauri.conf.json</code>: aus <code>bundle.externalBin</code> den Eintrag <code>"binaries/tb-worker"</code> entfernen (<code>"binaries/uv"</code> bleibt).</li>
+<li><code>capabilities/</code>: den <code>shell:allow-execute</code>-Eintrag für <code>binaries/tb-worker</code> entfernen.</li>
+<li><code>worker_manager.rs</code>, Funktion <code>set_endpoint</code>: <code>"local"</code> immer erlauben (die Bedingung <code>if self.sidecar_available</code> mit Rückfall auf <code>Remote</code> entfernen).</li>
+<li><code>lib.rs:918</code>: <code>wait_until_running(&amp;base, 25)</code> → <code>wait_until_running(&amp;base, 120)</code>.</li>
+<li>CI (<code>nightly.yml</code>, <code>release.yml</code>, <code>build.yml</code>): im Schritt „Create Worker Sidecar Binary" alle PyInstaller-Zeilen und das Erzeugen von <code>worker_runner.py</code> entfernen. <strong>Behalten:</strong> das Anlegen von <code>binaries/</code> und den <code>toolboxv2/dist/index.html</code>-Stub. Den Schritt umbenennen in „Prepare build dirs". <code>pip install pyinstaller</code> entfernen.</li>
+</ol>
+<p><strong>Gate</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nb">cd </span><span class="n">toolboxv2</span><span class="p">\</span><span class="n">simple-core</span><span class="p">\</span><span class="n">src-tauri</span><span class="p">;</span> <span class="n">cargo</span> <span class="n">test</span> <span class="p">-</span><span class="n">-lib</span><span class="p">;</span> <span class="nb">cd </span><span class="p">..</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">bash</span> <span class="p">../../</span><span class="n">scripts</span><span class="p">/</span><span class="n">fetch_uv_sidecar</span><span class="p">.</span><span class="n">sh</span> <span class="n">x86_64-pc-windows-msvc</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">npx</span> <span class="n">tauri</span> <span class="n">build</span> <span class="p">-</span><span class="n">-config</span> <span class="s1">'{\"bundle\":{\"createUpdaterArtifacts\":false}}'</span>
+</code></pre></div>
+<p>Erwartet: Tests bestanden; Build endet mit einem Setup unter <code>src-tauri\target\release\bundle\nsis\</code>.</p>
+<p><strong>Wenn rot:</strong> Meldet der Build ein fehlendes <code>binaries/uv-...</code>, das Sidecar-Skript mit dem Triple aus der Fehlermeldung erneut ausführen.</p>
+<hr />
+<h3 id="k0-messung-gegen-simplecoreapp-kein-code">K0 — Messung gegen <code>simplecore.app</code> (kein Code)<a class="headerlink" href="#k0-messung-gegen-simplecoreapp-kein-code" title="Permanent link">&para;</a></h3>
+<p><strong>Ziel:</strong> Vier Annahmen prüfen, auf denen K und S aufbauen. Ergebnisse in <code>docs/devdocs/probe_simplecore_2026-11.md</code> festhalten — <strong>ohne</strong> Tokens, Schlüssel oder Zugangsdaten (nur Statuscode, Feldnamen, Fehlermeldung).</p>
+<p><strong>Schritte</strong></p>
+<ol>
+<li>Token holen (öffnet den Browser, Owner meldet sich an):</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nv">$env:TOOLBOXV2_REMOTE_BASE</span> <span class="p">=</span> <span class="s2">"https://simplecore.app"</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">python</span> <span class="n">-c</span> <span class="s2">"import asyncio; from toolboxv2.utils.clis.cli_oauth import cli_remote_login; p = asyncio.run(cli_remote_login()); print(sorted(p.keys()) if p else None); open('probe_token.tmp','w').write(p['access_token'] if p else '')"</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="nv">$t</span> <span class="p">=</span> <span class="nb">Get-Content</span> <span class="n">probe_token</span><span class="p">.</span><span class="n">tmp</span>
+</code></pre></div>
+<ol>
+<li>Vier Aufrufe, jeweils Statuscode und Feldnamen der Antwort notieren:</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Aufruf</th>
+<th>Frage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P1</td>
+<td><code>curl -H "Authorization: Bearer $t" https://simplecore.app/api_user_data</code></td>
+<td>Welche Felder hat der Nutzerdatensatz?</td>
+</tr>
+<tr>
+<td>P2</td>
+<td><code>curl -H "Authorization: Bearer $t" https://simplecore.app/api/CloudM.UserDataAPI/list_data</code></td>
+<td>Stimmt die URL-Form <code>/api/&lt;Modul&gt;/&lt;Funktion&gt;</code>? Wie sieht die Liste aus?</td>
+</tr>
+<tr>
+<td>P3</td>
+<td><code>curl -H "Authorization: Bearer $t" https://simplecore.app/api/CloudM.UserDataAPI/get_secure_storage_credentials</code></td>
+<td>Gibt der Server MinIO-Zugangsdaten aus? Welche Felder (<code>endpoint</code>, <code>secure</code>, <code>buckets</code>, …)?</td>
+</tr>
+<tr>
+<td>P4</td>
+<td><code>curl -H "Authorization: Bearer $t" "https://simplecore.app/api/CloudM.UserDataAPI/get_data?path=&lt;ein Pfad aus P2&gt;"</code></td>
+<td>In welcher Form kommen die Daten zurück?</td>
+</tr>
+</tbody>
+</table>
+<ol>
+<li><code>probe_token.tmp</code> löschen. Prüfen, dass die Datei nicht in <code>git status</code> auftaucht.</li>
+</ol>
+<p><strong>Gate / Entscheidung</strong></p>
+<table>
+<thead>
+<tr>
+<th>Ergebnis</th>
+<th>Weiter</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P1–P4 liefern 200</td>
+<td>K1</td>
+</tr>
+<tr>
+<td>P2 liefert 404</td>
+<td>Stoppen. Die URL-Form ist eine ANNAHME; richtige Form beim Owner erfragen</td>
+</tr>
+<tr>
+<td>P3 meldet „MINIO_ENDPOINT not configured" oder einen anderen Fehler</td>
+<td>K-Block normal fortsetzen; <strong>S2 und S4 sind blockiert</strong>, bis der Owner MinIO auf dem Server konfiguriert (H4). Melden</td>
+</tr>
+<tr>
+<td>P3 liefert <code>secure: false</code> oder einen <code>endpoint</code>, der nicht aus dem Internet erreichbar ist</td>
+<td>Wie Zeile darüber</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="k1-geratekonto-verknupfen-merken-altdaten-ubernehmen-f8-f16-f17">K1 — Gerätekonto: verknüpfen, merken, Altdaten übernehmen (F8, F16, F17)<a class="headerlink" href="#k1-geratekonto-verknupfen-merken-altdaten-ubernehmen-f8-f16-f17" title="Permanent link">&para;</a></h3>
+<p><strong>Neue Datei:</strong> <code>toolboxv2/mods/CloudM/auth/device_account.py</code></p>
+<p><strong>Festlegungen</strong></p>
+<ul>
+<li>„Gerätekonto" = das SimpleCore-Konto, das auf diesem Gerät angemeldet wurde.</li>
+<li>Merker ist die Datei <code>&lt;app.data_dir&gt;/device_owner.json</code> mit genau diesen Feldern: <code>user_id</code>, <code>username</code>, <code>base_url</code>, <code>linked_at</code>, <code>migrated_from</code> (leer oder alte lokale ID). Keine Tokens, keine Schlüssel in dieser Datei.</li>
+<li>Auf dem eigenen Gerät hat das Gerätekonto lokal <code>level = -1</code> (wie bisher der lokale Admin <code>root</code>). Dieses lokale Level wird nie an den Server gesendet.</li>
+</ul>
+<p><strong>Funktionen</strong></p>
+<ol>
+<li><code>device_owner_file(app=None) -&gt; Path</code>: <code>Path(app.data_dir) / "device_owner.json"</code>; ohne <code>app</code> → <code>get_app()</code>.</li>
+<li><code>read_device_owner(app=None) -&gt; Optional[dict]</code>: Datei lesen; bei fehlender oder ungültiger Datei <code>None</code>.</li>
+<li><code>async link_account(app, payload: dict) -&gt; UserData</code>:</li>
+<li><code>payload</code> muss <code>access_token</code> und <code>user_id</code> enthalten, sonst <code>ValueError</code>.</li>
+<li>Tokens speichern <strong>genau wie</strong> <code>utils/clis/local_cli.py:259–267</code> (<code>s.username = ...</code>, <code>s._save_session_token(...)</code>, <code>await s.login()</code>); vorher <code>app.session.base</code> auf <code>TOOLBOXV2_REMOTE_BASE</code> setzen, Default <code>https://simplecore.app</code>. Schlägt <code>login()</code> fehl → <code>RuntimeError</code>, nichts weiter schreiben.</li>
+<li>Lokalen Nutzerdatensatz laden (<code>_load_user(app, user_id)</code>) oder neu anlegen: <code>user_id</code> und <code>username</code> aus <code>payload</code>, <code>email</code> leer, <code>level = -1</code>, <code>settings = {"device_owner": True}</code>.</li>
+<li><strong>Altdaten übernehmen:</strong> <code>old = await _find_user_by_email(app, LOCAL_ADMIN_EMAIL)</code>. Wenn <code>old</code> existiert und <code>old.user_id != user_id</code>: jeden Schlüssel aus <code>old.settings</code> (außer <code>anonymous</code>, <code>local_admin</code>) und aus <code>old.mod_data</code> in den neuen Datensatz übernehmen, <strong>wenn er dort noch nicht existiert</strong> (Konto gewinnt bei Konflikt). Danach <code>_db_delete</code> für <code>AUTH_USER::&lt;old.user_id&gt;</code> und <code>AUTH_USER_EMAIL::&lt;LOCAL_ADMIN_EMAIL&gt;</code>. <code>migrated_from = old.user_id</code>.</li>
+<li><code>_save_user(app, user)</code>, dann <code>device_owner.json</code> schreiben.</li>
+<li>Mehrfacher Aufruf mit demselben Konto ändert nichts (idempotent). Aufruf mit einem <strong>anderen</strong> Konto, während schon eines verknüpft ist → <code>RuntimeError("device already linked")</code>.</li>
+<li><code>async unlink_account(app) -&gt; None</code>: <code>device_owner.json</code> löschen und <code>await app.session.logout()</code>.</li>
+</ol>
+<p><strong>Test <code>toolboxv2/tests/test_core/test_device_account.py</code></strong> (unittest; <code>_db_set</code>, <code>_db_get</code>, <code>_db_get_raw</code>, <code>_db_delete</code> in <code>user_store</code> und <code>device_account</code> per <code>unittest.mock.patch</code> durch ein Dict ersetzen; <code>app.session</code> durch ein Mock, dessen <code>login()</code> <code>True</code> liefert; <code>app.data_dir</code> = Temp-Ordner):</p>
+<table>
+<thead>
+<tr>
+<th>Fall</th>
+<th>Erwartet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Verknüpfen ohne lokalen Admin</td>
+<td>Datei existiert, Nutzer mit <code>level -1</code> gespeichert</td>
+</tr>
+<tr>
+<td>Verknüpfen mit lokalem Admin, der <code>settings={"theme":"dark"}</code> und <code>mod_data={"m":{"a":1}}</code> hat</td>
+<td>Neuer Nutzer hat beides, alter Datensatz und E-Mail-Index gelöscht, <code>migrated_from</code> gesetzt</td>
+</tr>
+<tr>
+<td>Konto hat <code>theme: light</code>, lokaler Admin <code>theme: dark</code></td>
+<td>bleibt <code>light</code></td>
+</tr>
+<tr>
+<td>Zweiter Aufruf, gleiches Konto</td>
+<td>keine Änderung, kein Fehler</td>
+</tr>
+<tr>
+<td>Zweiter Aufruf, anderes Konto</td>
+<td><code>RuntimeError</code></td>
+</tr>
+<tr>
+<td><code>login()</code> liefert <code>False</code></td>
+<td><code>RuntimeError</code>, keine Datei</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Gate:</strong> Standard-Gate + neuer Test <code>OK</code>.</p>
+<hr />
+<h3 id="k2-automatische-anmeldung-uber-das-geratekonto-f8">K2 — Automatische Anmeldung über das Gerätekonto (F8)<a class="headerlink" href="#k2-automatische-anmeldung-uber-das-geratekonto-f8" title="Permanent link">&para;</a></h3>
+<p><strong>Dateien:</strong> <code>toolboxv2/utils/workers/session.py</code>, <code>toolboxv2/utils/workers/server_worker.py</code></p>
+<p><strong>Schritt 1 — <code>SessionManager</code> (session.py ab Zeile 524):</strong></p>
+<ul>
+<li>In <code>__init__</code>: <code>self._local_trust_provider = None</code>.</li>
+<li>Neue Methode <code>enable_local_trust(self, provider) -&gt; None</code>: <code>provider</code> ist eine Funktion ohne Argumente, die ein Dict (<code>user_id</code>, <code>username</code>, <code>level</code>) oder <code>None</code> liefert.</li>
+<li>Neue Methode <code>_local_trust_session(self, environ, headers)</code>: gibt <code>None</code> zurück, außer <strong>alle</strong> Bedingungen gelten:</li>
+<li>Ein Provider ist gesetzt und liefert ein Dict mit nicht-leerer <code>user_id</code>.</li>
+<li><code>environ.get("REMOTE_ADDR")</code> ist <code>127.0.0.1</code> oder <code>::1</code>.</li>
+<li>Keiner der Header <code>X-Forwarded-For</code>, <code>X-Real-Ip</code>, <code>Forwarded</code> ist vorhanden (Groß-/Kleinschreibung egal).</li>
+<li>Der Host aus <code>HTTP_HOST</code> (ohne Port) ist <code>127.0.0.1</code>, <code>localhost</code> oder <code>[::1]</code>.
+  Dann eine <code>SessionData</code> zurückgeben mit <code>user_id</code>, <code>user_name</code>, <code>level</code>, <code>session_id="local-trust"</code>, <code>validated=True</code>, <code>anonymous=False</code>, <code>exp = jetzt + cookie_max_age</code>.</li>
+<li>In <code>get_session_from_request</code> (Zeile 685) <strong>und</strong> <code>get_session_from_request_sync</code> (Zeile 738): direkt vor „4. Return anonymous" <code>_local_trust_session</code> aufrufen und dessen Ergebnis zurückgeben, wenn es nicht <code>None</code> ist.</li>
+</ul>
+<p><strong>Schritt 2 — <code>server_worker.py:1682–1700</code>:</strong> Den ganzen Block ersetzen. Neu: Wenn das Profil <code>local</code> oder <code>developer</code> ist, <code>self._session_manager.enable_local_trust(provider)</code> aufrufen. <code>provider</code> liest <code>read_device_owner(self._app)</code> und gibt <code>{"user_id", "username", "level": -1}</code> oder <code>None</code> zurück; das Ergebnis darf 5 s zwischengespeichert werden. Die Bedingungen auf <code>TOOLBOXV2_REMOTE_BASE</code> und <code>environment</code> entfallen. <code>ensure_local_admin</code> wird hier <strong>nicht</strong> mehr aufgerufen. Profil <code>server</code> oder fehlendes Profil → kein Provider.</p>
+<p><strong>Schritt 3 — <code>mods/CloudM/module.py:93–109</code>:</strong> Wenn <code>read_device_owner(self.app)</code> ein Konto liefert, <code>app.session.username</code>, <code>app.session.user_id</code>, <code>app.session.valid = True</code> daraus setzen und <code>app.session.base</code> <strong>nicht</strong> auf <code>None</code> setzen. Nur wenn kein Gerätekonto existiert, bleibt das bisherige Verhalten (lokaler Admin für die CLI).</p>
+<p><strong>Test <code>toolboxv2/tests/test_core/test_local_trust.py</code></strong> (unittest):</p>
+<table>
+<thead>
+<tr>
+<th>Fall</th>
+<th>Erwartet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Provider liefert Konto, <code>REMOTE_ADDR=127.0.0.1</code>, <code>HTTP_HOST=127.0.0.1:8467</code></td>
+<td>Session des Kontos, <code>anonymous False</code>, <code>validated True</code></td>
+</tr>
+<tr>
+<td>Provider liefert Konto, <code>REMOTE_ADDR=192.168.1.5</code></td>
+<td>anonym</td>
+</tr>
+<tr>
+<td>Provider liefert Konto, Loopback, Header <code>X-Forwarded-For: 1.2.3.4</code></td>
+<td>anonym</td>
+</tr>
+<tr>
+<td>Provider liefert Konto, Loopback, <code>HTTP_HOST=evil.example</code></td>
+<td>anonym</td>
+</tr>
+<tr>
+<td>Provider liefert <code>None</code>, Loopback</td>
+<td>anonym</td>
+</tr>
+<tr>
+<td>Kein Provider gesetzt, Loopback</td>
+<td>anonym</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Gate:</strong> Standard-Gate + beide neuen Tests <code>OK</code>. Im Worker-Log steht nicht mehr <code>Loopback trust not enabled</code>.</p>
+<p><strong>Nicht tun:</strong> Keine Anmeldung für Nicht-Loopback-Anfragen. CSRF- und CORS-Regeln nicht anfassen.</p>
+<hr />
+<h3 id="k3-konto-ist-pflicht-zustand-api-seite">K3 — Konto ist Pflicht: Zustand, API, Seite<a class="headerlink" href="#k3-konto-ist-pflicht-zustand-api-seite" title="Permanent link">&para;</a></h3>
+<p><strong>Schritt 1 — <code>utils/clis/first_run.py</code>, <code>onboarding_state()</code>:</strong> Das Ergebnis bekommt zwei neue Felder: <code>needs_account</code> (<code>True</code>, wenn Profil <code>local</code> oder <code>developer</code> ist und <code>read_device_owner()</code> <code>None</code> liefert) und <code>account</code> (<code>username</code> des Gerätekontos oder <code>None</code>). Die Bedeutung von <code>first_run</code> bleibt unverändert.</p>
+<p><strong>Schritt 2 — <code>utils/workers/fast/wizard_api.py</code>:</strong></p>
+<ul>
+<li><code>GET /api/wizard/state</code> gibt zusätzlich <code>needs_account</code> und <code>account</code> zurück.</li>
+<li>Neu <code>POST /api/wizard/account/start</code> (<code>auth=False</code>): startet <strong>einen</strong> Hintergrund-Thread, der <code>cli_remote_login()</code> ausführt (öffnet den Standard-Browser auf der Login-Seite von SimpleCore), danach <code>link_account(app, payload)</code>. Vorher <code>TOOLBOXV2_REMOTE_BASE</code> bzw. Default <code>https://simplecore.app</code> als <code>app.session.base</code> setzen. Läuft schon ein Thread: nichts Neues starten. Antwort <code>{"ok": true, "state": "waiting"}</code>.</li>
+<li>Neu <code>GET /api/wizard/account/status</code> (<code>auth=False</code>): <code>{"state": "idle" | "waiting" | "linked" | "error", "error": &lt;Text oder null&gt;, "account": &lt;username oder null&gt;}</code>.</li>
+<li>Beide neuen Routen nur für Loopback (dieselbe Prüfung wie in <code>local_ui.py:36</code>).</li>
+</ul>
+<p><strong>Schritt 3 — neue Datei <code>utils/workers/fast/account_page.py</code>:</strong> Eine Konstante <code>ACCOUNT_PAGE_HTML</code> mit einer vollständigen, eigenständigen HTML-Seite (kein externes Skript, kein externes Stylesheet): Überschrift „Mit SimpleCore anmelden", ein Knopf, eine Statuszeile. Klick → <code>POST /api/wizard/account/start</code>, dann alle 2 s <code>GET /api/wizard/account/status</code>; bei <code>linked</code> → <code>location.replace('/')</code>; bei <code>error</code> → Fehlertext anzeigen und Knopf wieder aktivieren. HTML als Python-String, damit keine Paketdaten nötig sind.</p>
+<p><strong>Schritt 4 — <code>utils/workers/fast/local_ui.py</code>:</strong></p>
+<ul>
+<li>Neue Route <code>GET /account</code> (<code>auth=False</code>): liefert <code>ACCOUNT_PAGE_HTML</code>.</li>
+<li>Route <code>/</code> (Zeile 114): Reihenfolge 1. <code>first_run</code> → Setup-Seite (wie bisher), 2. sonst <code>needs_account</code> → <code>ACCOUNT_PAGE_HTML</code>, 3. sonst Dashboard.</li>
+</ul>
+<p><strong>Schritt 5 — Tests.</strong> <code>test_wizard_api.py</code> und <code>test_wizard_e2e_http.py</code> ergänzen: Zustand mit Profil, ohne Gerätekonto → <code>needs_account true</code>, <code>/</code> liefert die Kontoseite; mit <code>device_owner.json</code> im Temp-Datenordner → <code>needs_account false</code>, <code>/</code> liefert das Dashboard. Bestehende Fälle, die nach gesetztem Profil das Dashboard erwarten, legen in ihrem <code>setUp</code> ein <code>device_owner.json</code> an (das ist die neue Voraussetzung, keine Abschwächung).</p>
+<p><strong>Gate:</strong> Standard-Gate + <code>python -m pytest -q toolboxv2/tests/test_core/test_wizard_e2e_http.py</code> bestanden.</p>
+<p><strong>Nicht tun:</strong> Keine Umgebungsvariable und kein Schalter, der die Kontopflicht umgeht.</p>
+<hr />
+<h3 id="k4-abnahme-konto-manuell-mit-der-installation-aus-t6">K4 — Abnahme Konto (manuell, mit der Installation aus T6)<a class="headerlink" href="#k4-abnahme-konto-manuell-mit-der-installation-aus-t6" title="Permanent link">&para;</a></h3>
+<p>Wheel neu bauen, <code>installer.ps1</code> erneut ausführen, Workers starten.</p>
+<table>
+<thead>
+<tr>
+<th>Schritt</th>
+<th>Erwartet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>curl http://127.0.0.1:8467/api/wizard/state</code></td>
+<td><code>"first_run":false</code>, <code>"needs_account":true</code></td>
+</tr>
+<tr>
+<td>Browser <code>http://127.0.0.1:8467/</code></td>
+<td>Kontoseite</td>
+</tr>
+<tr>
+<td>Knopf klicken, im geöffneten Browser bei SimpleCore anmelden</td>
+<td>Seite springt auf das Dashboard</td>
+</tr>
+<tr>
+<td><code>curl http://127.0.0.1:8467/api_user_data</code></td>
+<td>Datensatz des SimpleCore-Kontos (<code>user_id</code> wie bei P1 aus K0)</td>
+</tr>
+<tr>
+<td>Workers stoppen, <strong>Netzwerk trennen</strong>, Workers starten, <code>/</code> öffnen</td>
+<td>Dashboard, angemeldet, keine Kontoseite</td>
+</tr>
+<tr>
+<td><code>dir "$env:LOCALAPPDATA\toolboxv2\.data"</code> (rekursiv nach <code>device_owner.json</code> suchen)</td>
+<td>Datei existiert, enthält kein Token</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Wenn rot:</strong> Bleibt die Seite nach dem Login auf „waiting" → prüfen, ob Port 8765 (Rückkanal von <code>cli_oauth.py</code>) von einer Firewall blockiert wird; Befund melden, nicht den Port ändern.</p>
+<hr />
+<h3 id="t10-isaa-im-owner-abnehmen">T10 — ISAA im Owner abnehmen<a class="headerlink" href="#t10-isaa-im-owner-abnehmen" title="Permanent link">&para;</a></h3>
+<p><strong>Voraussetzung:</strong> K4 ist grün (Gerätekonto verknüpft). <strong>H0 (Owner):</strong> einen LLM-API-Key bereitstellen und über <code>tb -init onboard</code> (Frage 2) eintragen.</p>
+<p><strong>Schritte:</strong> Kein Code, außer ein Gate ist rot.</p>
+<p><strong>Gate</strong> (Installation aus T6, Workers laufen):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nb">curl </span><span class="n">-X</span> <span class="n">POST</span> <span class="n">-H</span> <span class="s2">"Content-Type: application/json"</span> <span class="n">-H</span> <span class="s2">"Origin: http://127.0.0.1:8467"</span> <span class="n">-d</span> <span class="s2">"{\"</span><span class="n">command</span><span class="p">\</span><span class="s2">":\"</span><span class="n">start_app</span><span class="p">\</span><span class="s2">",\"</span><span class="n">args</span><span class="p">\</span><span class="s2">":{\"</span><span class="n">name</span><span class="p">\</span><span class="s2">":\"</span><span class="n">isaa</span><span class="p">\</span><span class="s2">"}}"</span> <span class="n">http</span><span class="p">://</span><span class="n">127</span><span class="p">.</span><span class="n">0</span><span class="p">.</span><span class="n">0</span><span class="p">.</span><span class="n">1</span><span class="p">:</span><span class="n">8467</span><span class="p">/</span><span class="n">tray</span><span class="p">/</span><span class="n">command</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="nb">curl </span><span class="n">-s</span> <span class="n">-o</span> <span class="n">NUL</span> <span class="n">-w</span> <span class="s2">"%{http_code}"</span> <span class="n">http</span><span class="p">://</span><span class="n">127</span><span class="p">.</span><span class="n">0</span><span class="p">.</span><span class="n">0</span><span class="p">.</span><span class="n">1</span><span class="p">:</span><span class="n">8467</span><span class="p">/</span><span class="n">isaa</span>
+</code></pre></div>
+<p>Erwartet: <code>"ok":true</code> mit <code>"prefix":"/isaa"</code>; danach <code>200</code>. Dann im Browser <code>http://127.0.0.1:8467/</code> → Tab „Lokal" → ISAA → eine Nachricht senden → Antwort erscheint. In den Entwicklerwerkzeugen (Netzwerk → WS) besteht eine Verbindung zu Port <strong>8468</strong>.</p>
+<p><strong>Wenn rot</strong></p>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Maßnahme</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>start_app</code> meldet einen Routenkonflikt</td>
+<td>Konflikt-Route und beide Quellen melden, stoppen</td>
+</tr>
+<tr>
+<td>WS verbindet auf einen anderen Port als 8468</td>
+<td>Stelle im ISAA-Frontend (<code>mods/isaa/ui/static</code>) finden, die die WS-URL baut; auf den vom Owner gelieferten Port umstellen (Regel 6)</td>
+</tr>
+<tr>
+<td><code>ModuleNotFoundError</code> im Log</td>
+<td>Fehlendes Paket in das Extra <code>isaa</code> in <code>pyproject.toml</code> eintragen, Wheel neu bauen, neu installieren</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="t11-obs-als-app-im-owner-f11-b1">T11 — OBS als App im Owner (F11, B1)<a class="headerlink" href="#t11-obs-als-app-im-owner-f11-b1" title="Permanent link">&para;</a></h3>
+<p><strong>Schritt 1 — <code>mods/isaa/extras/live_obs_server.py:1537</code>:</strong> <code>module_path="obs"</code> → <code>module_path="toolboxv2.mods.isaa.extras.live_obs_server"</code>.</p>
+<p><strong>Schritt 2 — Start ohne <code>main()</code>.</strong> Beim Mounten läuft <code>main()</code> nicht. Eine idempotente Funktion <code>ensure_started()</code> ergänzen, die genau einmal <code>start_disk_scanner(str(Path(get_app().data_dir) / "Agents"))</code> aufruft; sie am Anfang des Handlers von <code>@app.get("/")</code> (Zeile 691) aufrufen.</p>
+<p><strong>Schritt 3 — WS-URL.</strong> Bei Zeile 1320 (<code>ws=new WebSocket(url)</code>) nachsehen, wie <code>url</code> gebildet wird. Sie muss auf dieselbe Weise entstehen wie im ISAA-Frontend aus T10 (WS-Port des Owners, Pfad mit Präfix <code>/obs</code>). Wenn nicht: angleichen.</p>
+<p><strong>Schritt 4 — Registry.</strong> In <code>toolboxv2/features/isaa/feature.yaml</code> unter <code>user_facing</code> einen zweiten Eintrag ergänzen:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">obs</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">function</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ui</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span><span class="nt">label</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">OBS</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">  </span><span class="nt">icon</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">monitoring</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">  </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Live-Beobachtung der Agenten</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">  </span><span class="nt">mount</span><span class="p">:</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">    </span><span class="nt">module</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">toolboxv2.mods.isaa.extras.live_obs_server</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="w">    </span><span class="nt">attr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">app</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="w">    </span><span class="nt">prefix</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">obs</span>
+</code></pre></div>
+<p><strong>Schritt 5 — Test.</strong> In <code>test_user_apps.py</code> analog zu <code>test_isaa_feature_declares_lazy_app</code> einen Test für den Eintrag <code>obs</code> ergänzen.</p>
+<p><strong>Gate:</strong> Standard-Gate. Wheel neu bauen, neu installieren, Workers starten:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nb">curl </span><span class="n">http</span><span class="p">://</span><span class="n">127</span><span class="p">.</span><span class="n">0</span><span class="p">.</span><span class="n">0</span><span class="p">.</span><span class="n">1</span><span class="p">:</span><span class="n">8467</span><span class="p">/</span><span class="n">tray</span><span class="p">/</span><span class="n">apps</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="nb">curl </span><span class="n">-X</span> <span class="n">POST</span> <span class="n">-H</span> <span class="s2">"Content-Type: application/json"</span> <span class="n">-H</span> <span class="s2">"Origin: http://127.0.0.1:8467"</span> <span class="n">-d</span> <span class="s2">"{\"</span><span class="n">command</span><span class="p">\</span><span class="s2">":\"</span><span class="n">start_app</span><span class="p">\</span><span class="s2">",\"</span><span class="n">args</span><span class="p">\</span><span class="s2">":{\"</span><span class="n">name</span><span class="p">\</span><span class="s2">":\"</span><span class="n">obs</span><span class="p">\</span><span class="s2">"}}"</span> <span class="n">http</span><span class="p">://</span><span class="n">127</span><span class="p">.</span><span class="n">0</span><span class="p">.</span><span class="n">0</span><span class="p">.</span><span class="n">1</span><span class="p">:</span><span class="n">8467</span><span class="p">/</span><span class="n">tray</span><span class="p">/</span><span class="n">command</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="nb">curl </span><span class="n">-s</span> <span class="n">-o</span> <span class="n">NUL</span> <span class="n">-w</span> <span class="s2">"%{http_code}"</span> <span class="n">http</span><span class="p">://</span><span class="n">127</span><span class="p">.</span><span class="n">0</span><span class="p">.</span><span class="n">0</span><span class="p">.</span><span class="n">1</span><span class="p">:</span><span class="n">8467</span><span class="p">/</span><span class="n">obs</span>
+</code></pre></div>
+<p>Erwartet: <code>/tray/apps</code> listet <code>isaa</code> und <code>obs</code>; <code>"ok":true</code>; <code>200</code>. Im Browser zeigt <code>/obs</code> nach einer ISAA-Nachricht neue Einträge. Beide Apps gleichzeitig gemountet → beide weiter erreichbar.</p>
+<p><strong>Wenn rot:</strong> Kollidiert eine OBS-Route mit Owner oder ISAA, die Route melden und stoppen (kein Umbenennen auf eigene Faust).</p>
+<hr />
+<h3 id="s1-server-ein-schlussel-pro-konto-f18">S1 — Server: ein Schlüssel pro Konto (F18)<a class="headerlink" href="#s1-server-ein-schlussel-pro-konto-f18" title="Permanent link">&para;</a></h3>
+<p><strong>Entscheidung des Owners:</strong> Der Schlüssel für synchronisierte Daten liegt beim Konto auf dem Server und wird nach dem Login an das Gerät gegeben.</p>
+<p><strong>Datei:</strong> <code>toolboxv2/mods/CloudM/UserDataAPI.py</code></p>
+<p><strong>Schritte</strong></p>
+<ol>
+<li>Neue Funktion mit demselben Dekorator wie <code>get_secure_storage_credentials</code> (Zeile 1096): <code>async def get_user_data_key(app, request)</code>.</li>
+<li>Nutzer über <code>_get_storage_provider(app, request)</code> bestimmen; ohne Nutzer → <code>Result.default_user_error(info="Nicht authentifiziert", exec_code=401)</code>.</li>
+<li>Schlüssel unter dem DB-Schlüssel <code>AUTH_USER_DATAKEY::&lt;user_id&gt;</code> lesen (<code>_db_get_raw</code> aus <code>auth/db_helpers.py</code>). Fehlt er: mit <code>Code.generate_symmetric_key()</code> (<code>utils/security/cryp.py:148</code>) erzeugen und mit <code>_db_set</code> speichern.</li>
+<li>Antwort <code>Result.ok(data={"key": &lt;schlüssel&gt;, "user_id": &lt;user_id&gt;})</code>.</li>
+<li>Der Schlüssel wird nie geloggt.</li>
+</ol>
+<p><strong>Test <code>toolboxv2/tests/test_core/test_user_data_key.py</code></strong> (unittest, DB wie in K1 durch ein Dict ersetzt, <code>_get_storage_provider</code> gepatcht):</p>
+<table>
+<thead>
+<tr>
+<th>Fall</th>
+<th>Erwartet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Nutzer A, zwei Aufrufe</td>
+<td>zweimal derselbe Schlüssel</td>
+</tr>
+<tr>
+<td>Nutzer A und Nutzer B</td>
+<td>verschiedene Schlüssel</td>
+</tr>
+<tr>
+<td>nicht angemeldet</td>
+<td>Fehler 401, kein Schlüssel</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Gate:</strong> Standard-Gate + neuer Test <code>OK</code>.</p>
+<p><strong>H5 (Owner):</strong> Diese Änderung auf <code>simplecore.app</code> ausrollen. Der Agent stoppt nach S1, bis der Owner bestätigt, dass <code>curl -H "Authorization: Bearer &lt;token&gt;" https://simplecore.app/api/CloudM.UserDataAPI/get_user_data_key</code> einen Schlüssel liefert.</p>
+<hr />
+<h3 id="s2-gerat-schlussel-und-zugangsdaten-holen-blob-speicher-auf-das-konto-stellen-f19-f20">S2 — Gerät: Schlüssel und Zugangsdaten holen, Blob-Speicher auf das Konto stellen (F19, F20)<a class="headerlink" href="#s2-gerat-schlussel-und-zugangsdaten-holen-blob-speicher-auf-das-konto-stellen-f19-f20" title="Permanent link">&para;</a></h3>
+<p><strong>Voraussetzung:</strong> K0-P3 war erfolgreich und H5 ist erledigt. Sonst stoppen.</p>
+<p><strong>Neue Datei:</strong> <code>toolboxv2/mods/CloudM/auth/device_sync.py</code></p>
+<p><strong>Funktionen</strong></p>
+<ol>
+<li><code>async fetch_account_key(app) -&gt; str</code>: <code>app.session.fetch("/api/CloudM.UserDataAPI/get_user_data_key")</code>; den Schlüssel lokal verschlüsselt ablegen — mit <code>BlobFile</code> im selben Speicher und mit demselben Geräteschlüssel wie die Tokens (<code>utils/system/session.py:129–160</code> als Vorlage, Blob-Name <code>device_data_key</code>).</li>
+<li><code>load_cached_account_key(app) -&gt; Optional[str]</code>: liest den abgelegten Schlüssel, ohne Netz.</li>
+<li><code>async fetch_cloud_credentials(app) -&gt; dict</code>: <code>app.session.fetch("/api/CloudM.UserDataAPI/get_secure_storage_credentials")</code>. Ergebnis <strong>nicht</strong> auf Platte speichern (kurzlebig).</li>
+<li><code>build_account_blob_storage(app) -&gt; Optional[BlobStorage]</code> (kein Netz): Wenn <code>read_device_owner(app)</code> und <code>load_cached_account_key(app)</code> beide etwas liefern: <code>BlobStorage(mode=StorageMode.OFFLINE, user_id=&lt;Konto-ID&gt;, encryption_key=&lt;Schlüssel&gt;, auto_sync=False)</code>. Sonst <code>None</code>.</li>
+<li><code>attach_cloud(storage, creds) -&gt; None</code>: <code>storage._cloud_minio = Minio(creds["endpoint"], access_key=..., secret_key=..., secure=creds["secure"])</code> und <code>storage.bucket</code> auf den privaten Bucket aus <code>creds</code> setzen. Die Feldnamen stehen im Messprotokoll aus K0-P3 — exakt diese verwenden.</li>
+<li><code>migrate_local_blobs(old_storage, new_storage) -&gt; int</code>: alle Blob-IDs aus <code>old_storage.list_blobs()</code> lesen, jeden mit <code>old_storage.read_blob(...)</code> entschlüsselt laden und mit <code>new_storage</code> neu schreiben. Rückgabe = Anzahl. (Grund: bisherige Blobs sind mit dem Geräteschlüssel verschlüsselt und wären sonst nach dem Umstellen unlesbar. Das ist zugleich die Übernahme der Altdaten.)</li>
+</ol>
+<p><strong>Verdrahtung</strong></p>
+<ul>
+<li><code>utils/toolbox.py:290</code>: Vor dem bestehenden Ausdruck <code>build_account_blob_storage(self)</code> versuchen; liefert es einen Speicher, wird er <code>self.root_blob_storage</code>. Sonst bleibt die Zeile wie sie ist.</li>
+<li><code>device_account.link_account</code> (K1), ganz am Ende: <code>fetch_account_key</code> → neuen Speicher bauen → <code>migrate_local_blobs(alter, neuer)</code> → <code>app.root_blob_storage = neuer</code>. Ein Fehler hier bricht das Verknüpfen <strong>nicht</strong> ab; er wird geloggt und im Kontostatus als Hinweis gemeldet.</li>
+</ul>
+<p><strong>Test <code>toolboxv2/tests/test_core/test_device_sync.py</code></strong> (unittest, Temp-Ordner, kein Netz):</p>
+<table>
+<thead>
+<tr>
+<th>Fall</th>
+<th>Erwartet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Kein Gerätekonto</td>
+<td><code>build_account_blob_storage</code> → <code>None</code></td>
+</tr>
+<tr>
+<td>Gerätekonto + Schlüssel im Cache</td>
+<td>Speicher mit <code>user_id</code> = Konto-ID</td>
+</tr>
+<tr>
+<td>Blob „a" mit Geräteschlüssel geschrieben, dann <code>migrate_local_blobs</code></td>
+<td>Neuer Speicher liest „a" mit identischem Inhalt</td>
+</tr>
+<tr>
+<td>Zwei Speicher in zwei Temp-Ordnern mit <strong>demselben</strong> Kontoschlüssel: A schreibt Blob, Rohdaten nach B kopiert</td>
+<td>B liest den Inhalt (beweist: Schlüssel ist nicht gerätegebunden)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Gate:</strong> Standard-Gate + neuer Test <code>OK</code>.</p>
+<p><strong>Wenn rot:</strong> Weichen die Methodennamen von <code>BlobStorage</code> ab (<code>read_blob</code>, <code>list_blobs</code>, <code>create_blob</code>, <code>update_blob</code> stehen in <code>utils/extras/blobs.py:697–923</code>), dort die Signaturen lesen und exakt verwenden.</p>
+<hr />
+<h3 id="s3-kontodaten-uber-die-data-api-laden-und-abgleichen-f21">S3 — Kontodaten über die Data-API laden und abgleichen (F21)<a class="headerlink" href="#s3-kontodaten-uber-die-data-api-laden-und-abgleichen-f21" title="Permanent link">&para;</a></h3>
+<p><strong>Grundsatz:</strong> Daten der Data-API laufen <strong>immer über HTTPS zum Server</strong> (dort entschlüsselt der Server), nie direkt nach MinIO. Grund: Bestehende Serverdaten sind mit dem Schlüssel des Servers verschlüsselt.</p>
+<p><strong>Schritt 1 — Messung (kein Code).</strong> Auf dem Gerät mit verknüpftem Konto prüfen und im Messprotokoll festhalten:</p>
+<table>
+<thead>
+<tr>
+<th>Frage</th>
+<th>Wie prüfen</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>M1: Bleibt ein lokales <code>set_data(path="probe/a", data={"x":1}, scope="private")</code> nach einem Neustart der Workers lesbar?</td>
+<td><code>curl -X POST http://127.0.0.1:8467/api/CloudM.UserDataAPI/set_data ...</code>, Neustart, <code>get_data</code></td>
+</tr>
+<tr>
+<td>M2: Dasselbe für <code>set_mod_data(source_mod="probe", data={"x":1})</code> / <code>get_mod_data</code></td>
+<td>wie M1</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Schritt 2 — lokale Ablage.</strong> Wenn M1 „nein" ergibt: in <code>UserDataAPI._get_storage_provider</code> (Zeile 358–389) für Geräte mit Gerätekonto <code>local_db_path = &lt;app.data_dir&gt;/user_data.db</code> übergeben und im <code>UserContext</code> <code>encryption_key</code> = Kontoschlüssel (<code>load_cached_account_key</code>) setzen. Dann M1 wiederholen → muss „ja" sein.</p>
+<p><strong>Schritt 3 — Abgleich in <code>device_sync.py</code>:</strong></p>
+<ul>
+<li><code>async pull_account_data(app) -&gt; dict</code>: entfernt <code>list_data</code> (Scope <code>private</code>) aufrufen, für jeden Pfad entfernt <code>get_data</code>, Ergebnis lokal mit dem lokalen Speicher schreiben, wenn der Pfad lokal fehlt oder der entfernte Stand neuer ist. Rückgabe <code>{"downloaded": n}</code>.</li>
+<li><code>async push_account_data(app) -&gt; dict</code>: lokal geänderte Einträge (<code>get_dirty_blobs()</code> der lokalen DB) per entferntem <code>set_data</code> hochladen und danach als synchron markieren. Rückgabe <code>{"uploaded": n}</code>.</li>
+<li><code>async sync_account_data(app) -&gt; dict</code>: erst <code>push</code>, dann <code>pull</code>.</li>
+<li>Die Form der Antworten steht im Messprotokoll (K0-P2, K0-P4) — exakt diese verwenden.</li>
+</ul>
+<p><strong>Schritt 4 — Mod-Daten.</strong> Nur wenn M2 „ja" ergibt: entferntes <code>get_mod_data</code> / <code>set_mod_data</code> analog einbinden. Ergibt M2 „nein": <strong>stoppen und melden</strong>, nichts erfinden.</p>
+<p><strong>Test</strong> (unittest, entfernte Aufrufe durch ein Mock von <code>app.session.fetch</code> ersetzt):</p>
+<table>
+<thead>
+<tr>
+<th>Fall</th>
+<th>Erwartet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Entfernt 2 Einträge, lokal leer</td>
+<td><code>pull</code> lädt 2, beide lokal lesbar</td>
+</tr>
+<tr>
+<td>Lokal 1 geänderter Eintrag</td>
+<td><code>push</code> sendet genau 1 <code>set_data</code>, Eintrag danach nicht mehr „dirty"</td>
+</tr>
+<tr>
+<td>Entfernter Aufruf schlägt fehl (kein Netz)</td>
+<td>kein Absturz, Rückgabe enthält <code>error</code>, lokale Daten unverändert</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Gate:</strong> Standard-Gate + neuer Test <code>OK</code>.</p>
+<hr />
+<h3 id="s4-blobs-und-der-globale-isaa-ordner-f20-f22">S4 — Blobs und der globale ISAA-Ordner (F20, F22)<a class="headerlink" href="#s4-blobs-und-der-globale-isaa-ordner-f20-f22" title="Permanent link">&para;</a></h3>
+<p><strong>Schritt 1 — Blob-Sync.</strong> In <code>device_sync.py</code>: <code>async sync_blobs(app) -&gt; dict</code>: <code>fetch_cloud_credentials</code> → <code>attach_cloud(app.root_blob_storage, creds)</code> → <code>app.root_blob_storage.sync()</code> (existiert, <code>blobs.py:1021</code>). Ohne Netz oder ohne Gerätekonto: <code>{"status": "skipped"}</code>.</p>
+<p><strong>Schritt 2 — globaler ISAA-Ordner.</strong> Der Ordner ist <code>&lt;app.data_dir&gt;/Agents/VFS/global</code> (<code>mods/isaa/base/patch/power_vfs.py:110</code>). In <code>device_sync.py</code>:</p>
+<ul>
+<li><code>global_dir(app) -&gt; Path</code>: genau dieser Pfad. <code>power_vfs</code> <strong>nicht</strong> importieren (zieht ISAA-Abhängigkeiten).</li>
+<li><code>export_global_folder(app) -&gt; int</code>: jede Datei im Ordner (rekursiv) als Blob mit der ID <code>isaa/global/&lt;relativer Pfad mit /&gt;</code> schreiben, wenn der Blob fehlt oder die Datei neuer ist als der Blob.</li>
+<li><code>import_global_folder(app) -&gt; int</code>: jeden Blob mit Präfix <code>isaa/global/</code> als Datei schreiben, wenn die Datei fehlt oder der Blob neuer ist.</li>
+<li>Pfade, die <code>..</code> enthalten oder absolut sind, werden übersprungen und geloggt.</li>
+<li>Löschungen werden <strong>nicht</strong> übertragen (eine lokal gelöschte Datei kommt beim nächsten Import zurück). Dateien über 50 MB werden übersprungen und geloggt.</li>
+</ul>
+<p><strong>Schritt 3 — ein Einstieg.</strong> <code>async sync_all(app) -&gt; dict</code> in dieser Reihenfolge: <code>export_global_folder</code> → <code>sync_blobs</code> → <code>import_global_folder</code> → <code>sync_account_data</code>. Rückgabe: ein Dict mit den Teilergebnissen und <code>finished_at</code>.</p>
+<p><strong>Schritt 4 — Auslöser.</strong></p>
+<ul>
+<li>Nach erfolgreichem <code>link_account</code> (K1): einmal <code>sync_all</code>.</li>
+<li>Beim Start des Owner-Prozesses, wenn ein Gerätekonto existiert: einmal <code>sync_all</code> im Hintergrund; danach alle 10 Minuten.</li>
+<li>Neu <code>POST /api/wizard/account/sync</code> (nur Loopback, nur mit Gerätekonto): stößt <code>sync_all</code> an und gibt das Ergebnis zurück. <code>GET /api/wizard/account/status</code> (K3) zeigt zusätzlich <code>last_sync</code>.</li>
+<li>Ein Fehler im Sync darf den Owner-Prozess nie beenden.</li>
+</ul>
+<p><strong>Test</strong> (unittest, zwei Temp-Ordner als „Gerät A" und „Gerät B", ein gemeinsamer Fake-Cloud-Speicher statt MinIO, gleicher Kontoschlüssel):</p>
+<table>
+<thead>
+<tr>
+<th>Fall</th>
+<th>Erwartet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A legt <code>global/notes/a.txt</code> an, A <code>export</code>, Blob in die Fake-Cloud, B <code>import</code></td>
+<td>B hat <code>global/notes/a.txt</code> mit gleichem Inhalt</td>
+</tr>
+<tr>
+<td>Blob-ID <code>isaa/global/../x</code></td>
+<td>wird nicht geschrieben</td>
+</tr>
+<tr>
+<td>Kein Gerätekonto</td>
+<td><code>sync_all</code> → <code>skipped</code>, kein Fehler</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Gate:</strong> Standard-Gate + neuer Test <code>OK</code>.</p>
+<hr />
+<h3 id="s5-abnahme-sync-manuell-echtes-konto">S5 — Abnahme Sync (manuell, echtes Konto)<a class="headerlink" href="#s5-abnahme-sync-manuell-echtes-konto" title="Permanent link">&para;</a></h3>
+<p>Zwei Installationen desselben Kontos (zweiter Windows-Rechner oder zweites Windows-Benutzerkonto).</p>
+<table>
+<thead>
+<tr>
+<th>Schritt</th>
+<th>Erwartet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Gerät 1: Datei <code>…\.data\&lt;id&gt;\Agents\VFS\global\probe.txt</code> anlegen, <code>curl -X POST -H "Origin: http://127.0.0.1:8467" http://127.0.0.1:8467/api/wizard/account/sync</code></td>
+<td>Antwort ohne <code>error</code>, mindestens 1 Upload</td>
+</tr>
+<tr>
+<td>Gerät 2: frisch installieren, mit demselben Konto anmelden</td>
+<td>Nach dem Login existiert <code>probe.txt</code> mit gleichem Inhalt</td>
+</tr>
+<tr>
+<td>Gerät 2: <code>get_data</code> für einen Pfad aus K0-P2 lokal aufrufen</td>
+<td>Liefert die bestehenden Kontodaten</td>
+</tr>
+<tr>
+<td>Gerät 2: lokal <code>set_data(path="probe/b", ...)</code>, Sync auslösen; Gerät 1: Sync auslösen, <code>get_data("probe/b")</code></td>
+<td>Gleicher Inhalt</td>
+</tr>
+<tr>
+<td>Gerät 1: Netz trennen, App neu starten</td>
+<td>Startet angemeldet, <code>probe.txt</code> weiter lesbar</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Wenn rot:</strong> Gerät 2 kann Blobs nicht entschlüsseln → der Kontoschlüssel wurde nicht geholt oder nicht verwendet; S2 prüfen. Zugriff auf MinIO verweigert → Bucket-Name oder Präfix passt nicht zu den ausgegebenen Rechten; mit dem Messprotokoll K0-P3 vergleichen.</p>
+<hr />
+<h3 id="h1-signaturschlussel-owner">H1 — Signaturschlüssel (Owner)<a class="headerlink" href="#h1-signaturschlussel-owner" title="Permanent link">&para;</a></h3>
+<p>Der Agent stoppt hier, bis der Owner bestätigt:</p>
+<ol>
+<li>Der private Schlüssel zum <code>pubkey</code> in <code>tauri.conf.json</code> liegt vor. Falls nicht: <code>npx tauri signer generate -w %USERPROFILE%\.tauri\simplecore.key</code> ausführen und dem Agenten den <strong>öffentlichen</strong> Schlüssel geben (der Agent trägt ihn als <code>plugins.updater.pubkey</code> ein).</li>
+<li>GitHub-Secrets im Repo gesetzt: <code>TAURI_SIGNING_PRIVATE_KEY</code>, <code>TAURI_SIGNING_PRIVATE_KEY_PASSWORD</code>.</li>
+</ol>
+<hr />
+<h3 id="t12-app-update-uber-github-f12">T12 — App-Update über GitHub (F12)<a class="headerlink" href="#t12-app-update-uber-github-f12" title="Permanent link">&para;</a></h3>
+<p><strong>Kanal dieser Session:</strong> das Release <code>nightly</code> (einziger Weg, der heute Tauri-Bundles in ein GitHub-Release legt). Stabile Releases sind ein Folge-Task.</p>
+<p><strong>Schritt 1 — <code>Cargo.toml</code>:</strong> unter <code>[target.'cfg(not(any(target_os = "android")))'.dependencies]</code> ergänzen: <code>tauri-plugin-updater = "2"</code>.</p>
+<p><strong>Schritt 2 — <code>lib.rs</code>:</strong>
+- Im Desktop-Zweig des Builders (dort, wo <code>tauri_plugin_autostart</code> registriert wird): <code>.plugin(tauri_plugin_updater::Builder::new().build())</code>.
+- Neue Funktion <code>spawn_update_check(app: AppHandle)</code> (nur Desktop): 15 s warten, dann <code>app.updater()</code> → <code>check().await</code>. Bei <code>Ok(Some(update))</code>: Log-Eintrag mit der Version, <code>update.download_and_install(...)</code>, danach <code>app.restart()</code>. Bei <code>Ok(None)</code> oder <code>Err</code>: nur loggen, nie abstürzen.
+- Aufruf in <code>setup</code> direkt nach <code>spawn_bootstrap(...)</code>.</p>
+<p><strong>Schritt 3 — <code>capabilities/</code> (Desktop-Datei):</strong> Berechtigung <code>updater:default</code> ergänzen.</p>
+<p><strong>Schritt 4 — <code>tauri.conf.json</code>:</strong>
+- <code>bundle.createUpdaterArtifacts: true</code>
+- <code>plugins.updater.endpoints</code>: <code>["https://github.com/MarkinHaus/ToolBoxV2/releases/download/nightly/latest.json"]</code></p>
+<p><strong>Schritt 5 — <code>nightly.yml</code>:</strong>
+- Vor dem Tauri-Build einen Schritt einfügen, der in <code>tauri.conf.json</code> die <code>version</code> auf <code>&lt;Version aus pyproject.toml&gt;-&lt;github.run_number&gt;</code> setzt (nur Ziffern nach dem Bindestrich; MSI verlangt das).
+- Im Schritt „Build Tauri (nightly)" unter <code>env</code> ergänzen: <code>TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}</code> und <code>TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}</code>.</p>
+<p><strong>Gate:</strong> <code>cargo test --lib</code> bestanden. Lokaler Build wie in T8 (mit <code>createUpdaterArtifacts:false</code>) erfolgreich. Der echte Nachweis erfolgt in T14.</p>
+<p><strong>Wenn rot:</strong> Kompiliert der Updater-Aufruf nicht, die API in der Doku des installierten Plugins nachlesen (<code>cargo doc -p tauri-plugin-updater --open</code>) statt zu raten.</p>
+<hr />
+<h3 id="t13-kern-update-beim-app-start">T13 — Kern-Update beim App-Start<a class="headerlink" href="#t13-kern-update-beim-app-start" title="Permanent link">&para;</a></h3>
+<p><strong>Ziel:</strong> Bringt die App ein neueres Wheel mit als installiert ist, aktualisiert sie den Kern vor dem Start.</p>
+<p><strong>Schritt 1 — <code>installer.rs</code>:</strong>
+- Reine Funktion <code>wheel_version(path: &amp;Path) -&gt; Option&lt;String&gt;</code>: aus <code>toolboxv2-&lt;version&gt;-py3-none-any.whl</code> die Version lesen.
+- Reine Funktion <code>installed_version(install_dir: &amp;Path) -&gt; Option&lt;String&gt;</code>: aus <code>&lt;install_dir&gt;/install.manifest</code> den Wert der Zeile <code>tb_version:</code> lesen (Anführungszeichen entfernen).
+- Reine Funktion <code>core_needs_update(bundled: Option&lt;String&gt;, installed: Option&lt;String&gt;) -&gt; bool</code>: <code>true</code> nur, wenn beide vorhanden und verschieden sind.
+- Funktion <code>run_core_update(app)</code>: wie <code>run_install</code>, aber die Config enthält nur <code>action: update</code>, <code>assume: yes</code>, <code>ui: none</code>; <code>TB_WHEEL</code> und <code>TB_UV_BIN</code> werden gesetzt. Gemeinsamen Code aus <code>run_install</code> in eine Hilfsfunktion ziehen statt kopieren.
+- Unit-Tests für die drei reinen Funktionen.</p>
+<p><strong>Schritt 2 — <code>lib.rs</code>, <code>bootstrap_target()</code>:</strong> Ganz am Anfang: wenn <code>launch::tb_on_path()</code> und <code>core_needs_update(...)</code>:
+1. laufende Workers stoppen: <code>&lt;tb&gt; workers stop</code> (Befehl vorher mit <code>tb workers --help</code> bestätigen), dann warten, bis <code>probe_health</code> <code>false</code> liefert (max. 30 s);
+2. <code>run_core_update</code> ausführen;
+3. bei Fehler: loggen und normal weiter (alter Kern startet).
+Danach läuft die bestehende Logik unverändert.</p>
+<p><strong>Gate:</strong> <code>cargo test --lib</code> bestanden. Manuell: <code>tb_version</code> in <code>%LOCALAPPDATA%\toolboxv2\install.manifest</code> von Hand auf <code>0.0.1</code> setzen, App starten → Log <code>install.log</code> zeigt einen Update-Lauf, danach steht dort wieder <code>0.1.29</code>; <code>curl http://127.0.0.1:8467/api/wizard/state</code> zeigt weiter <code>"profile":"local"</code>, <code>first_run:false</code>, <code>needs_account:false</code>.</p>
+<p><strong>Wenn rot:</strong> Scheitert das Update mit „Datei wird verwendet", läuft noch ein <code>tb</code>-Prozess — die Wartezeit in Punkt 1 prüfen, nicht <code>--force</code> oder Prozess-Kill einbauen.</p>
+<hr />
+<h3 id="t14-gesamtabnahme">T14 — Gesamtabnahme<a class="headerlink" href="#t14-gesamtabnahme" title="Permanent link">&para;</a></h3>
+<p><strong>Schritte</strong></p>
+<ol>
+<li>Alles committen und pushen. Der Owner stößt <code>nightly.yml</code> an (<strong>H2</strong>).</li>
+<li>Auf einem Windows-Konto ohne <code>%LOCALAPPDATA%\toolboxv2</code> das Nightly-Setup installieren.</li>
+<li>Punkte Z1–Z6 aus Abschnitt 0 durchgehen; Z8 nach dem Ablauf von S5 mit der Nightly-App wiederholen.</li>
+<li>Der Owner stößt <code>nightly.yml</code> ein zweites Mal an (<strong>H3</strong>). App neu starten → Z7: Update wird installiert, App startet neu; <code>install.manifest</code> zeigt die neue Version; ISAA-Chatverlauf und Profil sind erhalten.</li>
+</ol>
+<p><strong>Gate:</strong> Tabelle Z1–Z8 vollständig mit „ok" oder genauer Fehlermeldung ausgefüllt an den Owner melden.</p>
+<p><strong>Wenn rot</strong></p>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Zurück zu</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Installer-Fenster meldet Fehler</td>
+<td><code>logs\install.log</code> neben der App-EXE lesen → T5/T6</td>
+</tr>
+<tr>
+<td>Fehlerseite „installed-stopped-timeout"</td>
+<td><code>%LOCALAPPDATA%\ToolBoxV2\app\logs\workers_start.log</code> lesen → T4/T8</td>
+</tr>
+<tr>
+<td>Onboarding erscheint erneut</td>
+<td>T3</td>
+</tr>
+<tr>
+<td>Kontoseite erscheint nach dem ersten Login erneut</td>
+<td>K1/K2</td>
+</tr>
+<tr>
+<td>Daten fehlen auf dem zweiten Gerät</td>
+<td>S2–S4</td>
+</tr>
+<tr>
+<td>Kein Update gefunden</td>
+<td>Prüfen, ob <code>latest.json</code> im Release <code>nightly</code> liegt und die Version höher ist → T12</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="5-risiken-die-unterwegs-auftreten-konnen">5. Risiken, die unterwegs auftreten können<a class="headerlink" href="#5-risiken-die-unterwegs-auftreten-konnen" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Risiko</th>
+<th>Erkennbar an</th>
+<th>Vorgesehene Reaktion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>file:///</code>-Wheel-URL wird von <code>uv</code> unter Windows anders behandelt</td>
+<td>T5-Gate</td>
+<td>Ausweichform in T5 „Wenn rot"</td>
+</tr>
+<tr>
+<td>Erste Installation lädt ~580 MB Abhängigkeiten, langsam oder offline</td>
+<td>T6/T14 dauert Minuten</td>
+<td>Kein Code; im Installer-Fenster läuft der Fortschritt. Offline-Installation ist nicht Teil des Ziels</td>
+</tr>
+<tr>
+<td>Windows sperrt Dateien eines laufenden <code>tb</code> beim Update</td>
+<td>T13-Gate</td>
+<td>Workers vorher stoppen und auf Ende warten</td>
+</tr>
+<tr>
+<td>ISAA lädt im Owner-Prozess, Start wird langsam</td>
+<td>T10: <code>/health</code> antwortet erst spät</td>
+<td>Messen und melden; die Wartezeit ist in T8 auf 120 s erhöht</td>
+</tr>
+<tr>
+<td>Routenkonflikt ISAA/OBS/Owner</td>
+<td>T10/T11</td>
+<td>Melden und stoppen</td>
+</tr>
+<tr>
+<td>MinIO-Verbindungsversuche auf <code>localhost:9000</code> im Profil <code>local</code></td>
+<td>Warnungen im Log</td>
+<td>Ignorieren, solange Z2 in unter 120 s erfüllt ist</td>
+</tr>
+<tr>
+<td>Kein privater Signaturschlüssel vorhanden</td>
+<td>H1</td>
+<td>Neues Schlüsselpaar; bereits verteilte Apps können dann nicht aktualisiert werden</td>
+</tr>
+<tr>
+<td>CI-Windows-Runner scheitert an <code>fetch_uv_sidecar.sh</code> (Handoff V2)</td>
+<td>H2</td>
+<td>Log des Schritts lesen, nur diesen Schritt reparieren</td>
+</tr>
+<tr>
+<td><code>simplecore.app</code> gibt keine MinIO-Zugangsdaten aus</td>
+<td>K0-P3</td>
+<td>S2 und S4 blockiert bis H4; Konto und Data-API-Sync (S3) gehen trotzdem</td>
+</tr>
+<tr>
+<td>MinIO des Servers ist von außen nicht per HTTPS erreichbar</td>
+<td>K0-P3, S5</td>
+<td>Wie oben; Owner-Entscheidung</td>
+</tr>
+<tr>
+<td>Kurzlebige MinIO-Zugangsdaten laufen während eines Syncs ab</td>
+<td>Fehler im Sync-Ergebnis</td>
+<td>Vor jedem <code>sync_blobs</code> neu holen (so in S4 vorgesehen)</td>
+</tr>
+<tr>
+<td>Gleiche Daten auf zwei Geräten geändert</td>
+<td>S5</td>
+<td>Bestehendes Verhalten: lokale Änderung wird hochgeladen, sonst gewinnt der neuere Stand. Keine Zusammenführung</td>
+</tr>
+<tr>
+<td>Lokale Blobs nach dem Umstellen auf den Kontoschlüssel unlesbar</td>
+<td>S2-Test</td>
+<td><code>migrate_local_blobs</code> vor dem Umschalten</td>
+</tr>
+<tr>
+<td>Rückkanal-Port 8765 des Logins belegt oder blockiert</td>
+<td>K4</td>
+<td>Melden; Port nicht ändern</td>
+</tr>
+<tr>
+<td>Nutzer verliert Zugang zum Konto</td>
+<td>—</td>
+<td>Lokale Daten bleiben lesbar (Schlüssel liegt im Geräte-Cache); kein Code in dieser Session</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="6-bewusst-offen-nicht-anfassen">6. Bewusst offen (nicht anfassen)<a class="headerlink" href="#6-bewusst-offen-nicht-anfassen" title="Permanent link">&para;</a></h2>
+<p>Handoff B2, B3, B4, B5, B6, B7, B9; V5; Punkt E; Abschnitt 4 des Handoffs komplett. Dazu neu: ISAA-Chatverläufe pro Nutzer speichern und synchronisieren (<code>isaa/ui/chat_store.py</code> kennt keine Nutzer-ID); Löschungen im globalen Ordner übertragen; Abmelden/Kontowechsel in der Oberfläche; bestehende Serverdaten auf den Kontoschlüssel umstellen; <code>launch.rs</code> kennt unter Linux/macOS den Installationspfad nicht (<code>tb_candidates</code> deckt nur Windows ab); stabiler Update-Kanal über <code>release.yml</code>; Entwicklerprofil in der Tauri-App (Source-Installation braucht Git).</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Zurück zum Seitenanfang
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      © 2022–2026 Markin Hausmanns
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.tabs", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "In Zwischenablage kopiert", "clipboard.copy": "In Zwischenablage kopieren", "search.result.more.one": "1 weiteres Suchergebnis auf dieser Seite", "search.result.more.other": "# weitere Suchergebnisse auf dieser Seite", "search.result.none": "Keine Suchergebnisse", "search.result.one": "1 Suchergebnis", "search.result.other": "# Suchergebnisse", "search.result.placeholder": "Suchbegriff eingeben", "search.result.term.missing": "Es fehlt", "select.version": "Version ausw\u00e4hlen"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>
