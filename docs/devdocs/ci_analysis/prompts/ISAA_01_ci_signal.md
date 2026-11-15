@@ -1,14 +1,14 @@
 # ISAA-Auftrag 01 – CI-Signal reparieren (Workflow-Dateien)
 
-> Komplexität: **1 von 5 – sehr klein** · Fix-Aufträge: FIX-01, FIX-02, FIX-06 · Test-IDs: 1
-> Braucht keine Antwort des Owners. Unabhängig von den Aufträgen 01–05; läuft parallel zu ihnen.
+> Komplexität: **1 von 5 – sehr klein** · Fix-Aufträge: FIX-01, FIX-02, FIX-04, FIX-06 · Test-IDs: 9
+> Braucht keine Antwort des Owners. Unabhängig von den anderen Aufträgen (01–07); läuft parallel zu ihnen.
 > Erstellt aus der WP2-CI-Analyse (Lauf 43742117802 auf `ebed4d6`, 12 Jobs; Stellen geprüft auf `master` @ `ed32daf`).
 
-**Du bist eine ISAA-Instanz und arbeitest diesen Auftrag selbstständig ab.** Die CI zeigt heute grün, obwohl in jedem Python-Job 500+ Tests fehlschlagen, und rot aus dem falschen Grund. Du änderst drei Stellen in zwei Workflow-Dateien. Danach sind alle 12 `py-check`-Jobs **rot – das ist das gewünschte, ehrliche Ergebnis**; die anderen Instanzen machen sie grün.
+**Du bist eine ISAA-Instanz und arbeitest diesen Auftrag selbstständig ab.** Die CI zeigt heute grün, obwohl in jedem Python-Job 500+ Tests fehlschlagen, und rot aus dem falschen Grund. Du änderst vier Stellen in zwei Workflow-Dateien. Danach sind alle 12 `py-check`-Jobs **rot – das ist das gewünschte, ehrliche Ergebnis**; die anderen Instanzen machen sie grün.
 
 ## 0. Rahmen – gilt für dich und für die anderen Instanzen
 
-Bis zu fünf ISAA-Instanzen arbeiten gleichzeitig im Repository `MarkinHaus/ToolBoxV2`, alle direkt auf `master`, jede an **anderen Dateien**. Diese Datei ist dein vollständiger Auftrag; du brauchst keine weiteren Dokumente und keine Rückfragen. Die Analyse, aus der er stammt, liegt auf dem Branch `origin/claude/keen-goldberg-o59mt9` unter `docs/devdocs/ci_analysis/` (nur lesen, z. B. `git show origin/claude/keen-goldberg-o59mt9:docs/devdocs/ci_analysis/README.md`; nicht auschecken, nicht nach `master` übernehmen).
+Bis zu sieben ISAA-Instanzen arbeiten gleichzeitig im Repository `MarkinHaus/ToolBoxV2`, alle direkt auf `master`, jede an **anderen Dateien**. Diese Datei ist dein vollständiger Auftrag; du brauchst keine weiteren Dokumente und keine Rückfragen. Die Analyse, aus der er stammt, liegt auf dem Branch `origin/claude/keen-goldberg-o59mt9` unter `docs/devdocs/ci_analysis/` (nur lesen, z. B. `git show origin/claude/keen-goldberg-o59mt9:docs/devdocs/ci_analysis/README.md`; nicht auschecken, nicht nach `master` übernehmen).
 
 ### 0.1 Eigene Arbeitskopie anlegen (einmal)
 
@@ -87,7 +87,9 @@ python -c "import sys,yaml; [yaml.safe_load(open(f,encoding='utf-8')) for f in s
 - Auftrag 03 (VFS-Werkzeuge: Tests und Health-Check an die neue Schnittstelle): toolboxv2/mods/isaa/base/Agent/flow_agent.py (nur Zeile 3613); toolboxv2/tests/test_isaa/test_base/test_agent/test_vfs/test_vfs_v2.py, test_vfs_shell_tool.py, test_vfs_shell_bullet_proof.py, test_vfs_shared_store_edits.py; toolboxv2/tests/test_isaa/test_base/test_agent/test_agent_session_tools.py; toolboxv2/tests/test_mini/test_manifest/test_manifest_schema.py
 - Auftrag 04 (Sporadische Tests stabilisieren): toolboxv2/tests/test_isaa/test_base/test_agent/test_vfs/test_vfs_pooling.py (nur die Klassen `TestPollIntegration` und `TestMultiAgentSync` bzw. die Tests mit festen Wartezeiten), toolboxv2/tests/test_mini/test_extras/test_analyser/test_profiler.py, toolboxv2/tests/test_mini/test_extras/test_install/test_rollback_manager.py, toolboxv2/tests/test_isaa/test_mem/test_hybrid_memory_realworld.py, toolboxv2/tests/test_isaa/test_base/test_audio/test_audio_core.py
 - Auftrag 05 (Windows- und Python-3.10-Fehler: erst reproduzieren, dann beheben): installer.ps1 und toolboxv2/simple-core/src-tauri/installer.ps1 (müssen byte-gleich bleiben: nach jeder Änderung die eine Datei auf die andere kopieren, `fc.exe /b` muss „keine Unterschiede“ melden), scripts/verify_install_windows.ps1, toolboxv2/tests/test_core/test_installer_protocol.py, toolboxv2/tests/test_core/test_verify_install_windows.py; toolboxv2/mods/isaa/module.py (nur die Shell-Sitzung: Klasse um Zeilen 2470–2640 und `shell_tool_function` ab Zeile 2942); toolboxv2/mods/isaa/base/Agent/vfs_v2.py (`rmdir` Zeile 1473, `rm`, `mv`), toolboxv2/mods/isaa/base/patch/vfs_shell_tool.py (nur die Verzeichnisbefehle), toolboxv2/mods/CloudM/LiveSync/share_store.py; toolboxv2/tests/test_core/test_endpoint_dist_dir.py, toolboxv2/tests/test_isaa/test_codig/test_base_coder.py; toolboxv2/tests/test_isaa/test_providers/test_performance_and_limiter.py, toolboxv2/tests/test_isaa/test_base/test_agent/test_agent_performance_stability.py; toolboxv2/tests/test_core/test_job_execution_state.py; liegt die Ursache in ISAA-Produktcode unter Python 3.10 (Syntax/Typing): genau die Datei, die der Traceback nennt, sofern sie nicht in der Sperrliste von Abschnitt 1 steht – sonst stoppen und melden; toolboxv2/tests/test_mini/test_system/test_state_system.py und der Test, der die Variable hinterlässt (nur wenn er keiner anderen Instanz gehört)
-- Außerdem gesperrt (offene Owner-Fragen): `pyproject.toml`, `toolboxv2/mods/isaa/pyproject.toml`, `toolboxv2/utils/system/session.py`, `toolboxv2/mcp_server/`, `toolboxv2/utils/brodcast/`, `docs/`.
+- Auftrag 06 (Eine Sitzungsdatei je Nutzer, mit Übernahme der alten Datei): toolboxv2/utils/system/session.py; toolboxv2/tests/test_mini/test_system/test_session.py (nur Zeilen 49, 59, 80, 104); toolboxv2/tests/test_mini/test_cli_session.py (nur `test_long_username_truncated`)
+- Auftrag 07 (Migration auf mcp 2 (Server, ISAA-Client, FlowAgent)): pyproject.toml (nur die mcp-Zeile im Extra `isaa`), toolboxv2/mods/isaa/pyproject.toml (nur die mcp-Zeile), toolboxv2/mcp_server/server.py, toolboxv2/mods/isaa/extras/mcp_session_manager.py, toolboxv2/mods/isaa/base/Agent/flow_agent.py (nur Zeilen 72, 429, 4518, 4529)
+- Außerdem gesperrt (offene Owner-Fragen oder nicht Teil der Aufträge): `pyproject.toml` und `toolboxv2/mods/isaa/pyproject.toml` außer der mcp-Zeile (Auftrag 07), `toolboxv2/mcp_server/models.py`, `toolboxv2/tests/test_isaa/test_mcp/test_models.py`, `toolboxv2/utils/brodcast/`, `docs/`.
 
 ## 2. Aufträge in dieser Reihenfolge
 
@@ -171,6 +173,58 @@ toolboxv2/tests/test_isaa/test_shell_tool.py::TestKillProcess::test_killing_the_
 </details>
 
 **Commit:** `FIX-02 (K-ENV-04): …`
+
+### FIX-04 – Karte K-ENV-03
+
+**Ursache:** `fast_tb.serve()` importiert `waitress`; das Paket steht nur im Extra `web`, die CI installiert ohne Extras.
+
+**Beleg:** `toolboxv2/utils/workers/fast_tb.py:1073` `from waitress.server import create_server`; `pyproject.toml:166` (`web = [… "waitress>=3.0.2"]`). Im Testlog: `ModuleNotFoundError: No module named 'waitress'` im Server-Thread, im Test `urllib.error.URLError: <urlopen error [Errno 111] Connection refused>`
+
+**Warum:** Der Server-Thread der lokalen Oberfläche stirbt beim Import, der Test wartet und bekommt „Connection refused“. **Owner-Entscheidung 2026-11-15: `pyproject.toml` bleibt, die CI installiert `.[web]`** (der SimpleCore-Installer installiert `ToolBoxV2[cli,web,isaa]`, Nutzer sind also nicht betroffen).
+
+> In der Analyse getestet: Repro rot → Probe-Fix → grün, Nachbartests unverändert.
+
+**Dateien (nur diese):** .github/workflows/build.yml
+
+**Vorher lesen:** Job `py-check`, Schritt `Install toolboxv2 with ISAA` (Zeilen 143–147)
+
+**Repro (vor der Änderung, muss rot sein):**
+
+```powershell
+python -m pytest toolboxv2/tests/test_core/test_wizard_e2e_http.py -q   # in deiner venv ohne waitress: 8 rot; mit 'uv pip install waitress' (nur zum Prüfen): 10 passed
+```
+
+Erwartet (Analyse): `8 failed, 2 passed … in 81.19s`
+
+**Schritte:**
+
+1. Nach FIX-02 lautet Zeile 147 `python -m uv pip install -e . --system`. Ändern in:
+
+```yaml
+          python -m uv pip install -e ".[web]" --system
+```
+
+**Nicht tun:** `pyproject.toml` nicht ändern (Owner-Entscheidung). Keine weiteren Extras hinzufügen.
+
+**Abnahme:** CI ubuntu/3.12: alle 8 IDs aus `test_core/test_wizard_e2e_http.py` grün.
+
+**Test-IDs (8):** in der CI unter Windows rot und damit lokal rot erwartet: 8; nur auf Linux/macOS rot: 0.
+
+<details><summary>Liste</summary>
+
+```
+toolboxv2/tests/test_core/test_wizard_e2e_http.py::test_browser_onboarding_flow_over_http
+toolboxv2/tests/test_core/test_wizard_e2e_http.py::test_e2e_live_health_over_http
+toolboxv2/tests/test_core/test_wizard_e2e_http.py::test_e2e_live_redirect_or_disabled
+toolboxv2/tests/test_core/test_wizard_e2e_http.py::test_e2e_loopback_guard_blocks_remote_environ
+toolboxv2/tests/test_core/test_wizard_e2e_http.py::test_e2e_wizard_profile_over_http
+toolboxv2/tests/test_core/test_wizard_e2e_http.py::test_e2e_wizard_state_over_http
+toolboxv2/tests/test_core/test_wizard_e2e_http.py::test_root_serves_onboarding_on_first_run
+toolboxv2/tests/test_core/test_wizard_e2e_http.py::test_setup_always_serves_onboarding
+```
+</details>
+
+**Commit:** `FIX-04 (K-ENV-03): …`
 
 ### FIX-06 – Karte K-ENV-06
 

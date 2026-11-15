@@ -69,10 +69,10 @@ Jede Karte gehört zu genau einem Paket. Ein Paket kann einer eigenen Instanz ge
 
 | Paket | Bedeutung | braucht dich? |
 |---|---|---|
-| P0-SIGNAL | CI-Workflow, Abhängigkeiten | 3 kurze Antworten (mcp, waitress, Secret) |
+| P0-SIGNAL | CI-Workflow, Abhängigkeiten | nur noch das Signing-Secret (FIX-05) |
 | P1-AUTO-MINI | minimaler Fix, getestet | nein |
-| P2-AUTO-MEDIUM | mittlerer Fix, Muster getestet | eine Rückfrage (MCP-Port) |
-| P3-VERALTET | Test prüft alte Schnittstelle | je Karte ein Ja/Nein |
+| P2-AUTO-MEDIUM | mittlerer Fix, Muster getestet | eine Rückfrage (MCP-Port 8791) |
+| P3-VERALTET | Test prüft alte Schnittstelle | je Karte bestätigen (Entscheidung 4) |
 | P4-ENTSCHEIDUNG | zwei gültige Richtungen | ja, je Karte |
 | P5-ARCH | Aufbau | Brainstorming |
 | P6-PLATTFORM | nur Windows/macOS/Linux-Runner/3.10 | Windows-Karten: lokal bei dir prüfbar |
@@ -86,8 +86,8 @@ Zuerst. Ohne diese Fixes misst jeder spätere Lauf falsch. Wer: Planer / kleines
 |---|---|---|---|---|---|
 | [K-ENV-01](cards/K-ENV-01.md) | [FIX-01](fixes/FIX-01.md) | A | 0 | getestet | Der Fallback `|| python -m unittest discover` entscheidet das Job-Ergebnis; er findet 0 Tests. Bis 3.11 ist das Exit-Code 0 (grün), ab 3.12 Exit-Code  |
 | [K-ENV-04](cards/K-ENV-04.md) | [FIX-02](fixes/FIX-02.md) | A | 1 | getestet | `toolboxv2` ist in der CI nicht editierbar installiert; ein Unterprozess, der nicht im Checkout startet, importiert die Kopie aus `site-packages`, in  |
-| [K-ENV-02](cards/K-ENV-02.md) | [FIX-03](fixes/FIX-03.md) | B | 45 | getestet | `mcp` ist ungepinnt (`mcp>=1.6.0`); die CI installiert 2.x, dort gibt es `Server.list_tools()` nicht mehr. |
-| [K-ENV-03](cards/K-ENV-03.md) | [FIX-04](fixes/FIX-04.md) | B | 8 | getestet | `fast_tb.serve()` importiert `waitress`; das Paket steht nur im Extra `web`, die CI installiert ohne Extras. |
+| [K-ENV-02](cards/K-ENV-02.md) | [FIX-03](fixes/FIX-03.md) | A | 45 | getestet | `mcp` ist ungepinnt (`mcp>=1.6.0`); installiert wird 2.x. Dort gibt es die Dekorator-API (`Server.list_tools()` …) und `mcp.server.fastmcp` nicht mehr |
+| [K-ENV-03](cards/K-ENV-03.md) | [FIX-04](fixes/FIX-04.md) | A | 8 | getestet | `fast_tb.serve()` importiert `waitress`; das Paket steht nur im Extra `web`, die CI installiert ohne Extras. |
 | [K-ENV-07](cards/K-ENV-07.md) | [FIX-05](fixes/FIX-05.md) | B | 0 | ungetestet | Auf `master` schlägt `tauri build` beim Signieren fehl: das Secret `TAURI_PRIVATE_KEY` lässt sich nicht als Base64 lesen. |
 | [K-ENV-06](cards/K-ENV-06.md) | [FIX-06](fixes/FIX-06.md) | A | 0 | ungetestet | `release.yml`: die Jobs `build-windows-x64` und `build-macos-arm64` rufen `python -m nuitka` auf, installieren Nuitka aber nicht (O4). |
 
@@ -139,8 +139,8 @@ Fix ist klar, aber es gibt zwei gültige Richtungen (Produkt ändern oder Test �
 
 | Karte | Fix | Typ | IDs | Status | Ursache |
 |---|---|---|---|---|---|
-| [K-API-13](cards/K-API-13.md) | [FIX-19](fixes/FIX-19.md) | B | 3 | ungetestet | `Session._get_blob_name()` gibt immer `"user/_session.json"` zurück; der bereinigte Nutzername wird berechnet, aber nicht verwendet. |
-| [K-API-14](cards/K-API-14.md) | [FIX-20](fixes/FIX-20.md) | B | 3 | ungetestet | Vier weitere Abweichungen in `test_session.py`: erwarteter Aufruf ohne `Authorization`-Header, erwarteter Blob-Name, `del os.environ["TOOLBOXV2_REMOTE |
+| [K-API-13](cards/K-API-13.md) | [FIX-19](fixes/FIX-19.md) | A | 3 | getestet | `Session._get_blob_name()` gibt immer `"user/_session.json"` zurück; der bereinigte Nutzername wird berechnet, aber nicht verwendet. Alle Nutzer eines |
+| [K-API-14](cards/K-API-14.md) | [FIX-20](fixes/FIX-20.md) | B | 3 | ungetestet | Restliche Abweichungen in `test_session.py`: erwarteter Aufruf ohne `Authorization`-Header; Sitzung löschen erwartet `delete_blob`, das Produkt schrei |
 | [K-BUG-03](cards/K-BUG-03.md) | [FIX-21](fixes/FIX-21.md) | B | 2 | ungetestet | `brodcast/client.py` ruft `int(os.getenv("TOOLBOXV2_BASE_PORT"))` ohne Vorgabewert auf; ohne die Variable stirbt der Client-Thread. |
 | [K-API-16](cards/K-API-16.md) | [FIX-22](fixes/FIX-22.md) | B | 2 | ungetestet | `test_cli_service_manager.py` erwartet `workers` in der Kategorie `core` und mindestens 4 `core`-Dienste; heute ist `workers` `infrastructure`, mehrer |
 | [K-API-18](cards/K-API-18.md) | [FIX-23](fixes/FIX-23.md) | B | 1 | ungetestet | `test_docker_build.py` verlangt für jedes Feature in `FEATURE_MAP` ein `ARG` im Dockerfile; `FEATURE_CLI` fehlt dort. |
@@ -237,23 +237,29 @@ Einschränkungen: Der Teil-Lauf ist nicht der Gesamtlauf (andere Reihenfolge-Nac
 | A1 | H0 beantwortet, Log-Zeilen aus 3.10 und 3.11 | erfüllt (K-ENV-01, Tabelle oben; lokal mit 3.10 und 3.12 nachgestellt) |
 | A2 | `raw/` enthält alle 12 Jobs von `ebed4d6` | erfüllt |
 | A3 | jede ID genau einmal, keine ohne Kategorie | erfüllt (593 IDs) |
-| A4 | jede Karte GETESTET oder UNGETESTET mit Grund; ≥ 80 % der IDs in GETESTET-Karten | **nicht erfüllt: 375 von 593 = 63 %.** Jede Karte hat Status und Grund. Ungetestet sind: veraltete Tests, deren Probe-Fix das Umschreiben der Tests wäre (P3, 107 IDs), reine Windows/macOS/Runner-/3.10-Fehler (P6, 39), optionale Pakete (26), `sys.modules`-Verschmutzung (22), Entscheidungsfragen (P4, 15), Sporadische (7), Port-Erwartungen (2) |
+| A4 | jede Karte GETESTET oder UNGETESTET mit Grund; ≥ 80 % der IDs in GETESTET-Karten | **nicht erfüllt: 378 von 593 = 64 %.** Jede Karte hat Status und Grund. Ungetestet sind: veraltete Tests, deren Probe-Fix das Umschreiben der Tests wäre (P3, 107 IDs), reine Windows/macOS/Runner-/3.10-Fehler (P6, 39), optionale Pakete (26), `sys.modules`-Verschmutzung (22), Entscheidungsfragen (P4, 15), Sporadische (7), Port-Erwartungen (2) |
 | A5 | jede Typ-A/B-Karte hat einen Fix-Auftrag | erfüllt (44) |
 | A6 | jede Typ-C-Ursache hat eine Notiz mit ≥ 2 Wegen | erfüllt (ARCH-01, -02, -03) |
 | A7 | Arbeitsbaum sauber, `git diff --stat master -- toolboxv2 .github` leer | erfüllt |
 
 ## 8. Fragen an den Owner
 
+### Entscheidungen vom 2026-11-15
+
+| # | Frage | Entscheidung | Folge |
+|---|---|---|---|
+| 1 | mcp 2.x: pinnen oder migrieren? | **migrieren** | FIX-03 ist jetzt die Migration (Server, ISAA-Client, FlowAgent, `mcp>=2.3,<3`); getestet mit mcp 2.3.0, Prompt 07. Nebenbefund dabei: unter mcp 2 sah der ISAA-Client von einem MCP-Server 0 statt 17 Werkzeuge, ohne Fehlermeldung |
+| 2 | `waitress`: Basis-Abhängigkeit oder CI-Extra? | **CI installiert `.[web]`** | FIX-04 ändert nur `build.yml`, Teil von Prompt 01 |
+| 3 | Sitzungsdatei je Gerät oder je Nutzer? | **je Nutzer** | FIX-19: `user/<name>_session.json` (`BlobFile` verlangt einen Ordner im Namen) plus einmalige Übernahme der alten `user/_session.json`, nur wenn sie demselben Nutzer gehört; getestet, Prompt 06. Beleg für die Dringlichkeit: heute lädt ein anderer Nutzer auf demselben Gerät die Anmeldung des vorigen |
+| 4 | Veraltete Tests: generelle Freigabe? | **je Karte einzeln** | P3 (11 Karten, 107 IDs) bleibt gesperrt, bis die Fragen der Karten beantwortet sind |
+
 ### Typ B (je Fix-Auftrag)
 
 | Fix | Karte | IDs | Frage |
 |---|---|---|---|
-| FIX-03 | K-ENV-02 | 45 | Jetzt auf `mcp<2` pinnen (Typ-A-Teil, sofort) und die Migration auf die mcp-2-API als eigene Aufgabe planen? Oder direkt migrieren? |
-| FIX-04 | K-ENV-03 | 8 | Gehört `waitress` in die Basis-Abhängigkeiten (lokale Oberfläche ist Kernfunktion, Empfehlung) oder soll die CI `.[web]` installieren? Prüfen: installiert der SimpleCore-Installer `toolboxv2[web]`? (`test_installer_protocol` erwartet `ToolBoxV2[cli,web,isaa]`, dann ist nur die CI betroffen.) |
 | FIX-05 | K-ENV-07 | 0 | Owner: Secret `TAURI_PRIVATE_KEY` neu eintragen (eine Zeile, kein Umbruch) und `build.yml` manuell auslösen. Liegt danach `latest.json` signiert im Release `nightly`? |
 | FIX-18 | K-API-15 | 2 | MCP-Vorgabeport 8791: gewollt? (WS 8468 ist durch `d1db5c9` belegt und kann ohne Rückfrage angepasst werden.) Außerdem prüft derselbe Test `http[0].port == 8000` – stimmt 8000 noch neben 8467? |
-| FIX-19 | K-API-13 | 3 | Eine Sitzungsdatei je Nutzer (`{safe_name}_session.json`, wie die Tests es erwarten) oder genau eine je Gerät (`user/_session.json`)? Betrifft WP1 (Login/Sitzung nach Update). |
-| FIX-20 | K-API-14 | 3 | Soll `validate_session` den Token zusätzlich als `Authorization: Bearer` senden (heutiges Verhalten)? Dann Test anpassen. |
+| FIX-20 | K-API-14 | 3 | (a) Soll `validate_session` den Token zusätzlich als `Authorization: Bearer` senden (heutiges Verhalten)? (d) Soll „abmelden“ die Sitzungsdatei löschen oder nur leeren (heute: leeren)? |
 | FIX-21 | K-BUG-03 | 2 | Welcher Vorgabeport gilt für den Broadcast-Client (6568, 6588 oder der vereinheitlichte 8467)? Soll `host` der Name (`"Local test router"`) oder die IP sein? Wird der Broadcast noch gebraucht? |
 | FIX-22 | K-API-16 | 2 | Ist `workers` jetzt `infrastructure`, und sind die auskommentierten `core`-Dienste endgültig weg? |
 | FIX-23 | K-API-18 | 1 | Hat das Dockerfile noch Feature-Build-Argumente (`FEATURE_*`), oder ist es bewusst ein Vollabbild? |
@@ -293,7 +299,7 @@ Einschränkungen: Der Teil-Lauf ist nicht der Gesamtlauf (andere Reihenfolge-Nac
 | `fixes/` | 44 Fix-Aufträge, Nummer = Reihenfolge |
 | `architecture/` | ARCH-01 (globaler Testzustand), ARCH-02 (Installation, ISAA-Paket), ARCH-03 (optionale Abhängigkeiten) |
 | `raw/` | `<os>-<py>.txt` je Job (`ebed4d6`), `second_run_91d984a/`, `sporadic.txt` |
-| `prompts/` | Fünf eigenständige Start-Prompts für ISAA-Instanzen, aufsteigende Komplexität, ohne offene Owner-Fragen: 01 CI-Signal (FIX-01/02/06) · 02 minimale Fixes (FIX-07–16) · 03 VFS-Werkzeuge (FIX-17, FIX-18 Teil WS-Port) · 04 sporadische Tests (FIX-44) · 05 Windows/3.10 (FIX-35–38, 41–43). Dateilisten überschneiden sich nicht; jede Instanz arbeitet in einem eigenen git worktree und pusht nach `master` |
+| `prompts/` | Fünf eigenständige Start-Prompts für ISAA-Instanzen, aufsteigende Komplexität, ohne offene Owner-Fragen: 01 CI-Signal (FIX-01/02/06) · 02 minimale Fixes (FIX-07–16) · 03 VFS-Werkzeuge (FIX-17, FIX-18 Teil WS-Port) · 04 sporadische Tests (FIX-44) · 05 Windows/3.10 (FIX-35–38, 41–43) · nach den Entscheidungen: 06 Sitzung je Nutzer (FIX-19), 07 mcp-2-Migration (FIX-03); 01 enthält zusätzlich FIX-04. Dateilisten überschneiden sich nicht, außer zwei ausdrücklich zeilengetrennten Dateien (`test_session.py` 02/06, `flow_agent.py` 03/07); jede Instanz arbeitet in einem eigenen git worktree und pusht nach `master` |
 | `gate.py` | Abnahme-Helfer: `python docs/devdocs/ci_analysis/gate.py [Pfad] [--card K-…]` meldet rote IDs außerhalb des Katalogs. Reines Hilfsskript, kein Produktcode |
 
 Befehle in den Karten sind für eine POSIX-Shell geschrieben und setzen `MOCK_EXTERNAL_SERVICES=true IS_OFFLINE_DB=true` voraus (PowerShell: `$env:MOCK_EXTERNAL_SERVICES="true"; $env:IS_OFFLINE_DB="true"`). `gate.py` setzt beide selbst.

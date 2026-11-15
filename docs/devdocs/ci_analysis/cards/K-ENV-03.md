@@ -4,7 +4,7 @@
 Karte:       K-ENV-03
 Paket:       P0-SIGNAL – CI-Signal und Installation
 Status:      GETESTET
-Fix-Typ:     B (Gehört `waitress` in die Basis-Abhängigkeiten (lokale Oberfläche ist Kernfunktion, Empfehlung) oder soll die CI `.[web]` installieren? Prüfen: installiert der SimpleCore-Installer `toolboxv2[web]`? (`test_installer_protocol` erwartet `ToolBoxV2[cli,web,isaa]`, dann ist nur die CI betroffen.))
+Fix-Typ:     A
 Fix-Auftrag: FIX-04
 ```
 
@@ -14,7 +14,7 @@ Fix-Auftrag: FIX-04
 
 **Beleg:** `toolboxv2/utils/workers/fast_tb.py:1073` `from waitress.server import create_server`; `pyproject.toml:166` (`web = [… "waitress>=3.0.2"]`). Im Testlog: `ModuleNotFoundError: No module named 'waitress'` im Server-Thread, im Test `urllib.error.URLError: <urlopen error [Errno 111] Connection refused>`
 
-**Hypothese:** Der Server-Thread der lokalen Oberfläche stirbt beim Import, der Test wartet und bekommt „Connection refused“. Gilt auch für das Produkt: die Onboarding-Oberfläche (WP1-K3) startet nur, wenn `toolboxv2[web]` installiert ist.
+**Hypothese:** Der Server-Thread der lokalen Oberfläche stirbt beim Import, der Test wartet und bekommt „Connection refused“. **Owner-Entscheidung 2026-11-15: `pyproject.toml` bleibt, die CI installiert `.[web]`** (der SimpleCore-Installer installiert `ToolBoxV2[cli,web,isaa]`, Nutzer sind also nicht betroffen).
 
 **Repro:**
 
@@ -24,11 +24,13 @@ python -m pytest toolboxv2/tests/test_core/test_wizard_e2e_http.py -q
 
 **Vorher:** `8 failed, 2 passed … in 81.19s`
 
-**Probe-Fix:** `uv pip install waitress` in der Testumgebung
+**Probe-Fix:** `waitress` in der Testumgebung installiert (gleiche Wirkung wie `.[web]`)
 
 **Nachher:** `10 passed, 1 warning in 4.77s`
 
 **Nachbarn:** python -m pytest toolboxv2/tests/test_core -q → keine neue rote ID durch waitress
+
+**Entscheidung des Owners (2026-11-15):** CI installiert `.[web]`; `pyproject.toml` unverändert.
 
 ## Test-IDs
 
