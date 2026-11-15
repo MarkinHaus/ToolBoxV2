@@ -562,6 +562,10 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # the action's default also installs 'tools', which the SDK manager
+          # no longer offers -> the step failed before anything was built
+          packages: 'platform-tools'
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
