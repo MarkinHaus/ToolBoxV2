@@ -12,13 +12,12 @@ from typing import Any
 CHAT = "chat"          # data: query, agent, session
 STOP = "stop"          # data: run
 PAUSE = "pause"        # data: run
-AGENTS = "agents"        # Agentenliste anfordern (immer live aus isaa)
-USE = "use"              # data: agent  -> aktiven Agenten laden/wechseln
-PACK = "pack"            # data: agent  -> Agent samt Tools als Paket sichern
+LIST = "list"            # data: what (agents|models|sessions|mounts)
+DO = "do"                # data: action + Argumente (siehe backend.do)
 SHUTDOWN = "shutdown"
 
 # ── Events: Engine -> UI ─────────────────────────────────────────────────────
-READY = "ready"            # data: agents, agent, session, model
+READY = "ready"            # data: agent, session, model, complex_model, mounts[, history]
 RUN_START = "run_start"    # data: agent, session, query, steer
 TEXT = "text"              # data: text            (gebuendelte Content-Deltas)
 THINK = "think"            # data: text            (gebuendeltes Reasoning)
@@ -26,7 +25,7 @@ TOOL_START = "tool_start"  # data: id, name, summary, reason, detail
 TOOL_END = "tool_end"      # data: id, name, ok, summary, detail, secs
 STATUS = "status"          # data: msg, iter, max_iter, tokens, tokens_max
 RUN_END = "run_end"        # data: status (done|failed|stopped|paused), answer, error
-AGENT_LIST = "agent_list"  # data: agents=[{name, state, pack}]
+ROWS = "rows"              # data: what, title, rows=[{value, label, hint}]
 NOTICE = "notice"          # data: level (info|warn|error), text
 BYE = "bye"                # Engine ist sauber beendet
 

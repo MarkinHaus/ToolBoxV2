@@ -25,7 +25,25 @@ EVENTS_PER_FRAME = 200         # Obergrenze je Frame: UI bleibt auch bei Flut be
 SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 END_MARK = {"done": "", "failed": f"{SYM['fail']} fehlgeschlagen", "stopped": "■ gestoppt",
             "paused": f"{SYM['pause']} pausiert – nächste Nachricht setzt fort"}
-AGENT_STATE = {"live": "geladen", "registered": "registriert", "disk": "gespeichert"}
+
+# Befehl -> (Argument-Hinweis, Beschreibung). Reihenfolge = Reihenfolge in der Palette.
+COMMANDS: dict[str, tuple[str, str]] = {
+    "/agent": ("[name]", "Agent wechseln"),
+    "/model": ("[name] [fast|complex]", "Modell des Agenten wählen"),
+    "/session": ("[name|+]", "Session wechseln oder neu anlegen"),
+    "/mount": ("[ordner]", "Ordner einhängen, ohne Argument: Mounts verwalten"),
+    "/new": ("", "Neue Session mit leerem Kontext"),
+    "/reset": ("", "Verlauf der aktuellen Session leeren"),
+    "/open": ("[n]", "Letzte n Tool-Ergebnisse aufklappen"),
+    "/fold": ("", "Alle Tool-Details auf- oder zuklappen"),
+    "/pack": ("[name]", "Agent mit allen Tools und Checkpoint sichern"),
+    "/stop": ("", "Laufenden Lauf abbrechen"),
+    "/clear": ("", "Anzeige leeren"),
+    "/q": ("", "Beenden"),
+}
+ALIASES = {"/quit": "/q", "/exit": "/q"}
+MODEL_TARGETS = [("both", "beide", "schnell und komplex"), ("fast", "schnell", "Standard-Antworten"),
+                 ("complex", "komplex", "schwere Aufgaben")]
 
 
 class ToolCard(Collapsible):
@@ -137,6 +155,9 @@ class ICli2(App):
         Binding("escape", "stop", "Stopp", priority=True),
         Binding("ctrl+q", "quit_app", "Beenden", priority=True),
         Binding("ctrl+l", "clear", "Leeren"),
+        Binding("ctrl+p", "palette", "Befehle", priority=True),
+        Binding("up", "history(-1)", show=False),
+        Binding("down", "history(1)", show=False),
         Binding("ctrl+o", "fold_tools", "Tools auf/zu", priority=True),
         Binding("ctrl+r", "fold_thinking", "Gedanken auf/zu", priority=True),
         *[Binding(f"alt+{n}", f"open_last({n})", show=False, priority=True) for n in range(1, 10)],
@@ -146,6 +167,9 @@ class ICli2(App):
         super().__init__()
         self.engine = engine
         self.agent, self.session, self.model = agent, session, "…"
+        self.complex_model, self.mounts = "", 0
+        self.history: list[str] = []
+        self._hist_pos = 0
         self.ready = False
         self.runs: dict[str, RunView] = {}
         self.tool_cards: list[ToolCard] = []
@@ -223,12 +247,16 @@ class ICli2(App):
                 self.focus_run = next(reversed(self.runs), "")
             self.status_msg = ""
         elif ev.kind == P.READY:
-            if self.ready and d["agent"] != self.agent:
-                await self._note(f"{SYM['agent']} Agent: {d['agent']} · {d['model']}")
+            if self.ready and (d["agent"], d["session"], d["model"], d["complex_model"]) != \
+                    (self.agent, self.session, self.model, self.complex_model):
+                await self._note(f"{SYM['agent']} {d['agent']} · {d['model']} · {d['session']}")
             self.ready = True
             self.agent, self.session, self.model = d["agent"], d["session"], d["model"]
-        elif ev.kind == P.AGENT_LIST:
-            self._pick_agent(d["agents"])
+            self.complex_model, self.mounts = d["complex_model"], d["mounts"]
+            if "history" in d:
+                self.history, self._hist_pos = d["history"], len(d["history"])
+        elif ev.kind == P.ROWS:
+            self._pick(d["what"], d["title"], d["rows"])
         elif ev.kind == P.NOTICE:
             await self._note(d["text"], d.get("level", "info"))
 
@@ -243,8 +271,10 @@ class ICli2(App):
     def _chrome(self) -> None:
         """Kopf- und Fusszeile. Rein lokal, deshalb auch bei blockierter Engine fluessig."""
         self._tick += 1
+        mounts = f" · {self.mounts} mount{'s' if self.mounts != 1 else ''}" if self.mounts else ""
         self.query_one("#head", Static).update(
-            f"[{G.L4_BRIGHT}]{SYM['agent']} {self.agent}[/] [{DIM}]· {self.model} · {self.session}[/]")
+            f"[{G.L4_BRIGHT}]{SYM['agent']} {self.agent}[/] "
+            f"[{DIM}]· {self.model} · {self.session}{mounts}[/]")
         spin = SPIN[self._tick % len(SPIN)]
         if not self.ready:
             left = f"{spin} Engine startet …"
@@ -268,6 +298,10 @@ class ICli2(App):
             return
         if not self.runs:
             self._signal("")
+        if not self.history or self.history[-1] != text:
+            self.history.append(text)
+            self.engine.send(P.DO, action="remember", text=text)
+        self._hist_pos = len(self.history)
         if text.startswith("/"):
             await self._command(text)
             return
@@ -277,36 +311,82 @@ class ICli2(App):
 
     async def _command(self, text: str) -> None:
         name, _, arg = text.partition(" ")
-        name, arg = name.lower(), arg.strip()
-        if name in ("/q", "/quit", "/exit"):
+        name, arg = ALIASES.get(name.lower(), name.lower()), arg.strip()
+        do = lambda action, **kw: self.engine.send(P.DO, action=action, **kw)   # noqa: E731
+        ask = lambda what: self.engine.send(P.LIST, what=what)                  # noqa: E731
+        if name == "/":
+            self.action_palette()
+        elif name == "/q":
             self.action_quit_app()
         elif name == "/stop":
-            self.action_stop()
+            if self.focus_run:
+                self.engine.send(P.STOP, run=self.focus_run)
         elif name == "/clear":
             await self.action_clear()
         elif name == "/agent":
-            # mit Name: direkt wechseln, ohne: Auswahl (Liste kommt live aus isaa)
-            self.engine.send(P.USE, agent=arg) if arg else self.engine.send(P.AGENTS)
+            do("agent", name=arg) if arg else ask("agents")
+        elif name == "/model":
+            if arg:
+                model, _, target = arg.partition(" ")
+                do("model", name=model, target=target.strip() or "both")
+            else:
+                ask("models")
+        elif name == "/session":
+            do("session", name=arg) if arg else ask("sessions")
+        elif name == "/new":
+            do("session", name="+")
+        elif name == "/reset":
+            do("session_clear")
+        elif name == "/mount":
+            do("mount", path=arg) if arg else ask("mounts")
         elif name == "/open":
             self.action_open_last(int(arg) if arg.isdigit() else 1)
         elif name == "/fold":
             self.action_fold_tools()
         elif name == "/pack":
-            self.engine.send(P.PACK, agent=arg or self.agent)
+            do("pack", name=arg)
         else:
-            await self._note(f"Unbekannter Befehl {name} – /agent /pack /open n /fold /stop /clear /q", "warn")
+            await self._note(f"Unbekannter Befehl {name} – Strg+P zeigt alle", "warn")
 
-    def _pick_agent(self, agents: list[dict]) -> None:
-        items = [(a["name"], a["name"],
-                  AGENT_STATE.get(a["state"], a["state"]) + (" · Paket mit Tools" if a.get("pack") else "")
-                  + (" · aktiv" if a["name"] == self.agent else ""))
-                 for a in agents]
+    def _pick(self, what: str, title: str, rows: list[dict]) -> None:
+        """Picker fuer eine Liste aus der Engine oeffnen und die Wahl zurueckschicken."""
+        if not rows:
+            self.run_worker(self._note(title, "warn"))
+            return
+        send = self.engine.send
+
+        def chosen(value: str | None) -> None:
+            if value is None:
+                return
+            if what == "agents":
+                send(P.DO, action="agent", name=value)
+            elif what == "sessions":
+                send(P.DO, action="session", name=value)
+            elif what == "mounts":
+                send(P.DO, action="unmount", at=value)
+            elif what == "models":
+                self.push_screen(
+                    Picker(f"{value} für", MODEL_TARGETS),
+                    lambda target: target and send(P.DO, action="model", name=value, target=target))
+
+        self.push_screen(Picker(title, [(r["value"], r["label"], r["hint"]) for r in rows]), chosen)
+
+    def action_palette(self) -> None:
+        items = [(name, name, f"{hint}  {text}".strip()) for name, (hint, text) in COMMANDS.items()]
 
         def chosen(name: str | None) -> None:
-            if name and name != self.agent:
-                self.engine.send(P.USE, agent=name)
+            if name:
+                self.run_worker(self._command(name))     # ohne Argument: Auswahl bzw. Standard
 
-        self.push_screen(Picker("Agent wechseln", items), chosen)
+        self.push_screen(Picker("Befehle", items), chosen)
+
+    def action_history(self, step: int) -> None:
+        prompt = self.query_one("#prompt", Input)
+        if not prompt.has_focus or not self.history:
+            return
+        self._hist_pos = max(0, min(len(self.history), self._hist_pos + step))
+        prompt.value = self.history[self._hist_pos] if self._hist_pos < len(self.history) else ""
+        prompt.cursor_position = len(prompt.value)
 
     def action_stop(self) -> None:
         """Esc pausiert den fokussierten Lauf (fortsetzbar), ein zweites Esc bricht hart ab.

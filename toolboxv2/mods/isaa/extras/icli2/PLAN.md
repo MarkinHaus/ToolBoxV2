@@ -1,6 +1,6 @@
 # icli 2.0 – Plan
 
-Stand: Schritt 3 von 9 umgesetzt. Die alte `flows/isaa/icli.py` bleibt unverändert und parallel nutzbar.
+Stand: Schritt 4 von 9 umgesetzt. Die alte `flows/isaa/icli.py` bleibt unverändert und parallel nutzbar.
 
 Start: `tb -m icli2` · Code: `toolboxv2/mods/isaa/extras/icli2/` · Starter: `toolboxv2/flows/isaa/icli2.py`
 
@@ -60,9 +60,9 @@ Regeln, die für jeden weiteren Schritt gelten:
 | `/pack [name]` | fertig | – (manuelles Vollpaket mit Checkpoint) |
 | `/open n`, `/fold` | fertig | – |
 | `/stop`, `/clear` | fertig | Interrupt-Menü, `/clear` |
-| `/model` | Schritt 4 | `/agent model` |
-| `/session` | Schritt 4 | `/session new/clear/show/working` |
-| `/mount [pfad]` | Schritt 4 | `/vfs mount/unmount/save` |
+| `/model` | fertig | `/agent model` |
+| `/session [name]`, `/new`, `/reset` | fertig | `/session new/clear/show` |
+| `/mount [pfad]` | fertig | `/vfs mount/unmount/save` |
 | `/task` | Schritt 5 | `/task log/view`, Fokuswechsel |
 | `/job` | Schritt 5 | `/job`, `/job dream` |
 | `/feature`, `/skill`, `/mcp`, `/plugin` | Schritt 6 | gleichnamige Befehle, über Palette |
@@ -70,7 +70,7 @@ Regeln, die für jeden weiteren Schritt gelten:
 | `/login` | Schritt 8 | – |
 | `/voice` | Schritt 9 | `/audio`, `/omni` |
 
-Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+R` Gedanken auf/zu, `Alt+1–9` letzte n Tools öffnen, `Strg+L` leeren, `Strg+Q` beenden. Geplant: `Strg+P` Palette, `F2` Seitenleiste, `F4` Sprache.
+Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+R` Gedanken auf/zu, `Alt+1–9` letzte n Tools öffnen, `Strg+L` leeren, `Strg+Q` beenden. `Strg+P` Palette, `↑/↓` Eingabe-History. Geplant: `F2` Seitenleiste, `F4` Sprache.
 
 ## Erledigt
 
@@ -94,16 +94,20 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 - **Tool-Zeilen** ohne JSON: Begründung, falls vorhanden, sonst `schlüssel using wert`; Details als eingerückte Liste; Ergebnis-Kurzinfo über den vorhandenen `ZenRenderer._extract_tool_meta`.
 - Auf-/Zuklappen per Taste und Befehl.
 
+### Schritt 4 – Modell, Session, Mount, Palette (`icli2-04-modell-session-mount.patch`)
+- Engine und Protokoll kennen nur noch zwei generische Eingänge: `LIST` (Zeilen für einen Picker) und `DO` (Aktion). Neue Bereiche brauchen ab jetzt nur Code in `backend.py` und einen Eintrag in der Befehlstabelle.
+- `/model`: Picker mit Modellen aus dem Register der alten icli (`MODEL_MAPPING`, per AST gelesen, ohne `icli.py` zu importieren) plus Gateway-Modelle; zweiter Picker für schnell/komplex/beide; wird in `agent.json` gespeichert.
+- `/session`, `/new`, `/reset`: wechseln, neu anlegen, Verlauf leeren (gleiche Logik wie `/session clear`).
+- `/mount ordner` hängt ein (erster Mount unter `/project`, weitere unter `/<ordnername>`); `/mount` ohne Argument listet, Enter hängt aus und speichert.
+- Palette `Strg+P` (auch `/` + Enter), Eingabe-History mit `↑/↓`, gespeichert unter `<appdata>/icli2/history.txt`.
+- Kopfzeile zeigt Anzahl der Mounts.
+
 ## Offen
 
-### Schritt 4 – Modell, Session, Mount, Palette
-- `/model`: Picker; Modellwechsel über `isaa.get_agent(name, model_override=…)`. Modellliste aus den Quellen der alten icli (`load_gateway_models`, `fetch_openrouter_models`) – vorher prüfen, ob sie ohne `icli.py`-Import nutzbar sind, sonst in ein gemeinsames Modul verschieben.
-- `/session`: Picker über `agent.session_manager`; neu, wechseln, leeren. Verlauf der gewählten Session beim Wechsel anzeigen.
-- `/mount pfad`: lokalen Ordner in das VFS der Session einhängen, ohne Argument Liste mit Aushängen/Speichern. Nutzt `vfs_v2`.
-- Palette `Strg+P`: alle Befehle plus Fuzzy-Suche.
-- Mehrzeilige Eingabe (`TextArea`, Enter senden, Umschalt+Enter Zeile) und Eingabe-History.
-
 ### Schritt 5 – Tasks, Jobs, Parallel-Läufe, Networks
+- Mehrzeilige Eingabe (`TextArea`, Enter senden, Umschalt+Enter neue Zeile).
+- Beim Session-Wechsel die letzten Nachrichten der Session anzeigen (`session.get_history`).
+- OpenRouter-Modellliste optional nachladen (Netzwerkabruf, deshalb bisher weggelassen).
 - Seitenleiste `F2`: laufende und beendete Läufe, Jobs, Mounts, Kontext-Auslastung.
 - Fokuswechsel zwischen Läufen; Lauf in den Hintergrund schieben; Stream je Lauf getrennt puffern.
 - Sub-Agenten-Chunks (`_sub_agent_id`) als eingerückte Unterläufe statt wie bisher verworfen.
@@ -148,6 +152,7 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 - **`Alt+Ziffer`** wird nicht von jedem Terminal weitergegeben; `/open n` funktioniert immer.
 - **Referenzbilder** für das Design konnten nicht geöffnet werden; das Aussehen folgt dem Branding im Code.
 - Eingabe ist noch einzeilig, Sub-Agenten-Ausgaben werden noch verworfen.
+- `/mount` und `/model` sind gegen nachgebaute isaa-Objekte getestet, nicht gegen das echte VFS.
 
 ## Patches anwenden
 
@@ -155,5 +160,16 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 git apply icli2-01-grundgeruest.patch
 git apply icli2-02-branding-agenten.patch
 git apply icli2-03-autopack-tools.patch
+git apply icli2-04-modell-session-mount.patch
 pip install "textual>=8"
+```
+
+## Mini-Prompt zum Fortfahren
+
+```
+Lies toolboxv2/mods/isaa/extras/icli2/PLAN.md und setze den nächsten offenen Schritt um.
+Regeln aus dem Plan einhalten (UI wartet auf nichts, nur backend.py kennt isaa,
+vorhandene Funktionen nutzen, alte icli.py nicht ändern). Headless testen,
+PLAN.md aktualisieren, committen, pushen und mir den Schritt als .patch
+(reiner Diff, aufbauend auf den vorherigen) schicken.
 ```

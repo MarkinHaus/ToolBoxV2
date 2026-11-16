@@ -23,9 +23,8 @@ class Backend(Protocol):
     """Was die Engine von der Agenten-Seite braucht (siehe backend.py)."""
 
     async def boot(self) -> dict[str, Any]: ...
-    async def agents(self) -> list[dict[str, Any]]: ...
-    async def use(self, agent: str) -> dict[str, Any]: ...
-    async def pack(self, agent: str) -> str: ...
+    async def rows(self, what: str) -> dict[str, Any]: ...
+    async def do(self, action: str, **args: Any) -> dict[str, Any]: ...
     def stream(self, agent: str, session: str, query: str) -> AsyncIterator[dict]: ...
     async def is_running(self, agent: str, session: str) -> bool: ...
     async def stop(self, agent: str, session: str) -> None: ...
@@ -157,7 +156,7 @@ class Engine:
             run = _Run(f"r{self._counter}", d["agent"], d["session"])
             self._runs[run.id] = run
             run.task = asyncio.create_task(self._chat(run, d["query"], boot))
-        elif cmd.kind in (P.AGENTS, P.USE, P.PACK):
+        elif cmd.kind in (P.LIST, P.DO):
             # kann dauern (Agent bauen, Paket laden): eigener Task, Inbox bleibt frei
             asyncio.create_task(self._admin(cmd, boot))
         elif cmd.kind in (P.STOP, P.PAUSE):
@@ -174,14 +173,17 @@ class Engine:
     async def _admin(self, cmd: P.Command, boot: asyncio.Task) -> None:
         try:
             await asyncio.shield(boot)
-            if cmd.kind == P.AGENTS:
-                self._emit(P.AGENT_LIST, agents=await self._backend.agents())
-            elif cmd.kind == P.USE:
-                self._emit(P.READY, **await self._backend.use(cmd.data["agent"]))
-            elif cmd.kind == P.PACK:
-                self._emit(P.NOTICE, level="info", text=await self._backend.pack(cmd.data["agent"]))
+            if cmd.kind == P.LIST:
+                self._emit(P.ROWS, what=cmd.data["what"], **await self._backend.rows(cmd.data["what"]))
+                return
+            args = dict(cmd.data)
+            out = await self._backend.do(args.pop("action"), **args)
+            if out.get("ready"):
+                self._emit(P.READY, **out["ready"])
+            if out.get("text"):
+                self._emit(P.NOTICE, level=out.get("level", "info"), text=out["text"])
         except Exception as e:
-            self._emit(P.NOTICE, level="error", text=f"{cmd.kind}: {type(e).__name__}: {e}")
+            self._emit(P.NOTICE, level="error", text=f"{cmd.data.get('action') or cmd.data.get('what')}: {e}")
 
     # ── Ein Lauf ─────────────────────────────────────────────────────────────
     def _flush(self, run: _Run) -> None:
