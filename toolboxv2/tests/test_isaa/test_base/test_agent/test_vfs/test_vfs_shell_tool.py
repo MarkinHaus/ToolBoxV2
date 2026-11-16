@@ -60,6 +60,22 @@ def _prep(session, files: dict[str, str] | None = None, dirs: list[str] | None =
 # 1. Basic plumbing
 # ===========================================================================
 
+def _sync_tool(fn):
+    """vfs_view is a coroutine function since the async VFS refactor; these sync
+    tests call it directly, so run it to completion on a private loop."""
+    import asyncio, functools, inspect
+    if not inspect.iscoroutinefunction(fn):
+        return fn
+    @functools.wraps(fn)
+    def _run(*a, **k):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(fn(*a, **k))
+        finally:
+            loop.close()
+    return _run
+
+
 class TestShellBasicPlumbing(unittest.TestCase):
 
     def setUp(self):
@@ -935,7 +951,7 @@ class TestVfsView(unittest.TestCase):
             "    return UserModel()",
         ])
         _prep(self.session, {"/models.py": code})
-        self.view = make_vfs_view(self.session)
+        self.view = _sync_tool(make_vfs_view(self.session))
         self.vfs = self.session.vfs
 
     def test_basic_open(self):

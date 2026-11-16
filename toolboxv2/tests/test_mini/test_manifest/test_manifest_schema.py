@@ -103,7 +103,7 @@ class TestWorkersConfig:
         assert len(config.http) == 1
         assert len(config.websocket) == 1
         assert config.http[0].port == 8000
-        assert config.websocket[0].port == 8100
+        assert config.websocket[0].port == 8468
 
     def test_multiple_workers(self):
         """Test multiple worker instances."""

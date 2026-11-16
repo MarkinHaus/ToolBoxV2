@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional, Union
 
 # MCP SDK imports
 from mcp.server import Server, NotificationOptions
-from mcp.server.models import InitializationOptions
 import mcp.server.stdio
 import mcp.types as types
 from pydantic import AnyUrl
@@ -81,7 +80,15 @@ class ToolBoxV2MCPServer:
         self.config = config or MCPConfig()
 
         # MCP Server instance
-        self.server = Server(self.config.server_name)
+        # mcp>=2: handlers are passed to the constructor (no decorator API)
+        self.server = Server(
+            self.config.server_name,
+            version=self.config.server_version,
+            on_list_tools=self._on_list_tools,
+            on_list_resources=self._on_list_resources,
+            on_read_resource=self._on_read_resource,
+            on_call_tool=self._on_call_tool,
+        )
 
         # State
         self._app: Optional[Any] = None  # ToolBoxV2 App (lazy loaded)
@@ -742,52 +749,36 @@ class ToolBoxV2MCPServer:
     # =========================================================================
 
     def _setup_handlers(self):
-        """Setup MCP protocol handlers."""
+        """Handlers are registered in __init__ via Server(on_...=...) (mcp>=2)."""
 
-        @self.server.list_tools()
-        async def handle_list_tools() -> List[types.Tool]:
-            """Return static tool definitions immediately (no app loading)."""
-            tools = self.get_tool_definitions()
-            return [
-                types.Tool(
-                    name=t["name"],
-                    description=t["description"],
-                    inputSchema=t["inputSchema"]
-                )
-                for t in tools
-            ]
+    async def _on_list_tools(self, ctx, params) -> types.ListToolsResult:
+        """Return static tool definitions immediately (no app loading)."""
+        return types.ListToolsResult(tools=[
+            types.Tool(name=t["name"], description=t["description"], inputSchema=t["inputSchema"])
+            for t in self.get_tool_definitions()
+        ])
 
-        @self.server.list_resources()
-        async def handle_list_resources() -> List[types.Resource]:
-            """Return resource definitions."""
-            resources = self.get_resource_definitions()
-            return [
-                types.Resource(
-                    uri=r["uri"],
-                    name=r["name"],
-                    description=r["description"],
-                    mimeType=r["mimeType"]
-                )
-                for r in resources
-            ]
+    async def _on_list_resources(self, ctx, params) -> types.ListResourcesResult:
+        """Return resource definitions."""
+        return types.ListResourcesResult(resources=[
+            types.Resource(uri=r["uri"], name=r["name"], description=r["description"], mimeType=r["mimeType"])
+            for r in self.get_resource_definitions()
+        ])
 
-        @self.server.read_resource()
-        async def handle_read_resource(uri: AnyUrl) -> str:
-            """Read a resource."""
-            return await self.read_resource(str(uri))
+    async def _on_read_resource(self, ctx, params) -> types.ReadResourceResult:
+        """Read a resource."""
+        uri = str(params.uri)
+        text = await self.read_resource(uri)
+        mime = next((r["mimeType"] for r in self.get_resource_definitions() if r["uri"] == uri), "text/plain")
+        return types.ReadResourceResult(contents=[types.TextResourceContents(uri=uri, mimeType=mime, text=text)])
 
-        @self.server.call_tool()
-        async def handle_call_tool(
-            name: str,
-            arguments: Dict[str, Any]
-        ) -> List[types.TextContent]:
-            """Execute a tool."""
-            results = await self.call_tool(name, arguments)
-
-            return [
-                types.TextContent(type="text", text=r.content)
-                for r in results
-            ]
+    async def _on_call_tool(self, ctx, params) -> types.CallToolResult:
+        """Execute a tool."""
+        results = await self.call_tool(params.name, params.arguments or {})
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=r.content) for r in results],
+            isError=any(not r.success for r in results),
+        )
 
     # =========================================================================
     # SERVER LIFECYCLE
@@ -805,13 +796,8 @@ class ToolBoxV2MCPServer:
                 await self.server.run(
                     read_stream,
                     write_stream,
-                    InitializationOptions(
-                        server_name=self.config.server_name,
-                        server_version=self.config.server_version,
-                        capabilities=self.server.get_capabilities(
-                            notification_options=NotificationOptions(),
-                            experimental_capabilities={}
-                        )
+                    self.server.create_initialization_options(
+                        notification_options=NotificationOptions(),
                     )
                 )
         finally:

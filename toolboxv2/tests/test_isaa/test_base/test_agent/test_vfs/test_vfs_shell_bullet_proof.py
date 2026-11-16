@@ -61,6 +61,22 @@ def _prep(session, files=None, dirs=None):
         vfs.create(path, content)
 
 
+def _sync_tool(fn):
+    """vfs_view is a coroutine function since the async VFS refactor; these sync
+    tests call it directly, so run it to completion on a private loop."""
+    import asyncio, functools, inspect
+    if not inspect.iscoroutinefunction(fn):
+        return fn
+    @functools.wraps(fn)
+    def _run(*a, **k):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(fn(*a, **k))
+        finally:
+            loop.close()
+    return _run
+
+
 class TestStripQuotes(unittest.TestCase):
 
     def test_double_quotes(self):
@@ -467,7 +483,7 @@ class TestAgentRoundtrip(unittest.TestCase):
     def setUp(self):
         self.session = _session()
         self.sh = make_vfs_shell(self.session)
-        self.view = make_vfs_view(self.session)
+        self.view = _sync_tool(make_vfs_view(self.session))
         self.vfs = self.session.vfs
         _prep(self.session, {
             "/proj/config.py": textwrap.dedent("""\
@@ -793,7 +809,7 @@ class TestVfsViewRealWorld(unittest.TestCase):
     def setUp(self):
         self.session = _session()
         self.sh = make_vfs_shell(self.session)
-        self.view = make_vfs_view(self.session)
+        self.view = _sync_tool(make_vfs_view(self.session))
         self.vfs = self.session.vfs
         # 100-line file
         lines = [f"# line {i}" for i in range(1, 51)]

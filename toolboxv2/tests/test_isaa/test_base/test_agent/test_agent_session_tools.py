@@ -923,8 +923,10 @@ class TestVFSToolContracts(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         from toolboxv2.mods.isaa.base.patch.vfs_shell_tool import make_vfs_shell, make_vfs_view
         self.session = _make_session()
-        self.sh = make_vfs_shell(self.session)
-        self.view = make_vfs_view(self.session)
+        _sh = make_vfs_shell(self.session)
+        # vfs_shell(reason, command): reason is required since the VFS tool refactor
+        self.sh = lambda command: _sh("test", command)
+        self.view = make_vfs_view(self.session)  # coroutine function: await its result
 
     def _check(self, result, contract: dict, tool: str):
         if not contract.get("allow_none", True):
@@ -957,16 +959,16 @@ class TestVFSToolContracts(unittest.IsolatedAsyncioTestCase):
 
     async def test_29_vfs_view_returns_dict(self):
         contract = {"allow_none": False, "expected_type": "dict"}
-        self._check(self.view("/system_context.md", line_start=1, line_end=3), contract, "vfs_view")
+        self._check(await self.view("/system_context.md", line_start=1, line_end=3), contract, "vfs_view")
 
     async def test_30_vfs_view_success_has_content_and_showing(self):
-        r = self.view("/system_context.md", line_start=1, line_end=3)
+        r = await self.view("/system_context.md", line_start=1, line_end=3)
         if r.get("success"):
             self.assertIn("content", r)
             self.assertIn("showing", r)
 
     async def test_31_vfs_view_fail_has_error_key(self):
-        r = self.view("/nonexistent_xyz.py")
+        r = await self.view("/nonexistent_xyz.py")
         if not r.get("success"):
             self.assertIn("error", r)
 

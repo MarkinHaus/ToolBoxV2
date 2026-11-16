@@ -48,7 +48,23 @@ def _make_shell(vfs):
 def _make_view(vfs):
     session = MagicMock()
     session.vfs = vfs
-    return make_vfs_view(session)
+    return _sync_tool(make_vfs_view(session))
+
+
+def _sync_tool(fn):
+    """vfs_view is a coroutine function since the async VFS refactor; these sync
+    tests call it directly, so run it to completion on a private loop."""
+    import asyncio, functools, inspect
+    if not inspect.iscoroutinefunction(fn):
+        return fn
+    @functools.wraps(fn)
+    def _run(*a, **k):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(fn(*a, **k))
+        finally:
+            loop.close()
+    return _run
 
 
 def _safe_read(tc, vfs, path):
