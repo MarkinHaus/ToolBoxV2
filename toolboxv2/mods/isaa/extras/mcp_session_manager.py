@@ -302,7 +302,7 @@ class MCPSessionManager:
     async def _create_http_session(self, server_name: str, server_config: dict[str, Any]) -> ClientSession | None:
         """Create HTTP MCP session with timeout"""
         try:
-            import httpx
+            import httpx2 as httpx  # mcp>=2 transports take an httpx2.AsyncClient
             from mcp.client.streamable_http import streamable_http_client
 
             url = server_config.get("url", f"http://localhost:{server_config.get('port', 8000)}/mcp")
@@ -364,7 +364,7 @@ class MCPSessionManager:
                     capabilities['tools'][tool.name] = {
                         'name': tool.name,
                         'description': tool.description or '',
-                        'input_schema': tool.inputSchema,
+                        'input_schema': tool.input_schema,
                         'output_schema': getattr(tool, 'outputSchema', None),
                         'display_name': getattr(tool, 'title', tool.name)
                     }
@@ -392,9 +392,9 @@ class MCPSessionManager:
             try:
                 templates_response = await asyncio.wait_for(session.list_resource_templates(), timeout=3.0)
                 for template in templates_response.resourceTemplates:
-                    capabilities['resource_templates'][template.uriTemplate] = {
-                        'uri_template': template.uriTemplate,
-                        'name': template.name or template.uriTemplate,
+                    capabilities['resource_templates'][template.uri_template] = {
+                        'uri_template': template.uri_template,
+                        'name': template.name or template.uri_template,
                         'description': template.description or ''
                     }
             except TimeoutError:

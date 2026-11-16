@@ -69,7 +69,7 @@ except ImportError:
         pass
 
 try:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer  # mcp>=2: FastMCP was renamed
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
@@ -426,7 +426,7 @@ class FlowAgent:
 
         # Servers
         self.a2a_server: A2AServer | None = None
-        self.mcp_server: FastMCP | None = None
+        self.mcp_server: "MCPServer | None" = None
 
         # Execution engine instance (lazy loaded)
         self._execution_engine_cache = None
@@ -4515,7 +4515,7 @@ class FlowAgent:
 
     def setup_mcp_server(self, name: str | None = None):
         try:
-            from mcp.server.fastmcp import FastMCP
+            from mcp.server.mcpserver import MCPServer  # mcp>=2: FastMCP was renamed
 
             MCP_AVAILABLE = True
         except ImportError:
@@ -4526,7 +4526,7 @@ class FlowAgent:
             return
 
         server_name = name or f"{self.amd.name}_MCP"
-        self.mcp_server = FastMCP(server_name)
+        self.mcp_server = MCPServer(server_name)
 
         @self.mcp_server.tool()
         async def agent_run(query: str, session_id: str = "mcp_session") -> str:

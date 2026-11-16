@@ -186,7 +186,7 @@ isaa = [
     "pypdf2>=3.0.1",
     "nest-asyncio>=1.5.0",
     "pyvis>=0.3.0",
-    "mcp>=1.6.0",
+    "mcp>=2.3,<3",
     "tenacity>=9.1.2",
     "playwright",
     "html2text>=2025.4.15",
