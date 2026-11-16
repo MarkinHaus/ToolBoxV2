@@ -116,15 +116,6 @@ async def link_account(app: App, payload: dict) -> UserData:
         "migrated_from": migrated_from,
     }, indent=2), encoding="utf-8")
 
-    # WP1 S3: best-effort sync kick-off right after linking (background,
-    # never blocks or fails the link itself)
-    try:
-        import threading
-        from toolboxv2.mods.CloudM.sync.global_sync import run_sync_once
-        threading.Thread(target=run_sync_once, args=(app,),
-                         daemon=True).start()
-    except Exception:
-        pass
     return user
 
 
