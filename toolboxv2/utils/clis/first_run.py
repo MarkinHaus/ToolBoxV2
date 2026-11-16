@@ -86,7 +86,7 @@ def onboarding_state() -> dict:
         profile = None
     owner = _read_device_owner()
     return {"installed": True, "first_run": profile is None, "profile": profile,
-            "needs_account": owner is not None,
+            "needs_account": profile in ("local", "developer") and owner is None,
             "account": owner.get("username", "") if owner else None}
 
 

@@ -100,14 +100,25 @@ class AccountFlowTest(unittest.TestCase):
         }))
         return self.da.read_device_owner(self.app)
 
-    def test_needs_account_false_without_owner_file(self):
+    def test_needs_account_true_without_owner_local_profile(self):
+        self.fr.apply_profile("local")
+        state = self.fr.onboarding_state()
+        self.assertTrue(state["needs_account"])
+
+    def test_needs_account_false_for_server_profile(self):
+        self.fr.apply_profile("server")
+        self._link(None)
         state = self.fr.onboarding_state()
         self.assertFalse(state["needs_account"])
 
-    def test_needs_account_true_after_link(self):
+    def test_needs_account_false_without_profile(self):
+        state = self.fr.onboarding_state()
+        self.assertFalse(state["needs_account"])
+
+    def test_needs_account_false_after_link(self):
         self._link(None)
         state = self.fr.onboarding_state()
-        self.assertTrue(state["needs_account"])
+        self.assertFalse(state["needs_account"])
         self.assertTrue(state["account"])
 
     def test_account_state_shape(self):
@@ -121,7 +132,7 @@ class AccountFlowTest(unittest.TestCase):
     def test_first_run_and_needs_account_independent(self):
         self._link(None)
         state = self.fr.onboarding_state()
-        self.assertTrue(state["needs_account"])
+        self.assertFalse(state["needs_account"])
         self.assertTrue(state["first_run"])
 
     def test_wizard_state_endpoint_reports_account(self):
@@ -142,7 +153,7 @@ class AccountFlowTest(unittest.TestCase):
             wizard_api.register_wizard_routes(_App())
             self._link(None)
             res = routes["/api/wizard/state"](None)
-        self.assertTrue(res["needs_account"])
+        self.assertFalse(res["needs_account"])
         self.assertEqual(res["account"], "markin")
 
     def test_start_endpoint_rejects_unknown_method(self):
