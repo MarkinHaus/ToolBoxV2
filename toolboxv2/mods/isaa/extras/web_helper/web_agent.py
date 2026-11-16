@@ -18,7 +18,12 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, UTC
+try:
+    from datetime import UTC, datetime  # UTC erst ab Python 3.11
+except ImportError:  # K-PY-02: Python 3.10
+    from datetime import datetime, timezone
+
+    UTC = timezone.utc
 from enum import Enum
 from typing import Optional, Callable, Any
 from urllib.parse import urljoin, urlparse, quote_plus
