@@ -2536,7 +2536,21 @@ class ShellSession:
 
         self._start_reader(self.process.stdout, self.out_queue)
         self._start_reader(self.process.stderr, self.err_queue)
+        if self._shell_kind() == "powershell":
+            # PowerShell prints its prompt AFTER a command finishes, so it
+            # would leak into every result ("hiPS C:\\...>"). A constant,
+            # unique token lets _strip_marker_noise drop that line safely
+            # even when PSReadLine wraps it in ANSI colour codes.
+            self.write("function global:prompt { '__TB_PS_PROMPT__' }")
         self._probe_marker()
+        if self.is_windows and not self.marker_ok:
+            # Fallback (no completion tracking): still swallow the startup
+            # banner, the first prompt and the echo of the prompt line above,
+            # so the first command's output stays clean.
+            try:
+                self.read_output(timeout=1.5)
+            except Exception:
+                pass
 
     def _start_reader(self, pipe, q):
         """Startet async Reader für non-blocking I/O"""
@@ -2679,11 +2693,24 @@ class ShellSession:
 
     def _strip_marker_noise(self, text: str) -> str:
         """Drops lines that only exist because of the marker plumbing (e.g. the
-        invoke line echoed back by cmd.exe / PowerShell)."""
+        invoke line echoed back by cmd.exe / PowerShell) plus PowerShell's
+        prompt line: the session sets `function global:prompt { '' }`, which
+        PowerShell 7 renders as a bare "PS>" - after EVERY command. Without
+        stripping it every result would end with "hi\\nPS>"."""
         base = f"__TB_DONE_{self.id[:8]}_"
-        if base not in text:
-            return text
-        return "".join(l for l in text.splitlines(keepends=True) if base not in l)
+        script = f"tb_shell_{self.id[:8]}_"  # echoed dot-source of our script
+        out = []
+        for line in text.splitlines(keepends=True):
+            if base in line or script in line:
+                continue
+            if "__TB_PS_PROMPT__" in line:
+                # PS prints the prompt right after the command output on the
+                # SAME line ("hi__TB_PS_PROMPT__") - cut the token, keep "hi".
+                line = line.replace("__TB_PS_PROMPT__", "")
+                if not line.strip("\r\n"):
+                    continue
+            out.append(line)
+        return "".join(out)
 
     def read_output(self, timeout: float = 2.0, hard_timeout: float | None = None) -> Dict[str, Any]:
         """
