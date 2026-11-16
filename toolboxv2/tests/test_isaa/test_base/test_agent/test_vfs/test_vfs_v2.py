@@ -65,6 +65,21 @@ def _prep(session, paths: dict[str, str] | None = None, dirs: list[str] | None =
         session.vfs.create(path, content)
 
 
+def _sync_tool(fn):
+    """vfs_view is a coroutine function since the async VFS refactor; these sync
+    tests call it directly, so run it to completion on a private loop."""
+    import asyncio, functools, inspect
+    if not inspect.iscoroutinefunction(fn):
+        return fn
+    @functools.wraps(fn)
+    def _run(*a, **k):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(fn(*a, **k))
+        finally:
+            loop.close()
+    return _run
+
 
 class TestFileTypes(unittest.TestCase):
     """Tests for file type detection"""
@@ -1296,7 +1311,7 @@ class TestVfsViewReturnSchema(unittest.TestCase):
     def setUp(self):
         self.session = _make_session()
         _prep(self.session, {"/big.py": self.CONTENT})
-        self.view = make_vfs_view(self.session)
+        self.view = _sync_tool(make_vfs_view(self.session))
 
     def _assert_schema(self, r):
         self.assertIsInstance(r, dict)
@@ -1328,7 +1343,7 @@ class TestVfsViewLineRange(unittest.TestCase):
     def setUp(self):
         self.session = _make_session()
         _prep(self.session, {"/doc.py": self.CONTENT})
-        self.view = make_vfs_view(self.session)
+        self.view = _sync_tool(make_vfs_view(self.session))
         self.vfs = self.session.vfs
 
     def test_open_full_file(self):
@@ -1387,7 +1402,7 @@ class TestVfsViewScrollTo(unittest.TestCase):
             "    user_id = 1\n"
         )
         _prep(self.session, {"/models.py": code})
-        self.view = make_vfs_view(self.session)
+        self.view = _sync_tool(make_vfs_view(self.session))
         self.vfs = self.session.vfs
 
     def test_scroll_to_finds_line(self):
@@ -1444,7 +1459,7 @@ class TestVfsViewCloseOthers(unittest.TestCase):
             "/b.py": "beta",
             "/c.py": "gamma",
         })
-        self.view = make_vfs_view(self.session)
+        self.view = _sync_tool(make_vfs_view(self.session))
         self.vfs = self.session.vfs
 
     def test_close_others_closes_open_files(self):
@@ -1517,7 +1532,7 @@ class TestVfsViewWorkflow(unittest.TestCase):
             "/src/utils.py": "def helper(): pass",
         })
         self.shell = make_vfs_shell(self.session)
-        self.view = make_vfs_view(self.session)
+        self.view = _sync_tool(make_vfs_view(self.session))
         self.vfs = self.session.vfs
 
     def test_full_xy_workflow(self):

@@ -3610,7 +3610,7 @@ class FlowAgent:
             # ── PRIMARY ───────────────────────────────────────────────────────────────
 
             "vfs_shell": {
-                "live_test_inputs": [{"command": "ls /"}],
+                "live_test_inputs": [{"reason": "health check", "command": "ls /"}],
                 "result_contract": {
                     "allow_none": False,
                     "allow_empty_string": False,
