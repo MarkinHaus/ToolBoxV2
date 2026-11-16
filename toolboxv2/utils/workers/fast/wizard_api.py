@@ -169,6 +169,24 @@ def register_wizard_routes(app) -> None:
         from toolboxv2.utils.clis.first_run import account_state
         return account_state()
 
+    @app.post("/api/account/sync", auth=False)
+    def account_sync(request: ParsedRequest):
+        """Trigger a local <-> cloud sync run (WP1 S3). Loopback only,
+        non-blocking: fire-and-forget background thread."""
+        import threading
+        from toolboxv2.mods.CloudM.sync.global_sync import run_sync_once
+        from toolboxv2 import get_app
+
+        def _bg():
+            try:
+                app = get_app("sync.trigger")
+                run_sync_once(app)
+            except Exception:
+                pass  # sync is best-effort, never breaks the API
+
+        threading.Thread(target=_bg, daemon=True).start()
+        return 202, {"started": True}
+
     @app.post("/api/account/start", auth=False)
     def account_start(request: ParsedRequest):
         from toolboxv2.utils.clis.first_run import _start_account_link, account_state
