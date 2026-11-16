@@ -88,12 +88,21 @@ def account_state(app=None) -> dict:
     """Account-link status for UIs. Identity only - never tokens."""
     owner = _read_device_owner(app)
     if owner:
+        try:
+            from toolboxv2.mods.CloudM.LiveSync.data_api_sync import _LAST
+            last_sync = _LAST.get("finished_at")
+            last_sync_error = _LAST.get("error")
+        except Exception:
+            last_sync = None
+            last_sync_error = None
         return {"linked": True,
                 "user_id": owner.get("user_id", ""),
                 "username": owner.get("username", ""),
                 "base_url": owner.get("base_url", ""),
                 "migrated_from": owner.get("migrated_from"),
-                "state": "linked", "error": None}
+                "state": "linked", "error": None,
+                "last_sync": last_sync,
+                "last_sync_error": last_sync_error}
     with _LINK_LOCK:
         return {"linked": False,
                 "state": _LINK["state"], "error": _LINK["error"]}

@@ -1688,7 +1688,24 @@ class HTTPWorker:
         self._session_manager.enable_local_trust(provider)
         if provider:
             logger.info(f"Device trust on for {provider.get('username', '')}")
-            # Teil 10 haengt hier den Konto-Sync an.
+            # Teil 10: periodic account sync (once per process, 30 s delay, 600 s cycle).
+        import threading as _th10
+        if not any(getattr(t, "name", "") == "account-sync" for t in _th10.enumerate()):
+            import asyncio as _a10
+
+            def _account_sync_loop():
+                import time as _t10
+                from toolboxv2.mods.CloudM.LiveSync.data_api_sync import sync_all
+                _t10.sleep(30)
+                while True:
+                    try:
+                        _a10.run(sync_all(self._app))
+                    except Exception as e:
+                        logger.warning(f"account-sync failed: {type(e).__name__}")
+                    _t10.sleep(600)
+
+            _th10.Thread(target=_account_sync_loop, daemon=True,
+                         name="account-sync").start()
         else:
             logger.info("Device trust off (no device account or not a local profile)")
 

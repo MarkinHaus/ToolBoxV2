@@ -76,7 +76,13 @@ async def link_account(app: App, payload: dict) -> UserData:
                             username=owner.get("username") or payload.get("username", ""),
                             level=-1)
             await _save_user(app, user)
-        return user
+        # WP1 Teil 10: initial account sync right after linking (best-effort).
+    try:
+        from toolboxv2.mods.CloudM.LiveSync.data_api_sync import run_sync_in_background
+        run_sync_in_background(app)
+    except Exception:
+        pass
+    return user
 
     # Tokens via the existing session path (F17a); base points at the remote.
     s = app.session

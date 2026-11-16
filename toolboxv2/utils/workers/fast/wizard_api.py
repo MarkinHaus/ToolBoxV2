@@ -177,6 +177,21 @@ def register_wizard_routes(app) -> None:
         from toolboxv2.utils.clis.first_run import account_state
         return account_state()
 
+    @app.post("/api/account/sync", auth=False)
+    def account_sync(request: ParsedRequest):
+        """Trigger one account sync run (WP1 Teil 10). Loopback only."""
+        err = _loopback_guard(request)
+        if err is not None:
+            return err
+        from toolboxv2.mods.CloudM.auth.device_account import read_device_owner
+        from toolboxv2 import get_app
+        app = get_app()
+        if not read_device_owner(app):
+            return 409, {"error": "no-account"}
+        from toolboxv2.mods.CloudM.LiveSync.data_api_sync import run_sync_in_background
+        run_sync_in_background(app)
+        return 202, {"started": True}
+
     @app.post("/api/account/start", auth=False)
     def account_start(request: ParsedRequest):
         err = _loopback_guard(request)

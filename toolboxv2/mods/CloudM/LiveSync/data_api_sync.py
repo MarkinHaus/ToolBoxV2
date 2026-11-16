@@ -51,13 +51,20 @@ class DataApiTransport:
 
     async def _call(self, fn: str, **kw):
         from toolboxv2 import Result
+        from toolboxv2.utils.system.types import ToolBoxError
         res = await self.app.run_http("CloudM.UserDataAPI", fn, method="POST", **kw)
         if not isinstance(res, dict):
             raise TransferError(f"{fn} failed")
-        r = Result.result_from_dict(**res)
+        r = Result.result_from_dict(
+            error=res.get("error", ToolBoxError.none),
+            result=res.get("result", {}),
+            info=res.get("info", {}),
+            origin=res.get("origin"),
+        )
         if r.is_error():
-            msg = str(res.get("info", ""))
-            if "Session fetch failed" in msg:
+            msg = str(res.get("info", {}).get("help_text", "")) + \
+                str(res.get("info", {}).get("exec_code", ""))
+            if "Session fetch failed" in msg or res.get("info", {}).get("exec_code") == 401:
                 raise TransferError("offline")
             raise TransferError(f"{fn} failed")
         return r.get()
@@ -222,3 +229,141 @@ async def sync_folder(transport, local_dir: Path, prefix: str, index, key: str,
                 remote_key=prefix + rel,
             )
     return out
+
+
+# ---------------------------------------------------------------------------
+# sync_all orchestration (Teil 10)
+# ---------------------------------------------------------------------------
+_RUN_LOCK = None
+_LAST = {}
+
+
+def _run_lock():
+    global _RUN_LOCK
+    import threading
+    if _RUN_LOCK is None:
+        _RUN_LOCK = threading.Lock()
+    return _RUN_LOCK
+
+
+async def ensure_sync_key(app, user_id: str) -> str:
+    """Fetch (or reuse) the account sync key. The key is never logged."""
+    from toolboxv2 import Result
+    user = await _load_user(app, user_id)
+    if user is not None and getattr(user, "user_pass_sync", ""):
+        return user.user_pass_sync
+    res = await app.run_http("CloudM.Auth", "get_sync_key", method="POST")
+    if not isinstance(res, dict):
+        raise TransferError("offline")
+    from toolboxv2.utils.system.types import ToolBoxError
+    r = Result.result_from_dict(
+        error=res.get("error", ToolBoxError.none),
+        result=res.get("result", {}),
+        info=res.get("info", {}),
+        origin=res.get("origin"),
+    )
+    if r.is_error():
+        if res.get("info", {}).get("exec_code") == 401:
+            raise TransferError("reauth_required")
+        raise TransferError("offline")
+    key = (r.get() or {}).get("key", "")
+    if not key:
+        raise TransferError("reauth_required")
+    if user is not None:
+        user.user_pass_sync = key
+        await _save_user(app, user)
+    return key
+
+
+def _fill_lazy():
+    """Resolve collaborators once into module globals (patchable in tests)."""
+    import socket
+    import time
+    from toolboxv2.mods.CloudM.auth.device_account import read_device_owner
+    from toolboxv2.mods.CloudM.auth.user_store import _load_user, _save_user
+    from toolboxv2.mods.CloudM.LiveSync.account_bridge import (
+        export_account, import_account)
+    from toolboxv2.mods.CloudM.LiveSync.conflict import sanitize_device_id
+    from toolboxv2.mods.CloudM.LiveSync.index import LocalIndex
+    globals().update(
+        socket=socket, time=time,
+        read_device_owner=read_device_owner,
+        _load_user=_load_user, _save_user=_save_user,
+        export_account=export_account, import_account=import_account,
+        sanitize_device_id=sanitize_device_id, LocalIndex=LocalIndex,
+    )
+
+
+async def sync_all(app) -> dict:
+    """One full account + global sync run. Never raises."""
+    from pathlib import Path
+
+    if not _run_lock().acquire(blocking=False):
+        return {"skipped": True, "reason": "running"}
+    try:
+        owner = read_device_owner(app)
+        if not owner or not owner.get("user_id"):
+            result = {"skipped": True, "reason": "no-account"}
+            _LAST.clear()
+            _LAST.update(result)
+            return result
+        try:
+            key = await ensure_sync_key(app, owner["user_id"])
+            transport = DataApiTransport(app)
+            data = Path(app.data_dir)
+            device_id = sanitize_device_id(socket.gethostname())
+            (data / "account_sync").mkdir(parents=True, exist_ok=True)
+            (data / "Agents" / "VFS" / "global").mkdir(parents=True,
+                                                       exist_ok=True)
+            out = {}
+            # --- global folder ---
+            idx = LocalIndex(str(data / "account_sync" / "global_index.db"))
+            await idx.init()
+            try:
+                out["global"] = await sync_folder(
+                    transport, data / "Agents" / "VFS" / "global",
+                    PREFIX_GLOBAL, idx, key, device_id)
+            finally:
+                await idx.close()
+            # --- account mirror ---
+            user = await _load_user(app, owner["user_id"])
+            if user is not None:
+                mirror = data / "account_sync" / "mirror"
+                export_account(user, mirror)
+                idx2 = LocalIndex(str(data / "account_sync" / "account_index.db"))
+                await idx2.init()
+                try:
+                    out["account"] = await sync_folder(
+                        transport, mirror, PREFIX_ACCOUNT, idx2, key, device_id)
+                finally:
+                    await idx2.close()
+                if import_account(user, mirror):
+                    await _save_user(app, user)
+            result = dict(out)
+            result["finished_at"] = time.time()
+        except TransferError as e:
+            result = {"error": str(e), "finished_at": time.time()}
+        except Exception as e:  # never raise, never leak key material
+            result = {"error": type(e).__name__, "finished_at": time.time()}
+        _LAST.clear()
+        _LAST.update(result)
+        return result
+    finally:
+        _run_lock().release()
+
+
+def run_sync_in_background(app) -> None:
+    """Fire-and-forget sync run in a daemon thread."""
+    import asyncio
+    import threading
+
+    def _bg():
+        try:
+            asyncio.run(sync_all(app))
+        except Exception:
+            pass
+
+    threading.Thread(target=_bg, daemon=True, name="account-sync-run").start()
+
+
+_fill_lazy()
