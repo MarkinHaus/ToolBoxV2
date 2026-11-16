@@ -332,7 +332,7 @@ class TestGitWorktreeReal(unittest.TestCase):
     def setUp(self):
         if not shutil.which("git"):
             self.skipTest("git not available")
-        self.tmp = Path(tempfile.mkdtemp())
+        self.tmp = Path(tempfile.mkdtemp()).resolve()  # K-OS-03: realpath-Form (8.3-Aliase, /var-Symlinks)
         subprocess.run(["git", "init"], cwd=self.tmp, capture_output=True)
         subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=self.tmp, capture_output=True)
         subprocess.run(["git", "config", "user.name", "Test"], cwd=self.tmp, capture_output=True)
@@ -392,7 +392,7 @@ class TestGitWorktreeReal(unittest.TestCase):
 class TestCoderAgentBash(unittest.TestCase):
     def setUp(self):
         self.agent = MockAgent()
-        self.tmp = tempfile.mkdtemp()
+        self.tmp = str(Path(tempfile.mkdtemp()).resolve())  # K-OS-03: resolve 8.3-Aliase (RUNNER~1 vs runneradmin)
         self.coder = CoderAgent(self.agent, self.tmp, {"bash_timeout": 5})
         self.coder.worktree = GitWorktree(self.tmp)
         self.coder.worktree.setup()

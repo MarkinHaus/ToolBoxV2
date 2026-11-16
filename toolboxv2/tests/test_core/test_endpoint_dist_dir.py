@@ -12,7 +12,7 @@ class TestDistDirManifestBase(unittest.TestCase):
         # R8b: Manifest liegt in manifest_base_dir() (nicht tb_root_dir);
         # absoluter dist_dir aus dem Manifest gewinnt.
         with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
+            tmp = Path(tmp).resolve()  # K-OS-03: realpath-Form benutzen (macOS /var, Windows 8.3)
             dist = tmp / "from-manifest"
             dist.mkdir()
             mbase = tmp / "manifest-home"
@@ -28,7 +28,7 @@ class TestDistDirManifestBase(unittest.TestCase):
         # relativer dist_dir wird gegen tb_root_dir aufgeloest, nicht gegen
         # die Manifest-Base; Kandidat muss existieren, sonst Fallback.
         with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
+            tmp = Path(tmp).resolve()  # K-OS-03: realpath-Form benutzen (macOS /var, Windows 8.3)
             fake_root = tmp / "fake-root"
             rel = fake_root / "rel-dist"
             rel.mkdir(parents=True)
