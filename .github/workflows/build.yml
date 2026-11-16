@@ -151,7 +151,7 @@ jobs:
         env:
           MOCK_EXTERNAL_SERVICES: "true"
           IS_OFFLINE_DB: "true"
-        run: python -m pytest toolboxv2/tests/ -v --tb=short || python -m unittest discover -s toolboxv2/tests/
+        run: python -m pytest toolboxv2/tests/ -v --tb=short -rfE
 
   # ============================================================================
   # NODE.JS / FRONTEND BUILDS
