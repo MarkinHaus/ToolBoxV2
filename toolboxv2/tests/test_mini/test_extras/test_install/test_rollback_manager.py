@@ -351,15 +351,38 @@ def test_delete_backup(rollback_manager, sample_package):
     assert not metadata_path.exists()
 
 
-def test_cleanup_old_backups(rollback_manager, sample_package):
+def test_cleanup_old_backups(rollback_manager, sample_package, monkeypatch):
     """Test cleanup of old backups."""
-    # Create multiple backups
+    # Deterministische Fake-Uhr: sonst kollidieren die ms-genauen Backup-IDs
+    # (siehe _generate_backup_id), wenn alle 7 Backups innerhalb derselben
+    # Millisekunde erzeugt werden, und Backups ueberschreiben sich gegenseitig.
+    fake_now = 1_000_000.0
+
+    class _FakeTimeModule:
+        """Minimal-Ersatz fuer das time-Modul innerhalb der Erzeugungsschleife."""
+
+        def time(self):
+            return fake_now
+
+    monkeypatch.setattr(
+        "toolboxv2.utils.extras.install.rollback_manager.time", _FakeTimeModule()
+    )
+
+    # Create multiple backups, jeweils 10 Minuten auseinander
     for i in range(7):
-        rollback_manager.create_backup(
+        metadata = rollback_manager.create_backup(
             package_name="test_package",
             version=f"1.{i}.0",
             source_path=sample_package,
         )
+        fake_now += 600.0
+        # created_at deterministisch nachziehen: BackupMetadata.created_at wird
+        # bereits bei Klassendefinition an die echte time.time gebunden
+        # (default_factory) und ist durch den monkeypatch nicht erreichbar.
+        metadata.created_at = 1_000_000.0 + i * 600.0
+        metadata.to_file(rollback_manager._get_metadata_path(metadata.backup_id))
+
+    monkeypatch.undo()
 
     initial_count = rollback_manager.get_backup_count()
     assert initial_count == 7

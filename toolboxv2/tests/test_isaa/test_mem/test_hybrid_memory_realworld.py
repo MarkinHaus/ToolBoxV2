@@ -11,7 +11,9 @@ Tests the system with Wikipedia-like content including:
 Phase 1 Exit Test
 """
 
+import hashlib
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -235,11 +237,23 @@ class TestHybridMemoryRealWorld(unittest.TestCase):
         """
         Generate deterministic embedding for text.
         In production, this would use a real embedding model.
+
+        Deterministic mock: bag-of-words hashing (sha256, prozess-stabil) +
+        Frequenzskalierung. Wort-Overlap zwischen Query und Seite steuert die
+        Cosine-Aehnlichkeit semantisch korrekt (vi) > (vii) unabhaengig vom
+        PYTHONHASHSEED des Prozesses.
         """
-        # Use hash for deterministic but varied embeddings
-        hash_val = hash(text) % (2**31)
-        self.rng = np.random.default_rng(hash_val)
-        return self.rng.random(768).astype(np.float32)
+        dim = 768
+        vec = np.zeros(dim, dtype=np.float32)
+        words = re.findall(r"[a-z0-9]+", text.lower())
+        counts: Dict[str, int] = {}
+        for w in words:
+            counts[w] = counts.get(w, 0) + 1
+        for w, c in counts.items():
+            idx = int(hashlib.sha256(w.encode("utf-8")).hexdigest()[:8], 16) % dim
+            vec[idx] += float(c)
+            vec[(idx * 7 + 13) % dim] += float(c) * 0.5
+        return vec
 
     def tearDown(self):
         """Clean up temporary directory."""

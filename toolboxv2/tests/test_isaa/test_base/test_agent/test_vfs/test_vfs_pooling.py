@@ -470,6 +470,32 @@ class TestRegistryLifecycle(unittest.TestCase):
 # EBENE 2 — End-to-End Integration
 # ===========================================================================
 
+def _bump_mtime(path, delta=2.0):
+    """mtime explizit vorverlegen statt sleep(): ueberwindet Dateisystem-
+    Zeitloesung (NTFS ~1s), damit der naechste Poll-Tick die Aenderung als
+    modified erkennt, auch wenn Wanduhr-Delta < Aufloesung war."""
+    st = os.stat(path)
+    os.utime(path, (st.st_atime, st.st_mtime + delta))
+
+
+def _wait_for_initial_snapshot(registry, local_path, expected_paths, timeout=5.0):
+    """Warten, bis der Watcher seinen initialen Snapshot aufgebaut hat.
+
+    Race-Sicherheit: _build_initial_snapshot() laeuft asynchron im
+    Watcher-Thread. Disk-Aenderungen zwischen subscribe() und Snapshot-Ende
+    sind dann bereits Teil des Snapshots und erzeugen KEIN created/deleted-
+    Event mehr (Flaky-Ursache auf langsamen Dateisystemen/CI).
+    """
+    abs_path = os.path.abspath(local_path)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        watcher = registry._watchers.get(abs_path)
+        if watcher is not None and all(p in watcher._snapshot for p in expected_paths):
+            return True
+        time.sleep(0.05)
+    return False
+
+
 class TestPollIntegration(unittest.TestCase):
 
     FAST_POLL = 0.3
@@ -484,6 +510,10 @@ class TestPollIntegration(unittest.TestCase):
         self.vfs.mount(self.tmp.name, vfs_path="/proj", auto_sync=True)
         # schnelleres Interval erzwingen (Watcher existiert bereits vom mount-auto-subscribe)
         self.reg.subscribe(self.tmp.name, self.vfs, poll_interval=self.FAST_POLL)
+        # Auf fertigen Initial-Snapshot warten (siehe Helper-Docstring)
+        assert _wait_for_initial_snapshot(
+            self.reg, self.tmp.name, [os.path.join(self.tmp.name, "shared.py")]
+        ), f"Initial-Snapshot nicht rechtzeitig: {self.reg.stats()}"
 
     def tearDown(self):
         try: self.vfs.unmount("/proj", save_changes=False)
@@ -510,8 +540,8 @@ class TestPollIntegration(unittest.TestCase):
         f = self.vfs.files["/proj/shared.py"]
         self.assertTrue(f.is_loaded)
 
-        time.sleep(0.15)
         _write_disk(f.local_path, "v = MODIFIED_EXTERNALLY")
+        _bump_mtime(f.local_path)
 
         invalidated = _wait_for_vfs_change(
             self.vfs,
@@ -527,8 +557,8 @@ class TestPollIntegration(unittest.TestCase):
         self.vfs.read("/proj/shared.py")
         f = self.vfs.files["/proj/shared.py"]
 
-        time.sleep(0.15)
         _write_disk(f.local_path, "v = FRESH_CONTENT")
+        _bump_mtime(f.local_path)
 
         _wait_for_vfs_change(
             self.vfs,
@@ -596,6 +626,10 @@ class TestMultiAgentSync(unittest.TestCase):
         # der das kleinere Interval übernimmt
         self.reg.subscribe(self.tmp.name, self.vfs_a, poll_interval=self.FAST_POLL)
         self.reg.subscribe(self.tmp.name, self.vfs_b, poll_interval=self.FAST_POLL)
+        # Auf fertigen Initial-Snapshot warten (siehe Helper-Docstring)
+        assert _wait_for_initial_snapshot(
+            self.reg, self.tmp.name, [os.path.join(self.tmp.name, "shared.py")]
+        ), f"Initial-Snapshot nicht rechtzeitig: {self.reg.stats()}"
 
     def tearDown(self):
         try: self.vfs_a.unmount("/proj", save_changes=False)
@@ -642,8 +676,9 @@ class TestMultiAgentSync(unittest.TestCase):
         )
         self.assertIn("/proj/a_1.py", self.vfs_b.files)
 
-        time.sleep(0.15)   # mtime-Differenz
         self.vfs_b.write("/proj/a_1.py", "v = B_WROTE")
+        # mtime deterministisch ueber die Dateisystem-Aufloesung heben
+        _bump_mtime(self.vfs_b.files["/proj/a_1.py"].local_path)
 
         _wait_for_vfs_change(
             self.vfs_a,

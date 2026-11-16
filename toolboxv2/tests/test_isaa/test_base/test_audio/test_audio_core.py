@@ -495,7 +495,14 @@ class TestAudioStreamPlayer(unittest.IsolatedAsyncioTestCase):
             await sp.start()
             for t in texts:
                 await sp.queue_text(t)
-            await asyncio.sleep(0.5)
+            # Auf vollstaendige Abarbeitung warten statt festes sleep: Unter
+            # Last ist der Worker evtl. noch nicht fertig -> Reihenfolge-Assert
+            # sah unvollstaendige Listen (flaky). Bedingungsbasiert + Timeout.
+            deadline = asyncio.get_event_loop().time() + 5.0
+            while null.get_received_texts() != texts:
+                if asyncio.get_event_loop().time() >= deadline:
+                    break
+                await asyncio.sleep(0.05)
             await sp.stop()
 
         received = null.get_received_texts()
