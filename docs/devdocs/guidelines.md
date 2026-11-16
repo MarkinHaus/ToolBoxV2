@@ -266,3 +266,19 @@ Ein Modul ist erst "Production Ready", wenn:
 - [ ] **Registration:** Das `export = get_app(...).tb` Pattern wird genutzt.
 - [ ] **Integrity:** `__slots__` verwendet und Atomic Writes implementiert.
 - [ ] **Compatibility:** `REQUIRED_DEPS` definiert.
+
+---
+
+## Environment-Regel: Genau eine `.env` (R1)
+
+**Kein Test, sondern Entwicklungsregel.** Gilt für jeden Contributor und jeden Agenten-Run:
+
+- Es existiert **genau eine** `.env` pro Installation (Pfad ueber `env_file()`), geladen
+  **ausschliesslich** in `toolboxv2/__init__.py`.
+- **NIEMALS** eine zweite `.env` anlegen - auch nicht "mal eben" mit Werten, die sich
+  dann widersprechen (historischer Vorfall: Run loeste Config-Chaos durch Zweit-.env).
+- **NIEMALS** `load_dotenv()` ohne Argument (pfadlos) - laedt je nach CWD falsche Dateien.
+- Config-Werte gehoeren in die **bestehende** `.env` (ueber die `env_file`-Schnittstelle),
+  nie in Zweitdateien.
+- Es gibt bewusst **keinen** Repo-Scan-Test dafuer (`rglob("*.py")` ueber den Baum haengt
+  unter Windows). Review/PR prueft die Regel; ein Verstoss ist ein Bug.

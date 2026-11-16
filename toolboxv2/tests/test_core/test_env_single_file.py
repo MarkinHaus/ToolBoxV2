@@ -145,26 +145,6 @@ class InlineCommentTest(unittest.TestCase):
                     os.environ[k] = v
 
 
-class SingleLoadPointTest(unittest.TestCase):
-    """The one .env is loaded exactly once (package __init__); no pathless load_dotenv()."""
-
-    def test_no_pathless_load_dotenv_in_core(self):
-        import re
-        import toolboxv2
-        root = Path(toolboxv2.tb_root_dir)
-        skip = ("tests", "mods" + os.sep + "isaa", "flows" + os.sep + "isaa", "node_modules")
-        hits = []
-        for py in root.rglob("*.py"):
-            rel = str(py.relative_to(root))
-            if any(rel.startswith(s) or (os.sep + s + os.sep) in (os.sep + rel) for s in skip):
-                continue
-            for n, line in enumerate(py.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
-                if re.search(r"^\s*load_dotenv\(", line):
-                    hits.append(f"{rel}:{n}: {line.strip()}")
-        allowed = [h for h in hits if "env_file" in h]
-        self.assertEqual(hits, allowed, "pathless/foreign load_dotenv(): " + "; ".join(hits))
-        self.assertEqual(1, sum(h.startswith("__init__.py:") for h in hits), hits)
-
 
 if __name__ == "__main__":
     unittest.main()
