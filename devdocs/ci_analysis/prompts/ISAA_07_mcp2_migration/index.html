@@ -1,0 +1,3527 @@
+
+<!doctype html>
+<html lang="de" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Modulares Python-Framework für Tools, Funktionen und komplette Anwendungen.">
+      
+      
+      
+        <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/devdocs/ci_analysis/prompts/ISAA_07_mcp2_migration/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>ISAA-Auftrag 07 – Migration auf mcp 2 (Server, ISAA-Client, FlowAgent) - ToolBoxV2 Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=IBM+Plex+Sans:300,300i,400,400i,700,700i%7CIBM+Plex+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"IBM Plex Sans";--md-code-font:"IBM Plex Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../../../assets/stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#isaa-auftrag-07-migration-auf-mcp-2-server-isaa-client-flowagent" class="md-skip">
+          Zum Inhalt
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Kopfzeile">
+    <a href="../../../.." title="ToolBoxV2 Docs" class="md-header__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ToolBoxV2 Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ISAA-Auftrag 07 – Migration auf mcp 2 (Server, ISAA-Client, FlowAgent)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Suche" placeholder="Suche" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Suche">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Zurücksetzen" aria-label="Zurücksetzen" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Suche wird initialisiert
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Zum Repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    MarkinHaus/ToolBoxV2
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Hauptnavigation" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../../foundations/onboarding/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../../services/cli/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../../mods/isaa/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  ISAA
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../../mods/CloudM/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  CloudM
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../../runtime/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Runtime
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../../storage/ref_database/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Storage
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../../frontend/tbjs/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Frontend
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../../registry/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Infrastructure
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../../reference/toolboxv2/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../../.." title="ToolBoxV2 Docs" class="md-nav__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ToolBoxV2 Docs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Zum Repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    MarkinHaus/ToolBoxV2
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../foundations/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../foundations/first_run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run & Profile
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLIs & Flows
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CLIs & Flows
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../services/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../flows/icli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    icli
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../flows/minicli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MiniCLI & Macros
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../flows/chain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chains (Flows)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../flows/adaptive_prompt_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adaptive Prompt System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Module Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../guidelines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coding Guidelines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../mod_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mod Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../docs_toolchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docs Toolchain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../mods/isaa/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ISAA
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ISAA
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../mods/isaa/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../mods/isaa/agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents (FlowAgent)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../mods/isaa/chains/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chains
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../mods/isaa/jobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../mods/isaa/reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Full Reference (legacy)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../mods/CloudM/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CloudM
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CloudM
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../mods/CloudM/user_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../mods/CloudM/developer_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../mods/CloudM/auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Auth System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../mods/CloudM/login_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Login System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../mods/CloudM/user_data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../mods/CloudM/mod_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mod Manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../mods/CloudM/folder_sync/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Folder Sync
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../mods/CloudM/dashboards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dashboards
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../runtime/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runtime
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../runtime/workers_core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workers (Core)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../runtime/service_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ServiceManager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../runtime/config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../runtime/server_worker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Server Worker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../runtime/fast_tb_handler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FastTB Handler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../runtime/fasttb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FastTB
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../runtime/session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../runtime/session_custom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Custom Sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../runtime/event_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Event Manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../runtime/ws_bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WS Bridge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../runtime/toolbox_integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Toolbox Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../runtime/tauri_integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tauri Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../runtime/debug_runner/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debug Runner
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Storage
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../storage/ref_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database Modes (LC/LR/RR/CB)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../storage/ref_blobdb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    BlobDB & Offline Fallback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../storage/blob_sharing_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blob Sharing API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../storage/blob_watch_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blob Watch API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Frontend
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Frontend
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../frontend/tbjs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    tbjs Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../frontend/tauri/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tauri App Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../frontend/p2p_rpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P2P RPC Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../frontend/tb_browser/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    tb_browser Extension
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../../registry/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Infrastructure
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Infrastructure
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../registry/USER_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — User Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../registry/DEVELOPERS_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — Developers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../registry/CONTRIBUTORS_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — Contributors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../registry/API_REFERENCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../llm_gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM Gateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../reference/toolboxv2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    toolboxv2 Core API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../reference/logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging & Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../reference/changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Inhaltsverzeichnis">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Inhaltsverzeichnis
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#0-rahmen-gilt-fur-dich-und-fur-die-anderen-instanzen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0. Rahmen – gilt für dich und für die anderen Instanzen
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0. Rahmen – gilt für dich und für die anderen Instanzen">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#01-eigene-arbeitskopie-anlegen-einmal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1 Eigene Arbeitskopie anlegen (einmal)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#02-regeln" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.2 Regeln
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#03-commit-und-push-nach-master" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3 Commit und Push nach master
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#04-gate-keine-neue-rote-test-id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.4 Gate: keine neue rote Test-ID
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#05-bericht" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.5 Bericht
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#besonderheit-dieses-auftrags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Besonderheit dieses Auftrags
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-deine-dateien" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Deine Dateien
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-auftrage-in-dieser-reihenfolge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Aufträge in dieser Reihenfolge
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Aufträge in dieser Reihenfolge">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fix-03-karte-k-env-02" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIX-03 – Karte K-ENV-02
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-abschluss" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Abschluss
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/MarkinHaus/ToolBoxV2/edit/master/docs/devdocs/ci_analysis/prompts/ISAA_07_mcp2_migration.md" title="Seite editieren" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="isaa-auftrag-07-migration-auf-mcp-2-server-isaa-client-flowagent">ISAA-Auftrag 07 – Migration auf mcp 2 (Server, ISAA-Client, FlowAgent)<a class="headerlink" href="#isaa-auftrag-07-migration-auf-mcp-2-server-isaa-client-flowagent" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>Komplexität: <strong>nach Owner-Entscheidung – mittel, 5 Dateien</strong> · Fix-Aufträge: FIX-03 · Test-IDs: 45
+Braucht keine Antwort des Owners. Unabhängig von den anderen Aufträgen (01–07); läuft parallel zu ihnen.
+Erstellt aus der WP2-CI-Analyse (Lauf 43742117802 auf <code>ebed4d6</code>, 12 Jobs; Stellen geprüft auf <code>master</code> @ <code>ed32daf</code>).</p>
+</blockquote>
+<p><strong>Du bist eine ISAA-Instanz und arbeitest diesen Auftrag selbstständig ab.</strong> <code>pyproject.toml</code> verlangt <code>mcp&gt;=1.6.0</code>, installiert wird mcp 2.x. Damit startet der ToolBoxV2-MCP-Server nicht (45 rote Tests), <code>FlowAgent.setup_mcp_server</code> meldet „MCP not available“, und der ISAA-Client sieht von einem angebundenen MCP-Server <strong>0 statt 17 Werkzeuge</strong>, ohne Fehlermeldung. Der Owner hat entschieden: <strong>auf mcp 2 migrieren</strong>. Die Migration ist auf <code>master</code> @ <code>ed32daf</code> mit mcp 2.3.0 getestet (Unit-Tests, echtes Protokoll, ISAA-Client, FlowAgent) und liegt als Patch bei.</p>
+<h2 id="0-rahmen-gilt-fur-dich-und-fur-die-anderen-instanzen">0. Rahmen – gilt für dich und für die anderen Instanzen<a class="headerlink" href="#0-rahmen-gilt-fur-dich-und-fur-die-anderen-instanzen" title="Permanent link">&para;</a></h2>
+<p>Bis zu sieben ISAA-Instanzen arbeiten gleichzeitig im Repository <code>MarkinHaus/ToolBoxV2</code>, alle direkt auf <code>master</code>, jede an <strong>anderen Dateien</strong>. Diese Datei ist dein vollständiger Auftrag; du brauchst keine weiteren Dokumente und keine Rückfragen. Die Analyse, aus der er stammt, liegt auf dem Branch <code>origin/claude/keen-goldberg-o59mt9</code> unter <code>docs/devdocs/ci_analysis/</code> (nur lesen, z. B. <code>git show origin/claude/keen-goldberg-o59mt9:docs/devdocs/ci_analysis/README.md</code>; nicht auschecken, nicht nach <code>master</code> übernehmen).</p>
+<h3 id="01-eigene-arbeitskopie-anlegen-einmal">0.1 Eigene Arbeitskopie anlegen (einmal)<a class="headerlink" href="#01-eigene-arbeitskopie-anlegen-einmal" title="Permanent link">&para;</a></h3>
+<p>Jede Instanz hat ihren eigenen Ordner (git worktree) und ihre eigene venv. Den Haupt-Checkout des Owners benutzt du nicht.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">cd </span><span class="n">C</span><span class="p">:\</span><span class="n">Users</span><span class="p">\</span><span class="n">Markin</span><span class="p">\</span><span class="n">Workspace</span><span class="p">\</span><span class="n">ISAABOX</span><span class="p">\</span><span class="n">Toolboxv2</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">git</span> <span class="n">fetch</span> <span class="n">origin</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">git</span> <span class="n">worktree</span> <span class="n">add</span> <span class="n">-B</span> <span class="n">isaa</span><span class="p">/</span><span class="n">07</span> <span class="n">C</span><span class="p">:\</span><span class="n">Users</span><span class="p">\</span><span class="n">Markin</span><span class="p">\</span><span class="n">Workspace</span><span class="p">\</span><span class="n">ISAABOX</span><span class="p">\</span><span class="n">Toolboxv2-isaa07</span> <span class="n">origin</span><span class="p">/</span><span class="n">master</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nb">cd </span><span class="n">C</span><span class="p">:\</span><span class="n">Users</span><span class="p">\</span><span class="n">Markin</span><span class="p">\</span><span class="n">Workspace</span><span class="p">\</span><span class="n">ISAABOX</span><span class="p">\</span><span class="n">Toolboxv2-isaa07</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">uv</span> <span class="n">venv</span> <span class="n">-p</span> <span class="n">3</span><span class="p">.</span><span class="n">12</span> <span class="p">.</span><span class="n">venv</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">.\.</span><span class="n">venv</span><span class="p">\</span><span class="n">Scripts</span><span class="p">\</span><span class="n">Activate</span><span class="p">.</span><span class="n">ps1</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">uv</span> <span class="n">pip</span> <span class="n">install</span> <span class="n">pytest</span> <span class="n">pytest-asyncio</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">uv</span> <span class="n">pip</span> <span class="n">install</span> <span class="n">-e</span> <span class="n">toolboxv2</span><span class="p">/</span><span class="n">mods</span><span class="p">/</span><span class="n">isaa</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="n">uv</span> <span class="n">pip</span> <span class="n">install</span> <span class="n">-e</span> <span class="p">.</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="nv">$env:MOCK_EXTERNAL_SERVICES</span> <span class="p">=</span> <span class="s2">"true"</span><span class="p">;</span> <span class="nv">$env:IS_OFFLINE_DB</span> <span class="p">=</span> <span class="s2">"true"</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="n">python</span> <span class="n">-c</span> <span class="s2">"import toolboxv2; print(toolboxv2.__file__)"</span>   <span class="c"># muss in C:\Users\Markin\Workspace\ISAABOX\Toolboxv2-isaa07 liegen</span>
+</code></pre></div>
+<p><code>.venv</code> und <code>.venv310</code> stehen in <code>.gitignore</code> bzw. werden nie committet. In jeder neuen Shell: venv aktivieren und die zwei Umgebungsvariablen setzen.</p>
+<h3 id="02-regeln">0.2 Regeln<a class="headerlink" href="#02-regeln" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Nur die Dateien aus Abschnitt 1 ändern.</strong> Jede andere Datei gehört einer anderen Instanz oder ist gesperrt.</li>
+<li><strong>Kein Grün durch Wegsehen:</strong> kein <code>skip</code>, <code>skipIf</code>, <code>xfail</code>, <code>importorskip</code>, kein <code>continue-on-error</code>, kein <code>|| true</code>, keinen Test löschen, keine Assertion abschwächen, keinen Erwartungswert auf den Ist-Wert setzen, ohne dass der Auftrag es sagt.</li>
+<li><strong>Ein Commit je Fix-Auftrag.</strong> Dateien einzeln hinzufügen (<code>git add &lt;pfad&gt; &lt;pfad&gt;</code>), nie <code>git add -A</code>, <code>git add .</code> oder <code>git commit -a</code>. Vor jedem Commit <code>git status --short</code> ansehen: nur deine Dateien. Nie committen: <code>.venv*</code>, <code>docs/.docs_index.json</code>, Test-Artefakte, Logs.</li>
+<li><strong>Kein <code>--force</code>, kein <code>--no-verify</code>, keine Merge-Commits auf <code>master</code>, kein Umschreiben fremder Commits.</strong></li>
+<li><strong>Owner-Umgebung schützen:</strong> Ports 8467 und 8468 nicht belegen, wenn die Owner-Instanz läuft; keine fremden Prozesse beenden; keine Daten unter dem Haupt-Checkout oder im Benutzerprofil löschen. Keine Geheimnisse (API-Schlüssel, Tokens) in Dateien, Commits oder den Bericht.</li>
+<li><strong>Stoppen und melden</strong>, statt weiterzumachen, wenn: die Abnahme rot bleibt; eine Datei außerhalb deiner Liste geändert werden müsste; <code>git rebase</code> einen Konflikt meldet; der Code an der genannten Stelle anders aussieht als im Auftrag beschrieben. Dann <code>git rebase --abort</code> bzw. Änderung zurücksetzen (<code>git checkout -- &lt;pfad&gt;</code>), den Auftrag als „gestoppt“ in den Bericht, weiter mit dem nächsten Auftrag.</li>
+</ol>
+<h3 id="03-commit-und-push-nach-master">0.3 Commit und Push nach <code>master</code><a class="headerlink" href="#03-commit-und-push-nach-master" title="Permanent link">&para;</a></h3>
+<p>Commit-Nachricht: erste Zeile <code>FIX-NN (Karte): kurze Beschreibung</code>, darunter <code>WP2-Analyse, Karte &lt;Karte&gt;.</code> und die letzte Zeile der Abnahme-Ausgabe.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">git</span> <span class="n">fetch</span> <span class="n">origin</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">git</span> <span class="n">rebase</span> <span class="n">origin</span><span class="p">/</span><span class="n">master</span>          <span class="c"># holt die Commits der anderen Instanzen unter deinen Commit</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="c"># Gate-Check (0.4) erneut laufen lassen, wenn der Rebase fremde Commits gebracht hat</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">git</span> <span class="n">push</span> <span class="n">origin</span> <span class="n">HEAD</span><span class="p">:</span><span class="n">master</span>
+</code></pre></div>
+<p>Wird der Push abgelehnt (<code>non-fast-forward</code>): die drei Schritte wiederholen, höchstens dreimal. Danach melden.</p>
+<h3 id="04-gate-keine-neue-rote-test-id">0.4 Gate: keine neue rote Test-ID<a class="headerlink" href="#04-gate-keine-neue-rote-test-id" title="Permanent link">&para;</a></h3>
+<p>Lege dieses Skript <strong>außerhalb</strong> des Repos ab, als <code>C:\Users\Markin\Workspace\ISAABOX\tb_gate.py</code> (einmal; alle Instanzen nutzen dieselbe Datei):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># tb_gate.py - Baseline/Check fuer rote Test-IDs (WP2). Liegt AUSSERHALB des Repos.</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">json</span><span class="o">,</span><span class="w"> </span><span class="nn">os</span><span class="o">,</span><span class="w"> </span><span class="nn">re</span><span class="o">,</span><span class="w"> </span><span class="nn">subprocess</span><span class="o">,</span><span class="w"> </span><span class="nn">sys</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="n">paths</span><span class="p">):</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">env</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">,</span> <span class="n">MOCK_EXTERNAL_SERVICES</span><span class="o">=</span><span class="s2">"true"</span><span class="p">,</span> <span class="n">IS_OFFLINE_DB</span><span class="o">=</span><span class="s2">"true"</span><span class="p">)</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">cmd</span> <span class="o">=</span> <span class="p">[</span><span class="n">sys</span><span class="o">.</span><span class="n">executable</span><span class="p">,</span> <span class="s2">"-m"</span><span class="p">,</span> <span class="s2">"pytest"</span><span class="p">,</span> <span class="o">*</span><span class="n">paths</span><span class="p">,</span> <span class="s2">"-q"</span><span class="p">,</span> <span class="s2">"-rfE"</span><span class="p">,</span> <span class="s2">"--tb=no"</span><span class="p">,</span> <span class="s2">"-p"</span><span class="p">,</span> <span class="s2">"no:cacheprovider"</span><span class="p">]</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">out</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="n">env</span><span class="o">=</span><span class="n">env</span><span class="p">,</span> <span class="n">capture_output</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">,</span> <span class="n">errors</span><span class="o">=</span><span class="s2">"replace"</span><span class="p">)</span><span class="o">.</span><span class="n">stdout</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">red</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">({</span><span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">"</span><span class="se">\\</span><span class="s2">"</span><span class="p">,</span> <span class="s2">"/"</span><span class="p">)</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">re</span><span class="o">.</span><span class="n">finditer</span><span class="p">(</span><span class="sa">r</span><span class="s2">"^(FAILED|ERROR) (\S+)"</span><span class="p">,</span> <span class="n">out</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">M</span><span class="p">)})</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">summ</span> <span class="o">=</span> <span class="p">[</span><span class="n">l</span> <span class="k">for</span> <span class="n">l</span> <span class="ow">in</span> <span class="n">out</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span> <span class="k">if</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">"\d+ (passed|failed|error)"</span><span class="p">,</span> <span class="n">l</span><span class="p">)]</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="k">return</span> <span class="n">red</span><span class="p">,</span> <span class="p">(</span><span class="n">summ</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="k">if</span> <span class="n">summ</span> <span class="k">else</span> <span class="n">out</span><span class="p">[</span><span class="o">-</span><span class="mi">400</span><span class="p">:])</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="n">mode</span><span class="p">,</span> <span class="n">file</span><span class="p">,</span> <span class="n">paths</span> <span class="o">=</span> <span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">3</span><span class="p">:]</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="n">red</span><span class="p">,</span> <span class="n">summ</span> <span class="o">=</span> <span class="n">run</span><span class="p">(</span><span class="n">paths</span><span class="p">)</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="nb">print</span><span class="p">(</span><span class="n">summ</span><span class="p">)</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="k">if</span> <span class="n">mode</span> <span class="o">==</span> <span class="s2">"baseline"</span><span class="p">:</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>    <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">red</span><span class="p">,</span> <span class="nb">open</span><span class="p">(</span><span class="n">file</span><span class="p">,</span> <span class="s2">"w"</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">),</span> <span class="n">indent</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">"Baseline gespeichert:"</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">red</span><span class="p">),</span> <span class="s2">"rote IDs -&gt;"</span><span class="p">,</span> <span class="n">file</span><span class="p">)</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="n">base</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="n">file</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">)))</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="n">new</span> <span class="o">=</span> <span class="p">[</span><span class="n">t</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">red</span> <span class="k">if</span> <span class="n">t</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">base</span><span class="p">]</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="n">gone</span> <span class="o">=</span> <span class="p">[</span><span class="n">t</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">base</span><span class="p">)</span> <span class="k">if</span> <span class="n">t</span> <span class="ow">not</span> <span class="ow">in</span> <span class="nb">set</span><span class="p">(</span><span class="n">red</span><span class="p">)]</span>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"rot: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">red</span><span class="p">)</span><span class="si">}</span><span class="s2"> | gruen geworden: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">gone</span><span class="p">)</span><span class="si">}</span><span class="s2"> | NEU rot: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">new</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">new</span><span class="p">:</span>
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">"  NEU:"</span><span class="p">,</span> <span class="n">t</span><span class="p">)</span>
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span> <span class="k">if</span> <span class="n">new</span> <span class="k">else</span> <span class="mi">0</span><span class="p">)</span>
+</code></pre></div>
+<p>Dein Gate-Bereich:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nv">$GATE</span> <span class="p">=</span> <span class="p">@(</span><span class="s1">'toolboxv2/tests/test_isaa/test_mcp'</span><span class="p">,</span> <span class="s1">'toolboxv2/tests/test_mini/test_system/feature_tests_progressive.py'</span><span class="p">,</span> <span class="s1">'toolboxv2/tests/test_isaa/test_base/test_agent/test_flow_agent_class.py'</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>Vor der ersten Änderung</strong> einmal die Baseline schreiben, <strong>nach jedem Fix</strong> den Check:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">python</span> <span class="n">C</span><span class="p">:\</span><span class="n">Users</span><span class="p">\</span><span class="n">Markin</span><span class="p">\</span><span class="n">Workspace</span><span class="p">\</span><span class="n">ISAABOX</span><span class="p">\</span><span class="n">tb_gate</span><span class="p">.</span><span class="n">py</span> <span class="n">baseline</span> <span class="n">C</span><span class="p">:\</span><span class="n">Users</span><span class="p">\</span><span class="n">Markin</span><span class="p">\</span><span class="n">Workspace</span><span class="p">\</span><span class="n">ISAABOX</span><span class="p">\</span><span class="n">isaa07_baseline</span><span class="p">.</span><span class="n">json</span> <span class="nv">@GATE</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">python</span> <span class="n">C</span><span class="p">:\</span><span class="n">Users</span><span class="p">\</span><span class="n">Markin</span><span class="p">\</span><span class="n">Workspace</span><span class="p">\</span><span class="n">ISAABOX</span><span class="p">\</span><span class="n">tb_gate</span><span class="p">.</span><span class="n">py</span> <span class="n">check</span>    <span class="n">C</span><span class="p">:\</span><span class="n">Users</span><span class="p">\</span><span class="n">Markin</span><span class="p">\</span><span class="n">Workspace</span><span class="p">\</span><span class="n">ISAABOX</span><span class="p">\</span><span class="n">isaa07_baseline</span><span class="p">.</span><span class="n">json</span> <span class="nv">@GATE</span>   <span class="c"># Exit 0 = ok, 'NEU rot: 0'</span>
+</code></pre></div>
+<p><code>NEU rot</code> muss 0 sein. Erscheint nach einem <code>git rebase</code> eine neue rote ID, prüfe, ob sie von dir kommt:</p>
+<ol>
+<li><code>git switch --detach origin/master</code>, dann den Check erneut.</li>
+<li>Auch dort rot → Ursache ist ein fremder Commit: ID im Bericht unter „fremd“ notieren, dort (auf <code>origin/master</code>) die Baseline neu schreiben, <code>git switch isaa/07</code>, weiterarbeiten.</li>
+<li>Dort grün → Ursache bist du: <code>git switch isaa/07</code>, nicht pushen, Fehler suchen oder Fix zurücknehmen.</li>
+</ol>
+<h3 id="05-bericht">0.5 Bericht<a class="headerlink" href="#05-bericht" title="Permanent link">&para;</a></h3>
+<p>Am Ende schreibst du <code>C:\Users\Markin\Workspace\ISAABOX\isaa07_bericht.md</code> (außerhalb des Repos) und gibst denselben Text als Antwort aus:</p>
+<table>
+<thead>
+<tr>
+<th>Fix</th>
+<th>Ergebnis (<code>erledigt</code> / <code>gestoppt</code> / <code>nur CI prüfbar</code>)</th>
+<th>Commit</th>
+<th>Abnahme (letzte Zeile, wörtlich)</th>
+<th>grün gewordene IDs</th>
+<th>Bemerkung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Darunter: neue rote IDs (sollte leer sein), rote IDs aus fremden Commits, alles, was du gefunden, aber nicht geändert hast.</p>
+<h2 id="besonderheit-dieses-auftrags">Besonderheit dieses Auftrags<a class="headerlink" href="#besonderheit-dieses-auftrags" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>toolboxv2/mods/isaa/base/Agent/flow_agent.py</code> ändert auch Auftrag 03 (nur Zeile 3613). Du änderst <strong>nur</strong> die Zeilen 72, 429, 4518 und 4529. Git führt beides beim <code>git rebase</code> zusammen; bei Konflikt stoppen (Regel 6).</li>
+<li>Deine venv hat vor der Änderung schon mcp 2.x (weil nichts gepinnt ist). Die Baseline zeigt deshalb ~46 rote MCP-Tests – das ist der Ausgangszustand.</li>
+<li>Nach dem Push installiert die CI mcp 2.3+ (<code>mcp&gt;=2.3,&lt;3</code>).</li>
+</ul>
+<h2 id="1-deine-dateien">1. Deine Dateien<a class="headerlink" href="#1-deine-dateien" title="Permanent link">&para;</a></h2>
+<ul>
+<li>pyproject.toml (nur die mcp-Zeile im Extra <code>isaa</code>), toolboxv2/mods/isaa/pyproject.toml (nur die mcp-Zeile), toolboxv2/mcp_server/server.py, toolboxv2/mods/isaa/extras/mcp_session_manager.py, toolboxv2/mods/isaa/base/Agent/flow_agent.py (nur Zeilen 72, 429, 4518, 4529)</li>
+</ul>
+<p><strong>Gehören anderen Instanzen – nicht ändern:</strong></p>
+<ul>
+<li>Auftrag 01 (CI-Signal reparieren (Workflow-Dateien)): .github/workflows/build.yml (nur Job <code>py-check</code>); .github/workflows/release.yml (nur Jobs <code>build-windows-x64</code>, <code>build-macos-arm64</code>)</li>
+<li>Auftrag 02 (Minimale Fixes, alle vorab getestet): toolboxv2/tests/conftest.py; toolboxv2/tests/test_mini/test_system/test_session.py; toolboxv2/tests/test_clis/test_minicli_macros.py; toolboxv2/tests/test_clis/test_config_wizard.py; toolboxv2/tests/test_isaa/test_base/test_agent/test_execution_engine.py; toolboxv2/tests/test_isaa/test_base/test_embeddings.py, toolboxv2/tests/test_isaa/test_base/test_llm_router.py, toolboxv2/tests/test_isaa/test_base/test_adapters.py; toolboxv2/utils/extras/mkdocs.py; toolboxv2/mods/isaa/base/ai_semantic_memory.py; toolboxv2/tests/test_core/test_port_unification.py; toolboxv2/tests/test_core/test_tray_daemon_integration.py</li>
+<li>Auftrag 03 (VFS-Werkzeuge: Tests und Health-Check an die neue Schnittstelle): toolboxv2/mods/isaa/base/Agent/flow_agent.py (nur Zeile 3613); toolboxv2/tests/test_isaa/test_base/test_agent/test_vfs/test_vfs_v2.py, test_vfs_shell_tool.py, test_vfs_shell_bullet_proof.py, test_vfs_shared_store_edits.py; toolboxv2/tests/test_isaa/test_base/test_agent/test_agent_session_tools.py; toolboxv2/tests/test_mini/test_manifest/test_manifest_schema.py</li>
+<li>Auftrag 04 (Sporadische Tests stabilisieren): toolboxv2/tests/test_isaa/test_base/test_agent/test_vfs/test_vfs_pooling.py (nur die Klassen <code>TestPollIntegration</code> und <code>TestMultiAgentSync</code> bzw. die Tests mit festen Wartezeiten), toolboxv2/tests/test_mini/test_extras/test_analyser/test_profiler.py, toolboxv2/tests/test_mini/test_extras/test_install/test_rollback_manager.py, toolboxv2/tests/test_isaa/test_mem/test_hybrid_memory_realworld.py, toolboxv2/tests/test_isaa/test_base/test_audio/test_audio_core.py</li>
+<li>Auftrag 05 (Windows- und Python-3.10-Fehler: erst reproduzieren, dann beheben): installer.ps1 und toolboxv2/simple-core/src-tauri/installer.ps1 (müssen byte-gleich bleiben: nach jeder Änderung die eine Datei auf die andere kopieren, <code>fc.exe /b</code> muss „keine Unterschiede“ melden), scripts/verify_install_windows.ps1, toolboxv2/tests/test_core/test_installer_protocol.py, toolboxv2/tests/test_core/test_verify_install_windows.py; toolboxv2/mods/isaa/module.py (nur die Shell-Sitzung: Klasse um Zeilen 2470–2640 und <code>shell_tool_function</code> ab Zeile 2942); toolboxv2/mods/isaa/base/Agent/vfs_v2.py (<code>rmdir</code> Zeile 1473, <code>rm</code>, <code>mv</code>), toolboxv2/mods/isaa/base/patch/vfs_shell_tool.py (nur die Verzeichnisbefehle), toolboxv2/mods/CloudM/LiveSync/share_store.py; toolboxv2/tests/test_core/test_endpoint_dist_dir.py, toolboxv2/tests/test_isaa/test_codig/test_base_coder.py; toolboxv2/tests/test_isaa/test_providers/test_performance_and_limiter.py, toolboxv2/tests/test_isaa/test_base/test_agent/test_agent_performance_stability.py; toolboxv2/tests/test_core/test_job_execution_state.py; liegt die Ursache in ISAA-Produktcode unter Python 3.10 (Syntax/Typing): genau die Datei, die der Traceback nennt, sofern sie nicht in der Sperrliste von Abschnitt 1 steht – sonst stoppen und melden; toolboxv2/tests/test_mini/test_system/test_state_system.py und der Test, der die Variable hinterlässt (nur wenn er keiner anderen Instanz gehört)</li>
+<li>Auftrag 06 (Eine Sitzungsdatei je Nutzer, mit Übernahme der alten Datei): toolboxv2/utils/system/session.py; toolboxv2/tests/test_mini/test_system/test_session.py (nur Zeilen 49, 59, 80, 104); toolboxv2/tests/test_mini/test_cli_session.py (nur <code>test_long_username_truncated</code>)</li>
+<li>Außerdem gesperrt (offene Owner-Fragen oder nicht Teil der Aufträge): <code>pyproject.toml</code> und <code>toolboxv2/mods/isaa/pyproject.toml</code> außer der mcp-Zeile (Auftrag 07), <code>toolboxv2/mcp_server/models.py</code>, <code>toolboxv2/tests/test_isaa/test_mcp/test_models.py</code>, <code>toolboxv2/utils/brodcast/</code>, <code>docs/</code>.</li>
+</ul>
+<p><strong>Mit einer anderen Instanz geteilte Dateien (nur die genannten Zeilen):</strong> <code>toolboxv2/mods/isaa/base/Agent/flow_agent.py</code> – du nur die Zeilen 72, 429, 4518, 4529; Auftrag 03 nur Zeile 3613.</p>
+<h2 id="2-auftrage-in-dieser-reihenfolge">2. Aufträge in dieser Reihenfolge<a class="headerlink" href="#2-auftrage-in-dieser-reihenfolge" title="Permanent link">&para;</a></h2>
+<h3 id="fix-03-karte-k-env-02">FIX-03 – Karte K-ENV-02<a class="headerlink" href="#fix-03-karte-k-env-02" title="Permanent link">&para;</a></h3>
+<p><strong>Ursache:</strong> <code>mcp</code> ist ungepinnt (<code>mcp&gt;=1.6.0</code>); installiert wird 2.x. Dort gibt es die Dekorator-API (<code>Server.list_tools()</code> …) und <code>mcp.server.fastmcp</code> nicht mehr, und Modelle liefern Felder nur noch unter snake_case-Namen (<code>input_schema</code>, <code>uri_template</code>).</p>
+<p><strong>Beleg:</strong> <code>toolboxv2/mcp_server/server.py:84, 747-790, 804-815</code>; <code>toolboxv2/mods/isaa/base/Agent/flow_agent.py:72, 429, 4518, 4529</code> (<code>FastMCP</code>); <code>toolboxv2/mods/isaa/extras/mcp_session_manager.py:306, 367, 395-397</code>; <code>pyproject.toml:189</code>, <code>toolboxv2/mods/isaa/pyproject.toml:28</code>. CI: <code>AttributeError: 'Server' object has no attribute 'list_tools'</code> (45). Unter mcp 2.3 zusätzlich: <code>No module named 'mcp.server.fastmcp'</code> und – ohne Fehlermeldung – der ISAA-Client meldet 0 statt 17 Werkzeuge eines MCP-Servers (<code>tool.inputSchema</code> wirft <code>AttributeError</code>, wird verschluckt).</p>
+<p><strong>Warum:</strong> Abhängigkeits-Drift, betrifft Nutzer genauso: der MCP-Server startet nicht, <code>FlowAgent.setup_mcp_server</code> meldet „MCP not available“, und ISAA sieht die Werkzeuge angebundener MCP-Server nicht. <strong>Owner-Entscheidung 2026-11-15: auf mcp 2 migrieren</strong> (nicht auf &lt;2 pinnen).</p>
+<blockquote>
+<p>In der Analyse getestet: Repro rot → Probe-Fix → grün, Nachbartests unverändert.</p>
+</blockquote>
+<p><strong>Dateien (nur diese):</strong> pyproject.toml (nur die mcp-Zeile im Extra <code>isaa</code>), toolboxv2/mods/isaa/pyproject.toml (nur die mcp-Zeile), toolboxv2/mcp_server/server.py, toolboxv2/mods/isaa/extras/mcp_session_manager.py, toolboxv2/mods/isaa/base/Agent/flow_agent.py (nur Zeilen 72, 429, 4518, 4529)</p>
+<p><strong>Vorher lesen:</strong> <code>server.py:78-120, 740-820</code>; <code>mcp_session_manager.py:255-420</code>; <code>flow_agent.py:66-76, 4510-4535</code></p>
+<p><strong>Repro (vor der Änderung, muss rot sein):</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pytest</span> <span class="n">toolboxv2</span><span class="p">/</span><span class="n">tests</span><span class="p">/</span><span class="n">test_isaa</span><span class="p">/</span><span class="n">test_mcp</span> <span class="n">toolboxv2</span><span class="p">/</span><span class="n">tests</span><span class="p">/</span><span class="n">test_mini</span><span class="p">/</span><span class="n">test_system</span><span class="p">/</span><span class="n">feature_tests_progressive</span><span class="p">.</span><span class="n">py</span> <span class="n">-q</span>   <span class="c"># mit mcp 2.3.0</span>
+</code></pre></div>
+<p>Erwartet (Analyse): <code>47 failed, 187 passed, 5 skipped</code> (45× <code>'Server' object has no attribute 'list_tools'</code>, 1× Port K-API-15, 1× <code>test_disk_not_mutated</code> – lokal schon vorher rot, nicht im Katalog)</p>
+<p><strong>Schritte:</strong></p>
+<ol>
+<li>Patch aus diesem Auftrag anwenden (s. „Patch“). Gelingt <code>git apply --check</code> nicht, die Änderungen von Hand nach dem Patch machen – er ist die Vorlage.</li>
+<li>venv neu installieren, damit mcp 2 drin ist: <code>uv pip install -e toolboxv2/mods/isaa</code> und <code>uv pip install -e .</code>; dann <code>python -c "import importlib.metadata as m; print(m.version('mcp'))"</code> → 2.3 oder höher.</li>
+<li>Das Prüfskript aus „Zusätzliche Abnahme“ ausführen (prüft Protokoll, ISAA-Client und FlowAgent in einem Lauf).</li>
+</ol>
+<p><strong>Nicht tun:</strong> Keine Tests ändern. <code>test_isaa/test_mcp/test_models.py</code> (Port 8791) nicht anfassen – offene Frage. Kein Kompatibilitäts-Zweig für mcp 1.x.</p>
+<p><strong>Abnahme:</strong> <code>python -m pytest toolboxv2/tests/test_isaa/test_mcp toolboxv2/tests/test_mini/test_system/feature_tests_progressive.py -q</code> → höchstens 2 rot (<code>test_models.py::TestMCPConfig::test_default_values</code>, <code>feature_tests_progressive.py::TestNoSingletonBleeding::test_disk_not_mutated</code>), und das Prüfskript gibt die Zeilen 1–7 mit den Werten aus „Nachher“ aus (<code>2 tools: 17</code>, <code>6 isaa client tools: 17</code>, <code>7 flowagent: MCPServer ['agent_run'] R:hi</code>). Danach Gate-Check (0.4).</p>
+<p><strong>Patch (getestet):</strong> Speichere den Block unten als <code>C:\Users\Markin\Workspace\ISAABOX\isaa07.patch</code> (außerhalb des Repos, UTF-8; nicht mit <code>Out-File</code>/<code>&gt;</code> aus Windows PowerShell 5.1, das schreibt UTF-16). Dann im Wurzelordner deiner Arbeitskopie:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">git</span> <span class="n">fetch</span> <span class="n">origin</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">git</span> <span class="n">apply</span> <span class="p">--</span><span class="n">3way</span> <span class="p">-</span><span class="n">-check</span> <span class="n">C</span><span class="p">:\</span><span class="n">Users</span><span class="p">\</span><span class="n">Markin</span><span class="p">\</span><span class="n">Workspace</span><span class="p">\</span><span class="n">ISAABOX</span><span class="p">\</span><span class="n">isaa07</span><span class="p">.</span><span class="n">patch</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">git</span> <span class="n">apply</span> <span class="p">--</span><span class="n">3way</span> <span class="n">C</span><span class="p">:\</span><span class="n">Users</span><span class="p">\</span><span class="n">Markin</span><span class="p">\</span><span class="n">Workspace</span><span class="p">\</span><span class="n">ISAABOX</span><span class="p">\</span><span class="n">isaa07</span><span class="p">.</span><span class="n">patch</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">git</span> <span class="nb">diff </span><span class="p">-</span><span class="n">-cached</span> <span class="p">-</span><span class="n">-stat</span>     <span class="c"># --3way legt die Änderung direkt in den Index</span>
+</code></pre></div>
+<p><code>--3way</code> nutzt die Blob-IDs im Patch und funktioniert auch mit CRLF-Zeilenenden in der Arbeitskopie. Meldet es einen Konflikt, hat sich eine Stelle seit <code>ed32daf</code> geändert: <code>git checkout -- .</code> und die Änderungen von Hand nach dem Patch übertragen; passt eine Stelle inhaltlich nicht mehr, stoppen (Regel 6).</p>
+<details><summary>Patch</summary>
+
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="gh">diff --git a/pyproject.toml b/pyproject.toml</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="gh">index f42f12e..cc6d1f8 100644</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="gd">--- a/pyproject.toml</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="gi">+++ b/pyproject.toml</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="gu">@@ -186,7 +186,7 @@ isaa = [</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w"> </span>    "pypdf2&gt;=3.0.1",
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w"> </span>    "nest-asyncio&gt;=1.5.0",
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w"> </span>    "pyvis&gt;=0.3.0",
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="gd">-    "mcp&gt;=1.6.0",</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="gi">+    "mcp&gt;=2.3,&lt;3",</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w"> </span>    "tenacity&gt;=9.1.2",
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="w"> </span>    "playwright",
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="w"> </span>    "html2text&gt;=2025.4.15",
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="gh">diff --git a/toolboxv2/mcp_server/server.py b/toolboxv2/mcp_server/server.py</span>
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a><span class="gh">index 3179e01..9805891 100644</span>
+<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a><span class="gd">--- a/toolboxv2/mcp_server/server.py</span>
+<a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a><span class="gi">+++ b/toolboxv2/mcp_server/server.py</span>
+<a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a><span class="gu">@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional, Union</span>
+<a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a>
+<a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a><span class="w"> </span># MCP SDK imports
+<a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a><span class="w"> </span>from mcp.server import Server, NotificationOptions
+<a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a><span class="gd">-from mcp.server.models import InitializationOptions</span>
+<a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a><span class="w"> </span>import mcp.server.stdio
+<a id="__codelineno-7-24" name="__codelineno-7-24" href="#__codelineno-7-24"></a><span class="w"> </span>import mcp.types as types
+<a id="__codelineno-7-25" name="__codelineno-7-25" href="#__codelineno-7-25"></a><span class="w"> </span>from pydantic import AnyUrl
+<a id="__codelineno-7-26" name="__codelineno-7-26" href="#__codelineno-7-26"></a><span class="gu">@@ -81,7 +80,15 @@ class ToolBoxV2MCPServer:</span>
+<a id="__codelineno-7-27" name="__codelineno-7-27" href="#__codelineno-7-27"></a><span class="w"> </span>        self.config = config or MCPConfig()
+<a id="__codelineno-7-28" name="__codelineno-7-28" href="#__codelineno-7-28"></a>
+<a id="__codelineno-7-29" name="__codelineno-7-29" href="#__codelineno-7-29"></a><span class="w"> </span>        # MCP Server instance
+<a id="__codelineno-7-30" name="__codelineno-7-30" href="#__codelineno-7-30"></a><span class="gd">-        self.server = Server(self.config.server_name)</span>
+<a id="__codelineno-7-31" name="__codelineno-7-31" href="#__codelineno-7-31"></a><span class="gi">+        # mcp&gt;=2: handlers are passed to the constructor (no decorator API)</span>
+<a id="__codelineno-7-32" name="__codelineno-7-32" href="#__codelineno-7-32"></a><span class="gi">+        self.server = Server(</span>
+<a id="__codelineno-7-33" name="__codelineno-7-33" href="#__codelineno-7-33"></a><span class="gi">+            self.config.server_name,</span>
+<a id="__codelineno-7-34" name="__codelineno-7-34" href="#__codelineno-7-34"></a><span class="gi">+            version=self.config.server_version,</span>
+<a id="__codelineno-7-35" name="__codelineno-7-35" href="#__codelineno-7-35"></a><span class="gi">+            on_list_tools=self._on_list_tools,</span>
+<a id="__codelineno-7-36" name="__codelineno-7-36" href="#__codelineno-7-36"></a><span class="gi">+            on_list_resources=self._on_list_resources,</span>
+<a id="__codelineno-7-37" name="__codelineno-7-37" href="#__codelineno-7-37"></a><span class="gi">+            on_read_resource=self._on_read_resource,</span>
+<a id="__codelineno-7-38" name="__codelineno-7-38" href="#__codelineno-7-38"></a><span class="gi">+            on_call_tool=self._on_call_tool,</span>
+<a id="__codelineno-7-39" name="__codelineno-7-39" href="#__codelineno-7-39"></a><span class="gi">+        )</span>
+<a id="__codelineno-7-40" name="__codelineno-7-40" href="#__codelineno-7-40"></a>
+<a id="__codelineno-7-41" name="__codelineno-7-41" href="#__codelineno-7-41"></a><span class="w"> </span>        # State
+<a id="__codelineno-7-42" name="__codelineno-7-42" href="#__codelineno-7-42"></a><span class="w"> </span>        self._app: Optional[Any] = None  # ToolBoxV2 App (lazy loaded)
+<a id="__codelineno-7-43" name="__codelineno-7-43" href="#__codelineno-7-43"></a><span class="gu">@@ -742,52 +749,36 @@ class ToolBoxV2MCPServer:</span>
+<a id="__codelineno-7-44" name="__codelineno-7-44" href="#__codelineno-7-44"></a><span class="w"> </span>    # =========================================================================
+<a id="__codelineno-7-45" name="__codelineno-7-45" href="#__codelineno-7-45"></a>
+<a id="__codelineno-7-46" name="__codelineno-7-46" href="#__codelineno-7-46"></a><span class="w"> </span>    def _setup_handlers(self):
+<a id="__codelineno-7-47" name="__codelineno-7-47" href="#__codelineno-7-47"></a><span class="gd">-        """Setup MCP protocol handlers."""</span>
+<a id="__codelineno-7-48" name="__codelineno-7-48" href="#__codelineno-7-48"></a><span class="gd">-</span>
+<a id="__codelineno-7-49" name="__codelineno-7-49" href="#__codelineno-7-49"></a><span class="gd">-        @self.server.list_tools()</span>
+<a id="__codelineno-7-50" name="__codelineno-7-50" href="#__codelineno-7-50"></a><span class="gd">-        async def handle_list_tools() -&gt; List[types.Tool]:</span>
+<a id="__codelineno-7-51" name="__codelineno-7-51" href="#__codelineno-7-51"></a><span class="gd">-            """Return static tool definitions immediately (no app loading)."""</span>
+<a id="__codelineno-7-52" name="__codelineno-7-52" href="#__codelineno-7-52"></a><span class="gd">-            tools = self.get_tool_definitions()</span>
+<a id="__codelineno-7-53" name="__codelineno-7-53" href="#__codelineno-7-53"></a><span class="gd">-            return [</span>
+<a id="__codelineno-7-54" name="__codelineno-7-54" href="#__codelineno-7-54"></a><span class="gd">-                types.Tool(</span>
+<a id="__codelineno-7-55" name="__codelineno-7-55" href="#__codelineno-7-55"></a><span class="gd">-                    name=t["name"],</span>
+<a id="__codelineno-7-56" name="__codelineno-7-56" href="#__codelineno-7-56"></a><span class="gd">-                    description=t["description"],</span>
+<a id="__codelineno-7-57" name="__codelineno-7-57" href="#__codelineno-7-57"></a><span class="gd">-                    inputSchema=t["inputSchema"]</span>
+<a id="__codelineno-7-58" name="__codelineno-7-58" href="#__codelineno-7-58"></a><span class="gd">-                )</span>
+<a id="__codelineno-7-59" name="__codelineno-7-59" href="#__codelineno-7-59"></a><span class="gd">-                for t in tools</span>
+<a id="__codelineno-7-60" name="__codelineno-7-60" href="#__codelineno-7-60"></a><span class="gd">-            ]</span>
+<a id="__codelineno-7-61" name="__codelineno-7-61" href="#__codelineno-7-61"></a><span class="gd">-</span>
+<a id="__codelineno-7-62" name="__codelineno-7-62" href="#__codelineno-7-62"></a><span class="gd">-        @self.server.list_resources()</span>
+<a id="__codelineno-7-63" name="__codelineno-7-63" href="#__codelineno-7-63"></a><span class="gd">-        async def handle_list_resources() -&gt; List[types.Resource]:</span>
+<a id="__codelineno-7-64" name="__codelineno-7-64" href="#__codelineno-7-64"></a><span class="gd">-            """Return resource definitions."""</span>
+<a id="__codelineno-7-65" name="__codelineno-7-65" href="#__codelineno-7-65"></a><span class="gd">-            resources = self.get_resource_definitions()</span>
+<a id="__codelineno-7-66" name="__codelineno-7-66" href="#__codelineno-7-66"></a><span class="gd">-            return [</span>
+<a id="__codelineno-7-67" name="__codelineno-7-67" href="#__codelineno-7-67"></a><span class="gd">-                types.Resource(</span>
+<a id="__codelineno-7-68" name="__codelineno-7-68" href="#__codelineno-7-68"></a><span class="gd">-                    uri=r["uri"],</span>
+<a id="__codelineno-7-69" name="__codelineno-7-69" href="#__codelineno-7-69"></a><span class="gd">-                    name=r["name"],</span>
+<a id="__codelineno-7-70" name="__codelineno-7-70" href="#__codelineno-7-70"></a><span class="gd">-                    description=r["description"],</span>
+<a id="__codelineno-7-71" name="__codelineno-7-71" href="#__codelineno-7-71"></a><span class="gd">-                    mimeType=r["mimeType"]</span>
+<a id="__codelineno-7-72" name="__codelineno-7-72" href="#__codelineno-7-72"></a><span class="gd">-                )</span>
+<a id="__codelineno-7-73" name="__codelineno-7-73" href="#__codelineno-7-73"></a><span class="gd">-                for r in resources</span>
+<a id="__codelineno-7-74" name="__codelineno-7-74" href="#__codelineno-7-74"></a><span class="gd">-            ]</span>
+<a id="__codelineno-7-75" name="__codelineno-7-75" href="#__codelineno-7-75"></a><span class="gd">-</span>
+<a id="__codelineno-7-76" name="__codelineno-7-76" href="#__codelineno-7-76"></a><span class="gd">-        @self.server.read_resource()</span>
+<a id="__codelineno-7-77" name="__codelineno-7-77" href="#__codelineno-7-77"></a><span class="gd">-        async def handle_read_resource(uri: AnyUrl) -&gt; str:</span>
+<a id="__codelineno-7-78" name="__codelineno-7-78" href="#__codelineno-7-78"></a><span class="gd">-            """Read a resource."""</span>
+<a id="__codelineno-7-79" name="__codelineno-7-79" href="#__codelineno-7-79"></a><span class="gd">-            return await self.read_resource(str(uri))</span>
+<a id="__codelineno-7-80" name="__codelineno-7-80" href="#__codelineno-7-80"></a><span class="gd">-</span>
+<a id="__codelineno-7-81" name="__codelineno-7-81" href="#__codelineno-7-81"></a><span class="gd">-        @self.server.call_tool()</span>
+<a id="__codelineno-7-82" name="__codelineno-7-82" href="#__codelineno-7-82"></a><span class="gd">-        async def handle_call_tool(</span>
+<a id="__codelineno-7-83" name="__codelineno-7-83" href="#__codelineno-7-83"></a><span class="gd">-            name: str,</span>
+<a id="__codelineno-7-84" name="__codelineno-7-84" href="#__codelineno-7-84"></a><span class="gd">-            arguments: Dict[str, Any]</span>
+<a id="__codelineno-7-85" name="__codelineno-7-85" href="#__codelineno-7-85"></a><span class="gd">-        ) -&gt; List[types.TextContent]:</span>
+<a id="__codelineno-7-86" name="__codelineno-7-86" href="#__codelineno-7-86"></a><span class="gd">-            """Execute a tool."""</span>
+<a id="__codelineno-7-87" name="__codelineno-7-87" href="#__codelineno-7-87"></a><span class="gd">-            results = await self.call_tool(name, arguments)</span>
+<a id="__codelineno-7-88" name="__codelineno-7-88" href="#__codelineno-7-88"></a><span class="gd">-</span>
+<a id="__codelineno-7-89" name="__codelineno-7-89" href="#__codelineno-7-89"></a><span class="gd">-            return [</span>
+<a id="__codelineno-7-90" name="__codelineno-7-90" href="#__codelineno-7-90"></a><span class="gd">-                types.TextContent(type="text", text=r.content)</span>
+<a id="__codelineno-7-91" name="__codelineno-7-91" href="#__codelineno-7-91"></a><span class="gd">-                for r in results</span>
+<a id="__codelineno-7-92" name="__codelineno-7-92" href="#__codelineno-7-92"></a><span class="gd">-            ]</span>
+<a id="__codelineno-7-93" name="__codelineno-7-93" href="#__codelineno-7-93"></a><span class="gi">+        """Handlers are registered in __init__ via Server(on_...=...) (mcp&gt;=2)."""</span>
+<a id="__codelineno-7-94" name="__codelineno-7-94" href="#__codelineno-7-94"></a><span class="gi">+</span>
+<a id="__codelineno-7-95" name="__codelineno-7-95" href="#__codelineno-7-95"></a><span class="gi">+    async def _on_list_tools(self, ctx, params) -&gt; types.ListToolsResult:</span>
+<a id="__codelineno-7-96" name="__codelineno-7-96" href="#__codelineno-7-96"></a><span class="gi">+        """Return static tool definitions immediately (no app loading)."""</span>
+<a id="__codelineno-7-97" name="__codelineno-7-97" href="#__codelineno-7-97"></a><span class="gi">+        return types.ListToolsResult(tools=[</span>
+<a id="__codelineno-7-98" name="__codelineno-7-98" href="#__codelineno-7-98"></a><span class="gi">+            types.Tool(name=t["name"], description=t["description"], inputSchema=t["inputSchema"])</span>
+<a id="__codelineno-7-99" name="__codelineno-7-99" href="#__codelineno-7-99"></a><span class="gi">+            for t in self.get_tool_definitions()</span>
+<a id="__codelineno-7-100" name="__codelineno-7-100" href="#__codelineno-7-100"></a><span class="gi">+        ])</span>
+<a id="__codelineno-7-101" name="__codelineno-7-101" href="#__codelineno-7-101"></a><span class="gi">+</span>
+<a id="__codelineno-7-102" name="__codelineno-7-102" href="#__codelineno-7-102"></a><span class="gi">+    async def _on_list_resources(self, ctx, params) -&gt; types.ListResourcesResult:</span>
+<a id="__codelineno-7-103" name="__codelineno-7-103" href="#__codelineno-7-103"></a><span class="gi">+        """Return resource definitions."""</span>
+<a id="__codelineno-7-104" name="__codelineno-7-104" href="#__codelineno-7-104"></a><span class="gi">+        return types.ListResourcesResult(resources=[</span>
+<a id="__codelineno-7-105" name="__codelineno-7-105" href="#__codelineno-7-105"></a><span class="gi">+            types.Resource(uri=r["uri"], name=r["name"], description=r["description"], mimeType=r["mimeType"])</span>
+<a id="__codelineno-7-106" name="__codelineno-7-106" href="#__codelineno-7-106"></a><span class="gi">+            for r in self.get_resource_definitions()</span>
+<a id="__codelineno-7-107" name="__codelineno-7-107" href="#__codelineno-7-107"></a><span class="gi">+        ])</span>
+<a id="__codelineno-7-108" name="__codelineno-7-108" href="#__codelineno-7-108"></a><span class="gi">+</span>
+<a id="__codelineno-7-109" name="__codelineno-7-109" href="#__codelineno-7-109"></a><span class="gi">+    async def _on_read_resource(self, ctx, params) -&gt; types.ReadResourceResult:</span>
+<a id="__codelineno-7-110" name="__codelineno-7-110" href="#__codelineno-7-110"></a><span class="gi">+        """Read a resource."""</span>
+<a id="__codelineno-7-111" name="__codelineno-7-111" href="#__codelineno-7-111"></a><span class="gi">+        uri = str(params.uri)</span>
+<a id="__codelineno-7-112" name="__codelineno-7-112" href="#__codelineno-7-112"></a><span class="gi">+        text = await self.read_resource(uri)</span>
+<a id="__codelineno-7-113" name="__codelineno-7-113" href="#__codelineno-7-113"></a><span class="gi">+        mime = next((r["mimeType"] for r in self.get_resource_definitions() if r["uri"] == uri), "text/plain")</span>
+<a id="__codelineno-7-114" name="__codelineno-7-114" href="#__codelineno-7-114"></a><span class="gi">+        return types.ReadResourceResult(contents=[types.TextResourceContents(uri=uri, mimeType=mime, text=text)])</span>
+<a id="__codelineno-7-115" name="__codelineno-7-115" href="#__codelineno-7-115"></a><span class="gi">+</span>
+<a id="__codelineno-7-116" name="__codelineno-7-116" href="#__codelineno-7-116"></a><span class="gi">+    async def _on_call_tool(self, ctx, params) -&gt; types.CallToolResult:</span>
+<a id="__codelineno-7-117" name="__codelineno-7-117" href="#__codelineno-7-117"></a><span class="gi">+        """Execute a tool."""</span>
+<a id="__codelineno-7-118" name="__codelineno-7-118" href="#__codelineno-7-118"></a><span class="gi">+        results = await self.call_tool(params.name, params.arguments or {})</span>
+<a id="__codelineno-7-119" name="__codelineno-7-119" href="#__codelineno-7-119"></a><span class="gi">+        return types.CallToolResult(</span>
+<a id="__codelineno-7-120" name="__codelineno-7-120" href="#__codelineno-7-120"></a><span class="gi">+            content=[types.TextContent(type="text", text=r.content) for r in results],</span>
+<a id="__codelineno-7-121" name="__codelineno-7-121" href="#__codelineno-7-121"></a><span class="gi">+            isError=any(not r.success for r in results),</span>
+<a id="__codelineno-7-122" name="__codelineno-7-122" href="#__codelineno-7-122"></a><span class="gi">+        )</span>
+<a id="__codelineno-7-123" name="__codelineno-7-123" href="#__codelineno-7-123"></a>
+<a id="__codelineno-7-124" name="__codelineno-7-124" href="#__codelineno-7-124"></a><span class="w"> </span>    # =========================================================================
+<a id="__codelineno-7-125" name="__codelineno-7-125" href="#__codelineno-7-125"></a><span class="w"> </span>    # SERVER LIFECYCLE
+<a id="__codelineno-7-126" name="__codelineno-7-126" href="#__codelineno-7-126"></a><span class="gu">@@ -805,13 +796,8 @@ class ToolBoxV2MCPServer:</span>
+<a id="__codelineno-7-127" name="__codelineno-7-127" href="#__codelineno-7-127"></a><span class="w"> </span>                await self.server.run(
+<a id="__codelineno-7-128" name="__codelineno-7-128" href="#__codelineno-7-128"></a><span class="w"> </span>                    read_stream,
+<a id="__codelineno-7-129" name="__codelineno-7-129" href="#__codelineno-7-129"></a><span class="w"> </span>                    write_stream,
+<a id="__codelineno-7-130" name="__codelineno-7-130" href="#__codelineno-7-130"></a><span class="gd">-                    InitializationOptions(</span>
+<a id="__codelineno-7-131" name="__codelineno-7-131" href="#__codelineno-7-131"></a><span class="gd">-                        server_name=self.config.server_name,</span>
+<a id="__codelineno-7-132" name="__codelineno-7-132" href="#__codelineno-7-132"></a><span class="gd">-                        server_version=self.config.server_version,</span>
+<a id="__codelineno-7-133" name="__codelineno-7-133" href="#__codelineno-7-133"></a><span class="gd">-                        capabilities=self.server.get_capabilities(</span>
+<a id="__codelineno-7-134" name="__codelineno-7-134" href="#__codelineno-7-134"></a><span class="gd">-                            notification_options=NotificationOptions(),</span>
+<a id="__codelineno-7-135" name="__codelineno-7-135" href="#__codelineno-7-135"></a><span class="gd">-                            experimental_capabilities={}</span>
+<a id="__codelineno-7-136" name="__codelineno-7-136" href="#__codelineno-7-136"></a><span class="gd">-                        )</span>
+<a id="__codelineno-7-137" name="__codelineno-7-137" href="#__codelineno-7-137"></a><span class="gi">+                    self.server.create_initialization_options(</span>
+<a id="__codelineno-7-138" name="__codelineno-7-138" href="#__codelineno-7-138"></a><span class="gi">+                        notification_options=NotificationOptions(),</span>
+<a id="__codelineno-7-139" name="__codelineno-7-139" href="#__codelineno-7-139"></a><span class="w"> </span>                    )
+<a id="__codelineno-7-140" name="__codelineno-7-140" href="#__codelineno-7-140"></a><span class="w"> </span>                )
+<a id="__codelineno-7-141" name="__codelineno-7-141" href="#__codelineno-7-141"></a><span class="w"> </span>        finally:
+<a id="__codelineno-7-142" name="__codelineno-7-142" href="#__codelineno-7-142"></a><span class="gh">diff --git a/toolboxv2/mods/isaa/base/Agent/flow_agent.py b/toolboxv2/mods/isaa/base/Agent/flow_agent.py</span>
+<a id="__codelineno-7-143" name="__codelineno-7-143" href="#__codelineno-7-143"></a><span class="gh">index 1fe7e15..c9500ba 100644</span>
+<a id="__codelineno-7-144" name="__codelineno-7-144" href="#__codelineno-7-144"></a><span class="gd">--- a/toolboxv2/mods/isaa/base/Agent/flow_agent.py</span>
+<a id="__codelineno-7-145" name="__codelineno-7-145" href="#__codelineno-7-145"></a><span class="gi">+++ b/toolboxv2/mods/isaa/base/Agent/flow_agent.py</span>
+<a id="__codelineno-7-146" name="__codelineno-7-146" href="#__codelineno-7-146"></a><span class="gu">@@ -69,7 +69,7 @@ except ImportError:</span>
+<a id="__codelineno-7-147" name="__codelineno-7-147" href="#__codelineno-7-147"></a><span class="w"> </span>        pass
+<a id="__codelineno-7-148" name="__codelineno-7-148" href="#__codelineno-7-148"></a>
+<a id="__codelineno-7-149" name="__codelineno-7-149" href="#__codelineno-7-149"></a><span class="w"> </span>try:
+<a id="__codelineno-7-150" name="__codelineno-7-150" href="#__codelineno-7-150"></a><span class="gd">-    from mcp.server.fastmcp import FastMCP</span>
+<a id="__codelineno-7-151" name="__codelineno-7-151" href="#__codelineno-7-151"></a><span class="gi">+    from mcp.server.mcpserver import MCPServer  # mcp&gt;=2: FastMCP was renamed</span>
+<a id="__codelineno-7-152" name="__codelineno-7-152" href="#__codelineno-7-152"></a><span class="w"> </span>    MCP_AVAILABLE = True
+<a id="__codelineno-7-153" name="__codelineno-7-153" href="#__codelineno-7-153"></a><span class="w"> </span>except ImportError:
+<a id="__codelineno-7-154" name="__codelineno-7-154" href="#__codelineno-7-154"></a><span class="w"> </span>    MCP_AVAILABLE = False
+<a id="__codelineno-7-155" name="__codelineno-7-155" href="#__codelineno-7-155"></a><span class="gu">@@ -426,7 +426,7 @@ class FlowAgent:</span>
+<a id="__codelineno-7-156" name="__codelineno-7-156" href="#__codelineno-7-156"></a>
+<a id="__codelineno-7-157" name="__codelineno-7-157" href="#__codelineno-7-157"></a><span class="w"> </span>        # Servers
+<a id="__codelineno-7-158" name="__codelineno-7-158" href="#__codelineno-7-158"></a><span class="w"> </span>        self.a2a_server: A2AServer | None = None
+<a id="__codelineno-7-159" name="__codelineno-7-159" href="#__codelineno-7-159"></a><span class="gd">-        self.mcp_server: FastMCP | None = None</span>
+<a id="__codelineno-7-160" name="__codelineno-7-160" href="#__codelineno-7-160"></a><span class="gi">+        self.mcp_server: "MCPServer | None" = None</span>
+<a id="__codelineno-7-161" name="__codelineno-7-161" href="#__codelineno-7-161"></a>
+<a id="__codelineno-7-162" name="__codelineno-7-162" href="#__codelineno-7-162"></a><span class="w"> </span>        # Execution engine instance (lazy loaded)
+<a id="__codelineno-7-163" name="__codelineno-7-163" href="#__codelineno-7-163"></a><span class="w"> </span>        self._execution_engine_cache = None
+<a id="__codelineno-7-164" name="__codelineno-7-164" href="#__codelineno-7-164"></a><span class="gu">@@ -4515,7 +4515,7 @@ class FlowAgent:</span>
+<a id="__codelineno-7-165" name="__codelineno-7-165" href="#__codelineno-7-165"></a>
+<a id="__codelineno-7-166" name="__codelineno-7-166" href="#__codelineno-7-166"></a><span class="w"> </span>    def setup_mcp_server(self, name: str | None = None):
+<a id="__codelineno-7-167" name="__codelineno-7-167" href="#__codelineno-7-167"></a><span class="w"> </span>        try:
+<a id="__codelineno-7-168" name="__codelineno-7-168" href="#__codelineno-7-168"></a><span class="gd">-            from mcp.server.fastmcp import FastMCP</span>
+<a id="__codelineno-7-169" name="__codelineno-7-169" href="#__codelineno-7-169"></a><span class="gi">+            from mcp.server.mcpserver import MCPServer  # mcp&gt;=2: FastMCP was renamed</span>
+<a id="__codelineno-7-170" name="__codelineno-7-170" href="#__codelineno-7-170"></a>
+<a id="__codelineno-7-171" name="__codelineno-7-171" href="#__codelineno-7-171"></a><span class="w"> </span>            MCP_AVAILABLE = True
+<a id="__codelineno-7-172" name="__codelineno-7-172" href="#__codelineno-7-172"></a><span class="w"> </span>        except ImportError:
+<a id="__codelineno-7-173" name="__codelineno-7-173" href="#__codelineno-7-173"></a><span class="gu">@@ -4526,7 +4526,7 @@ class FlowAgent:</span>
+<a id="__codelineno-7-174" name="__codelineno-7-174" href="#__codelineno-7-174"></a><span class="w"> </span>            return
+<a id="__codelineno-7-175" name="__codelineno-7-175" href="#__codelineno-7-175"></a>
+<a id="__codelineno-7-176" name="__codelineno-7-176" href="#__codelineno-7-176"></a><span class="w"> </span>        server_name = name or f"{self.amd.name}_MCP"
+<a id="__codelineno-7-177" name="__codelineno-7-177" href="#__codelineno-7-177"></a><span class="gd">-        self.mcp_server = FastMCP(server_name)</span>
+<a id="__codelineno-7-178" name="__codelineno-7-178" href="#__codelineno-7-178"></a><span class="gi">+        self.mcp_server = MCPServer(server_name)</span>
+<a id="__codelineno-7-179" name="__codelineno-7-179" href="#__codelineno-7-179"></a>
+<a id="__codelineno-7-180" name="__codelineno-7-180" href="#__codelineno-7-180"></a><span class="w"> </span>        @self.mcp_server.tool()
+<a id="__codelineno-7-181" name="__codelineno-7-181" href="#__codelineno-7-181"></a><span class="w"> </span>        async def agent_run(query: str, session_id: str = "mcp_session") -&gt; str:
+<a id="__codelineno-7-182" name="__codelineno-7-182" href="#__codelineno-7-182"></a><span class="gh">diff --git a/toolboxv2/mods/isaa/extras/mcp_session_manager.py b/toolboxv2/mods/isaa/extras/mcp_session_manager.py</span>
+<a id="__codelineno-7-183" name="__codelineno-7-183" href="#__codelineno-7-183"></a><span class="gh">index d52c501..9cd234a 100644</span>
+<a id="__codelineno-7-184" name="__codelineno-7-184" href="#__codelineno-7-184"></a><span class="gd">--- a/toolboxv2/mods/isaa/extras/mcp_session_manager.py</span>
+<a id="__codelineno-7-185" name="__codelineno-7-185" href="#__codelineno-7-185"></a><span class="gi">+++ b/toolboxv2/mods/isaa/extras/mcp_session_manager.py</span>
+<a id="__codelineno-7-186" name="__codelineno-7-186" href="#__codelineno-7-186"></a><span class="gu">@@ -302,7 +302,7 @@ class MCPSessionManager:</span>
+<a id="__codelineno-7-187" name="__codelineno-7-187" href="#__codelineno-7-187"></a><span class="w"> </span>    async def _create_http_session(self, server_name: str, server_config: dict[str, Any]) -&gt; ClientSession | None:
+<a id="__codelineno-7-188" name="__codelineno-7-188" href="#__codelineno-7-188"></a><span class="w"> </span>        """Create HTTP MCP session with timeout"""
+<a id="__codelineno-7-189" name="__codelineno-7-189" href="#__codelineno-7-189"></a><span class="w"> </span>        try:
+<a id="__codelineno-7-190" name="__codelineno-7-190" href="#__codelineno-7-190"></a><span class="gd">-            import httpx</span>
+<a id="__codelineno-7-191" name="__codelineno-7-191" href="#__codelineno-7-191"></a><span class="gi">+            import httpx2 as httpx  # mcp&gt;=2 transports take an httpx2.AsyncClient</span>
+<a id="__codelineno-7-192" name="__codelineno-7-192" href="#__codelineno-7-192"></a><span class="w"> </span>            from mcp.client.streamable_http import streamable_http_client
+<a id="__codelineno-7-193" name="__codelineno-7-193" href="#__codelineno-7-193"></a>
+<a id="__codelineno-7-194" name="__codelineno-7-194" href="#__codelineno-7-194"></a><span class="w"> </span>            url = server_config.get("url", f"http://localhost:{server_config.get('port', 8000)}/mcp")
+<a id="__codelineno-7-195" name="__codelineno-7-195" href="#__codelineno-7-195"></a><span class="gu">@@ -364,7 +364,7 @@ class MCPSessionManager:</span>
+<a id="__codelineno-7-196" name="__codelineno-7-196" href="#__codelineno-7-196"></a><span class="w"> </span>                    capabilities['tools'][tool.name] = {
+<a id="__codelineno-7-197" name="__codelineno-7-197" href="#__codelineno-7-197"></a><span class="w"> </span>                        'name': tool.name,
+<a id="__codelineno-7-198" name="__codelineno-7-198" href="#__codelineno-7-198"></a><span class="w"> </span>                        'description': tool.description or '',
+<a id="__codelineno-7-199" name="__codelineno-7-199" href="#__codelineno-7-199"></a><span class="gd">-                        'input_schema': tool.inputSchema,</span>
+<a id="__codelineno-7-200" name="__codelineno-7-200" href="#__codelineno-7-200"></a><span class="gi">+                        'input_schema': tool.input_schema,</span>
+<a id="__codelineno-7-201" name="__codelineno-7-201" href="#__codelineno-7-201"></a><span class="w"> </span>                        'output_schema': getattr(tool, 'outputSchema', None),
+<a id="__codelineno-7-202" name="__codelineno-7-202" href="#__codelineno-7-202"></a><span class="w"> </span>                        'display_name': getattr(tool, 'title', tool.name)
+<a id="__codelineno-7-203" name="__codelineno-7-203" href="#__codelineno-7-203"></a><span class="w"> </span>                    }
+<a id="__codelineno-7-204" name="__codelineno-7-204" href="#__codelineno-7-204"></a><span class="gu">@@ -392,9 +392,9 @@ class MCPSessionManager:</span>
+<a id="__codelineno-7-205" name="__codelineno-7-205" href="#__codelineno-7-205"></a><span class="w"> </span>            try:
+<a id="__codelineno-7-206" name="__codelineno-7-206" href="#__codelineno-7-206"></a><span class="w"> </span>                templates_response = await asyncio.wait_for(session.list_resource_templates(), timeout=3.0)
+<a id="__codelineno-7-207" name="__codelineno-7-207" href="#__codelineno-7-207"></a><span class="w"> </span>                for template in templates_response.resourceTemplates:
+<a id="__codelineno-7-208" name="__codelineno-7-208" href="#__codelineno-7-208"></a><span class="gd">-                    capabilities['resource_templates'][template.uriTemplate] = {</span>
+<a id="__codelineno-7-209" name="__codelineno-7-209" href="#__codelineno-7-209"></a><span class="gd">-                        'uri_template': template.uriTemplate,</span>
+<a id="__codelineno-7-210" name="__codelineno-7-210" href="#__codelineno-7-210"></a><span class="gd">-                        'name': template.name or template.uriTemplate,</span>
+<a id="__codelineno-7-211" name="__codelineno-7-211" href="#__codelineno-7-211"></a><span class="gi">+                    capabilities['resource_templates'][template.uri_template] = {</span>
+<a id="__codelineno-7-212" name="__codelineno-7-212" href="#__codelineno-7-212"></a><span class="gi">+                        'uri_template': template.uri_template,</span>
+<a id="__codelineno-7-213" name="__codelineno-7-213" href="#__codelineno-7-213"></a><span class="gi">+                        'name': template.name or template.uri_template,</span>
+<a id="__codelineno-7-214" name="__codelineno-7-214" href="#__codelineno-7-214"></a><span class="w"> </span>                        'description': template.description or ''
+<a id="__codelineno-7-215" name="__codelineno-7-215" href="#__codelineno-7-215"></a><span class="w"> </span>                    }
+<a id="__codelineno-7-216" name="__codelineno-7-216" href="#__codelineno-7-216"></a><span class="w"> </span>            except TimeoutError:
+<a id="__codelineno-7-217" name="__codelineno-7-217" href="#__codelineno-7-217"></a><span class="gh">diff --git a/toolboxv2/mods/isaa/pyproject.toml b/toolboxv2/mods/isaa/pyproject.toml</span>
+<a id="__codelineno-7-218" name="__codelineno-7-218" href="#__codelineno-7-218"></a><span class="gh">index b1be63a..d086da2 100644</span>
+<a id="__codelineno-7-219" name="__codelineno-7-219" href="#__codelineno-7-219"></a><span class="gd">--- a/toolboxv2/mods/isaa/pyproject.toml</span>
+<a id="__codelineno-7-220" name="__codelineno-7-220" href="#__codelineno-7-220"></a><span class="gi">+++ b/toolboxv2/mods/isaa/pyproject.toml</span>
+<a id="__codelineno-7-221" name="__codelineno-7-221" href="#__codelineno-7-221"></a><span class="gu">@@ -25,7 +25,7 @@ dependencies = [</span>
+<a id="__codelineno-7-222" name="__codelineno-7-222" href="#__codelineno-7-222"></a><span class="w"> </span>    "pyvis&gt;=0.3.0",
+<a id="__codelineno-7-223" name="__codelineno-7-223" href="#__codelineno-7-223"></a><span class="w"> </span>    "redis&gt;=5.0.0",
+<a id="__codelineno-7-224" name="__codelineno-7-224" href="#__codelineno-7-224"></a><span class="w"> </span>    # "python-a2a[all]&gt;=0.5.1",
+<a id="__codelineno-7-225" name="__codelineno-7-225" href="#__codelineno-7-225"></a><span class="gd">-    "mcp&gt;=1.6.0",</span>
+<a id="__codelineno-7-226" name="__codelineno-7-226" href="#__codelineno-7-226"></a><span class="gi">+    "mcp&gt;=2.3,&lt;3",</span>
+<a id="__codelineno-7-227" name="__codelineno-7-227" href="#__codelineno-7-227"></a><span class="w"> </span>    "google-cloud-aiplatform&gt;=1.38.0",
+<a id="__codelineno-7-228" name="__codelineno-7-228" href="#__codelineno-7-228"></a><span class="w"> </span>    "pyyaml&gt;=6.0",
+<a id="__codelineno-7-229" name="__codelineno-7-229" href="#__codelineno-7-229"></a><span class="w"> </span>    "docker&gt;=7.0.0",
+</code></pre></div>
+</details>
+
+<p><strong>Zusätzliche Abnahme (Prüfskript):</strong> Speichere den Block als <code>C:\Users\Markin\Workspace\ISAABOX\isaa07_check_mcp.py</code> und führe ihn im Wurzelordner deiner Arbeitskopie aus (venv aktiv): <code>python C:\Users\Markin\Workspace\ISAABOX\isaa07_check_mcp.py</code>. Das Skript schreibt nur in ein Temp-Verzeichnis.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="sd">"""ISAA-Auftrag 07, Abnahme: echtes MCP-Protokoll (mcp&gt;=2) gegen ToolBoxV2MCPServer,</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="sd">ISAA-Client (MCPSessionManager.extract_capabilities) und FlowAgent.setup_mcp_server.</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="sd">Start im Repo-Wurzelordner:  python &lt;pfad&gt;\\isaa07_check_mcp.py</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="sd">Schreibt nur in ein Temp-Verzeichnis."""</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span><span class="o">,</span><span class="w"> </span><span class="nn">os</span><span class="o">,</span><span class="w"> </span><span class="nn">sys</span><span class="o">,</span><span class="w"> </span><span class="nn">tempfile</span><span class="o">,</span><span class="w"> </span><span class="nn">types</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="n">TMP</span> <span class="o">=</span> <span class="n">tempfile</span><span class="o">.</span><span class="n">mkdtemp</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">"isaa07_"</span><span class="p">)</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"TB_DATA_DIR"</span><span class="p">]</span> <span class="o">=</span> <span class="n">TMP</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">"MOCK_EXTERNAL_SERVICES"</span><span class="p">,</span> <span class="s2">"true"</span><span class="p">);</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">"IS_OFFLINE_DB"</span><span class="p">,</span> <span class="s2">"true"</span><span class="p">)</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="n">sys</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">os</span><span class="o">.</span><span class="n">getcwd</span><span class="p">())</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unittest.mock</span><span class="w"> </span><span class="kn">import</span> <span class="n">Mock</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="kn">import</span><span class="w"> </span><span class="nn">anyio</span><span class="o">,</span><span class="w"> </span><span class="nn">importlib.metadata</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">md</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="kn">from</span><span class="w"> </span><span class="nn">mcp</span><span class="w"> </span><span class="kn">import</span> <span class="n">ClientSession</span>
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="kn">from</span><span class="w"> </span><span class="nn">mcp.server</span><span class="w"> </span><span class="kn">import</span> <span class="n">NotificationOptions</span>
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="kn">from</span><span class="w"> </span><span class="nn">mcp.shared.memory</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_client_server_memory_streams</span>
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mcp_server.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">MCPConfig</span>
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mcp_server.server</span><span class="w"> </span><span class="kn">import</span> <span class="n">ToolBoxV2MCPServer</span>
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="kn">import</span><span class="w"> </span><span class="nn">toolboxv2.mods.isaa.extras.mcp_session_manager</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">M</span>
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="nb">print</span><span class="p">(</span><span class="s2">"mcp version:"</span><span class="p">,</span> <span class="n">md</span><span class="o">.</span><span class="n">version</span><span class="p">(</span><span class="s2">"mcp"</span><span class="p">))</span>
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">protocol</span><span class="p">():</span>
+<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>    <span class="n">srv</span> <span class="o">=</span> <span class="n">ToolBoxV2MCPServer</span><span class="p">(</span><span class="n">MCPConfig</span><span class="p">(</span><span class="n">api_keys_file</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">TMP</span><span class="p">,</span> <span class="s2">"keys.json"</span><span class="p">)))</span>
+<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>    <span class="n">srv</span><span class="o">.</span><span class="n">_initialized</span> <span class="o">=</span> <span class="kc">True</span><span class="p">;</span> <span class="n">srv</span><span class="o">.</span><span class="n">_app</span> <span class="o">=</span> <span class="n">Mock</span><span class="p">()</span>          <span class="c1"># no app boot, like the unit tests</span>
+<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>    <span class="k">async</span> <span class="k">with</span> <span class="n">create_client_server_memory_streams</span><span class="p">()</span> <span class="k">as</span> <span class="p">(</span><span class="n">cs</span><span class="p">,</span> <span class="n">ss</span><span class="p">):</span>
+<a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>        <span class="k">async</span> <span class="k">with</span> <span class="n">anyio</span><span class="o">.</span><span class="n">create_task_group</span><span class="p">()</span> <span class="k">as</span> <span class="n">tg</span><span class="p">:</span>
+<a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a>            <span class="n">opts</span> <span class="o">=</span> <span class="n">srv</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">create_initialization_options</span><span class="p">(</span><span class="n">notification_options</span><span class="o">=</span><span class="n">NotificationOptions</span><span class="p">())</span>
+<a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a>            <span class="n">tg</span><span class="o">.</span><span class="n">start_soon</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">srv</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">ss</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">ss</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">opts</span><span class="p">))</span>
+<a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a>            <span class="k">async</span> <span class="k">with</span> <span class="n">ClientSession</span><span class="p">(</span><span class="n">cs</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">cs</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="k">as</span> <span class="n">c</span><span class="p">:</span>
+<a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a>                <span class="n">init</span> <span class="o">=</span> <span class="k">await</span> <span class="n">c</span><span class="o">.</span><span class="n">initialize</span><span class="p">()</span>
+<a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a>                <span class="nb">print</span><span class="p">(</span><span class="s2">"1 init:"</span><span class="p">,</span> <span class="n">init</span><span class="o">.</span><span class="n">server_info</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">init</span><span class="o">.</span><span class="n">server_info</span><span class="o">.</span><span class="n">version</span><span class="p">)</span>
+<a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a>                <span class="nb">print</span><span class="p">(</span><span class="s2">"2 tools:"</span><span class="p">,</span> <span class="nb">len</span><span class="p">((</span><span class="k">await</span> <span class="n">c</span><span class="o">.</span><span class="n">list_tools</span><span class="p">())</span><span class="o">.</span><span class="n">tools</span><span class="p">))</span>
+<a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a>                <span class="n">res</span> <span class="o">=</span> <span class="k">await</span> <span class="n">c</span><span class="o">.</span><span class="n">list_resources</span><span class="p">();</span> <span class="nb">print</span><span class="p">(</span><span class="s2">"3 resources:"</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">res</span><span class="o">.</span><span class="n">resources</span><span class="p">))</span>
+<a id="__codelineno-8-32" name="__codelineno-8-32" href="#__codelineno-8-32"></a>                <span class="n">rr</span> <span class="o">=</span> <span class="k">await</span> <span class="n">c</span><span class="o">.</span><span class="n">read_resource</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">res</span><span class="o">.</span><span class="n">resources</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">uri</span><span class="p">));</span> <span class="nb">print</span><span class="p">(</span><span class="s2">"4 read_resource:"</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">rr</span><span class="o">.</span><span class="n">contents</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="o">.</span><span class="vm">__name__</span><span class="p">)</span>
+<a id="__codelineno-8-33" name="__codelineno-8-33" href="#__codelineno-8-33"></a>                <span class="n">ct</span> <span class="o">=</span> <span class="k">await</span> <span class="n">c</span><span class="o">.</span><span class="n">call_tool</span><span class="p">(</span><span class="s2">"python_execute"</span><span class="p">,</span> <span class="p">{</span><span class="s2">"code"</span><span class="p">:</span> <span class="s2">"2 + 2"</span><span class="p">});</span> <span class="nb">print</span><span class="p">(</span><span class="s2">"5 call_tool:"</span><span class="p">,</span> <span class="n">ct</span><span class="o">.</span><span class="n">is_error</span><span class="p">,</span> <span class="n">ct</span><span class="o">.</span><span class="n">content</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">text</span><span class="o">.</span><span class="n">strip</span><span class="p">()[:</span><span class="mi">20</span><span class="p">])</span>
+<a id="__codelineno-8-34" name="__codelineno-8-34" href="#__codelineno-8-34"></a>                <span class="n">caps</span> <span class="o">=</span> <span class="k">await</span> <span class="n">M</span><span class="o">.</span><span class="n">MCPSessionManager</span><span class="p">()</span><span class="o">.</span><span class="n">extract_capabilities</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="s2">"tb"</span><span class="p">);</span> <span class="nb">print</span><span class="p">(</span><span class="s2">"6 isaa client tools:"</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">caps</span><span class="p">[</span><span class="s2">"tools"</span><span class="p">]))</span>
+<a id="__codelineno-8-35" name="__codelineno-8-35" href="#__codelineno-8-35"></a>            <span class="n">tg</span><span class="o">.</span><span class="n">cancel_scope</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span>
+<a id="__codelineno-8-36" name="__codelineno-8-36" href="#__codelineno-8-36"></a>    <span class="n">srv</span><span class="o">.</span><span class="n">python_worker</span><span class="o">.</span><span class="n">close</span><span class="p">();</span> <span class="n">srv</span><span class="o">.</span><span class="n">api_keys</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+<a id="__codelineno-8-37" name="__codelineno-8-37" href="#__codelineno-8-37"></a><span class="n">anyio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">protocol</span><span class="p">)</span>
+<a id="__codelineno-8-38" name="__codelineno-8-38" href="#__codelineno-8-38"></a>
+<a id="__codelineno-8-39" name="__codelineno-8-39" href="#__codelineno-8-39"></a><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.isaa.base.Agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">flow_agent</span> <span class="k">as</span> <span class="n">fa</span>
+<a id="__codelineno-8-40" name="__codelineno-8-40" href="#__codelineno-8-40"></a><span class="n">dummy</span> <span class="o">=</span> <span class="n">types</span><span class="o">.</span><span class="n">SimpleNamespace</span><span class="p">(</span><span class="n">amd</span><span class="o">=</span><span class="n">types</span><span class="o">.</span><span class="n">SimpleNamespace</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"Probe"</span><span class="p">))</span>
+<a id="__codelineno-8-41" name="__codelineno-8-41" href="#__codelineno-8-41"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">a_run</span><span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">session_id</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span> <span class="k">return</span> <span class="s2">"R:"</span> <span class="o">+</span> <span class="n">q</span>
+<a id="__codelineno-8-42" name="__codelineno-8-42" href="#__codelineno-8-42"></a><span class="n">dummy</span><span class="o">.</span><span class="n">a_run</span> <span class="o">=</span> <span class="n">a_run</span>
+<a id="__codelineno-8-43" name="__codelineno-8-43" href="#__codelineno-8-43"></a><span class="n">fa</span><span class="o">.</span><span class="n">FlowAgent</span><span class="o">.</span><span class="n">setup_mcp_server</span><span class="p">(</span><span class="n">dummy</span><span class="p">)</span>
+<a id="__codelineno-8-44" name="__codelineno-8-44" href="#__codelineno-8-44"></a><span class="nb">print</span><span class="p">(</span><span class="s2">"7 flowagent:"</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">dummy</span><span class="o">.</span><span class="n">mcp_server</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span> <span class="p">[</span><span class="n">t</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">dummy</span><span class="o">.</span><span class="n">mcp_server</span><span class="o">.</span><span class="n">list_tools</span><span class="p">())],</span>
+<a id="__codelineno-8-45" name="__codelineno-8-45" href="#__codelineno-8-45"></a>      <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">dummy</span><span class="o">.</span><span class="n">mcp_server</span><span class="o">.</span><span class="n">call_tool</span><span class="p">(</span><span class="s2">"agent_run"</span><span class="p">,</span> <span class="p">{</span><span class="s2">"query"</span><span class="p">:</span> <span class="s2">"hi"</span><span class="p">}))</span><span class="o">.</span><span class="n">content</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+</code></pre></div>
+<p>Erwartete Ausgabe nach dem Fix (aus der Analyse): <code>2 failed, 232 passed, 5 skipped</code> (Port K-API-15 und <code>test_disk_not_mutated</code>, beide ohne Patch ebenso rot). Protokoll-Probe mit echtem <code>ClientSession</code> über In-Memory-Streams: <code>init server: toolboxv2_mcp 3.0.0</code>, <code>tools: 17</code>, <code>resources: 5</code>, <code>read_resource: TextResourceContents</code>, <code>call_tool: False 4</code>. ISAA-Client <code>extract_capabilities</code>: vorher <code>tools: 0</code>, nachher <code>tools: 17</code>. <code>FlowAgent.setup_mcp_server</code>: <code>server: MCPServer</code>, <code>tools: ['agent_run']</code>, Aufruf liefert <code>R:hi</code>.</p>
+<p><strong>Test-IDs (45):</strong> in der CI unter Windows rot und damit lokal rot erwartet: 45; nur auf Linux/macOS rot: 0.</p>
+<details><summary>Liste</summary>
+
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2EAPIKeyWorkflow::test_complete_api_key_lifecycle
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2EAPIKeyWorkflow::test_multiple_keys_different_permissions
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2ECaching::test_cache_bypass
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2ECaching::test_cache_hit
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2ECompleteWorkflow::test_admin_workflow
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2ECompleteWorkflow::test_developer_workflow
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2EPerformanceTracking::test_performance_metrics_recorded
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2EPerformanceTracking::test_performance_to_dict
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2EPythonExecution::test_app_available
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2EPythonExecution::test_error_handling
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2EPythonExecution::test_function_definition_and_use
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2EPythonExecution::test_multiline_code
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2EPythonExecution::test_persistent_variables
+<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2EPythonExecution::test_simple_expression
+<a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2EPythonExecution::test_syntax_error
+<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2EResourceReading::test_read_all_resources
+<a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2EServerLifecycle::test_resource_definitions_complete
+<a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2EServerLifecycle::test_server_creation_and_configuration
+<a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2EServerLifecycle::test_tool_definitions_complete
+<a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2ESystemInfo::test_toolbox_info_flows
+<a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2ESystemInfo::test_toolbox_info_modules
+<a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2ESystemInfo::test_toolbox_info_python_guide
+<a id="__codelineno-9-23" name="__codelineno-9-23" href="#__codelineno-9-23"></a>toolboxv2/tests/test_isaa/test_mcp/test_e2.py::TestE2ESystemInfo::test_toolbox_status
+<a id="__codelineno-9-24" name="__codelineno-9-24" href="#__codelineno-9-24"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestLazyLoading::test_not_initialized_on_creation
+<a id="__codelineno-9-25" name="__codelineno-9-25" href="#__codelineno-9-25"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestLazyLoading::test_resource_definitions_without_loading
+<a id="__codelineno-9-26" name="__codelineno-9-26" href="#__codelineno-9-26"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestLazyLoading::test_tool_definitions_without_loading
+<a id="__codelineno-9-27" name="__codelineno-9-27" href="#__codelineno-9-27"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestPerformanceTracking::test_performance_recorded
+<a id="__codelineno-9-28" name="__codelineno-9-28" href="#__codelineno-9-28"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestResourceDefinitions::test_get_resource_definitions
+<a id="__codelineno-9-29" name="__codelineno-9-29" href="#__codelineno-9-29"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestResourceDefinitions::test_read_resource_discovery
+<a id="__codelineno-9-30" name="__codelineno-9-30" href="#__codelineno-9-30"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestResourceDefinitions::test_read_resource_performance
+<a id="__codelineno-9-31" name="__codelineno-9-31" href="#__codelineno-9-31"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestResourceDefinitions::test_read_resource_python_guide
+<a id="__codelineno-9-32" name="__codelineno-9-32" href="#__codelineno-9-32"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestResourceDefinitions::test_read_resource_unknown
+<a id="__codelineno-9-33" name="__codelineno-9-33" href="#__codelineno-9-33"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestResourceDefinitions::test_resource_structure
+<a id="__codelineno-9-34" name="__codelineno-9-34" href="#__codelineno-9-34"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestToolBoxV2MCPServerInit::test_custom_config
+<a id="__codelineno-9-35" name="__codelineno-9-35" href="#__codelineno-9-35"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestToolBoxV2MCPServerInit::test_default_config
+<a id="__codelineno-9-36" name="__codelineno-9-36" href="#__codelineno-9-36"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestToolBoxV2MCPServerInit::test_managers_initialized
+<a id="__codelineno-9-37" name="__codelineno-9-37" href="#__codelineno-9-37"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestToolBoxV2MCPServerInit::test_workers_initialized
+<a id="__codelineno-9-38" name="__codelineno-9-38" href="#__codelineno-9-38"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestToolDefinitions::test_get_tool_definitions_all_enabled
+<a id="__codelineno-9-39" name="__codelineno-9-39" href="#__codelineno-9-39"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestToolDefinitions::test_get_tool_definitions_docs_disabled
+<a id="__codelineno-9-40" name="__codelineno-9-40" href="#__codelineno-9-40"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestToolDefinitions::test_get_tool_definitions_flows_disabled
+<a id="__codelineno-9-41" name="__codelineno-9-41" href="#__codelineno-9-41"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestToolDefinitions::test_get_tool_definitions_python_disabled
+<a id="__codelineno-9-42" name="__codelineno-9-42" href="#__codelineno-9-42"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestToolDefinitions::test_tool_schema_structure
+<a id="__codelineno-9-43" name="__codelineno-9-43" href="#__codelineno-9-43"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestToolExecution::test_call_tool_toolbox_info
+<a id="__codelineno-9-44" name="__codelineno-9-44" href="#__codelineno-9-44"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestToolExecution::test_call_tool_toolbox_status
+<a id="__codelineno-9-45" name="__codelineno-9-45" href="#__codelineno-9-45"></a>toolboxv2/tests/test_isaa/test_mcp/test_server.py::TestToolExecution::test_call_tool_unknown
+</code></pre></div>
+</details>
+
+<p><strong>Commit:</strong> <code>FIX-03 (K-ENV-02): …</code></p>
+<h2 id="3-abschluss">3. Abschluss<a class="headerlink" href="#3-abschluss" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Alle Commits gepusht (<code>git log origin/master --oneline -10</code> zeigt sie).</li>
+<li>Bericht (0.5) geschrieben.</li>
+<li>Arbeitskopie bleibt bestehen; der Owner entfernt sie mit <code>git worktree remove C:\Users\Markin\Workspace\ISAABOX\Toolboxv2-isaa07</code>.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Zurück zum Seitenanfang
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      © 2022–2026 Markin Hausmanns
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../../..", "features": ["navigation.instant", "navigation.tracking", "navigation.tabs", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "In Zwischenablage kopiert", "clipboard.copy": "In Zwischenablage kopieren", "search.result.more.one": "1 weiteres Suchergebnis auf dieser Seite", "search.result.more.other": "# weitere Suchergebnisse auf dieser Seite", "search.result.none": "Keine Suchergebnisse", "search.result.one": "1 Suchergebnis", "search.result.other": "# Suchergebnisse", "search.result.placeholder": "Suchbegriff eingeben", "search.result.term.missing": "Es fehlt", "select.version": "Version ausw\u00e4hlen"}, "version": null}</script>
+    
+    
+      <script src="../../../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

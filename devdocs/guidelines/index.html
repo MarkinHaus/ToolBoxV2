@@ -1200,6 +1200,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#environment-regel-genau-eine-env-r1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment-Regel: Genau eine .env (R1)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3217,6 +3228,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#environment-regel-genau-eine-env-r1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment-Regel: Genau eine .env (R1)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3488,6 +3510,20 @@
 <li>[ ] <strong>Registration:</strong> Das <code>export = get_app(...).tb</code> Pattern wird genutzt.</li>
 <li>[ ] <strong>Integrity:</strong> <code>__slots__</code> verwendet und Atomic Writes implementiert.</li>
 <li>[ ] <strong>Compatibility:</strong> <code>REQUIRED_DEPS</code> definiert.</li>
+</ul>
+<hr />
+<h2 id="environment-regel-genau-eine-env-r1">Environment-Regel: Genau eine <code>.env</code> (R1)<a class="headerlink" href="#environment-regel-genau-eine-env-r1" title="Permanent link">&para;</a></h2>
+<p><strong>Kein Test, sondern Entwicklungsregel.</strong> Gilt für jeden Contributor und jeden Agenten-Run:</p>
+<ul>
+<li>Es existiert <strong>genau eine</strong> <code>.env</code> pro Installation (Pfad ueber <code>env_file()</code>), geladen
+  <strong>ausschliesslich</strong> in <code>toolboxv2/__init__.py</code>.</li>
+<li><strong>NIEMALS</strong> eine zweite <code>.env</code> anlegen - auch nicht "mal eben" mit Werten, die sich
+  dann widersprechen (historischer Vorfall: Run loeste Config-Chaos durch Zweit-.env).</li>
+<li><strong>NIEMALS</strong> <code>load_dotenv()</code> ohne Argument (pfadlos) - laedt je nach CWD falsche Dateien.</li>
+<li>Config-Werte gehoeren in die <strong>bestehende</strong> <code>.env</code> (ueber die <code>env_file</code>-Schnittstelle),
+  nie in Zweitdateien.</li>
+<li>Es gibt bewusst <strong>keinen</strong> Repo-Scan-Test dafuer (<code>rglob("*.py")</code> ueber den Baum haengt
+  unter Windows). Review/PR prueft die Regel; ein Verstoss ist ein Bug.</li>
 </ul>
 
 
