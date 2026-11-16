@@ -18,15 +18,50 @@ INSTALLER = ROOT / "installer.sh"
 TAURI_COPY = ROOT / "toolboxv2" / "simple-core" / "src-tauri" / "installer.sh"
 
 
+def _find_native_bash():
+    """Pick a bash that can open Windows paths. system32\\bash.exe is WSL:
+    it eats backslashes in argv (exit 127 on 'C:Users...') and hangs forever
+    when no WSL distro is installed (CI: empty stdout -> JSONDecodeError)."""
+    cand = shutil.which("bash")
+    if not cand:
+        return None
+    if os.name != "nt" or "system32" not in cand.lower():
+        return cand
+    git = shutil.which("git")
+    if git:
+        for rel in (r"..\bin\bash.exe", r"..\usr\bin\bash.exe"):
+            p = (Path(git).parent / rel).resolve()
+            if p.exists():
+                return str(p)
+    return cand
+
+
+BASH = _find_native_bash()
+
+# _subenv: drop outer toolbox mock vars so they cannot leak into installer.sh.
+# Real Windows-path trap: installer.sh's banner print interprets backslash
+# escapes (echo -e style), so "\t" inside temp paths (...\Temp\tb_inst_x)
+# is emitted as a real TAB on stderr and breaks raw string assertions.
+_SUBENV_DROP = ("MOCK_EXTERNAL_SERVICES", "IS_OFFLINE_DB")
+
+
+def _subenv(**over):
+    """os.environ minus the outer toolbox mock vars (see comment above)."""
+    e = {k: v for k, v in os.environ.items() if k not in _SUBENV_DROP}
+    e.update(over)
+    return e
+
 _WSL = False
-try:
-    _b = subprocess.run(["bash", "-c", "uname -r"], capture_output=True, text=True, timeout=15)
-    _WSL = "microsoft" in _b.stdout.lower()
-except Exception:
-    pass
+if BASH and "system32" in BASH.lower():
+    try:
+        _b = subprocess.run([BASH, "-c", "uname -r"], capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=30)
+        _WSL = "microsoft" in _b.stdout.lower()
+    except Exception:
+        _WSL = True  # a system32 bash that cannot answer promptly is WSL
 
 
-@unittest.skipUnless(shutil.which("bash") and shutil.which("curl") and not _WSL,
+@unittest.skipUnless(BASH and shutil.which("curl") and not _WSL,
                      "bash/curl required (WSL bash cannot see Windows paths)")
 class TestInstallerProtocol(unittest.TestCase):
     @classmethod
@@ -43,11 +78,12 @@ class TestInstallerProtocol(unittest.TestCase):
         cfg = cls.tmp / "tb-install.yaml"
         cfg.write_text(f"install_mode: uv\ninstall_path: {cls.tmp / 'tbhome'}\nprofile: developer\n"
                        "environment: development\nassume: yes\naction: install\nui: none\n")
-        env = {**os.environ, "HOME": str(cls.tmp / "home"),
-               "PATH": f"{stub.parent}{os.pathsep}{os.environ.get('PATH', '')}"}
+        env = _subenv(HOME=str(cls.tmp / "home"),
+                      PATH=f"{stub.parent}{os.pathsep}{os.environ.get('PATH', '')}")
         cls.proc = subprocess.run(
-            ["bash", str(INSTALLER), "--json-output", "--config", str(cfg), "--dry-run"],
-            cwd=cls.tmp, env=env, capture_output=True, text=True, timeout=120,
+            [BASH, str(INSTALLER), "--json-output", "--config", str(cfg), "--dry-run"],
+            cwd=cls.tmp, env=env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=120,
             stdin=subprocess.DEVNULL)
         cls.events = [json.loads(l) for l in cls.proc.stdout.splitlines() if l.strip()]
 
@@ -73,10 +109,11 @@ class TestInstallerProtocol(unittest.TestCase):
         self.assertEqual(last["progress"], 1)
 
     def test_fail_emits_error_event(self):
-        proc = subprocess.run(["bash", str(INSTALLER), "--json-output", "--config", "/nope.yaml",
+        proc = subprocess.run([BASH, str(INSTALLER), "--json-output", "--config", "/nope.yaml",
                                "--dry-run"], cwd=self.tmp, capture_output=True, text=True,
-                              timeout=120, stdin=subprocess.DEVNULL, env={**os.environ, "HOME": str(self.tmp / "home"),
-                                                "PATH": f"{self.tmp / 'bin'}{os.pathsep}{os.environ['PATH']}"})
+                              encoding="utf-8", errors="replace",
+                              timeout=120, stdin=subprocess.DEVNULL, env=_subenv(HOME=str(self.tmp / "home"),
+                                                PATH=f"{self.tmp / 'bin'}{os.pathsep}{os.environ['PATH']}"))
         self.assertNotEqual(proc.returncode, 0)
         events = [json.loads(l) for l in proc.stdout.splitlines() if l.strip()]
         self.assertEqual(events[-1]["type"], "error")
@@ -90,12 +127,15 @@ class TestInstallerProtocol(unittest.TestCase):
         fake.chmod(0o755)
         cfg = self.tmp / "tb-install.yaml"
         proc = subprocess.run(
-            ["bash", str(INSTALLER), "--json-output", "--config", str(cfg), "--dry-run"],
-            cwd=self.tmp, capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL,
-            env={**os.environ, "HOME": str(self.tmp / "home"), "TB_UV_BIN": str(fake),
-                 "PATH": f"{self.tmp / 'bin'}{os.pathsep}/usr/bin{os.pathsep}/bin"})
+            [BASH, str(INSTALLER), "--json-output", "--config", str(cfg), "--dry-run"],
+            cwd=self.tmp, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=120, stdin=subprocess.DEVNULL,
+            env=_subenv(HOME=str(self.tmp / "home"), TB_UV_BIN=str(fake),
+                 PATH=f"{self.tmp / 'bin'}{os.pathsep}/usr/bin{os.pathsep}/bin"))
         self.assertEqual(proc.returncode, 0, proc.stderr[-1500:])
-        self.assertIn(f"Runtime: bundled uv at {fake}", proc.stderr)  # dry-run: no copy
+        # banner print eats "\t" escapes (see _SUBENV_DROP note) -> restore TABs
+        self.assertIn(f"Runtime: bundled uv at {fake}",
+                      proc.stderr.replace("\t", "\\t"))  # dry-run: no copy
         self.assertNotIn("bootstrapping uv", proc.stderr)
 
     def test_tauri_bundle_copy_in_sync(self):
@@ -130,7 +170,7 @@ class TestOnboardingUiSingleSource(unittest.TestCase):
                          "web/installer/index.html drifted from src-tauri/installer.html")
 
 
-@unittest.skipUnless(shutil.which("bash") and not _WSL, "needs bash with native paths")
+@unittest.skipUnless(BASH and not _WSL, "needs bash with native paths")
 class TestCoreUpdateInPlace(unittest.TestCase):
     """`--update --path` as the Tauri app calls it for a core update: reinstall
     the bundled wheel, record the build id, keep everything else."""
@@ -168,13 +208,14 @@ class TestCoreUpdateInPlace(unittest.TestCase):
         wheel = cls.tmp / "toolboxv2-9.9.9-py3-none-any.whl"
         wheel.write_bytes(b"")
         cls.wheel = wheel
-        env = {**os.environ, "HOME": str(cls.tmp / "home"), "TB_WHEEL": str(wheel),
-               "TB_CORE_BUILD": "new-build"}
+        env = _subenv(HOME=str(cls.tmp / "home"), TB_WHEEL=str(wheel),
+               TB_CORE_BUILD="new-build")
         for k in ("TB_INSTALL_DIR", "TOOLBOX_HOME"):
             env.pop(k, None)
         cls.proc = subprocess.run(
-            ["bash", str(INSTALLER), "--json-output", "--update", "--yes", "--path", str(cls.install)],
-            cwd=cls.tmp, env=env, capture_output=True, text=True, timeout=120,
+            [BASH, str(INSTALLER), "--json-output", "--update", "--yes", "--path", str(cls.install)],
+            cwd=cls.tmp, env=env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=120,
             stdin=subprocess.DEVNULL)
         cls.manifest = (cls.install / "install.manifest").read_text(encoding="utf-8")
 
@@ -210,7 +251,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
-@unittest.skipUnless(not _WSL, "wheel dry-run probe uses Windows paths (WSL cannot see them)")
+@unittest.skipUnless(BASH and not _WSL, "wheel dry-run probe uses Windows paths (WSL cannot see them)")
 class TestWheelAndFeaturesDryRun(unittest.TestCase):
     """T5/F1-F3: tb_features aus Config + TB_WHEEL als Wheel-Quelle (dry run)."""
 
@@ -231,12 +272,14 @@ class TestWheelAndFeaturesDryRun(unittest.TestCase):
         cfg.write_text(f"install_mode: uv\ninstall_path: {cls.tmp / 'tbhome'}\nprofile: developer\n"
                        "environment: development\nassume: yes\naction: install\nui: none\n"
                        "tb_features: cli,web,isaa\n")
-        env = {**os.environ, "HOME": str(cls.tmp / "home"), "TB_WHEEL": str(wheel),
-               "PATH": f"{stub.parent}{os.pathsep}{os.environ.get('PATH', '')}"}
+        env = _subenv(HOME=str(cls.tmp / "home"), TB_WHEEL=str(wheel),
+               PATH=f"{stub.parent}{os.pathsep}{os.environ.get('PATH', '')}")
         cls.proc = subprocess.run(
-            ["bash", str(INSTALLER), "--json-output", "--config", str(cfg), "--dry-run"],
-            cwd=cls.tmp, env=env, capture_output=True, text=True, timeout=120,
+            [BASH, str(INSTALLER), "--json-output", "--config", str(cfg), "--dry-run"],
+            cwd=cls.tmp, env=env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=120,
             stdin=subprocess.DEVNULL)
+        cls.events = [json.loads(l) for l in cls.proc.stdout.splitlines() if l.strip()]
 
     def test_exit_ok_and_json_only(self):
         self.assertEqual(self.proc.returncode, 0, self.proc.stderr[-2000:])
@@ -245,5 +288,7 @@ class TestWheelAndFeaturesDryRun(unittest.TestCase):
         self.assertEqual(events[-1]["type"], "done")
 
     def test_dry_run_names_pkg_with_extras_and_file_url(self):
-        self.assertIn("ToolBoxV2[cli,web,isaa] @ file://", self.proc.stderr)
-        self.assertIn("toolboxv2-9.9.9-py3-none-any.whl", self.proc.stderr)
+        # JSON events carry Windows paths verbatim; stderr banner eats "\t" escapes
+        msg = " ".join(e.get("msg", "") for e in self.events if e.get("type") == "log")
+        self.assertIn("ToolBoxV2[cli,web,isaa] @ file://", msg)
+        self.assertIn("toolboxv2-9.9.9-py3-none-any.whl", msg)
