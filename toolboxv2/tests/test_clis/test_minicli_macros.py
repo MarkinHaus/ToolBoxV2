@@ -27,7 +27,7 @@ def _make_cli():
     app.functions = {}
     app.system_flag = "Linux"
 
-    with patch("toolboxv2.flows.minicli.BlobFile") as mock_blob:
+    with patch("toolboxv2.flows.mini.minicli.BlobFile") as mock_blob:
         # _load_macros finds nothing → empty dict
         mock_blob.return_value.__enter__.return_value.exists.return_value = False
         cli = BeastCLI(app)
@@ -93,7 +93,7 @@ class TestMacroSaveLoad(unittest.TestCase):
         mock_bf.exists.return_value = True
         mock_bf.read_json.return_value = macro_data
 
-        with patch("toolboxv2.flows.minicli.BlobFile", return_value=mock_bf):
+        with patch("toolboxv2.flows.mini.minicli.BlobFile", return_value=mock_bf):
             cli._load_macros()
 
         self.assertIn("test_macro", cli.macros)
@@ -122,7 +122,7 @@ class TestMacroSaveLoad(unittest.TestCase):
         mock_bf.__exit__ = MagicMock(return_value=False)
         mock_bf.write_json.side_effect = lambda d: written.update(d)
 
-        with patch("toolboxv2.flows.minicli.BlobFile", return_value=mock_bf):
+        with patch("toolboxv2.flows.mini.minicli.BlobFile", return_value=mock_bf):
             cli._save_macros()
 
         self.assertIn("my_macro", written)
@@ -136,7 +136,7 @@ class TestMacroSaveLoad(unittest.TestCase):
         mock_bf.__exit__ = MagicMock(return_value=False)
         mock_bf.exists.return_value = False
 
-        with patch("toolboxv2.flows.minicli.BlobFile", return_value=mock_bf):
+        with patch("toolboxv2.flows.mini.minicli.BlobFile", return_value=mock_bf):
             cli._load_macros()
 
         self.assertEqual(cli.macros, {})
