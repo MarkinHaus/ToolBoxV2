@@ -1,4 +1,5 @@
 import os
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -52,7 +53,10 @@ class TestTbState(unittest.TestCase):
     def test_get_state_from_app(self, mock_yaml_dump):
         # Test the get_state_from_app function
         mock_app = MagicMock()
-        mock_app.start_dir = "/root"
+        # K-STATE-03: kein '/root' mehr — auf dem Ubuntu-Runner (uid!=0, /root=0700)
+        # wirft schon Path('/root/toolboxv2/features').exists() PermissionError,
+        # bevor der existence-Guard greift. Intent des Tests: beliebiger start_dir.
+        mock_app.start_dir = tempfile.mkdtemp()
         mock_app.version = "1.0"
         # mock_app.get_all_mods.return_value = {"mod1": MagicMock(version="1.0"), "mod2": MagicMock(version="2.0")}
 
