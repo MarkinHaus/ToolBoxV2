@@ -11,17 +11,21 @@ import time
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Collapsible, Input, Markdown, Static
 
 from . import VERSION
 from . import protocol as P
 from .engine import Engine
+from .picker import Picker
+from .theme import DIM, ISAA_THEME, SYM, G, banner
 
 FRAME = 1 / 30                 # Abholtakt fuer Engine-Events
 EVENTS_PER_FRAME = 200         # Obergrenze je Frame: UI bleibt auch bei Flut bedienbar
 SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-END_MARK = {"done": "", "failed": "✗ fehlgeschlagen", "stopped": "■ gestoppt", "paused": "⏸ pausiert"}
+END_MARK = {"done": "", "failed": f"{SYM['fail']} fehlgeschlagen", "stopped": "■ gestoppt",
+            "paused": f"{SYM['pause']} pausiert – nächste Nachricht setzt fort"}
+AGENT_STATE = {"live": "geladen", "registered": "registriert", "disk": "gespeichert"}
 
 
 class ToolCard(Collapsible):
@@ -30,7 +34,7 @@ class ToolCard(Collapsible):
     def __init__(self, name: str, args: str):
         self._tool, self._args = name, args
         self._body = Static(args or "(keine Argumente)", classes="tool-body", markup=False)
-        super().__init__(self._body, title=f"◇ {name}  {self._hint()}", collapsed=True,
+        super().__init__(self._body, title=f"{SYM['tool']} {name}  {self._hint()}", collapsed=True,
                          classes="tool")
 
     def _hint(self) -> str:
@@ -38,7 +42,7 @@ class ToolCard(Collapsible):
         return flat[:60] + ("…" if len(flat) > 60 else "")
 
     def finish(self, ok: bool, result: str, secs: float) -> None:
-        self.title = f"{'✓' if ok else '✗'} {self._tool}  {self._hint()}  · {secs:.1f}s"
+        self.title = f"{SYM['ok'] if ok else SYM['fail']} {self._tool}  {self._hint()}  · {secs:.1f}s"
         self.set_class(not ok, "tool-failed")
         self._body.update(f"{self._args}\n\n── Ergebnis ──\n{result}" if self._args else result)
 
@@ -73,7 +77,7 @@ class RunView:
         if self.think is None:
             await self.close_segment()
             self.think = Static("", classes="think-body", markup=False)
-            await self.chat.mount(Collapsible(self.think, title="◎ Gedanken", collapsed=True,
+            await self.chat.mount(Collapsible(self.think, title=f"{SYM['think']} Gedanken", collapsed=True,
                                               classes="think"))
         self.think_text += delta
         self.think.update(self.think_text)
@@ -92,18 +96,29 @@ class RunView:
 class ICli2(App):
     TITLE = "icli"
     CSS = """
-    Screen { layers: base; }
-    #head { height: 1; padding: 0 1; color: $text-muted; background: $surface; }
+    #head { height: 1; padding: 0 1; color: $text-muted; }
     #chat { padding: 0 1; scrollbar-size-vertical: 1; }
-    #prompt { border: tall $surface-lighten-2; }
-    #prompt:focus { border: tall $accent; }
+    #banner { margin: 1 0; }
+    #bottom { height: auto; border-top: solid $secondary; }
+    #row { height: 1; }
+    #mark { width: 2; color: $accent; }
+    #prompt, #prompt:focus { border: none; height: 1; padding: 0; background: transparent; }
     #foot { height: 1; padding: 0 1; color: $text-muted; }
-    .user { margin: 1 0 0 0; padding: 0 1; border-left: thick $accent; color: $text; }
-    .answer { margin: 0; padding: 0 1; background: transparent; }
-    .tool, .think { margin: 0; padding: 0; border: none; background: transparent; color: $text-muted; }
-    .tool-failed { color: $error; }
-    .tool-body, .think-body { padding: 0 2; color: $text-muted; }
-    .note { padding: 0 1; color: $text-muted; }
+    .user { margin: 1 0 0 0; color: $accent; text-style: bold; }
+    .answer { margin: 0; padding: 0 0 0 2; background: transparent; }
+    .answer MarkdownH1, .answer MarkdownH2, .answer MarkdownH3 {
+        content-align: left middle; text-style: bold; color: $accent;
+        background: transparent; border: none; margin: 1 0 0 0; padding: 0; }
+    .answer MarkdownFence { background: $panel 40%; margin: 0 0 1 0; }
+    .tool, .think { margin: 0; padding: 0 0 0 2; border: none; background: transparent; }
+    .tool > CollapsibleTitle, .think > CollapsibleTitle { padding: 0; color: $text-muted; }
+    .tool > CollapsibleTitle:hover, .think > CollapsibleTitle:hover,
+    .tool > CollapsibleTitle:focus, .think > CollapsibleTitle:focus {
+        background: transparent; color: $accent; }
+    .tool-failed > CollapsibleTitle { color: $error; }
+    .tool > Contents, .think > Contents { padding: 0 0 0 2; }
+    .tool-body, .think-body { color: $text-muted; border-left: solid $secondary; padding: 0 1; }
+    .note { padding: 0 0 0 2; color: $text-muted; }
     .note-error { color: $error; }
     .note-warn { color: $warning; }
     """
@@ -128,14 +143,17 @@ class ICli2(App):
     # ── Aufbau ───────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
         yield Static(id="head")
-        yield VerticalScroll(id="chat")
+        with VerticalScroll(id="chat"):
+            yield Static(banner(VERSION), id="banner")
         with Vertical(id="bottom"):
-            yield Input(placeholder="Nachricht …  ( /q beenden · Esc pausiert · Esc Esc bricht ab )",
-                        id="prompt")
+            with Horizontal(id="row"):
+                yield Static(SYM["progress"], id="mark")
+                yield Input(placeholder="Nachricht oder /befehl", id="prompt")
             yield Static(id="foot")
 
     def on_mount(self) -> None:
-        self.query_one("#bottom").styles.height = "auto"
+        self.register_theme(ISAA_THEME)
+        self.theme = "isaa"
         self.chat = self.query_one("#chat", VerticalScroll)
         self.chat.anchor()                               # bleibt unten, solange nicht gescrollt wird
         self.query_one("#prompt", Input).focus()
@@ -182,8 +200,12 @@ class ICli2(App):
                 self.focus_run = next(reversed(self.runs), "")
             self.status_msg = ""
         elif ev.kind == P.READY:
+            if self.ready and d["agent"] != self.agent:
+                await self._note(f"{SYM['agent']} Agent: {d['agent']} · {d['model']}")
             self.ready = True
             self.agent, self.session, self.model = d["agent"], d["session"], d["model"]
+        elif ev.kind == P.AGENT_LIST:
+            self._pick_agent(d["agents"])
         elif ev.kind == P.NOTICE:
             await self._note(d["text"], d.get("level", "info"))
 
@@ -194,7 +216,7 @@ class ICli2(App):
         """Kopf- und Fusszeile. Rein lokal, deshalb auch bei blockierter Engine fluessig."""
         self._tick += 1
         self.query_one("#head", Static).update(
-            f"icli {VERSION} · {self.agent} · {self.model} · {self.session}")
+            f"[{G.L4_BRIGHT}]{SYM['agent']} {self.agent}[/] [{DIM}]· {self.model} · {self.session}[/]")
         spin = SPIN[self._tick % len(SPIN)]
         if not self.ready:
             left = f"{spin} Engine startet …"
@@ -204,7 +226,7 @@ class ICli2(App):
             more = f" (+{len(self.runs) - 1})" if len(self.runs) > 1 else ""
             left = f"{spin} {self.status_msg or 'arbeitet'}{more}"
         else:
-            left = "● bereit"
+            left = f"[{G.L3_MID}]{SYM['done']}[/] bereit"
         if self.tokens:
             left += f" · {self.tokens[0] / 1000:.1f}k/{self.tokens[1] / 1000:.0f}k tok"
         self.query_one("#foot", Static).update(left)
@@ -219,20 +241,38 @@ class ICli2(App):
         if text.startswith("/"):
             await self._command(text)
             return
-        await self.chat.mount(Static(text, classes="user", markup=False))
+        await self.chat.mount(Static(f"{SYM['progress']} {text}", classes="user", markup=False))
         self.chat.scroll_end(animate=False)
         self.engine.send(P.CHAT, query=text, agent=self.agent, session=self.session)
 
     async def _command(self, text: str) -> None:
-        name = text.split()[0].lower()
+        name, _, arg = text.partition(" ")
+        name, arg = name.lower(), arg.strip()
         if name in ("/q", "/quit", "/exit"):
             self.action_quit_app()
         elif name == "/stop":
             self.action_stop()
         elif name == "/clear":
             await self.action_clear()
+        elif name == "/agent":
+            # mit Name: direkt wechseln, ohne: Auswahl (Liste kommt live aus isaa)
+            self.engine.send(P.USE, agent=arg) if arg else self.engine.send(P.AGENTS)
+        elif name == "/pack":
+            self.engine.send(P.PACK, agent=arg or self.agent)
         else:
-            await self._note(f"Unbekannter Befehl {name} – verfügbar: /q /stop /clear", "warn")
+            await self._note(f"Unbekannter Befehl {name} – /agent /pack /stop /clear /q", "warn")
+
+    def _pick_agent(self, agents: list[dict]) -> None:
+        items = [(a["name"], a["name"],
+                  AGENT_STATE.get(a["state"], a["state"]) + (" · Paket mit Tools" if a.get("pack") else "")
+                  + (" · aktiv" if a["name"] == self.agent else ""))
+                 for a in agents]
+
+        def chosen(name: str | None) -> None:
+            if name and name != self.agent:
+                self.engine.send(P.USE, agent=name)
+
+        self.push_screen(Picker("Agent wechseln", items), chosen)
 
     def action_stop(self) -> None:
         """Esc pausiert den fokussierten Lauf (fortsetzbar), ein zweites Esc bricht hart ab.

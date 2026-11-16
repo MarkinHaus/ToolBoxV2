@@ -23,6 +23,9 @@ class Backend(Protocol):
     """Was die Engine von der Agenten-Seite braucht (siehe backend.py)."""
 
     async def boot(self) -> dict[str, Any]: ...
+    async def agents(self) -> list[dict[str, Any]]: ...
+    async def use(self, agent: str) -> dict[str, Any]: ...
+    async def pack(self, agent: str) -> str: ...
     def stream(self, agent: str, session: str, query: str) -> AsyncIterator[dict]: ...
     async def is_running(self, agent: str, session: str) -> bool: ...
     async def stop(self, agent: str, session: str) -> None: ...
@@ -169,6 +172,9 @@ class Engine:
             run = _Run(f"r{self._counter}", d["agent"], d["session"])
             self._runs[run.id] = run
             run.task = asyncio.create_task(self._chat(run, d["query"], boot))
+        elif cmd.kind in (P.AGENTS, P.USE, P.PACK):
+            # kann dauern (Agent bauen, Paket laden): eigener Task, Inbox bleibt frei
+            asyncio.create_task(self._admin(cmd, boot))
         elif cmd.kind in (P.STOP, P.PAUSE):
             run = self._runs.get(d.get("run", ""))
             if run is None:
@@ -179,6 +185,18 @@ class Engine:
             run.ended = "stopped"
             if run.task:
                 run.task.cancel()
+
+    async def _admin(self, cmd: P.Command, boot: asyncio.Task) -> None:
+        try:
+            await asyncio.shield(boot)
+            if cmd.kind == P.AGENTS:
+                self._emit(P.AGENT_LIST, agents=await self._backend.agents())
+            elif cmd.kind == P.USE:
+                self._emit(P.READY, **await self._backend.use(cmd.data["agent"]))
+            elif cmd.kind == P.PACK:
+                self._emit(P.NOTICE, level="info", text=await self._backend.pack(cmd.data["agent"]))
+        except Exception as e:
+            self._emit(P.NOTICE, level="error", text=f"{cmd.kind}: {type(e).__name__}: {e}")
 
     # ── Ein Lauf ─────────────────────────────────────────────────────────────
     def _flush(self, run: _Run) -> None:

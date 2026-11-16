@@ -12,6 +12,9 @@ from typing import Any
 CHAT = "chat"          # data: query, agent, session
 STOP = "stop"          # data: run
 PAUSE = "pause"        # data: run
+AGENTS = "agents"        # Agentenliste anfordern (immer live aus isaa)
+USE = "use"              # data: agent  -> aktiven Agenten laden/wechseln
+PACK = "pack"            # data: agent  -> Agent samt Tools als Paket sichern
 SHUTDOWN = "shutdown"
 
 # ── Events: Engine -> UI ─────────────────────────────────────────────────────
@@ -23,6 +26,7 @@ TOOL_START = "tool_start"  # data: id, name, args
 TOOL_END = "tool_end"      # data: id, name, ok, result, secs
 STATUS = "status"          # data: msg, iter, max_iter, tokens, tokens_max
 RUN_END = "run_end"        # data: status (done|failed|stopped|paused), answer, error
+AGENT_LIST = "agent_list"  # data: agents=[{name, state, pack}]
 NOTICE = "notice"          # data: level (info|warn|error), text
 BYE = "bye"                # Engine ist sauber beendet
 
