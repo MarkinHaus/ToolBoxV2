@@ -172,7 +172,7 @@ class AccountFlowTest(unittest.TestCase):
                         return fn
                     return deco
             wizard_api.register_wizard_routes(_App())
-            res = routes["/api/account/start"](SimpleNamespace(json_data={"method": "nope"}))
+            res = routes["/api/account/start"](SimpleNamespace(json_data={"method": "nope"}, headers={"host": "127.0.0.1:8467"}))
         self.assertEqual(res[0], 400)
 
 

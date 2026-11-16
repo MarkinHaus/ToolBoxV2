@@ -34,7 +34,7 @@ app.mount_dist()
 
 def _ensure_local(request: ParsedRequest) -> Optional[Result]:
     """Refuse anything that isn't loopback."""
-    host = (request.headers.get("host") or "").split(":")[0].lower()
+    host = ((getattr(request, "headers", None) or {}).get("host") or "").split(":")[0].lower()
     if host not in ("127.0.0.1", "localhost", "[::1]", "::1"):
         return Result.default_user_error(
             info="This UI is local-only. Use the public site for remote access.",
