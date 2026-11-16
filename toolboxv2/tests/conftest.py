@@ -46,6 +46,24 @@ def reset_app_state_before_test(request):
     reset_app_singleton(force_exit=True)
 
 
+@pytest.fixture(autouse=True)
+def ensure_open_event_loop():
+    """Sync tests that call asyncio.get_event_loop().run_until_complete(...) need
+    an open current loop. Earlier tests may have closed or unset it."""
+    import asyncio
+    import warnings
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            loop = asyncio.get_event_loop_policy().get_event_loop()
+        stale = loop.is_closed()
+    except RuntimeError:
+        stale = True
+    if stale:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    yield
+
+
 def pytest_configure(config):
     """Register the 'serial' marker for xdist compatibility."""
     config.addinivalue_line(
