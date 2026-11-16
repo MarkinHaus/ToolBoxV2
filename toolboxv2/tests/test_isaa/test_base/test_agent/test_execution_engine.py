@@ -265,6 +265,7 @@ class MockAgent:
         self.session_manager = MockSessionManager()
         self.tool_manager = MockToolManager()
         self.skills_manager = None
+        self.obs = None  # FlowAgent.obs is optional (flow_agent.py:435)
 
     async def a_run_llm_completion(self, messages, tools=None, **kwargs):
         """Mock LLM completion - returns a mock response"""
