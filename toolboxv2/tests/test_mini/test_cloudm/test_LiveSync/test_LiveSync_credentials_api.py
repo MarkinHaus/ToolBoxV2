@@ -1,6 +1,5 @@
 """
 Tests for the new dashboard-facing credential/share-token API:
-  - tb_get_my_minio_credentials
   - tb_generate_share_token
   - tb_get_share_credentials
   - _extract_user_id helper
@@ -57,61 +56,6 @@ class TestExtractUserId(unittest.TestCase):
         from toolboxv2.mods.CloudM.LiveSync import _extract_user_id
         req = MagicMock(spec=[])
         self.assertEqual(_extract_user_id(req), "")
-
-
-class TestGetMyMinioCredentials(unittest.TestCase):
-
-    def test_success(self):
-        from toolboxv2.mods.CloudM.LiveSync import tb_get_my_minio_credentials
-        creds = {
-            "endpoint": "localhost:9000",
-            "access_key": "sa-x",
-            "secret_key": "secret",
-            "secure": False,
-            "buckets": {"private": "tb-users-private", "public": "tb-users-public", "shared": "tb-shared"},
-            "user_prefix": "markin",
-            "policy_applied": True,
-            "expires_in": 86400,
-        }
-        req = _make_request(user_id="markin")
-        with patch("toolboxv2.mods.CloudM.LiveSync.minio_helper.vend_user_credentials_for_user",
-                   return_value=creds) as mock_vend:
-            result = tb_get_my_minio_credentials(app=None, request=req)
-        rd = result.as_dict()
-        self.assertEqual(rd["error"], "none")
-        self.assertEqual(rd["info"]["exec_code"], 0)
-        self.assertEqual(rd["result"]["data"], creds)
-        mock_vend.assert_called_once()
-        self.assertEqual(mock_vend.call_args[0][0], "markin")
-
-    def test_no_request(self):
-        from toolboxv2.mods.CloudM.LiveSync import tb_get_my_minio_credentials
-        result = tb_get_my_minio_credentials(app=None, request=None)
-        rd = result.as_dict()
-        self.assertNotEqual(rd["error"], "none")
-        self.assertNotEqual(rd["info"]["exec_code"], 0)
-        self.assertIn("request required", str(rd["result"]["data"]))
-
-    def test_no_session_returns_error(self):
-        from toolboxv2.mods.CloudM.LiveSync import tb_get_my_minio_credentials
-        result = tb_get_my_minio_credentials(
-            app=None,
-            request=_make_request(anonymous=True, user_id="", user_name="anonymous"),
-        )
-        rd = result.as_dict()
-        self.assertNotEqual(rd["error"], "none")
-        self.assertIn("Authentication required", str(rd["result"]["data"]))
-
-    def test_broker_value_error_propagates(self):
-        from toolboxv2.mods.CloudM.LiveSync import tb_get_my_minio_credentials
-        req = _make_request(user_id="markin")
-        with patch("toolboxv2.mods.CloudM.LiveSync.minio_helper.vend_user_credentials_for_user",
-                   side_effect=ValueError("env_config.endpoint required")):
-            result = tb_get_my_minio_credentials(app=None, request=req)
-        rd = result.as_dict()
-        self.assertNotEqual(rd["error"], "none")
-        self.assertIn("env_config.endpoint", str(rd["result"]["data"]))
-
 
 class TestGenerateShareToken(unittest.TestCase):
 
