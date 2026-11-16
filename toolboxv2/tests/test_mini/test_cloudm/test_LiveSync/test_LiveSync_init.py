@@ -1,6 +1,7 @@
 """Tests for __init__.py — Supervisor interface (subprocess, share mgmt)."""
 import os
 import shutil
+import stat
 import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
@@ -104,7 +105,15 @@ class TestShareRegistry(unittest.TestCase):
         raw = path.read_bytes()
         self.assertNotIn(b"supersecret-token-value", raw)
         self.assertNotIn(b"/tmp/vault1", raw)
-        self.assertEqual(oct(path.stat().st_mode)[-3:], "600")
+        if os.name == "nt":
+            # K-OS-06: Windows has no POSIX mode bits; os.chmod(0o600) only maps
+            # the read-only flag and stat() reports 666 for any writable file.
+            # Owner-only protection comes from the ACL inherited from the user
+            # data dir. The one expressible bit: the store stays owner-writable
+            # (read-only attribute must NOT be set).
+            self.assertFalse(path.stat().st_file_attributes & stat.FILE_ATTRIBUTE_READONLY)
+        else:
+            self.assertEqual(oct(path.stat().st_mode)[-3:], "600")
 
     def test_unknown_mode_rejected(self):
         from toolboxv2.mods.CloudM.LiveSync import share_store

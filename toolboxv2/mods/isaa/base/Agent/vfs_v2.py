@@ -1507,7 +1507,7 @@ Nutzen für: ToolBox-Verwaltung, System-Config, Git-Operationen auf dem Host.
         if force and contents:
             # Recursively remove contents
             for item in contents:
-                item_path =os.path.join(path, item['name'])
+                item_path = f"{path}/{item['name']}"  # VFS paths are POSIX; os.path.join would emit "\" on Windows
                 if item["type"] == "directory":
                     result = self.rmdir(item_path, force=True)
                 else:
@@ -1653,7 +1653,7 @@ Nutzen für: ToolBox-Verwaltung, System-Config, Git-Operationen auf dem Host.
 
         # If destination is existing directory, move into it
         if self._is_directory(destination):
-            destination = os.path.join(destination, self._get_basename(source))
+            destination = f"{destination}/{self._get_basename(source)}"  # POSIX join; os.path.join breaks lookups on Windows
 
         if self._path_exists(destination):
             return {
