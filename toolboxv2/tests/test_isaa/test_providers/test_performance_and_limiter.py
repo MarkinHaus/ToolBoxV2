@@ -32,11 +32,12 @@ class TestAgentPerformance(unittest.IsolatedAsyncioTestCase):
 
         # Dritter Request MUSS blockieren (da 2 RPM erreicht)
         # Wir setzen einen Timeout, damit der Test nicht ewig läuft
+        # K-PY-02: asyncio.timeout gibt es erst ab 3.11 -> wait_for nutzen
         try:
-            async with asyncio.timeout(0.05):
-                await self.limiter.acquire("test-provider/model")
-                self.fail("Limiter hätte blockieren müssen!")
-        except TimeoutError:
+            await asyncio.wait_for(
+                self.limiter.acquire("test-provider/model"), timeout=0.05)
+            self.fail("Limiter hätte blockieren müssen!")
+        except asyncio.TimeoutError:
             duration = time.perf_counter() - start_time
             print(f"✅ Limiter blockiert korrekt nach {duration:.2f}s")
 
