@@ -185,3 +185,34 @@ def test_old_ui_pages_are_gone():
     import toolboxv2.utils.workers.fast.local_ui as lu
     assert not hasattr(lu, "welcome")
     assert not hasattr(lu, "install")
+
+
+def test_root_serves_account_page_without_device_account():
+    """WP1 K3: local/developer profile without a linked device account
+    gets the account-link page on '/'. Server profile stays untouched."""
+    import toolboxv2.utils.workers.fast.local_ui as lu
+    from unittest.mock import patch
+
+    with _Server() as srv, patch.object(
+        lu, "get_installation_state",
+        return_value={"installed": True, "first_run": False,
+                      "profile": "local", "needs_account": True},
+    ):
+        status, html = _get_html(srv, "/")
+    assert status == 200
+    assert "ToolBoxV2 - Link account" in html
+
+
+def test_root_serves_dashboard_with_device_account():
+    """WP1 K3: with a linked device account '/' serves the dashboard,
+    never the account-link page."""
+    import toolboxv2.utils.workers.fast.local_ui as lu
+    from unittest.mock import patch
+
+    with _Server() as srv, patch.object(
+        lu, "get_installation_state",
+        return_value={"installed": True, "first_run": False,
+                      "profile": "local", "needs_account": False},
+    ):
+        status, html = _get_html(srv, "/")
+    assert "Link account" not in html

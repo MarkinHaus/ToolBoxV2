@@ -125,6 +125,11 @@ async def root(request: ParsedRequest):
         return ("ToolBoxV2 is not set up yet. Run 'tb' in a terminal "
                 "(or 'tb -init local|server|developer').")
 
+    # WP1 K3: local/developer profile without a linked device account
+    # must link an account before the dashboard is usable.
+    if get_installation_state().get("needs_account", False):
+        return _serve_account_page()
+
     d = dist_dir()
     if d:
         for name in ["mainPagen.html", "index.html"]:
@@ -133,12 +138,8 @@ async def root(request: ParsedRequest):
     return "ToolBox Local UI - dist/index.html not found."
 
 
-@app.get("/account", auth=False)
-async def account(request: ParsedRequest):
-    """Account-link page (WP1 K3). Loopback only."""
-    err = _ensure_local(request)
-    if err is not None:
-        return err
+def _serve_account_page():
+    """Account-link page body (WP1 K3). Shared by /account and the / redirect."""
     from toolboxv2.utils.workers.fast.account_page import account_page
     from toolboxv2.utils.workers.fast_tb_handler import FastTBHandler
     html = account_page()
@@ -150,6 +151,15 @@ async def account(request: ParsedRequest):
         return FastTBHandler._serve_static_file(tmp)
     finally:
         os.unlink(tmp)
+
+
+@app.get("/account", auth=False)
+async def account(request: ParsedRequest):
+    """Account-link page (WP1 K3). Loopback only."""
+    err = _ensure_local(request)
+    if err is not None:
+        return err
+    return _serve_account_page()
 
 
 @app.get("/setup", auth=False)
