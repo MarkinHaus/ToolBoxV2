@@ -6,12 +6,12 @@ Tool-Call haelt hoechstens diesen Loop an, nie die UI.
 from __future__ import annotations
 
 import asyncio
-import json
 import threading
 import time
 from collections import deque
 from typing import Any, AsyncIterator, Protocol
 
+from . import fmt
 from . import protocol as P
 
 FLUSH_SECONDS = 0.04      # Content-Deltas werden auf ~25 Events/s gebuendelt
@@ -30,28 +30,13 @@ class Backend(Protocol):
     async def is_running(self, agent: str, session: str) -> bool: ...
     async def stop(self, agent: str, session: str) -> None: ...
     async def pause(self, agent: str, session: str) -> bool: ...
+    def tool_meta(self, name: str, result: dict) -> str: ...
     async def close(self) -> None: ...
-
-
-def _clip(value: Any, limit: int) -> str:
-    if isinstance(value, (dict, list)):
-        try:
-            value = json.dumps(value, indent=2, ensure_ascii=False, default=str)
-        except Exception:
-            value = str(value)
-    text = "" if value is None else str(value)
-    if len(text) > limit:
-        text = text[:limit] + f"\n… (+{len(text) - limit} Zeichen)"
-    return text
 
 
 def _succeeded(result: Any) -> bool:
     """Tools melden Erfolg im JSON-Ergebnis ({"success": bool}), wie in der alten icli."""
-    if isinstance(result, str) and result.lstrip().startswith("{"):
-        try:
-            result = json.loads(result)
-        except Exception:
-            return True
+    result = fmt.parse(result)
     return result.get("success", True) is not False if isinstance(result, dict) else True
 
 
@@ -217,6 +202,16 @@ class Engine:
         if run.timer is None:
             run.timer = self._loop.call_later(FLUSH_SECONDS, self._flush, run)
 
+    def _meta(self, name: str, result: Any) -> str:
+        if isinstance(result, dict):
+            try:
+                meta = self._backend.tool_meta(name, result)
+                if meta:
+                    return str(meta)
+            except Exception:
+                pass
+        return fmt.result_summary(result)
+
     async def _chat(self, run: _Run, query: str, boot: asyncio.Task) -> None:
         status, answer, error = "done", "", ""
         started: dict[str, float] = {}
@@ -241,16 +236,20 @@ class Engine:
                 if t == "tool_start":
                     tid = str(chunk.get("id") or chunk.get("name", "?"))
                     started[tid] = time.monotonic()
-                    args = chunk.get("args", chunk.get("input", chunk.get("arguments", "")))
+                    args = fmt.parse(chunk.get("args", chunk.get("input", chunk.get("arguments", ""))))
                     self._emit(P.TOOL_START, run.id, id=tid, name=chunk.get("name", "?"),
-                               args=_clip(args, ARGS_LIMIT))
+                               summary=fmt.summary(args), reason=bool(fmt.reason_of(args)),
+                               detail=fmt.clip(fmt.detail(args), ARGS_LIMIT))
                 elif t in ("tool_result", "tool_error"):
                     tid = str(chunk.get("id") or chunk.get("name", "?"))
                     secs = time.monotonic() - started.pop(tid, time.monotonic())
-                    result = chunk.get("result", chunk.get("error", ""))
-                    self._emit(P.TOOL_END, run.id, id=tid, name=chunk.get("name", "?"),
+                    result = fmt.parse(chunk.get("result", chunk.get("error", "")))
+                    name = chunk.get("name", "?")
+                    self._emit(P.TOOL_END, run.id, id=tid, name=name,
                                ok=t == "tool_result" and _succeeded(result),
-                               result=_clip(result, RESULT_LIMIT), secs=round(secs, 2))
+                               summary=self._meta(name, result),
+                               detail=fmt.clip(fmt.detail(result), RESULT_LIMIT),
+                               secs=round(secs, 2))
                 elif t == "final_answer":
                     answer = str(chunk.get("answer", chunk.get("content", "")) or "")
                 elif t == "paused":

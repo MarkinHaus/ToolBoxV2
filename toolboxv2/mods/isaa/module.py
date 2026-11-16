@@ -851,6 +851,7 @@ class Tools(MainTool):
         include_checkpoint: bool = True,
         include_tools: bool = True,
         notes: str | None = None,
+        custom_only: bool = False,
     ) -> tuple[bool, AgentExportManifest | str]:
         """
         Export an agent to a .tar.gz archive.
@@ -901,19 +902,23 @@ class Tools(MainTool):
             tools_data = {}
 
             if include_tools and hasattr(agent, "tool_manager"):
-                for tool_name, tool_info in agent.tool_manager.tools.items():
-                    func = tool_info.get("function") or tool_info.get("func")
-                    if func:
-                        serialized, info = _serialize_tool(func, tool_name)
-                        if serialized:
-                            serializable_tools.append(tool_name)
-                            tools_data[tool_name] = {
-                                "data": serialized,
-                                "description": tool_info.get("description", ""),
-                                "category": tool_info.get("category", []),
-                            }
-                        else:
-                            non_serializable_tools.append(info)
+                # ToolManager haelt ToolEntry-Objekte (kein .tools-Dict mehr)
+                for entry in agent.tool_manager.get_all():
+                    func = entry.function
+                    if entry.source != "local" or func is None:
+                        continue
+                    if custom_only and str(getattr(func, "__module__", "")).startswith("toolboxv2."):
+                        continue  # System-Tools baut der Builder selbst wieder auf
+                    serialized, info = _serialize_tool(func, entry.name)
+                    if serialized:
+                        serializable_tools.append(entry.name)
+                        tools_data[entry.name] = {
+                            "data": serialized,
+                            "description": entry.description,
+                            "category": entry.category,
+                        }
+                    else:
+                        non_serializable_tools.append(info)
 
             # Prepare checkpoint
             checkpoint_data = None
@@ -1124,6 +1129,58 @@ class Tools(MainTool):
 
         except Exception as e:
             return None, None, [f"Failed to load agent: {str(e)}"]
+
+    # ── Auto-Pack: eigene Tools ueberleben Prozessgrenzen ─────────────────────
+    def agent_pack_path(self, agent_name: str) -> Path:
+        """Ablageort des automatischen Agent-Pakets (neben agent.json)."""
+        return Path(get_app().data_dir) / "Agents" / agent_name / f"{agent_name}.tar.gz"
+
+    def _packed_tools(self, agent_name: str) -> dict:
+        """Serialisierte Tools aus dem Paket lesen ({} wenn keins vorhanden)."""
+        path = self.agent_pack_path(agent_name)
+        serializer = _get_serializer()
+        if not path.exists() or serializer is None:
+            return {}
+        with tarfile.open(path, "r:gz") as tar:
+            data = self._read_from_tar(tar, "tools.dill", binary=True)
+        return serializer.loads(data) if data else {}
+
+    def _restore_packed_tools(self, agent_name: str, agent: FlowAgent) -> list[str]:
+        """Eigene Tools aus dem Paket an einen frisch gebauten Agenten haengen.
+        Vorhandene Tools werden nie ueberschrieben."""
+        restored = []
+        for tool_name, info in self._packed_tools(agent_name).items():
+            if agent.tool_manager.exists(tool_name) or not info.get("data"):
+                continue
+            func, error = _deserialize_tool(info["data"], tool_name)
+            if func is None:
+                self.print(f"Agent '{agent_name}': {error}")
+                continue
+            agent.add_tool(func, name=tool_name, description=info.get("description"),
+                           category=info.get("category"))
+            restored.append(tool_name)
+        if restored:
+            self.print(f"Agent '{agent_name}': {len(restored)} eigene Tools aus Paket geladen")
+        return restored
+
+    async def _auto_pack(self, agent_name: str, agent: FlowAgent):
+        """Agent mit eigenen Tools automatisch packen (ISAA_AUTO_PACK=0 schaltet ab).
+        Laeuft nur, wenn es eigene Tools gibt, und verwirft nie Tools eines
+        bestehenden Pakets."""
+        if os.getenv("ISAA_AUTO_PACK", "1") == "0":
+            return
+        try:
+            custom = [
+                e.name for e in agent.tool_manager.get_all()
+                if e.source == "local" and e.function is not None
+                and not str(getattr(e.function, "__module__", "")).startswith("toolboxv2.")
+            ]
+            if not custom or set(self._packed_tools(agent_name)) - set(custom):
+                return
+            await self.save_agent(agent_name, str(self.agent_pack_path(agent_name)),
+                                  include_checkpoint=False, custom_only=True)
+        except Exception as e:
+            self.print(f"Auto-pack for '{agent_name}' skipped: {e}")
 
     async def load_all_agents(self, do_not_cleanup: bool = False) -> dict:
         """
@@ -1998,6 +2055,14 @@ class Tools(MainTool):
         # agent_instance.
 
         self.config[instance_key] = agent_instance
+        try:
+            self._restore_packed_tools(agent_name, agent_instance)
+            _task = asyncio.create_task(self._auto_pack(agent_name, agent_instance))
+            self._pack_tasks = getattr(self, "_pack_tasks", set())
+            self._pack_tasks.add(_task)
+            _task.add_done_callback(self._pack_tasks.discard)
+        except Exception as e:
+            self.print(f"Agent pack handling for '{agent_name}' failed: {e}")
         if agent_name not in self.agent_data:
             self.agent_data[agent_name] = builder_to_use.config.model_dump()
         if agent_name not in self.config["agents-name-list"]:

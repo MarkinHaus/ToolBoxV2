@@ -10,7 +10,8 @@ fuer dieselbe Session schon ein Lauf aktiv ist.
 Agenten-Quellen (werden bei jeder Abfrage neu gelesen, nie gecacht):
   live  im laufenden isaa registriert            config["agents-name-list"]
   disk  von register_agent gespeichert           <data_dir>/Agents/<name>/agent.json
-  pack  mit save_agent gesichert, inkl. Tools    <data_dir>/Agents/<name>/<name>.tar.gz
+  pack  eigene Tools, automatisch gepackt        <data_dir>/Agents/<name>/<name>.tar.gz
+        (isaa._auto_pack beim Bauen, isaa._restore_packed_tools beim Laden)
 """
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ class IsaaBackend:
         return Path(self.app.data_dir) / "Agents"
 
     def pack_path(self, agent: str) -> Path:
-        return self._agents_dir() / agent / f"{agent}.tar.gz"
+        return self.isaa.agent_pack_path(agent)
 
     def _info(self, agent: Any) -> dict[str, Any]:
         return {"agent": self.agent, "session": self.session,
@@ -40,8 +41,7 @@ class IsaaBackend:
 
     async def boot(self) -> dict[str, Any]:
         self.isaa = self.app.get_mod("isaa")             # schwerer Import: hier, nicht in der UI
-        if self.agent == "self" and "agent-instance-self" not in self.isaa.config \
-                and not self.pack_path("self").exists():
+        if self.agent == "self" and "agent-instance-self" not in self.isaa.config:
             # gleiche Ausstattung wie die alte icli (icli.py:_init_self_agent)
             builder = self.isaa.get_agent_builder(
                 name="self", add_base_tools=True, with_dangerous_shell=True)
@@ -64,17 +64,11 @@ class IsaaBackend:
         return list(found.values())
 
     async def use(self, agent: str) -> dict[str, Any]:
-        """Agent laden und aktiv setzen. Reihenfolge: laufende Instanz -> Paket
-        (mit eigenen Tools) -> gespeicherte Konfiguration."""
-        pack = self.pack_path(agent)
-        if f"agent-instance-{agent}" in self.isaa.config or not pack.exists():
-            instance = await self.isaa.get_agent(agent)
-        else:
-            instance, _manifest, warnings = await self.isaa.load_agent(str(pack), override_name=agent)
-            if instance is None:
-                raise RuntimeError("; ".join(warnings) or f"Paket {pack.name} nicht ladbar")
-            if warnings:
-                self.app.logger.warning(f"icli2 load_agent {agent}: {warnings}")
+        """Agent laden und aktiv setzen. isaa.get_agent baut ihn aus der gespeicherten
+        Konfiguration und haengt eigene Tools aus dem Auto-Paket wieder an."""
+        if not any(a["name"] == agent for a in await self.agents()):
+            raise LookupError(f"Agent '{agent}' ist nicht registriert")
+        instance = await self.isaa.get_agent(agent)
         self.agent = agent
         return self._info(instance)
 
@@ -112,6 +106,11 @@ class IsaaBackend:
     async def pause(self, agent: str, session: str) -> bool:
         instance, _, run_id = await self._run_id(agent, session)
         return bool(run_id and await instance.pause_execution(run_id))
+
+    def tool_meta(self, name: str, result: dict) -> str:
+        # vorhandener Helfer der alten icli fuer bekannte Tools (vfs_*, shell, ...)
+        from toolboxv2.mods.isaa.extras.zen.zen_renderer import ZenRenderer
+        return ZenRenderer._extract_tool_meta(name, result) or ""
 
     async def close(self) -> None:
         pass          # app.a_exit() ruft der Flow-Starter nach dem UI-Ende auf

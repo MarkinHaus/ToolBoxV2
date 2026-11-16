@@ -22,8 +22,8 @@ READY = "ready"            # data: agents, agent, session, model
 RUN_START = "run_start"    # data: agent, session, query, steer
 TEXT = "text"              # data: text            (gebuendelte Content-Deltas)
 THINK = "think"            # data: text            (gebuendeltes Reasoning)
-TOOL_START = "tool_start"  # data: id, name, args
-TOOL_END = "tool_end"      # data: id, name, ok, result, secs
+TOOL_START = "tool_start"  # data: id, name, summary, reason, detail
+TOOL_END = "tool_end"      # data: id, name, ok, summary, detail, secs
 STATUS = "status"          # data: msg, iter, max_iter, tokens, tokens_max
 RUN_END = "run_end"        # data: status (done|failed|stopped|paused), answer, error
 AGENT_LIST = "agent_list"  # data: agents=[{name, state, pack}]

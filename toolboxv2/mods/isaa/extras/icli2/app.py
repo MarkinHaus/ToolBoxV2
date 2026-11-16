@@ -29,29 +29,32 @@ AGENT_STATE = {"live": "geladen", "registered": "registriert", "disk": "gespeich
 
 
 class ToolCard(Collapsible):
-    """Eine Zeile pro Tool-Aufruf, aufklappbar fuer Argumente und Ergebnis."""
+    """Eine Zeile pro Tool-Aufruf, aufklappbar fuer Parameter und Ergebnis."""
 
-    def __init__(self, name: str, args: str):
-        self._tool, self._args = name, args
-        self._body = Static(args or "(keine Argumente)", classes="tool-body", markup=False)
-        super().__init__(self._body, title=f"{SYM['tool']} {name}  {self._hint()}", collapsed=True,
-                         classes="tool")
+    def __init__(self, name: str, summary: str, detail: str):
+        self._tool, self._summary, self._detail = name, summary, detail
+        self._body = Static(detail, classes="tool-body", markup=False)
+        super().__init__(self._body, title=self._head(SYM["tool"]), collapsed=True, classes="tool")
 
-    def _hint(self) -> str:
-        flat = " ".join(self._args.split())
-        return flat[:60] + ("…" if len(flat) > 60 else "")
+    def _head(self, mark: str, tail: str = "") -> str:
+        line = f"{mark} {self._tool}"
+        if self._summary:
+            line += f"  · {self._summary}"
+        return line + tail
 
-    def finish(self, ok: bool, result: str, secs: float) -> None:
-        self.title = f"{SYM['ok'] if ok else SYM['fail']} {self._tool}  {self._hint()}  · {secs:.1f}s"
+    def finish(self, ok: bool, summary: str, detail: str, secs: float) -> None:
+        tail = (f"  → {summary}" if summary else "") + f"  {secs:.1f}s"
+        self.title = self._head(SYM["ok"] if ok else SYM["fail"], tail)
         self.set_class(not ok, "tool-failed")
-        self._body.update(f"{self._args}\n\n── Ergebnis ──\n{result}" if self._args else result)
+        self._body.update(f"{self._detail}\n\nErgebnis\n{detail}")
 
 
 class RunView:
     """Widgets eines Laufs. Text und Tool-Karten erscheinen in Stream-Reihenfolge."""
 
-    def __init__(self, chat: VerticalScroll):
-        self.chat = chat
+    def __init__(self, chat: VerticalScroll, app: "ICli2"):
+        self.chat, self.app = chat, app
+        self.answer = ""
         self.md: Markdown | None = None
         self.stream = None
         self.think: Static | None = None
@@ -71,26 +74,30 @@ class RunView:
             self.md = Markdown("", classes="answer")
             await self.chat.mount(self.md)
             self.stream = Markdown.get_stream(self.md)
+        self.answer += delta
         await self.stream.write(delta)
 
     async def thinking(self, delta: str) -> None:
         if self.think is None:
             await self.close_segment()
             self.think = Static("", classes="think-body", markup=False)
-            await self.chat.mount(Collapsible(self.think, title=f"{SYM['think']} Gedanken", collapsed=True,
-                                              classes="think"))
+            box = Collapsible(self.think, title=f"{SYM['think']} Gedanken",
+                              collapsed=not self.app.show_thinking, classes="think")
+            self.app.think_boxes.append(box)
+            await self.chat.mount(box)
         self.think_text += delta
         self.think.update(self.think_text)
 
-    async def tool_start(self, tid: str, name: str, args: str) -> None:
+    async def tool_start(self, tid: str, name: str, summary: str, detail: str) -> None:
         await self.close_segment()
-        card = self.tools[tid] = ToolCard(name, args)
+        card = self.tools[tid] = ToolCard(name, summary, detail)
+        self.app.tool_cards.append(card)
         await self.chat.mount(card)
 
-    def tool_end(self, tid: str, ok: bool, result: str, secs: float) -> None:
+    def tool_end(self, tid: str, ok: bool, summary: str, detail: str, secs: float) -> None:
         card = self.tools.pop(tid, None)
         if card is not None:
-            card.finish(ok, result, secs)
+            card.finish(ok, summary, detail, secs)
 
 
 class ICli2(App):
@@ -99,8 +106,12 @@ class ICli2(App):
     #head { height: 1; padding: 0 1; color: $text-muted; }
     #chat { padding: 0 1; scrollbar-size-vertical: 1; }
     #banner { margin: 1 0; }
-    #bottom { height: auto; border-top: solid $secondary; }
-    #row { height: 1; }
+    #bottom { height: auto; }
+    #row { height: 3; border: tall #3b5568; background: #0c161c; padding: 0 1; }
+    #row.-run { border: tall $primary; }
+    #row.-done { border: tall $success; }
+    #row.-ask { border: tall $warning; }
+    #row.-fail { border: tall $error; }
     #mark { width: 2; color: $accent; }
     #prompt, #prompt:focus { border: none; height: 1; padding: 0; background: transparent; }
     #foot { height: 1; padding: 0 1; color: $text-muted; }
@@ -126,6 +137,9 @@ class ICli2(App):
         Binding("escape", "stop", "Stopp", priority=True),
         Binding("ctrl+q", "quit_app", "Beenden", priority=True),
         Binding("ctrl+l", "clear", "Leeren"),
+        Binding("ctrl+o", "fold_tools", "Tools auf/zu", priority=True),
+        Binding("ctrl+r", "fold_thinking", "Gedanken auf/zu", priority=True),
+        *[Binding(f"alt+{n}", f"open_last({n})", show=False, priority=True) for n in range(1, 10)],
     ]
 
     def __init__(self, engine: Engine, agent: str = "self", session: str = "default"):
@@ -134,6 +148,9 @@ class ICli2(App):
         self.agent, self.session, self.model = agent, session, "…"
         self.ready = False
         self.runs: dict[str, RunView] = {}
+        self.tool_cards: list[ToolCard] = []
+        self.think_boxes: list[Collapsible] = []
+        self.show_thinking = False
         self.focus_run = ""
         self.status_msg = ""
         self.tokens: tuple[int, int] | None = None
@@ -173,17 +190,18 @@ class ICli2(App):
         elif ev.kind == P.THINK and view:
             await view.thinking(d["text"])
         elif ev.kind == P.TOOL_START and view:
-            await view.tool_start(d["id"], d["name"], d["args"])
+            await view.tool_start(d["id"], d["name"], d["summary"], d["detail"])
         elif ev.kind == P.TOOL_END and view:
-            view.tool_end(d["id"], d["ok"], d["result"], d["secs"])
+            view.tool_end(d["id"], d["ok"], d["summary"], d["detail"], d["secs"])
         elif ev.kind == P.STATUS:
             if d.get("msg"):
                 self.status_msg = d["msg"]
             if d.get("tokens") is not None and d.get("tokens_max"):
                 self.tokens = (d["tokens"], d["tokens_max"])
         elif ev.kind == P.RUN_START:
-            self.runs[ev.run] = RunView(self.chat)
+            self.runs[ev.run] = RunView(self.chat, self)
             self.focus_run = ev.run
+            self._signal("run")
             if d.get("steer"):
                 await self._note("↪ Nachsteuerung an laufenden Lauf gesendet")
         elif ev.kind == P.RUN_END:
@@ -196,6 +214,11 @@ class ICli2(App):
                 elif mark:
                     await self._note(f"{mark} · {secs:.1f}s")
             self.runs.pop(ev.run, None)
+            if not self.runs:
+                # Signalfarbe der Eingabeleiste: fertig / Frage / Absturz
+                asks = d["status"] == "paused" or (view and (d.get("answer") or view.answer).rstrip().endswith("?"))
+                self._signal("fail" if d["status"] == "failed" else "ask" if asks else
+                             "done" if d["status"] == "done" else "")
             if self.focus_run == ev.run:
                 self.focus_run = next(reversed(self.runs), "")
             self.status_msg = ""
@@ -208,6 +231,11 @@ class ICli2(App):
             self._pick_agent(d["agents"])
         elif ev.kind == P.NOTICE:
             await self._note(d["text"], d.get("level", "info"))
+
+    def _signal(self, state: str) -> None:
+        row = self.query_one("#row")
+        for name in ("run", "done", "ask", "fail"):
+            row.set_class(name == state, f"-{name}")
 
     async def _note(self, text: str, level: str = "info") -> None:
         await self.chat.mount(Static(text, classes=f"note note-{level}", markup=False))
@@ -238,6 +266,8 @@ class ICli2(App):
         message.input.value = ""
         if not text:
             return
+        if not self.runs:
+            self._signal("")
         if text.startswith("/"):
             await self._command(text)
             return
@@ -257,10 +287,14 @@ class ICli2(App):
         elif name == "/agent":
             # mit Name: direkt wechseln, ohne: Auswahl (Liste kommt live aus isaa)
             self.engine.send(P.USE, agent=arg) if arg else self.engine.send(P.AGENTS)
+        elif name == "/open":
+            self.action_open_last(int(arg) if arg.isdigit() else 1)
+        elif name == "/fold":
+            self.action_fold_tools()
         elif name == "/pack":
             self.engine.send(P.PACK, agent=arg or self.agent)
         else:
-            await self._note(f"Unbekannter Befehl {name} – /agent /pack /stop /clear /q", "warn")
+            await self._note(f"Unbekannter Befehl {name} – /agent /pack /open n /fold /stop /clear /q", "warn")
 
     def _pick_agent(self, agents: list[dict]) -> None:
         items = [(a["name"], a["name"],
@@ -286,6 +320,26 @@ class ICli2(App):
     async def action_clear(self) -> None:
         if not self.runs:
             await self.chat.remove_children()
+            self.tool_cards.clear()
+            self.think_boxes.clear()
+
+    def action_fold_tools(self) -> None:
+        """Alle Tool-Details auf, beim naechsten Mal alle zu."""
+        opening = any(card.collapsed for card in self.tool_cards)
+        for card in self.tool_cards:
+            card.collapsed = not opening
+
+    def action_fold_thinking(self) -> None:
+        self.show_thinking = not self.show_thinking
+        for box in self.think_boxes:
+            box.collapsed = not self.show_thinking
+
+    def action_open_last(self, count: int) -> None:
+        """Die letzten `count` Tool-Ergebnisse aufklappen, alle anderen zu."""
+        for index, card in enumerate(reversed(self.tool_cards)):
+            card.collapsed = index >= count
+        if self.tool_cards:
+            self.tool_cards[-min(count, len(self.tool_cards))].scroll_visible()
 
     def action_quit_app(self) -> None:
         self.exit()
