@@ -1,6 +1,9 @@
 import os
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock, AsyncMock
+
+_TEST_DATA_DIR = tempfile.mkdtemp(prefix="tb_test_session_")
 
 from toolboxv2.utils.singelton_class import Singleton
 from toolboxv2.utils.system.session import Session
@@ -23,8 +26,9 @@ class TestSessionStorage(unittest.TestCase):
 
     def setUp(self):
         _reset_session_singleton()
-        self.env_patcher = patch.dict(os.environ, {"TB_DATA_DIR": "/fake/dir"})
+        self.env_patcher = patch.dict(os.environ, {"TB_DATA_DIR": _TEST_DATA_DIR})
         self.env_patcher.start()
+        self.addCleanup(self.env_patcher.stop)
 
         # Mock the storage subsystem to prevent any real I/O
         self.mock_storage_patcher = patch('toolboxv2.utils.system.session.BlobStorage')
@@ -34,7 +38,6 @@ class TestSessionStorage(unittest.TestCase):
         self.sess = Session(username="testuser", base="http://localhost:8000")
 
     def tearDown(self):
-        self.env_patcher.stop()
         self.mock_storage_patcher.stop()
         _reset_session_singleton()
 
@@ -130,8 +133,9 @@ class TestSessionAuth(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         _reset_session_singleton()
-        self.env_patcher = patch.dict(os.environ, {"TB_DATA_DIR": "/fake/dir"})
+        self.env_patcher = patch.dict(os.environ, {"TB_DATA_DIR": _TEST_DATA_DIR})
         self.env_patcher.start()
+        self.addCleanup(self.env_patcher.stop)
 
         from toolboxv2.utils.system.session import Session
         self.sess = Session(username="testuser", base="http://test.local")
@@ -148,7 +152,6 @@ class TestSessionAuth(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         await self.sess.cleanup()
-        self.env_patcher.stop()
         _reset_session_singleton()
 
     @patch.object(Session, "_load_session_token")
