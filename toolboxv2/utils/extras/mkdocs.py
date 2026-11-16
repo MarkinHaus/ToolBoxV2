@@ -2013,7 +2013,15 @@ class FileScanner:
 
     def _should_include(self, path: Path) -> bool:
         """Check if file should be included (exclude only check)."""
+        # Only directories *inside* the project decide; a project that lives
+        # under e.g. /tmp or .../build must not be excluded as a whole.
         parts = path.parts
+        for base in (self.root, self.docs_root):
+            try:
+                parts = path.resolve().relative_to(Path(base).resolve()).parts
+                break
+            except (ValueError, OSError):
+                continue
         return not any(exc in parts for exc in self.exclude_dirs)
 
     def get_file_hash(self, path: Path) -> str:

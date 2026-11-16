@@ -41,7 +41,7 @@ def test_endpoint_default_matches_canon():
 
 def test_embedded_js_fallback_matches_canon():
     """Embedded JS: __TB_WS_PORT__ Fallback muss kanonischen WS-Port nutzen."""
-    base = Path(__file__).resolve().parents[3]
+    base = Path(__file__).resolve().parents[2]
     for rel in ("fast_tb.py", "fast_tb_defaults.py"):
         text = (base / "utils" / "workers" / rel).read_text(encoding="utf-8")
         assert "'8100'" not in text, f"{rel}: alter WS-Fallback 8100 vorhanden"

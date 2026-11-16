@@ -33,7 +33,7 @@ class TestEmbedFunction(unittest.TestCase):
         router.embed = AsyncMock(return_value=mock_result)
         return router
 
-    @patch("llm_router.embeddings._get_router")
+    @patch("toolboxv2.mods.isaa.base.llm_router.embeddings._get_router")
     def test_basic_embed(self, mock_get_router):
         embeddings_data = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
         mock_get_router.return_value = self._mock_router(embeddings_data)
@@ -45,7 +45,7 @@ class TestEmbedFunction(unittest.TestCase):
         self.assertEqual(result.shape, (2, 3))
         np.testing.assert_array_almost_equal(result[0], [0.1, 0.2, 0.3])
 
-    @patch("llm_router.embeddings._get_router")
+    @patch("toolboxv2.mods.isaa.base.llm_router.embeddings._get_router")
     def test_dimension_truncation(self, mock_get_router):
         """If provider returns more dims than requested, truncate."""
         embeddings_data = [[0.1, 0.2, 0.3, 0.4, 0.5]]
@@ -57,7 +57,7 @@ class TestEmbedFunction(unittest.TestCase):
         self.assertEqual(result.shape, (1, 3))
         np.testing.assert_array_almost_equal(result[0], [0.1, 0.2, 0.3])
 
-    @patch("llm_router.embeddings._get_router")
+    @patch("toolboxv2.mods.isaa.base.llm_router.embeddings._get_router")
     def test_dimensions_passed_to_router(self, mock_get_router):
         embeddings_data = [[0.1, 0.2]]
         router = self._mock_router(embeddings_data)
@@ -70,7 +70,7 @@ class TestEmbedFunction(unittest.TestCase):
         _, kwargs = router.embed.call_args
         self.assertEqual(kwargs.get("dimensions"), 256)
 
-    @patch("llm_router.embeddings._get_router")
+    @patch("toolboxv2.mods.isaa.base.llm_router.embeddings._get_router")
     def test_input_type_passed(self, mock_get_router):
         embeddings_data = [[0.1, 0.2]]
         router = self._mock_router(embeddings_data)
@@ -83,7 +83,7 @@ class TestEmbedFunction(unittest.TestCase):
         _, kwargs = router.embed.call_args
         self.assertEqual(kwargs.get("input_type"), "search_query")
 
-    @patch("llm_router.embeddings._get_router")
+    @patch("toolboxv2.mods.isaa.base.llm_router.embeddings._get_router")
     def test_litellm_embed_compat(self, mock_get_router):
         """litellm_embed() is a thin wrapper, verify it delegates correctly."""
         embeddings_data = [[0.1, 0.2, 0.3]]
@@ -97,7 +97,7 @@ class TestEmbedFunction(unittest.TestCase):
         self.assertIsInstance(result, np.ndarray)
         router.embed.assert_called_once()
 
-    @patch("llm_router.embeddings._get_router")
+    @patch("toolboxv2.mods.isaa.base.llm_router.embeddings._get_router")
     def test_smart_embed_delegates(self, mock_get_router):
         embeddings_data = [[0.1, 0.2]]
         router = self._mock_router(embeddings_data)

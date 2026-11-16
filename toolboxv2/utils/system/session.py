@@ -116,13 +116,41 @@ class Session(metaclass=Singleton):
             storage_directory=str(storage_path)
         )
 
+    # Until 2026-11 every user on a device shared this one file; read once and migrated.
+    _LEGACY_BLOB_NAME = "user/_session.json"
+
     def _get_blob_name(self) -> str:
-        """Determines the blob name (filename)."""
+        """Determines the blob name (filename): one session file per user."""
         # Default to 'default' if no username, allows basic session persistence without login
         safe_name = self.username or "default"
         # Sanitize filename
         safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in safe_name)[:32]
-        return f"user/_session.json"
+        # BlobFile needs "<blob_id>/<file>"; the blob is "user", one file per user inside it
+        return f"user/{safe_name}_session.json"
+
+    def _migrate_legacy_session(self) -> Optional[dict]:
+        """Move a session from the old device-wide file to this user's file (once).
+
+        Only when the old file belongs to this user (or has no owner recorded);
+        another user's old session is left untouched.
+        """
+        key = self._get_encryption_key()
+        try:
+            with BlobFile(self._LEGACY_BLOB_NAME, mode="r", key=key, storage=self._storage) as blob:
+                data = blob.read_json()
+        except Exception:
+            return None
+        if not data:
+            return None
+        owner = data.get("username") or ""
+        if self.username and owner and owner != self.username:
+            return None
+        with BlobFile(self._get_blob_name(), mode="w", key=key, storage=self._storage) as blob:
+            blob.write_json(data)
+        with BlobFile(self._LEGACY_BLOB_NAME, mode="w", key=key, storage=self._storage) as blob:
+            blob.write_json({})
+        get_logger().info(f"Session migrated from {self._LEGACY_BLOB_NAME} to {self._get_blob_name()}")
+        return data
 
     def _get_encryption_key(self) -> str:
         """
@@ -163,9 +191,14 @@ class Session(metaclass=Singleton):
         try:
             blob_name = self._get_blob_name()
 
-            with BlobFile(blob_name, mode="r", key=self._get_encryption_key(), storage=self._storage) as blob:
-                session_data = blob.read_json()
+            try:
+                with BlobFile(blob_name, mode="r", key=self._get_encryption_key(), storage=self._storage) as blob:
+                    session_data = blob.read_json()
+            except Exception:
+                session_data = None
 
+            if not session_data:
+                session_data = self._migrate_legacy_session()
             if not session_data:
                 return None
 

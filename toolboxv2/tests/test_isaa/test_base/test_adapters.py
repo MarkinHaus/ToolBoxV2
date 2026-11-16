@@ -419,10 +419,10 @@ class TestMiniMaxAdapter(unittest.TestCase):
 
 class TestSetupDefaultAdapters(unittest.TestCase):
     def test_registers_only_available_providers(self):
-        from llm_router.router import CompletionRouter
+        from toolboxv2.mods.isaa.base.llm_router.router import CompletionRouter
         router = CompletionRouter(session=MagicMock(), strict_mode=True)
 
-        from llm_router.adapters.setup import setup_default_adapters
+        from toolboxv2.mods.isaa.base.llm_router.adapters.setup import setup_default_adapters
         # Only GROQ key set
         setup_default_adapters(router, env={"GROQ_API_KEY": "test"})
 
@@ -435,10 +435,10 @@ class TestSetupDefaultAdapters(unittest.TestCase):
             router.resolve("anthropic/claude-3")
 
     def test_ollama_always_registered(self):
-        from llm_router.router import CompletionRouter
+        from toolboxv2.mods.isaa.base.llm_router.router import CompletionRouter
         router = CompletionRouter(session=MagicMock(), strict_mode=True)
 
-        from llm_router.adapters.setup import setup_default_adapters
+        from toolboxv2.mods.isaa.base.llm_router.adapters.setup import setup_default_adapters
         setup_default_adapters(router, env={})  # no keys at all
 
         adapter, model, prefix = router.resolve("ollama/mistral")

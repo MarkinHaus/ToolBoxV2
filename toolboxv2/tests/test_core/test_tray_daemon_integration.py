@@ -458,7 +458,7 @@ class TestDaemonServiceE2EValidation(unittest.TestCase):
         """fallback_tray hat dynamisches State-Fetching (A1)."""
         import toolboxv2.utils.extras.fallback_tray as ft
         src = inspect.getsource(ft)
-        self.assertIn("_fetch_tray_state", src)
+        self.assertIn("fetch_tray_state", src)
         self.assertIn("/tray/state", src)
 
     def test_daemon_command_is_bgr(self):
