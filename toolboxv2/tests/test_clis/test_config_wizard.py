@@ -55,6 +55,8 @@ _spec = importlib.util.spec_from_file_location(
 _wiz = importlib.util.module_from_spec(_spec)
 sys.modules["toolboxv2.utils.clis.config_wizard"] = _wiz
 _spec.loader.exec_module(_wiz)
+import toolboxv2.utils.clis as _clis_pkg
+_clis_pkg.config_wizard = _wiz  # py3.10: mock.patch resolves via getattr on the parent package
 # R1: restore sys.modules -- the stub must not leak into other tests
 # (cli_worker_manager imports print_table_header from the REAL cli_printing).
 sys.modules.pop("toolboxv2.utils.clis.cli_printing", None)
