@@ -1,6 +1,7 @@
 """Fuzzy-Auswahl als Overlay. Wiederverwendbar fuer /agent, /model, /session, Palette."""
 from __future__ import annotations
 
+from rich.markup import escape
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -48,7 +49,8 @@ class Picker(ModalScreen[str | None]):
         options.clear_options()
         for value, label, hint in self._items:
             if fuzzy(needle, label):
-                options.add_option(Option(f"{label}  [dim]{hint}[/]" if hint else label, id=value))
+                text = escape(label) + (f"  [dim]{escape(hint)}[/]" if hint else "")
+                options.add_option(Option(text, id=value))
         if options.option_count:
             options.highlighted = 0
 
