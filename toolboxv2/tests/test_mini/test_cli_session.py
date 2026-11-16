@@ -126,7 +126,8 @@ class TestSessionPathSafety(unittest.TestCase):
         sess = self._make_session("a" * 200)
         path = sess._get_blob_name()
         # Filename part (without extension) should be <= 32 + len("_session.json")
-        name_part = path.replace("_session.json", "")
+        # path is "user/<name>_session.json" (BlobFile needs "<blob_id>/<file>")
+        name_part = path.rsplit("/", 1)[-1].replace("_session.json", "")
         self.assertLessEqual(len(name_part), 32)
 
 

@@ -49,7 +49,7 @@ class TestSessionStorage(unittest.TestCase):
         blob_name = self.sess._get_blob_name()
 
         # Assert
-        self.assertEqual(blob_name, "user_evil_______name__session.json")
+        self.assertEqual(blob_name, "user/user_evil_______name__session.json")
 
     def test_get_blob_name_empty_username_uses_default(self):
         # Arrange
@@ -59,7 +59,7 @@ class TestSessionStorage(unittest.TestCase):
         blob_name = self.sess._get_blob_name()
 
         # Assert
-        self.assertEqual(blob_name, "default_session.json")
+        self.assertEqual(blob_name, "user/default_session.json")
 
     @patch('toolboxv2.utils.system.session.BlobFile')
     @patch('toolboxv2.utils.system.session.Code')
@@ -80,7 +80,7 @@ class TestSessionStorage(unittest.TestCase):
         self.assertEqual(self.sess.access_token, "access_123")
 
         mock_blob_file.assert_called_with(
-            "testuser_session.json",
+            "user/testuser_session.json",
             mode="w",
             key="fake-device-key",
             storage=self.sess._storage
@@ -104,7 +104,7 @@ class TestSessionStorage(unittest.TestCase):
         }
 
         # Temporarily clear base to test restoration
-        del os.environ["TOOLBOXV2_REMOTE_BASE"]
+        os.environ.pop("TOOLBOXV2_REMOTE_BASE", None)
 
         # Act
         data = self.sess._load_session_token()
