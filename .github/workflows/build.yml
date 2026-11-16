@@ -144,7 +144,7 @@ jobs:
       - name: Install toolboxv2 with ISAA
         run: |
           python -m uv pip install -e toolboxv2/mods/isaa --system
-          python -m uv pip install . --system
+          python -m uv pip install -e . --system
         working-directory: ${{ github.workspace }}
 
       - name: Run Tests
