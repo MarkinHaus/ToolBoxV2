@@ -39,6 +39,22 @@ def read_device_owner(app: App) -> Optional[dict]:
     return data if isinstance(data, dict) and data.get("user_id") else None
 
 
+def local_trust_provider(app, is_production: bool) -> Optional[dict]:
+    """Provider for SessionManager.enable_local_trust (WP1 K2).
+    Only profile local/developer, never production, only with a linked
+    device account. No local-admin fallback (account is mandatory)."""
+    if is_production:
+        return None
+    profile = getattr(getattr(getattr(app, "manifest", None), "app", None), "profile", None)
+    value = getattr(profile, "value", profile)
+    if value not in ("local", "developer"):
+        return None
+    owner = read_device_owner(app)
+    if not owner or not owner.get("user_id"):
+        return None
+    return {"user_id": owner["user_id"], "username": owner.get("username", ""), "level": -1}
+
+
 async def link_account(app: App, payload: dict) -> UserData:
     """Link this device to a SimpleCore account (idempotent per account).
 
