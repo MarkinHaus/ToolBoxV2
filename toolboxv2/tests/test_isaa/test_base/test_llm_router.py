@@ -174,7 +174,7 @@ class TestRouter(unittest.TestCase):
         router = CompletionRouter(session=MagicMock(), strict_mode=False)
         router._session = MagicMock()
         # Patch the litellm fallback import
-        with patch("llm_router.router.CompletionRouter._get_litellm_fallback") as mock_fb:
+        with patch("toolboxv2.mods.isaa.base.llm_router.router.CompletionRouter._get_litellm_fallback") as mock_fb:
             mock_adapter = MagicMock()
             mock_fb.return_value = mock_adapter
             resolved, model, prefix = router.resolve("unknown/model")
