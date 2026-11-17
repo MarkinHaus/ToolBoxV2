@@ -8,7 +8,15 @@ Quellen (jede einzeln abgesichert - ein Fehler entfernt nie die anderen):
 """
 from __future__ import annotations
 
+try:
+    from toolboxv2.mods.isaa.base.IntelligentRateLimiter.free_providers.registry import (
+        REGISTRY as _IRL_REGISTRY,
+    )
+except Exception:  # Quelle einzeln gesichert - IRL fehlt: Picker lebt weiter
+    _IRL_REGISTRY = ()
+
 import ast
+import asyncio
 import contextlib
 import io
 import os
@@ -93,6 +101,57 @@ def router_models() -> list[tuple[str, str, str]]:
     return out
 
 
+def _fetch_available_models(active_providers, extra_env=None, use_warm_fallback=True):
+    """Netzgrenze: dünn gekapselt für Test-Fakes (async)."""
+    from toolboxv2.mods.isaa.base.IntelligentRateLimiter.free_providers.fetch_models import (
+        fetch_available_models as _fetch,
+    )
+    return _fetch(active_providers, extra_env=extra_env, use_warm_fallback=use_warm_fallback)
+
+
+_REAL_FETCH = _fetch_available_models
+
+
+def irl_models(active_providers: dict | None = None) -> list[tuple[str, str, str]]:
+    """Modellzeilen aller IRL-Provider: [(litellm_prefix+model_id, display, provider_id)].
+    Quelle 1: fetch_models (aktive Provider mit Key, Netzgrenze gefaked in Tests).
+    Quelle 2: REGISTRY warm_models (offline-Fallback, immer verfügbar)."""
+    rows: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+
+    def add(prefix: str, model_id: str, display: str, provider: str) -> None:
+        full = prefix + model_id
+        if full not in seen:
+            seen.add(full)
+            rows.append((full, display, provider))
+
+    fetched = None
+    if active_providers:
+        try:
+            loop = asyncio.new_event_loop()
+            try:
+                fetched = loop.run_until_complete(
+                    _fetch_available_models(active_providers))
+            finally:
+                loop.close()
+        except Exception:
+            fetched = None
+
+    specs = {s.id: s for s in _IRL_REGISTRY}
+    if fetched:
+        for provider, model_list in fetched.items():
+            spec = specs.get(provider)
+            if spec is None:
+                continue
+            for mid in model_list:
+                add(spec.litellm_prefix, str(mid), spec.display_name, provider)
+
+    for spec in _IRL_REGISTRY:                      # offline-Fallback immer dazu
+        for mid in getattr(spec, "warm_models", ()) or ():
+            add(spec.litellm_prefix, mid, spec.display_name, spec.id)
+    return rows
+
+
 def all_models(current: list[tuple[str, str]] = ()) -> list[dict]:
     """Zeilen fuer den Picker: {"value": voller_modellname, "label": anzeigename, "hint": text}.
     Reihenfolge: 1. `current` (hint = aktuell schnell/komplex), 2. Router-Modelle, 3. statische Modelle.
@@ -110,4 +169,6 @@ def all_models(current: list[tuple[str, str]] = ()) -> list[dict]:
         add(full, name, f"Router: {router}")
     for alias, full in static_models().items():
         add(full, alias, full)
+    for full, display, provider in irl_models():
+        add(full, f"{display}: {full}", f"IRL ({provider})")
     return rows
