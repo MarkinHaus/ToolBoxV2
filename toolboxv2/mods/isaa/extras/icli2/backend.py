@@ -327,9 +327,37 @@ class IsaaBackend(FeatureMixin, PluginInstallMixin, ConnectMixin, BridgeMixin, C
     def _load_settings(self) -> None:
         try:
             data = json.loads(self._settings_file().read_text(encoding="utf-8"))
-            self.max_iterations = int(data.get("max_iterations", self.max_iterations))
         except Exception:
-            pass                                         # keine Datei / kaputt: Standardwerte
+            data = {}                                   # keine Datei / kaputt: Standardwerte
+        self.max_iterations = int(data.get("max_iterations", getattr(self, "max_iterations", 5)))
+        self._settings = data
+
+    def save_setting(self, key: str, value) -> None:
+        """Schluessel in settings.json mergen (atomar via tmp+replace)."""
+        import os as _os
+        path = self._settings_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+        data[key] = value
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        _os.replace(tmp, path)
+        if not isinstance(getattr(self, "_settings", None), dict):
+            self._settings = {}
+        self._settings[key] = value
+
+    def get_voice_devices(self) -> tuple:
+        """Gespeicherte Geraete (in, out) oder (None, None)."""
+        cfg = getattr(self, "_settings", None) or {}
+        return cfg.get("voice_input_device"), cfg.get("voice_output_device")
+
+    def get_tts_config(self) -> tuple:
+        """(tts_provider, tts_voice), Defaults wie alte icli (groq_tts/autumn)."""
+        cfg = getattr(self, "_settings", None) or {}
+        return cfg.get("tts_provider", "groq_tts"), cfg.get("tts_voice", "autumn")
 
     async def _rows_settings(self):
         user = await self._cloud_user()
@@ -347,9 +375,7 @@ class IsaaBackend(FeatureMixin, PluginInstallMixin, ConnectMixin, BridgeMixin, C
         if not value.isdigit() or not 1 <= int(value) <= 500:
             raise ValueError("max_iterations braucht eine Zahl von 1 bis 500")
         self.max_iterations = int(value)
-        path = self._settings_file()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        await asyncio.to_thread(path.write_text, json.dumps({"max_iterations": self.max_iterations}), "utf-8")
+        await asyncio.to_thread(self.save_setting, "max_iterations", self.max_iterations)
         return {"text": f"Max. Iterationen: {self.max_iterations} (gilt ab der nächsten Nachricht)"}
 
     async def _do_credentials(self) -> dict[str, Any]:
