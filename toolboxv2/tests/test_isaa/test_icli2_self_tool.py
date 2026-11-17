@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from toolboxv2.mods.isaa.extras.icli2.backend import IsaaBackend
-from toolboxv2.mods.isaa.extras.icli2.self_tool import SelfToolMixin
 
 
 def _backend(tmp: Path, agent: str = "self", with_agent_json: bool = True) -> IsaaBackend:
@@ -22,7 +21,7 @@ def _backend(tmp: Path, agent: str = "self", with_agent_json: bool = True) -> Is
     class _Isaa:
         agent_data = {}
 
-    class _B(SelfToolMixin, IsaaBackend):
+    class _B(IsaaBackend):  # SelfToolMixin ist in IsaaBackend verdrahtet (Validierung)
         def __init__(self):
             self.app = _App()
             self.isaa = _Isaa()
