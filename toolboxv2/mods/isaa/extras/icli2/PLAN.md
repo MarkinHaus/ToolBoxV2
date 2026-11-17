@@ -194,6 +194,12 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 - **Nachsteuerung:** Die Engine erkennt selbst, ob in derselben Session schon ein Chat-Lauf arbeitet. Die UI setzt Frage und Sidecar-Antwort dann an der aktuellen Stelle IN diesen Lauf; alles Weitere des Hauptlaufs erscheint darunter. Vorher bekam die Nachsteuerung einen eigenen Block ganz unten und der Hauptlauf schrieb oberhalb weiter. Geprüft im UI-Test und im echten Durchlauf gegen den isaa-Agenten.
 - **Nicht übernommen:** Ein kürzeres GIL-Umschaltintervall wurde gemessen und brachte nichts. Was an Rucklern bleibt, kommt vom gemeinsamen GIL von UI- und Agenten-Thread; das löst erst die Engine als eigener Prozess (siehe „Danach“).
 
+### Schritt 13 – Sub-Agent-Kachel und verständliche Fehler (`icli2-13-subagent-fehler.patch`)
+- **Sub-Agent als Kachel** (`subtile.py`): klein ein einziges Widget mit Status, Aufgabe, Kennzahlen (Schritt x/max, Laufzeit, Restzeit bis Zeitlimit, Tokens/Budget) und den letzten drei Aktionen; Klick öffnet die große Ansicht mit voller Aufgabe oben, allen Aktionen in einem eigenen Scrollbereich (einzeln aufklappbar, bis 300) und Ergebnis bzw. Fehler unten; Klick auf den Kopf schließt sie. Laufzeit und Restzeit zählen jede Sekunde mit.
+- **Dafür in `mods/isaa/base/Agent/sub_agent.py` (additiv):** Jeder weitergereichte Chunk trägt `_sub_agent_meta` (volle Aufgabe, Status, Fehler, Schritt, Budget, Zeitlimit, Start, Verbrauch); vor dem Ende kommt immer eine Abschlussmeldung mit Endstatus, Fehler und Ergebnis (auch bei Ausnahme oder Abbruch – vorher erreichten Fehler von Sub-Agenten die Oberfläche gar nicht). Ältere Oberflächen ignorieren das Feld; die bestehenden Engine-Tests liefern vorher wie nachher dasselbe Ergebnis.
+- **Fehler** (`errors.py`): Die Engine las Fehler bisher unter dem falschen Schlüssel (`message` statt `error`) und zeigte dadurch keine Meldung; Iterationslimit, Warnungen und Abbruch wurden nicht ausgewertet. Jetzt gibt es am Laufende eine anklickbare Zeile, z. B. „✗ Anbieter-Limit erreicht (429) – Rate limit exceeded: …“. Aufgeklappt: was zu tun ist (mit icli2-Befehlen), die eigentliche Meldung des Anbieters (aus eingebettetem JSON bzw. hinter Hüllen wie „Agent crashed: ProviderError: litellm.RateLimitError: …“), Wartezeit falls genannt, vollständige Details mit lesbar eingerücktem JSON und Traceback. Erkannt werden Anbieter-Limit, Zugang, Guthaben, Modell, Kontextgröße, Verbindung, Störung, Zeitüberschreitung, Inhalts-Sperre, abgelehnte Anfrage, leere Antwort, interner Absturz, Iterationslimit (gelb, mit Zusammenfassung des Agenten). Warnungen des Agenten erscheinen als Hinweis im Lauf.
+- **Geprüft:** `tests/check_errors.py` (realistische Fehlertexte von litellm/Anbietern/Engine, darunter der genaue Text aus dem echten Lauf), `tests/check_ui.py` (Kachel klein/groß, 30 Aktionen, Ergebnis, Fehler; Fehler-, Limit- und Absturz-Lauf), echter Durchlauf gegen den isaa-Agenten mit echtem HTTP-429 und echtem Sub-Agenten (`tests/e2e/e2e_errors.py`).
+
 ## Arbeitsanleitung für weitere Schritte
 
 Alle geplanten Schritte sind umgesetzt. Das Vorgehen gilt für jede Erweiterung; offene Ideen stehen unter „Danach“.
@@ -287,6 +293,8 @@ git apply icli2-06-07-features-discord.patch   # baut auf 08-09 auf
 git apply icli2-10-e2e-settings-vfs.patch
 git apply icli2-11-plugin-install.patch
 git apply icli2-12-fluessig-steering.patch
+git apply icli2-12b-fix-termguard.patch
+git apply icli2-13-subagent-fehler.patch
 pip install "textual>=8"
 ```
 
