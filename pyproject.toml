@@ -196,6 +196,7 @@ isaa = [
     "pillow>=12.1.1",
     # "fitz>=0.0.1.dev2",
     "croniter",
+    "textual>=8.0.0",  # icli2 (flows/isaa/icli2.py)
 ]
 
 exotic = [
