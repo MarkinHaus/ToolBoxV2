@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+import traceback
 from collections import deque
 from typing import Any, AsyncIterator, Protocol
 
@@ -264,9 +265,27 @@ class Engine:
         except Exception:
             return ""
 
+    def _sub_info(self, run: _Run, sub: str, chunk: dict, seen: dict) -> None:
+        """Rahmendaten eines Sub-Agenten an die UI - nur wenn sich etwas Sichtbares aendert."""
+        meta = chunk.get("_sub_agent_meta") or {}
+        task = str(meta.get("task") or chunk.get("_sub_agent_task") or sub)
+        state = (meta.get("status"), meta.get("iter"), int(meta.get("tokens") or 0) // 1000, bool(meta.get("final")))
+        if seen.get(sub) == state:
+            return
+        seen[sub] = state
+        self._flush(run)                                 # Reihenfolge: gesammelter Text zuerst
+        self._emit(P.SUB, run.id, sub=sub, task=task, status=str(meta.get("status") or "running"),
+                   iter=meta.get("iter"), max_iter=meta.get("max_iter"), tokens=meta.get("tokens"),
+                   budget=meta.get("budget"), timeout=meta.get("timeout"), started=meta.get("started"),
+                   error=str(meta.get("error") or ""), result=fmt.clip(str(meta.get("result") or ""), RESULT_LIMIT),
+                   final=bool(meta.get("final")))
+
     async def _chat(self, run: _Run, query: str, boot: asyncio.Task, tag: str = "",
                     kind: str = "chat", stream: Any = None) -> None:
-        status, answer, error = "done", "", ""
+        status, answer = "done", ""
+        errors: list[str] = []                           # roher Fehlertext, wie er vom Agenten kommt
+        trace, iters = "", (0, 0)
+        subs: dict[str, tuple] = {}                      # zuletzt gemeldeter Stand je Sub-Agent
         started: dict[str, float] = {}
         # Nachsteuerung: laeuft in dieser Session schon ein Chat-Lauf, beantwortet a_stream die
         # Nachricht als Sidecar - die UI setzt Frage und Antwort dann IN diesen Lauf ein.
@@ -281,10 +300,10 @@ class Engine:
             if stream is None:
                 stream = self._backend.stream(run.agent, run.session, query)
             async for chunk in stream:
-                # Sub-Agent: gleiche Darstellung, eingerueckt; beeinflusst nie den Status des Laufs
+                # Sub-Agent: eigene Kachel in der UI; beeinflusst nie den Status des Laufs
                 sub = str(chunk.get("_sub_agent_id") or "")
                 if sub:
-                    sub = f"{chunk.get('_sub_agent_task') or sub}"
+                    self._sub_info(run, sub, chunk, subs)
                 t = chunk.get("type", "")
                 if t == "content":
                     self._push(run, P.TEXT, chunk.get("chunk", ""), sub)
@@ -303,6 +322,8 @@ class Engine:
                 self._flush(run)
                 if sub and t not in ("tool_start", "tool_result", "tool_error"):
                     continue
+                if not sub and chunk.get("iter") is not None:
+                    iters = (int(chunk.get("iter") or 0), int(chunk.get("max_iter") or 0))
                 if t == "tool_start":
                     tid = str(chunk.get("id") or chunk.get("name", "?"))
                     started[tid] = time.monotonic()
@@ -325,10 +346,20 @@ class Engine:
                         self._flush(run)
                 elif t == "paused":
                     status = "paused"
-                elif t == "error":
-                    status, error = "failed", str(chunk.get("message", chunk.get("chunk", "")))
-                elif t == "done" and chunk.get("success") is False and status == "done":
+                elif t == "error":                       # der Engine liefert den Text unter "error"
                     status = "failed"
+                    errors.append(str(chunk.get("error") or chunk.get("message") or chunk.get("chunk") or ""))
+                elif t == "max_iterations":
+                    status = "limit"
+                    if not answer:
+                        answer = str(chunk.get("answer") or "")
+                elif t == "cancelled":
+                    status = run.ended or "stopped"
+                elif t == "warning" and chunk.get("message"):
+                    self._emit(P.NOTICE, run.id, level="warn", text=f"⚠ {chunk['message']}")
+                elif t == "done" and chunk.get("success") is False and status == "done":
+                    status = "failed"                    # Absturz: der Grund steht nur in final_answer
+                    errors.append(str(chunk.get("final_answer") or "Lauf ohne Erfolg beendet"))
                 if not sub and (chunk.get("status_msg") or chunk.get("iter") is not None):
                     self._emit(P.STATUS, run.id, msg=chunk.get("status_msg", ""),
                                iter=chunk.get("iter"), max_iter=chunk.get("max_iter"),
@@ -340,7 +371,9 @@ class Engine:
             except BaseException:
                 pass
         except Exception as e:
-            status, error = "failed", f"{type(e).__name__}: {e}"
+            status = "failed"
+            errors.append(f"{type(e).__name__}: {e}")
+            trace = traceback.format_exc()
         finally:
             if stream is not None and hasattr(stream, "aclose"):
                 try:
@@ -349,7 +382,9 @@ class Engine:
                     pass
             self._flush(run)
             self._runs.pop(run.id, None)
-            self._emit(P.RUN_END, run.id, status=status, answer=answer, error=error)
+            error = errors[-1] if errors else ""
+            self._emit(P.RUN_END, run.id, status=status, answer=answer, error=error,
+                       errors=errors[-3:], traceback=trace, iter=iters[0], max_iter=iters[1])
             if run.result is not None and not run.result.done():
                 if status == "failed":
                     run.result.set_exception(RuntimeError(error or "Lauf fehlgeschlagen"))

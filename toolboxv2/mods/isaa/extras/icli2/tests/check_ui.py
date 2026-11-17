@@ -1,5 +1,8 @@
 import asyncio, sys, time
 import stub
+OR_429 = ('litellm.RateLimitError: RateLimitError: OpenrouterException - {"error":{"message":"Rate limit '
+          'exceeded: free-models-per-day","code":429}}')
+SUB_TASK_A = "Recherchiere die API von Dienst X\nund liste alle Endpunkte mit Methode und Zweck auf.\nNutze nur die offizielle Doku."
 from toolboxv2.mods.isaa.extras.icli2 import protocol as P
 from toolboxv2.mods.isaa.extras.icli2.engine import Engine
 from toolboxv2.mods.isaa.extras.icli2.app import ICli2
@@ -12,6 +15,21 @@ class Fake:
     async def stream(s, agent, session, query):
         s.active.add(session)
         try:
+            if query.startswith("fehler"):                 # Abbruch durch den Anbieter (wie litellm/Engine)
+                yield {"type":"tool_start","name":"vfs_shell","args":{"command":"ls"},"id":"e1","iter":1,"max_iter":30}
+                yield {"type":"tool_result","name":"vfs_shell","id":"e1","result":{"success":True}}
+                yield {"type":"error","error":OR_429}
+                yield {"type":"done","success":False,"final_answer":"Es ist ein Fehler aufgetreten"}
+                return
+            if query.startswith("limit"):
+                for i in range(1, 6): yield {"type":"status","status_msg":f"Schritt {i}","iter":i,"max_iter":5}
+                yield {"type":"max_iterations","answer":"Ich konnte die Aufgabe nicht abschliessen. Zusammenfassung: drei Dateien gelesen.","iter":5,"max_iter":5}
+                yield {"type":"done","success":False,"final_answer":"…"}
+                return
+            if query.startswith("absturz"):
+                yield {"type":"warning","message":"Tool rejected — correction injected."}
+                yield {"type":"done","success":False,"final_answer":"Agent crashed: KeyError: 'tool_calls'"}
+                return
             yield {"type":"status","status_msg":"Preparing"}
             yield {"type":"reasoning","chunk":"hmm "}
             yield {"type":"tool_start","name":"vfs_shell","args":'{"cmd":"ls -la src", "timeout": 30}',"id":"t1"}
@@ -20,11 +38,18 @@ class Fake:
             yield {"type":"tool_start","name":"vfs_write","args":{"reason":"Konfiguration fuer den neuen Dienst anlegen","path":"/a/b.yaml","content":"a: 1\nb: 2","opts":{"mkdir":True,"mode":[1,2]}},"id":"t2"}
             yield {"type":"tool_result","name":"vfs_write","id":"t2","result":{"success":True,"size":2048,"lines":2,"file_type":"yaml"}}
             if "sub" in query:
-                for sid,task in (("sub_a1","Recherche API"),("sub_b2","Tests schreiben")):
-                    yield {"type":"tool_start","name":"vfs_read","args":{"path":"/x.py"},"id":"s"+sid,"_sub_agent_id":sid,"_sub_agent_task":task}
-                    yield {"type":"content","chunk":f"Teilergebnis {sid}. ","_sub_agent_id":sid,"_sub_agent_task":task}
-                    yield {"type":"tool_result","name":"vfs_read","id":"s"+sid,"result":{"success":True,"lines":3},"_sub_agent_id":sid,"_sub_agent_task":task}
-                    yield {"type":"done","success":False,"_sub_agent_id":sid,"_sub_agent_task":task}
+                for sid,task,n in (("sub_a1",SUB_TASK_A,2),("sub_b2","Tests schreiben fuer das Modul x",30)):
+                    meta={"task":task,"status":"running","iter":3,"max_iter":120,"tokens":12345,"budget":512000,
+                          "timeout":1800,"started":time.time()-42,"error":""}
+                    tag={"_sub_agent_id":sid,"_sub_agent_task":task[:60],"_sub_agent_meta":meta}
+                    for k in range(n):
+                        yield {"type":"tool_start","name":"vfs_read","args":{"path":f"/x{k}.py"},"id":f"s{sid}{k}",**tag}
+                        yield {"type":"tool_result","name":"vfs_read","id":f"s{sid}{k}","result":{"success":True,"lines":3},**tag}
+                    yield {"type":"content","chunk":f"Teilergebnis {sid}. ",**tag}
+                    final=dict(meta, final=True, status="completed" if sid=="sub_a1" else "failed",
+                               result="## Ergebnis A\n\nDie API hat **drei** Endpunkte." if sid=="sub_a1" else "",
+                               error="" if sid=="sub_a1" else OR_429)
+                    yield {"type":"status","status_msg":"Sub-Agent fertig","_sub_agent_id":sid,"_sub_agent_task":task[:60],"_sub_agent_meta":final}
             for i in range(400 if "long" in query else 20):
                 yield {"type":"content","chunk":f"wort{i} " + ("\n\n# Titel\n\n" if i==5 else "")}
                 await asyncio.sleep(0.005 if "long" not in query else 0.02)
@@ -174,9 +199,35 @@ async def main():
         await pilot.press("enter"); await pilot.pause(1.0)
         assert app.prompt.text=="" and app.history[-1]=="zeile1\nsub"
         run=list(app.runs.values())[-1]; assert run.status=="done", run.status
-        print("subs:", list(run.subs)); assert list(run.subs)==["Recherche API","Tests schreiben"]
-        assert run.subs["Recherche API"].answer.startswith("Teilergebnis sub_a1") and "Teilergebnis" not in run.answer
-        assert len(list(run.box.query(".sub")))==2 and len(list(run.subs["Tests schreiben"].box.query(".tool")))==1
+        print("subs:", list(run.subs)); assert list(run.subs)==["sub_a1","sub_b2"]
+        a, b = run.subs["sub_a1"], run.subs["sub_b2"]
+        assert a.task==SUB_TASK_A and a.label=="Recherchiere die API von Dienst X" and a.answer.startswith("Teilergebnis sub_a1")
+        assert "Teilergebnis" not in run.answer and len(list(run.box.query(".sub")))==2
+        assert a.status=="completed" and b.status=="failed" and b.error==OR_429
+        comp=str(b.tile.compact.render()); print(comp)
+        assert "Schritt 3/120" in comp and "12.3k/512.0k Tokens" in comp and "Klick" in comp and "28 weitere" in comp
+        assert comp.count("vfs_read")==2 and "Anbieter-Limit erreicht (429)" in comp      # letzte 3 Aktionen: 2 Tools + Text
+        assert "noch" not in comp                                                         # beendet: keine Restzeit
+        assert len(list(b.tile.query(".tool")))==0                                        # klein: nur EIN Widget
+        # gross: volle Aufgabe oben, alle Aktionen scrollbar, unten Ergebnis bzw. Fehler
+        a.tile.scroll_visible(animate=False); await pilot.pause(0.2)
+        await pilot.click(a.tile); await pilot.pause(0.3)
+        assert a.tile.expanded and SUB_TASK_A.splitlines()[1] in str(a.tile.head.render())
+        assert [str(w.render()) for w in a.tile.foot.query(".sub-label")]==["Ergebnis"]
+        assert "drei" in a.tile.foot.query("FrozenMarkdown").first().source
+        b.tile.scroll_visible(animate=False); await pilot.pause(0.2)
+        await pilot.click(b.tile); await pilot.pause(0.4)
+        acts=list(b.tile.list.query("FoldLine")); assert len(acts)==31, len(acts)       # 30 Tools + Text
+        assert b.tile.list.max_scroll_y>0                                                  # eigener Scrollbereich
+        prob=b.tile.foot.query(".problem").first(); assert "Anbieter-Limit erreicht (429)" in prob.title
+        prob.collapsed=False; await pilot.pause(0.1); assert "Meldung von Openrouter" in str(prob.render())
+        # echtes Click-Ereignis an die Aktion; Textual reicht es selbst nach oben weiter (bubble)
+        from textual import events
+        def click(w): w.post_message(events.Click(w, 0, 0, 0, 0, 1, False, False, False))
+        acts[-2].collapsed=True; click(acts[-2]); await pilot.pause(0.3)
+        assert not acts[-2].collapsed and b.tile.expanded                                  # Aktion auf, Kachel bleibt offen
+        click(b.tile.head); await pilot.pause(0.3); assert not b.tile.expanded and b.tile.compact.is_attached
+        app.save_screenshot("/tmp/icli2_shot_subtile.svg")
         # zwei Laeufe parallel: getrennte Bloecke, Fokus wechseln, nur der fokussierte wird gestoppt
         await pilot.press(*"long eins"); await pilot.press("enter"); await pilot.pause(0.3)
         await pilot.press("/", *"new"); await pilot.press("enter"); await pilot.pause(0.3)
@@ -202,6 +253,28 @@ async def main():
         await pilot.press(*"/network"); await pilot.press("enter"); await pilot.pause(0.2); assert ("network_save",{}) in fake.log
         await pilot.press("f2")
         print("step5 ui ok")
+        # ── Fehler: klickbare Zeile mit verstaendlicher Meldung ──
+        async def lauf(q):
+            await pilot.press(*[("space" if c==" " else c) for c in q]); await pilot.press("enter")
+            t=time.monotonic()
+            while time.monotonic()-t<10:
+                await pilot.pause(0.1)
+                r=[v for v in app.runs.values() if v.query==q]
+                if r and r[0].status!="running": return r[0]
+            raise AssertionError(q)
+        r=await lauf("fehler bitte"); assert r.status=="failed" and r.problem_line is not None
+        line=r.problem_line; print("FEHLER", line.title)
+        assert line.title.startswith("✗ Anbieter-Limit erreicht (429) – Rate limit exceeded") and line.collapsed
+        line.scroll_visible(animate=False); await pilot.pause(0.2)
+        await pilot.click(line); await pilot.pause(0.2); body=str(line.render())
+        assert "Meldung von Openrouter" in body and "/model" in body and '"code": 429' in body
+        assert app.w_row.has_class("-fail")
+        r=await lauf("limit bitte"); assert r.status=="limit" and r.problem_line.title=="◷ Iterationslimit erreicht (5/5)"
+        assert "Zusammenfassung: drei Dateien" in r.problem_line.body and "/set max_iterations" in r.problem_line.body
+        assert app.w_row.has_class("-ask")
+        r=await lauf("absturz bitte"); assert r.problem_line.title.startswith("✗ Interner Fehler im Agenten")
+        assert any("Tool rejected" in str(n.render()) for n in r.box.query(".note"))     # Warnung sichtbar
+        print("errors ui ok")
         # ── Reihenfolge trotz gesammelter Textausgabe: Gedanken, Tool, Text ──
         first=[r for r in app.runs.values() if r.query=="hallo"][0]
         order=[("think" if w.has_class("think") else "tool" if w.has_class("tool") else "answer" if w.has_class("answer") else "")

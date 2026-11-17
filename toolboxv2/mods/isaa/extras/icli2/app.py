@@ -20,7 +20,10 @@ from . import VERSION
 from . import protocol as P
 from .engine import Engine
 from .picker import BACK, Picker, fuzzy
+from .errors import explain, render
 from .richmd import FrozenMarkdown
+from .subtile import SubView
+from .widgets import FoldLine
 from .theme import DIM, ISAA_THEME, SYM, G, banner
 
 FRAME = 1 / 30                 # Abholtakt fuer Engine-Events
@@ -76,66 +79,6 @@ JOB_ACTIONS = [("fire", "jetzt ausführen", ""), ("pause", "pausieren / fortsetz
                ("remove", "löschen", "")]
 MODEL_TARGETS = [("both", "beide", "schnell und komplex"), ("fast", "schnell", "Standard-Antworten"),
                  ("complex", "komplex", "schwere Aufgaben")]
-
-
-class FoldLine(Static):
-    """Ein einziges Widget statt Collapsible (vier Widgets): Kopfzeile, aufgeklappt mit Text darunter.
-    Klick oder Enter klappt um. Zugeklappt kostet ein neuer Text keinen Layout-Durchlauf."""
-
-    can_focus = True
-
-    def __init__(self, title: str, body: str = "", collapsed: bool = True, classes: str = ""):
-        super().__init__("", classes=classes, markup=False)
-        self._title, self._fold_body, self._collapsed = title, body, collapsed
-
-    def on_mount(self) -> None:
-        self._draw()
-
-    @property
-    def title(self) -> str:
-        return self._title
-
-    @title.setter
-    def title(self, value: str) -> None:
-        if value != self._title:
-            self._title = value
-            self._draw()
-
-    @property
-    def body(self) -> str:
-        return self._fold_body
-
-    @body.setter
-    def body(self, value: str) -> None:
-        self._fold_body = value
-        if not self._collapsed:                         # zugeklappt: nichts zu zeichnen
-            self._draw()
-
-    @property
-    def collapsed(self) -> bool:
-        return self._collapsed
-
-    @collapsed.setter
-    def collapsed(self, value: bool) -> None:
-        if value != self._collapsed:
-            self._collapsed = value
-            self._draw()
-
-    def _draw(self) -> None:
-        if not self.is_mounted:
-            return
-        text = Text(("▶ " if self._collapsed else "▼ ") + self._title)
-        if not self._collapsed and self._fold_body:
-            for line in self._fold_body.splitlines() or [""]:
-                text.append("\n  │ ", style=G.L2_DARK)
-                text.append(line)
-        self.update(text)
-
-    def on_click(self) -> None:
-        self.collapsed = not self._collapsed
-
-    def key_enter(self) -> None:
-        self.collapsed = not self._collapsed
 
 
 class ToolCard(FoldLine):
@@ -215,9 +158,10 @@ class RunView:
         self.md: Markdown | None = None
         self.stream = None
         self.think: FoldLine | None = None
+        self.problem_line: FoldLine | None = None
         self.think_text = ""
         self.tools: dict[str, ToolCard] = {}
-        self.subs: dict[str, RunView] = {}
+        self.subs: dict[str, SubView] = {}
         self.started = time.monotonic()
         self.ended = 0.0
         self.queue: list[list] = []                      # [art, text] in Ankunftsreihenfolge
@@ -240,15 +184,29 @@ class RunView:
         for kind, text in queue:
             await (self.text(text) if kind == P.TEXT else self.thinking(text))
 
-    async def sub(self, name: str) -> "RunView":
-        view = self.subs.get(name)
+    async def sub(self, sid: str) -> SubView:
+        """Sub-Agent dieses Laufs (Kachel, siehe subtile.py); beim ersten Auftreten einhaengen."""
+        view = self.subs.get(sid)
         if view is None:
-            await self.flush()                           # eigener Text gehoert ueber den Unterblock
+            await self.flush()                           # eigener Text gehoert ueber die Kachel
             await self.close_segment()
-            box = Vertical(Static(f"{SYM['sub']} {name}", classes="sub-head", markup=False), classes="sub")
-            await self.box.mount(box)
-            view = self.subs[name] = RunView(box, self.app, agent=name)
+            view = self.subs[sid] = SubView(sid, self.app)
+            await self.box.mount(view.tile)
         return view
+
+    async def problem(self, d: dict, model: str = "") -> FoldLine:
+        """Fehler- bzw. Limitzeile am Laufende: Ueberschrift + Kurzmeldung, Klick zeigt Hinweis und Details."""
+        if d["status"] == "limit":
+            info = explain("", kind="limit", iters=(d.get("iter") or 0, d.get("max_iter") or 0))
+            body = info["hint"] + (f"\n\nZusammenfassung des Agenten:\n{d['answer'].strip()}" if d.get("answer") else "")
+            line = FoldLine(f"◷ {info['title']}", body, classes="problem -limit")
+        else:
+            info = explain(d.get("error") or "", model=model, traceback=d.get("traceback") or "")
+            short = f" – {info['message'][:90]}" if info["message"] else ""
+            line = FoldLine(f"{SYM['fail']} {info['title']}{short}", render(info), classes="problem -fail")
+        line.info = info
+        await self.box.mount(line)
+        return line
 
     async def close_segment(self) -> None:
         if self.stream is not None:
@@ -325,8 +283,18 @@ class ICli2(App):
     #complete.-open { display: block; }
     .run { height: auto; margin: 1 0 0 0; }
     .run.-focus { border-left: thick $primary; }
-    .sub { height: auto; margin: 0 0 0 2; border-left: solid $secondary; }
-    .sub-head { padding: 0 0 0 1; color: $secondary; }
+    .sub { height: auto; margin: 0 0 0 2; padding: 0 1; border: round $secondary; }
+    .sub:hover { border: round $primary; }
+    .sub.-open { border: round $primary; }
+    .sub-head-full { margin: 0 0 1 0; }
+    .sub-actions { height: auto; max-height: 22; scrollbar-size-vertical: 1; }
+    .sub-foot { height: auto; }
+    .sub-label { margin: 1 0 0 0; color: $text-muted; text-style: bold; }
+    .sub-text { color: $text; padding: 0 0 0 2; }
+    .problem { padding: 0 0 0 2; background: transparent; }
+    .problem.-fail, .problem.-fail:hover, .problem.-fail:focus { color: $error; }
+    .problem.-limit, .problem.-limit:hover, .problem.-limit:focus { color: $warning; }
+    .problem:hover, .problem:focus { text-style: bold; }
     .user { color: $accent; text-style: bold; margin: 0 0 1 0; }
     .answer { margin: 0; padding: 0 0 0 2; background: transparent; }
     .answer MarkdownH1, .answer MarkdownH2, .answer MarkdownH3 {
@@ -467,7 +435,9 @@ class ICli2(App):
         if view and view.queue:                          # Reihenfolge: erst der gesammelte Text
             await view.flush()
             self._dirty.discard(view)
-        if ev.kind == P.TOOL_START and view:
+        if ev.kind == P.SUB and view:
+            await view.info(d)
+        elif ev.kind == P.TOOL_START and view:
             await view.tool_start(d["id"], d["name"], d["summary"], d["detail"])
         elif ev.kind == P.TOOL_END and view:
             view.tool_end(d["id"], d["ok"], d["summary"], d["detail"], d["secs"])
@@ -500,14 +470,15 @@ class ICli2(App):
             self._dirty.discard(view)
             await view.close()
             view.status, view.ended = d["status"], time.monotonic()
-            mark = END_MARK.get(d["status"], d["status"])
-            if d.get("error"):
-                await view.note(f"{SYM['fail']} {d['error']}", "error")
-            elif mark:
-                await view.note(f"{mark} · {view.seconds:.1f}s")
+            if d["status"] in ("failed", "limit"):
+                view.problem_line = await view.problem(d, self.model)
+            else:
+                mark = END_MARK.get(d["status"], d["status"])
+                if mark:
+                    await view.note(f"{mark} · {view.seconds:.1f}s")
             if not self.active:
-                # Signalfarbe der Eingabeleiste: fertig / Frage / Absturz
-                asks = d["status"] == "paused" or (d.get("answer") or view.answer).rstrip().endswith("?")
+                # Signalfarbe der Eingabeleiste: fertig / Frage (auch Limit) / Absturz
+                asks = d["status"] in ("paused", "limit") or (d.get("answer") or view.answer).rstrip().endswith("?")
                 self._signal("fail" if d["status"] == "failed" else "ask" if asks else
                              "done" if d["status"] == "done" else "")
             if self.focus_run == ev.run:
@@ -618,6 +589,11 @@ class ICli2(App):
         if self.tokens:
             left += f" · {self.tokens[0] / 1000:.1f}k/{self.tokens[1] / 1000:.0f}k tok"
         self._set_line("_foot_text", self.w_foot, left)
+        if self._tick % 10 == 0:                         # Laufzeit/Restzeit der Sub-Agenten
+            for run in self.active.values():
+                for sub in run.subs.values():
+                    if sub.status == "running":
+                        sub.tile.redraw()
         if self._tick % 5 == 0 and self.w_side.has_class("-open"):
             self._set_side()
 
@@ -645,8 +621,8 @@ class ICli2(App):
             lines.append(f"{mark}[{color}]{RUN_SYM.get(view.status, '?')}[/] {escape(view.agent)} "
                          f"[{DIM}]{view.seconds:.0f}s[/]")
             lines.append(f"   [{DIM}]{escape(' '.join(view.query.split())[:30])}[/]")
-            for name, sub in view.subs.items():
-                lines.append(f"   [{DIM}]{SYM['sub']} {escape(name)}[/]")
+            for sub in view.subs.values():
+                lines.append(f"   [{DIM}]{SYM['sub']} {escape(sub.label[:30])}[/]")
         if len(lines) == 1:
             lines.append(f" [{DIM}]keine[/]")
         for what, head in (("jobs", "Jobs"), ("mounts", "Mounts")):

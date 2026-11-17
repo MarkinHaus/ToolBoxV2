@@ -459,10 +459,47 @@ class SubAgentManager:
 
     async def _run_sub_agent(self, state: SubAgentState):
         """Dispatch: native PageEngine (default) oder V3 ExecutionEngine."""
-        if self._sub_engine_kind() == "page":
-            await self._run_page_sub_agent(state)
-        else:
-            await self._run_v3_sub_agent(state)
+        try:
+            if self._sub_engine_kind() == "page":
+                await self._run_page_sub_agent(state)
+            else:
+                await self._run_v3_sub_agent(state)
+        finally:
+            self._forward_final(state)
+
+    @staticmethod
+    def _tag(chunk: dict, state: SubAgentState) -> dict:
+        """Chunk fuer den Parent-Stream markieren. `_sub_agent_meta` traegt die volle Aufgabe und den
+        Rahmen (Budget, Zeitlimit, Start, Verbrauch) - fuer Oberflaechen; aeltere ignorieren es."""
+        chunk["_sub_agent_id"] = state.id
+        chunk["_sub_agent_task"] = state.task[:60]
+        chunk["_sub_agent_meta"] = {
+            "task": state.task, "status": state.status.value, "error": state.error or "",
+            "iter": state.iterations_used, "max_iter": state.config.max_iterations,
+            "tokens": state.tokens_used, "budget": state.config.max_tokens,
+            "timeout": state.config.timeout_seconds,
+            "started": state.started_at.timestamp() if state.started_at else None,
+        }
+        return chunk
+
+    def _forward_final(self, state: SubAgentState) -> None:
+        """Abschlussmeldung mit Endstatus und Fehler (auch bei Ausnahme/Abbruch). `_sub_done` wird vom
+        Parent-Engine herausgefiltert, daher als normaler status-Chunk."""
+        status = state.status.value
+        if state.status == SubAgentStatus.RUNNING:          # z. B. durch Zeitlimit abgebrochen
+            status = "cancelled"
+        msg = {"completed": "Sub-Agent fertig", "max_iterations": "Sub-Agent: Iterationslimit erreicht",
+               "failed": f"Sub-Agent fehlgeschlagen: {state.error or 'unbekannter Fehler'}",
+               "timeout": f"Sub-Agent: Zeitlimit erreicht ({state.config.timeout_seconds} s)",
+               "cancelled": "Sub-Agent abgebrochen"}.get(status, f"Sub-Agent: {status}")
+        chunk = self._tag({"type": "status", "status_msg": msg}, state)
+        chunk["_sub_agent_meta"]["status"] = status
+        chunk["_sub_agent_meta"]["final"] = True
+        chunk["_sub_agent_meta"]["result"] = state.result or ""
+        try:
+            self._chunk_queue.put_nowait(chunk)
+        except Exception:
+            pass
 
     async def _run_page_sub_agent(self, state: SubAgentState):
         """Sub-Agent nativ auf der PageEngine.
@@ -544,8 +581,7 @@ class SubAgentManager:
                 elif t == "final_answer":
                     answer, success = chunk.get("answer", ""), bool(chunk.get("success"))
 
-                chunk["_sub_agent_id"] = state.id
-                chunk["_sub_agent_task"] = state.task[:60]
+                self._tag(chunk, state)
                 try:
                     self._chunk_queue.put_nowait(chunk)
                 except asyncio.QueueFull:
@@ -560,10 +596,7 @@ class SubAgentManager:
                     PageResumeHandle(engine, state.session_id, state.iterations_used)
                     if state.resumable else None
                 )
-                self._chunk_queue.put_nowait({
-                    "type": "max_iterations", "answer": answer,
-                    "_sub_agent_id": state.id, "_sub_agent_task": state.task[:60],
-                })
+                self._chunk_queue.put_nowait(self._tag({"type": "max_iterations", "answer": answer}, state))
             else:
                 state.resumable, state.execution_context = False, None
                 state.result = answer
@@ -777,8 +810,7 @@ class SubAgentManager:
                             state.error = "Execution finished without success flag"
 
                     # >>> Forward chunk to parent stream <
-                    chunk["_sub_agent_id"] = state.id
-                    chunk["_sub_agent_task"] = state.task[:60]
+                    self._tag(chunk, state)
                     try:
                         self._chunk_queue.put_nowait(chunk)
                     except asyncio.QueueFull:
