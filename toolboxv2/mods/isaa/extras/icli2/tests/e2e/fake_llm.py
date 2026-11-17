@@ -21,8 +21,13 @@ class H(BaseHTTPRequestHandler):
             body = json.dumps({"error": {"message": "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day", "code": 429}}).encode()
             self.send_response(429); self.send_header("Content-Type", "application/json"); self.send_header("retry-after", "1")
             self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
-        call = None
-        if "limitshell" in (user or "") and "vfs_shell" in tools:
+        call, prefix = None, ""
+        if "zwischentext" in (user or "") and tools:   # wie echte Modelle: Text UND Tool-Aufruf in einer Antwort
+            if n_tool == 0 and "vfs_shell" in tools:
+                prefix, call = "Ich schaue kurz nach. ", ("vfs_shell", {"command": "ls /"})
+            elif "final_answer" in tools:
+                prefix, call = "Fertig, hier kommt die Antwort. ", ("final_answer", {"answer": "Die Antwort ist 42.", "success": True})
+        elif "limitshell" in (user or "") and "vfs_shell" in tools:
             call = ("vfs_shell", {"command": f"ls /x{n_tool}"})
         elif "limit-test" in (user or "") and "think" in tools:
             call = ("think", {"thought": f"Ich denke weiter nach (Schritt {n_tool + 1})."})
@@ -47,6 +52,8 @@ class H(BaseHTTPRequestHandler):
                 d = {"id": "c1", "object": "chat.completion.chunk", "model": "fake", "choices": [{"index": 0, "delta": delta, "finish_reason": fin}]}
                 self.wfile.write(("data: " + json.dumps(d) + "\n\n").encode()); self.wfile.flush(); time.sleep(0.01)
             ev({"role": "assistant", "content": ""})
+            for w in prefix.split(" "):
+                if w: ev({"content": w + " "})
             if call:
                 args = json.dumps(call[1])
                 ev({"tool_calls": [{"index": 0, "id": "call_" + str(int(time.time()*1000)), "type": "function", "function": {"name": call[0], "arguments": ""}}]})

@@ -201,6 +201,11 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 - **Geprüft:** `tests/check_errors.py` (realistische Fehlertexte von litellm/Anbietern/Engine, darunter der genaue Text aus dem echten Lauf), `tests/check_ui.py` (Kachel klein/groß, 30 Aktionen, Ergebnis, Fehler; Fehler-, Limit- und Absturz-Lauf), echter Durchlauf gegen den isaa-Agenten mit echtem HTTP-429 und echtem Sub-Agenten (`tests/e2e/e2e_errors.py`).
 - **Aus dem echten Durchlauf behoben:** Der 429 kam als „Agent crashed: ProviderError: litellm.RateLimitError: …“ – die Hüllen werden jetzt alle entfernt (bei Python-Fehlern bleibt die Fehlerklasse stehen). Ein `tool_result` ohne vorheriges `tool_start` (kommt vor) wurde verschluckt und erscheint jetzt als fertige Zeile. Fertig eingehängte Tool-/Aktionszeilen blieben leer, bis sie sich änderten (Zeichnen während `on_mount`) – betraf die große Kachel und Tool-Zeilen ohne Ergebnis. Fehlerdetails sind jetzt lesbar statt komplett rot.
 
+### Schritt 14 – Endantwort kommt immer an (`icli2-14-endantwort.patch`)
+- **Ursache 1 (Engine):** Die Antwort aus `final_answer` wurde nur gezeigt, wenn vorher kein Text gestreamt war. Echte Modelle schreiben oft erst einen Satz („ich schaue nach …“) und liefern die Antwort dann über das `final_answer`-Tool – die Antwort fiel weg. Jetzt wird sie immer gezeigt, außer sie steht schon wörtlich im zuletzt gestreamten Text; kommt sie nur im `done`-Chunk, wird sie dort übernommen.
+- **Ursache 2 (UI, zeitabhängig):** Beim Einfrieren eines Abschnitts wurde der Text aus dem Markdown-Widget gelesen. Textuals `MarkdownStream.stop()` wartet ein laufendes `append` nicht ab – bei langsamem Zeichnen (z. B. Terminal im Hintergrund) fehlte der Rest oder der ganze Abschnitt. Jetzt führt jeder Lauf den Abschnittstext selbst.
+- **Geprüft:** `tests/check_final.py` (Zwischentext + Antwort, langsames Zeichnen, schon gestreamte Antwort genau einmal, Antwort nur in `done`; schlägt ohne Fix fehl) und echter Durchlauf gegen den isaa-Agenten mit Text und Tool-Aufruf in derselben Modellantwort (`tests/e2e/e2e_final.py`).
+
 ## Arbeitsanleitung für weitere Schritte
 
 Alle geplanten Schritte sind umgesetzt. Das Vorgehen gilt für jede Erweiterung; offene Ideen stehen unter „Danach“.
@@ -298,6 +303,7 @@ git apply icli2-11-plugin-install.patch
 git apply icli2-12-fluessig-steering.patch
 git apply icli2-12b-fix-termguard.patch
 git apply icli2-13-subagent-fehler.patch
+git apply icli2-14-endantwort.patch
 pip install "textual>=8"
 ```
 
