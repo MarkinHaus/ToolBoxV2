@@ -17,7 +17,7 @@ DO = "do"                # data: action + Argumente (siehe backend.do)
 SHUTDOWN = "shutdown"
 
 # ── Events: Engine -> UI ─────────────────────────────────────────────────────
-READY = "ready"            # data: agent, session, model, complex_model, mounts[, history]
+READY = "ready"            # data: agent, session, model, complex_model, mounts, user[, history, recap]
 RUN_START = "run_start"    # data: agent, session, query, tag, origin (chat|job)
 TEXT = "text"              # data: text            (gebuendelte Content-Deltas)
 THINK = "think"            # data: text            (gebuendeltes Reasoning)
@@ -26,6 +26,7 @@ TOOL_END = "tool_end"      # data: id, name, ok, summary, detail, secs
 STATUS = "status"          # data: msg, iter, max_iter, tokens, tokens_max
 RUN_END = "run_end"        # data: status (done|failed|stopped|paused), answer, error
 ROWS = "rows"              # data: what, title, rows=[{value, label, hint}]
+DRAFT = "draft"            # data: text  -> in die Eingabe setzen (Spracheingabe)
 NOTICE = "notice"          # data: level (info|warn|error), text
 BYE = "bye"                # Engine ist sauber beendet
 

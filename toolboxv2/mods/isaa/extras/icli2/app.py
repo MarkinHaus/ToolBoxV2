@@ -41,6 +41,10 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "/dream": ("", "Nächtlichen Dream-Job für den Agenten anlegen"),
     "/network": ("[datei]", "Agent-Network laden, ohne Argument: aktuelles speichern"),
     "/side": ("", "Seitenleiste ein/aus (F2)"),
+    "/login": ("", "CloudM-Anmeldung prüfen oder starten"),
+    "/tb": ("[mod.fn key=wert …]", "ToolBox-Funktion aufrufen"),
+    "/share": ("", "LiveSync-Ordner verbinden oder trennen"),
+    "/voice": ("", "Vorlesen, Geräte, Omni (F4 = Spracheingabe)"),
     "/new": ("", "Neue Session mit leerem Kontext"),
     "/reset": ("", "Verlauf der aktuellen Session leeren"),
     "/open": ("[n]", "Letzte n Tool-Ergebnisse aufklappen"),
@@ -236,6 +240,7 @@ class ICli2(App):
         Binding("ctrl+p", "palette", "Befehle", priority=True),
         Binding("f2", "side", "Seitenleiste", priority=True),
         Binding("f3", "next_run", "Nächster Lauf", priority=True),
+        Binding("f4", "voice", "Spracheingabe", priority=True),
         Binding("ctrl+o", "fold_tools", "Tools auf/zu", priority=True),
         Binding("ctrl+r", "fold_thinking", "Gedanken auf/zu", priority=True),
         *[Binding(f"alt+{n}", f"open_last({n})", show=False, priority=True) for n in range(1, 10)],
@@ -245,7 +250,7 @@ class ICli2(App):
         super().__init__()
         self.engine = engine
         self.agent, self.session, self.model = agent, session, "…"
-        self.complex_model, self.mounts = "", 0
+        self.complex_model, self.mounts, self.user = "", 0, ""
         self.history: list[str] = []
         self._hist_pos = 0
         self.ready = False
@@ -360,6 +365,7 @@ class ICli2(App):
             self.ready = True
             self.agent, self.session, self.model = d["agent"], d["session"], d["model"]
             self.complex_model, self.mounts = d["complex_model"], d["mounts"]
+            self.user = d.get("user", "")
             if "history" in d:
                 self.history, self._hist_pos = d["history"], len(d["history"])
             for role, text in d.get("recap", []):       # letzte Nachrichten der Session
@@ -369,6 +375,9 @@ class ICli2(App):
                 self.side_rows[d["what"]] = d["rows"]
             else:
                 self._pick(d["what"], d["title"], d["rows"])
+        elif ev.kind == P.DRAFT:
+            self.prompt.set_text((self.prompt.text + " " + d["text"]).strip())
+            self.prompt.focus()
         elif ev.kind == P.NOTICE:
             if view:                                     # gehoert zu einem Lauf
                 await view.note(d["text"], d.get("level", "info"))
@@ -395,7 +404,8 @@ class ICli2(App):
         mounts = f" · {self.mounts} mount{'s' if self.mounts != 1 else ''}" if self.mounts else ""
         self.query_one("#head", Static).update(
             f"[{G.L4_BRIGHT}]{SYM['agent']} {self.agent}[/] "
-            f"[{DIM}]· {self.model} · {self.session}{mounts}[/]")
+            f"[{DIM}]· {self.model} · {self.session}{mounts}"
+            f"{' · ' + self.user if self.user else ''}[/]")
         spin = SPIN[self._tick % len(SPIN)]
         active, focus = self.active, self.runs.get(self.focus_run)
         if not self.ready:
@@ -512,6 +522,17 @@ class ICli2(App):
             do("dream")
         elif name == "/network":
             do("network_load", path=arg) if arg else do("network_save")
+        elif name == "/login":
+            do("login")
+        elif name == "/logout":
+            do("logout")
+        elif name == "/tb":
+            target, _, rest = arg.partition(" ")
+            do("tb", target=target, args=rest.strip()) if arg else ask("tb")
+        elif name == "/share":
+            ask("shares")
+        elif name == "/voice":
+            ask("voice")
         elif name == "/open":
             self.action_open_last(int(arg) if arg.isdigit() else 1)
         elif name == "/fold":
@@ -537,6 +558,12 @@ class ICli2(App):
                 send(P.DO, action="session", name=value)
             elif what == "mounts":
                 send(P.DO, action="unmount", at=value)
+            elif what == "tb":
+                send(P.DO, action="tb", target=value)
+            elif what == "shares":
+                send(P.DO, action="share", share=value)
+            elif what == "voice":
+                send(P.DO, action="voice", op=value)
             elif what == "jobs":
                 self.push_screen(
                     Picker(f"Job {value}", JOB_ACTIONS),
@@ -585,6 +612,10 @@ class ICli2(App):
             self._refresh_side()
             self.query_one("#side-text", Static).update(self._side_text())
 
+    def action_voice(self) -> None:
+        """F4: Aufnahme starten bzw. beenden; der erkannte Text landet in der Eingabe."""
+        self.engine.send(P.DO, action="voice_toggle")
+
     def action_next_run(self) -> None:
         """Fokus auf den naechsten laufenden Lauf (Esc wirkt auf den Fokus)."""
         ids = list(self.active)
@@ -595,7 +626,7 @@ class ICli2(App):
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         # Ist ein Picker offen, gehoeren Esc & Co. ihm (sonst schloesse Esc ihn nicht).
-        if len(self.screen_stack) > 1 and action in ("stop", "palette", "side", "next_run"):
+        if len(self.screen_stack) > 1 and action in ("stop", "palette", "side", "next_run", "voice"):
             return False
         return True
 

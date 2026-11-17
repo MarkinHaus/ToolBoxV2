@@ -31,12 +31,15 @@ class Fake:
             yield {"type":"final_answer","answer":"ok"}
             yield {"type":"done","success":True}
         finally: s.active.discard(session)
-    st={"agent":"self","session":"default","model":"fake-1","complex_model":"fake-c","mounts":0}
+    st={"agent":"self","session":"default","model":"fake-1","complex_model":"fake-c","mounts":0,"user":""}
     async def rows(s,what):
         R=lambda v,h="":{"value":v,"label":v,"hint":h}
         return {"agents":{"title":"Agent wechseln","rows":[R("self","geladen · aktiv"),R("myagent","gespeichert · eigene Tools"),R("coder","registriert")]},
                 "models":{"title":"Modell wählen","rows":[R("openrouter/a"),R("gateway/big-model")]},
                 "sessions":{"title":"Session wechseln","rows":[R("+"),R("default","aktiv"),R("work")]},
+                "tb":{"title":"ToolBox-Funktionen","rows":[R("CloudM.get_user","name"),R("isaa.version")]},
+                "shares":{"title":"LiveSync","rows":[R("sh1","getrennt")]},
+                "voice":{"title":"Sprache","rows":[R("speak","aus"),R("omni","aus")]},
                 "jobs":{"title":"Jobs","rows":[{"value":"j1","label":"nightly","hint":"on_cron · active · completed · 3x · self"}]},
                 "mounts":{"title":"Mounts","rows":[R("/project","/tmp/x")] if s.st["mounts"] else []} }[what] | ({"title":"Keine Mounts – /mount <ordner>"} if what=="mounts" and not s.st["mounts"] else {})
     async def do(s,action,**a):
@@ -50,6 +53,12 @@ class Fake:
         elif action=="job":
             asyncio.ensure_future(s.spawn("self","default","nightly: aufräumen",kind="job")); return {"text":"Job nightly gestartet"}
         elif action in ("job_add","dream","network_save","network_load"): return {"text":action+" ok"}
+        elif action=="login": s.st.update(user="markin"); return {"ready":dict(s.st),"text":"Angemeldet als markin"}
+        elif action=="tb": return {"text":"ergebnis\n  wert  "+a["target"]+" "+a.get("args","")}
+        elif action=="share": return {"text":"share "+a["share"]+" verbunden"}
+        elif action=="voice": return {"text":"Vorlesen an"}
+        elif action=="voice_toggle":
+            s.rec=not getattr(s,"rec",False); return {"text":"● Aufnahme läuft – F4 beendet"} if s.rec else {"draft":"gesprochener text"}
         elif action=="mount": s.st.update(mounts=1); return {"ready":dict(s.st),"text":"/tmp/x → /project · 12 Dateien"}
         elif action=="unmount": s.st.update(mounts=0); return {"ready":dict(s.st),"text":"/project ausgehängt"}
         elif action=="pack": return {"text":"myagent gepackt: 3 Tools gesichert"}
@@ -159,7 +168,7 @@ async def main():
         await pilot.press("f2"); await pilot.pause(2.6)
         side=str(app.query_one("#side-text").render()); print(side); assert "Läufe" in side and "nightly" in side and "long eins" in side
         app.save_screenshot("/tmp/icli2_shot_side.svg")
-        await pilot.press("f3"); assert app.focus_run==r1
+        await pilot.press("f3"); await pilot.pause(0.1); assert app.focus_run==r1
         await pilot.press("escape"); await pilot.pause(0.5); assert v1.status=="stopped" and v2.status=="running" and app.focus_run==r2
         await pilot.press("escape"); await pilot.pause(0.5); assert not app.active
         # /task Picker
@@ -174,6 +183,19 @@ async def main():
         await pilot.press(*"/network"); await pilot.press("enter"); await pilot.pause(0.2); assert ("network_save",{}) in fake.log
         await pilot.press("f2")
         print("step5 ui ok")
+        # ── Schritt 8/9 ──
+        await pilot.press(*"/login"); await pilot.press("enter"); await pilot.pause(0.3)
+        assert app.user=="markin" and "markin" in str(app.query_one("#head").render())
+        await pilot.press(*"/tb"); await pilot.press("enter"); await pilot.pause(0.3); assert isinstance(app.screen,P_)
+        await pilot.press(*"vers"); await pilot.press("enter"); await pilot.pause(0.3); assert ("tb",{"target":"isaa.version"}) in fake.log
+        await pilot.press(*"/tb"); await pilot.press("space"); await pilot.press(*"CloudM.get_user"); await pilot.press("space"); await pilot.press(*"a=1"); await pilot.press("enter"); await pilot.pause(0.3)
+        assert ("tb",{"target":"CloudM.get_user","args":"a=1"}) in fake.log
+        await pilot.press(*"/share"); await pilot.press("enter"); await pilot.pause(0.3); await pilot.press("enter"); await pilot.pause(0.3); assert ("share",{"share":"sh1"}) in fake.log
+        await pilot.press(*"/voice"); await pilot.press("enter"); await pilot.pause(0.3); await pilot.press("enter"); await pilot.pause(0.3); assert ("voice",{"op":"speak"}) in fake.log
+        await pilot.press("f4"); await pilot.pause(0.3); await pilot.press(*"vorher"); await pilot.press("f4"); await pilot.pause(0.3)
+        assert app.prompt.text=="vorher gesprochener text", app.prompt.text
+        app.prompt.set_text("")
+        print("step8/9 ui ok")
         await pilot.press(*"logs"); await pilot.press("enter"); await pilot.pause(0.8)
         app.save_screenshot("/tmp/icli2_shot.svg")
         await pilot.press(*"/q"); await pilot.press("enter")

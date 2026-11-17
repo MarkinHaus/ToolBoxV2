@@ -48,7 +48,7 @@ def banner(version: str) -> str:
     lines = [f"[{shade}]{line}[/]" for shade, line in zip(_LOGO_SHADES, LOGO_LINES)]
     lines.append("")
     lines.append(f" [{G.WHITE}]{get_greeting()}[/]  [{DIM}]icli {version}[/]")
-    lines.append(f" [{DIM}]Strg+P Befehle   F2 Leiste   Esc pausieren   Strg+O Tools   Strg+R Gedanken[/]")
+    lines.append(f" [{DIM}]Strg+P Befehle   F2 Leiste   F4 Sprache   Esc pausieren   Strg+O Tools   Strg+R Gedanken[/]")
     return "\n".join(lines)
 
 

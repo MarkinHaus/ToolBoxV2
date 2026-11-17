@@ -214,6 +214,8 @@ class Engine:
             out = await self._backend.do(args.pop("action"), **args)
             if out.get("ready"):
                 self._emit(P.READY, **out["ready"])
+            if out.get("draft"):
+                self._emit(P.DRAFT, text=out["draft"])
             if out.get("text"):
                 self._emit(P.NOTICE, level=out.get("level", "info"), text=out["text"])
         except Exception as e:

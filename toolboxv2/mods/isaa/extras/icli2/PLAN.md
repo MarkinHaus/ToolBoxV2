@@ -1,6 +1,6 @@
 # icli 2.0 – Plan
 
-Stand: Schritt 5 von 9 umgesetzt. Die alte `flows/isaa/icli.py` bleibt unverändert und parallel nutzbar.
+Stand: Schritte 1–5, 8 und 9 umgesetzt; 6 und 7 offen (laufen lokal). Die alte `flows/isaa/icli.py` bleibt unverändert und parallel nutzbar.
 
 Start: `tb -m icli2` · Code: `toolboxv2/mods/isaa/extras/icli2/` · Starter: `toolboxv2/flows/isaa/icli2.py`
 
@@ -69,8 +69,10 @@ Regeln, die für jeden weiteren Schritt gelten:
 | `/side` | fertig | – |
 | `/feature`, `/skill`, `/mcp`, `/plugin` | Schritt 6 | gleichnamige Befehle, über Palette |
 | `/discord` | Schritt 7 | unverändert durchgereicht |
-| `/login` | Schritt 8 | – |
-| `/voice` | Schritt 9 | `/audio`, `/omni` |
+| `/login`, `/logout` | fertig | – |
+| `/tb [mod.fn key=wert]` | fertig | – (ToolBox-Funktion aufrufen) |
+| `/share` | fertig | `/vfs share` (nur verbinden/trennen) |
+| `/voice`, `F4` | fertig | `/audio`, `/omni` (Omni nur Grundfunktion) |
 
 Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+R` Gedanken auf/zu, `Alt+1–9` letzte n Tools öffnen, `Strg+L` leeren, `Strg+Q` beenden. `Strg+P` Palette, `↑/↓` Eingabe-History, `F2` Seitenleiste, `F3` nächster Lauf, `Umschalt+Enter`/`Strg+J` neue Zeile. Geplant: `F4` Sprache.
 
@@ -117,6 +119,18 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 - Unabhängiges Code-Review eingearbeitet (10 Funde): übergebener Stream wurde verworfen (Dream-Jobs liefen als normaler Chat), früh scheiternde Läufe blieben in der UI hängen, Shutdown ließ Tasks zurück, Scheduler-Stopp, Resume-Datei atomar und pro Eintrag, Wertebereiche bei `/job`, Formatierer gegen kaputte/tief verschachtelte Werte, Zustand wechselt erst nach Erfolg.
 - Prüfskripte liegen jetzt im Repo: `tests/check_ui.py`, `tests/check_backend.py`, `tests/check_autopack.py`.
 
+### Schritt 8 – CloudM (`icli2-08-09-cloudm-voice.patch`, Datei `cloudm.py`)
+- `/login` zeigt den angemeldeten Benutzer (`app.session`, sonst `_find_cli_session`); der Name steht in der Kopfzeile. **Anmelden selbst geht nicht in der icli2**, weil `cli_login` Tastatureingaben per `input()` braucht: `/login` nennt dann den Befehl `tb login` für das normale Terminal. `/logout` nutzt `cli_logout`.
+- `/tb` öffnet einen Picker über `app.functions`; `/tb mod.fn key=wert …` ruft über `app.a_run_any((mod, fn), get_results=True, …)` auf (Werte als JSON, sonst Text), Ergebnis lesbar formatiert.
+- `/share` listet die gespeicherten LiveSync-Shares der alten icli (`<appdata>/icli/vfs_shares.json`) und verbindet/trennt sie über `VFSSyncManager.connect/disconnect`. Neue Shares anlegen geht weiterhin nur in der alten icli (`/vfs share connect`).
+
+### Schritt 9 – Sprache (gleicher Patch, Datei `voice.py`)
+- Audio-Code wird erst beim ersten Gebrauch geladen (per Test abgesichert).
+- `F4` startet/beendet die Aufnahme (`LocalMicRecorder`), transkribiert mit `Stt.transcribe` und setzt den Text in die Eingabe.
+- `/voice`: Vorlesen an/aus (`AudioStreamPlayer`, Satz-Pufferung wie in der alten icli, Code-Blöcke werden übersprungen), Ein-/Ausgabegerät wählen, Omni-Session starten/stoppen.
+- **Omni ist nur die Grundfunktion:** Backend, Mikrofon, Player und die Tools des Agenten. Es fehlen gegenüber der alten icli: Delegations-/VFS-/Chat-Tools, Weltmodell, JobManager, Zustandsspeicher, Silero-VAD, Sprecher-Erkennung, Pegelanzeige. Fest auf `omni_cloud` (Gemini Live).
+- Aufnahme und Omni schließen sich gegenseitig aus (beide brauchen das Mikrofon).
+
 ## Offen – Arbeitsanleitung für die restlichen Schritte
 
 Geschrieben für einen kleinen Agenten. Ein Schritt pro Durchgang, in dieser Reihenfolge.
@@ -157,17 +171,6 @@ Fertig, wenn: jeder der vier Befehle einen Picker öffnet, Umschalten eine Rück
 - `/discord` ohne Argument: Picker mit den Unterbefehlen aus `get_completer_dict()`.
 - Fertig, wenn: `/discord status` die Ausgabe der Extension als Hinweis zeigt und ein über den Shim gestarteter Lauf als Block mit `origin` „discord“ erscheint (im Test mit Fake-Extension prüfen).
 
-### Schritt 8 – CloudM
-
-- **Vorhanden:** `mods/CloudM/` (`Auth.py`, `LogInSystem.py`, `UserAccountManager.py`), `mods/CloudM/LiveSync/vfs_adapter.py`; ToolBox-Funktionen über `app.functions`, Aufruf über `app.a_run_any((mod, fn), **kwargs)`; VFS-Shares der alten icli: `_load_vfs_shares` `icli.py:4895`, `_autostart_vfs_shares` `icli.py:4914`, `flows/isaa/vfs_remote_sync.py`.
-- **Zuerst klären (lesen, nicht raten):** wie die CLI den Anmeldestatus liest (in `LogInSystem.py` nach der CLI-Login-Funktion suchen) und welche Funktion in `vfs_adapter.py` einen geteilten Ordner in ein VFS einhängt.
-- **Umsetzung:** `/login` (Status anzeigen, sonst Login-Funktion aufrufen; Eingaben nie in der UI-Schicht verarbeiten), Benutzername in READY als `user` und in der Kopfzeile; `_rows_mounts` um geteilte Ordner ergänzen (Wert `share:<id>`), `_do_unmount`/`_do_mount` entsprechend verzweigen; `/tb` öffnet einen Picker über `app.functions` (Label `mod.funktion`), Enter ruft ohne Argumente auf, `/tb mod fn key=wert …` mit Argumenten; Ergebnis über `fmt.detail` als Hinweis.
-
-### Schritt 9 – Audio und Omni
-
-- **Vorhanden:** `_handle_audio_command` `icli.py:11005`, `_ensure_audio_setup` `icli.py:4613`, `_record_audio`/`_process_recorded_audio` `icli.py:5446`/`5478`, `_enqueue_speech` `icli.py:10726`, Satz-Pufferung beim Vorlesen in `_drain_agent_stream` `icli.py:14672`; Omni: `_handle_omni_command` `icli.py:11567`, `_make_omni_tools` `icli.py:11374`; Module unter `mods/isaa/base/audio_io/`.
-- **Umsetzung:** neue Datei `icli2/voice.py`, die alle Audio-Importe erst beim ersten Aufruf lädt. `F4` sendet `DO voice_toggle`; Backend nimmt auf, transkribiert und gibt den Text als READY-Zusatz `draft` zurück, den die UI in die Eingabe setzt. Vorlesen: in `backend.stream` Content-Chunks satzweise an den Player geben (Logik aus `_drain_agent_stream`). `/voice` Picker: Vorlesen an/aus, Gerät wählen, Omni starten/stoppen. Pegel als STATUS-Feld in die Fußzeile.
-
 ### Danach
 
 - Engine als eigener Prozess: `protocol.py` ist schon JSON-fähig; Transport analog `mods/icli_web/bridge.py`.
@@ -192,6 +195,11 @@ Fertig, wenn: jeder der vier Befehle einen Picker öffnet, Umschalten eine Rück
 - OpenRouter-Modellliste wird nicht nachgeladen (Netzwerkabruf); Modellnamen lassen sich mit `/model name` direkt setzen.
 - Beendete Job-/Dream-Läufe aus `on_cli_exit` sind nach dem Schließen der UI nicht mehr sichtbar.
 
+- **Schritt 8/9 von Subagenten geschrieben**, von mir gegengelesen und die genutzten Signaturen im Quellcode nachgeprüft. Getestet nur gegen Nachbauten: kein echter Login, kein echter LiveSync-Server, kein Mikrofon, kein TTS, kein Gemini Live.
+- **Gerätewahl** bei `/voice` wird nicht gespeichert und gilt nur bis zum Beenden.
+- **Vorlesen** nutzt fest Groq-TTS mit Stimme „autumn“ (wie die alte icli); die Emotions-Erkennung ist vereinfacht.
+- **Patch 08-09 baut auf Patch 05 auf**, nicht auf 06/07. Beide Stränge ändern `app.py` und `backend.py`; beim Zusammenführen `git apply --3way` verwenden.
+
 ## Patches anwenden
 
 ```bash
@@ -200,6 +208,7 @@ git apply icli2-02-branding-agenten.patch
 git apply icli2-03-autopack-tools.patch
 git apply icli2-04-modell-session-mount.patch
 git apply icli2-05-laeufe-jobs-networks.patch
+git apply --3way icli2-08-09-cloudm-voice.patch   # nach den lokalen Schritten 6/7
 pip install "textual>=8"
 ```
 

@@ -31,6 +31,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from .cloudm import CloudMMixin      # Schritt 8: Login, ToolBox-Funktionen, LiveSync-Shares
+from .voice import VoiceMixin        # Schritt 9: Sprache (Audio-Importe erst bei Gebrauch)
+
 AGENT_STATE = {"live": "geladen", "registered": "registriert", "disk": "gespeichert"}
 HISTORY_KEEP = 500
 RECAP_MESSAGES = 4
@@ -43,7 +46,7 @@ def _row(value: str, label: str = "", hint: str = "") -> dict[str, str]:
     return {"value": value, "label": label or value, "hint": hint}
 
 
-class IsaaBackend:
+class IsaaBackend(CloudMMixin, VoiceMixin):
     def __init__(self, app: Any, agent: str = "self", session: str = "default"):
         self.app = app
         self.agent = agent
@@ -89,6 +92,7 @@ class IsaaBackend:
             "model": getattr(agent.amd, "fast_llm_model", "?"),
             "complex_model": getattr(agent.amd, "complex_llm_model", "?"),
             "mounts": len(getattr(vfs, "mounts", {}) or {}),
+            "user": await self._cloud_user(),
         }
 
     async def _switch(self, agent: str | None = None, session: str | None = None) -> dict[str, Any]:
@@ -467,10 +471,15 @@ class IsaaBackend:
     # ── Laeufe ───────────────────────────────────────────────────────────────
     async def stream(self, agent: str, session: str, query: str) -> AsyncIterator[dict]:
         instance = await self.isaa.get_agent(agent)
-        async for chunk in instance.a_stream(
-            query=query, session_id=session, max_iterations=self.max_iterations,
-        ):
-            yield chunk
+        try:
+            async for chunk in instance.a_stream(
+                query=query, session_id=session, max_iterations=self.max_iterations,
+            ):
+                if chunk.get("type") == "content" and not chunk.get("_sub_agent_id"):
+                    self._voice_feed(chunk.get("chunk", ""))     # tut nichts, wenn Vorlesen aus ist
+                yield chunk
+        finally:
+            self._voice_flush()
 
     async def _run_id(self, agent: str, session: str):
         instance = await self.isaa.get_agent(agent)
@@ -501,6 +510,7 @@ class IsaaBackend:
         app.a_exit() ruft der Flow-Starter nach dem UI-Ende auf."""
         if self.isaa is None:
             return
+        await self._voice_close()
         try:
             await asyncio.to_thread(self._save_paused)
         except Exception as e:
