@@ -18,7 +18,7 @@ SHUTDOWN = "shutdown"
 
 # ── Events: Engine -> UI ─────────────────────────────────────────────────────
 READY = "ready"            # data: agent, session, model, complex_model, mounts, user, features[, history, recap]
-RUN_START = "run_start"    # data: agent, session, query, tag, origin (chat|job)
+RUN_START = "run_start"    # data: agent, session, query, tag, origin (chat|job|…), steer (Ziel-Lauf oder "")
 TEXT = "text"              # data: text            (gebuendelte Content-Deltas)
 THINK = "think"            # data: text            (gebuendeltes Reasoning)
 TOOL_START = "tool_start"  # data: id, name, summary, reason, detail

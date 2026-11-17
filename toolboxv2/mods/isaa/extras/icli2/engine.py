@@ -52,7 +52,8 @@ def _show(value: Any, limit: int) -> dict[str, str]:
 
 
 class _Run:
-    __slots__ = ("id", "agent", "session", "task", "buf", "kind", "sub", "timer", "ended", "result", "spoke")
+    __slots__ = ("id", "agent", "session", "task", "buf", "kind", "sub", "timer", "ended", "result", "spoke",
+                 "origin")
 
     def __init__(self, run_id: str, agent: str, session: str):
         self.id, self.agent, self.session = run_id, agent, session
@@ -61,6 +62,7 @@ class _Run:
         self.kind = P.TEXT
         self.sub = ""                                    # Sub-Agent, dem der Puffer gehoert
         self.spoke = False                               # wurde Antworttext gestreamt?
+        self.origin = "chat"                             # chat | job | discord | telegram | …
         self.result: asyncio.Future | None = None        # fuer von der Engine gestartete Laeufe
         self.timer: asyncio.TimerHandle | None = None
         self.ended = ""          # von aussen gesetzter Endstatus (stopped/paused)
@@ -197,6 +199,7 @@ class Engine:
         self._counter += 1
         run = _Run(f"r{self._counter}", agent, session)
         run.result = self._loop.create_future()
+        run.origin = kind
         self._runs[run.id] = run
         run.task = asyncio.create_task(self._chat(run, query, self._boot_task, tag, kind, stream))
         return run
@@ -265,14 +268,16 @@ class Engine:
                     kind: str = "chat", stream: Any = None) -> None:
         status, answer, error = "done", "", ""
         started: dict[str, float] = {}
-        # 2) RUN_START vor allem, was scheitern kann: die UI sieht jeden Lauf und sein Ende
+        # Nachsteuerung: laeuft in dieser Session schon ein Chat-Lauf, beantwortet a_stream die
+        # Nachricht als Sidecar - die UI setzt Frage und Antwort dann IN diesen Lauf ein.
+        steer = "" if kind != "chat" else next(
+            (r.id for r in self._runs.values() if r is not run and r.origin == "chat"
+             and r.agent == run.agent and r.session == run.session and r.task and not r.task.done()), "")
+        # RUN_START vor allem, was scheitern kann: die UI sieht jeden Lauf und sein Ende
         self._emit(P.RUN_START, run.id, agent=run.agent, session=run.session,
-                   query=query, tag=tag, origin=kind)
+                   query=query, tag=tag, origin=kind, steer=steer)
         try:
             await asyncio.shield(boot)
-            if kind == "chat" and await self._backend.is_running(run.agent, run.session):
-                self._emit(P.NOTICE, run.id, level="info",
-                           text="↪ Nachsteuerung an laufenden Lauf gesendet")
             if stream is None:
                 stream = self._backend.stream(run.agent, run.session, query)
             async for chunk in stream:

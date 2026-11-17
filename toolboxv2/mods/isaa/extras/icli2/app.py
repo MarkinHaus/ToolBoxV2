@@ -13,15 +13,21 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
-from textual.widgets import Collapsible, Markdown, Static, TextArea
+from rich.text import Text
+from textual.widgets import Markdown, Static, TextArea
 
 from . import VERSION
 from . import protocol as P
 from .engine import Engine
 from .picker import BACK, Picker, fuzzy
+from .richmd import FrozenMarkdown
 from .theme import DIM, ISAA_THEME, SYM, G, banner
 
 FRAME = 1 / 30                 # Abholtakt fuer Engine-Events
+TEXT_EVERY = 0.08              # Antworttext hoechstens so oft schreiben, wenn man unten mitliest
+TEXT_EVERY_AWAY = 0.6          # … wenn man hochgescrollt hat (der Text ist dann ohnehin nicht sichtbar)
+SCROLL_QUIET = 0.3             # waehrend gescrollt wird, gar nicht schreiben
+MAX_BLOCKS = 60                # so viele Bloecke bleiben im Bild; der Verlauf selbst bleibt in der Session
 EVENTS_PER_FRAME = 200         # Obergrenze je Frame: UI bleibt auch bei Flut bedienbar
 SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 RUN_SYM = {"running": SYM["agent"], "done": SYM["done"], "failed": SYM["fail"],
@@ -72,13 +78,72 @@ MODEL_TARGETS = [("both", "beide", "schnell und komplex"), ("fast", "schnell", "
                  ("complex", "komplex", "schwere Aufgaben")]
 
 
-class ToolCard(Collapsible):
+class FoldLine(Static):
+    """Ein einziges Widget statt Collapsible (vier Widgets): Kopfzeile, aufgeklappt mit Text darunter.
+    Klick oder Enter klappt um. Zugeklappt kostet ein neuer Text keinen Layout-Durchlauf."""
+
+    can_focus = True
+
+    def __init__(self, title: str, body: str = "", collapsed: bool = True, classes: str = ""):
+        super().__init__("", classes=classes, markup=False)
+        self._title, self._fold_body, self._collapsed = title, body, collapsed
+
+    def on_mount(self) -> None:
+        self._draw()
+
+    @property
+    def title(self) -> str:
+        return self._title
+
+    @title.setter
+    def title(self, value: str) -> None:
+        if value != self._title:
+            self._title = value
+            self._draw()
+
+    @property
+    def body(self) -> str:
+        return self._fold_body
+
+    @body.setter
+    def body(self, value: str) -> None:
+        self._fold_body = value
+        if not self._collapsed:                         # zugeklappt: nichts zu zeichnen
+            self._draw()
+
+    @property
+    def collapsed(self) -> bool:
+        return self._collapsed
+
+    @collapsed.setter
+    def collapsed(self, value: bool) -> None:
+        if value != self._collapsed:
+            self._collapsed = value
+            self._draw()
+
+    def _draw(self) -> None:
+        if not self.is_mounted:
+            return
+        text = Text(("▶ " if self._collapsed else "▼ ") + self._title)
+        if not self._collapsed and self._fold_body:
+            for line in self._fold_body.splitlines() or [""]:
+                text.append("\n  │ ", style=G.L2_DARK)
+                text.append(line)
+        self.update(text)
+
+    def on_click(self) -> None:
+        self.collapsed = not self._collapsed
+
+    def key_enter(self) -> None:
+        self.collapsed = not self._collapsed
+
+
+class ToolCard(FoldLine):
     """Eine Zeile pro Tool-Aufruf, aufklappbar fuer Parameter und Ergebnis."""
 
     def __init__(self, name: str, summary: str, detail: str):
         self._tool, self._summary, self._detail = name, summary, detail
-        self._body = Static(detail, classes="tool-body", markup=False)
-        super().__init__(self._body, title=self._head(SYM["tool"]), collapsed=True, classes="tool")
+        super().__init__(self._head(SYM["tool"]), detail, classes="tool")
 
     def _head(self, mark: str, tail: str = "") -> str:
         line = f"{mark} {self._tool}"
@@ -88,9 +153,9 @@ class ToolCard(Collapsible):
 
     def finish(self, ok: bool, summary: str, detail: str, secs: float) -> None:
         tail = (f"  → {summary}" if summary else "") + f"  {secs:.1f}s"
-        self.title = self._head(SYM["ok"] if ok else SYM["fail"], tail)
         self.set_class(not ok, "tool-failed")
-        self._body.update(f"{self._detail}\n\nErgebnis\n{detail}")
+        self.body = f"{self._detail}\n\nErgebnis\n{detail}"
+        self.title = self._head(SYM["ok"] if ok else SYM["fail"], tail)
 
 
 class PromptArea(TextArea):
@@ -149,20 +214,36 @@ class RunView:
         self.answer = ""
         self.md: Markdown | None = None
         self.stream = None
-        self.think: Static | None = None
+        self.think: FoldLine | None = None
         self.think_text = ""
         self.tools: dict[str, ToolCard] = {}
         self.subs: dict[str, RunView] = {}
         self.started = time.monotonic()
         self.ended = 0.0
+        self.queue: list[list] = []                      # [art, text] in Ankunftsreihenfolge
+        self.last_flush = 0.0
 
     @property
     def seconds(self) -> float:
         return (self.ended or time.monotonic()) - self.started
 
+    def add(self, kind: str, text: str) -> None:
+        """Text vormerken; geschrieben wird gebuendelt in flush()."""
+        if self.queue and self.queue[-1][0] == kind:
+            self.queue[-1][1] += text
+        else:
+            self.queue.append([kind, text])
+
+    async def flush(self) -> None:
+        queue, self.queue = self.queue, []
+        self.last_flush = time.monotonic()
+        for kind, text in queue:
+            await (self.text(text) if kind == P.TEXT else self.thinking(text))
+
     async def sub(self, name: str) -> "RunView":
         view = self.subs.get(name)
         if view is None:
+            await self.flush()                           # eigener Text gehoert ueber den Unterblock
             await self.close_segment()
             box = Vertical(Static(f"{SYM['sub']} {name}", classes="sub-head", markup=False), classes="sub")
             await self.box.mount(box)
@@ -172,10 +253,16 @@ class RunView:
     async def close_segment(self) -> None:
         if self.stream is not None:
             await self.stream.stop()
+        if self.md is not None and self.md.is_attached:
+            # fertiger Abschnitt: viele Markdown-Widgets -> ein Widget (siehe richmd.py)
+            frozen = FrozenMarkdown(self.md.source)
+            await self.md.parent.mount(frozen, after=self.md)
+            await self.md.remove()
         self.md = self.stream = self.think = None
         self.think_text = ""
 
     async def close(self) -> None:
+        await self.flush()
         await self.close_segment()
         for view in self.subs.values():
             await view.close()
@@ -192,13 +279,12 @@ class RunView:
     async def thinking(self, delta: str) -> None:
         if self.think is None:
             await self.close_segment()
-            self.think = Static("", classes="think-body", markup=False)
-            box = Collapsible(self.think, title=f"{SYM['think']} Gedanken",
-                              collapsed=not self.app.show_thinking, classes="think")
-            self.app.think_boxes.append(box)
-            await self.box.mount(box)
+            self.think = FoldLine(f"{SYM['think']} Gedanken", collapsed=not self.app.show_thinking,
+                                  classes="think")
+            self.app.think_boxes.append(self.think)
+            await self.box.mount(self.think)
         self.think_text += delta
-        self.think.update(self.think_text)
+        self.think.body = self.think_text
 
     async def tool_start(self, tid: str, name: str, summary: str, detail: str) -> None:
         await self.close_segment()
@@ -247,14 +333,11 @@ class ICli2(App):
         content-align: left middle; text-style: bold; color: $accent;
         background: transparent; border: none; margin: 1 0 0 0; padding: 0; }
     .answer MarkdownFence { background: $panel 40%; margin: 0 0 1 0; }
-    .tool, .think { margin: 0; padding: 0 0 0 2; border: none; background: transparent; }
-    .tool > CollapsibleTitle, .think > CollapsibleTitle { padding: 0; color: $text-muted; }
-    .tool > CollapsibleTitle:hover, .think > CollapsibleTitle:hover,
-    .tool > CollapsibleTitle:focus, .think > CollapsibleTitle:focus {
-        background: transparent; color: $accent; }
-    .tool-failed > CollapsibleTitle { color: $error; }
-    .tool > Contents, .think > Contents { padding: 0 0 0 2; }
-    .tool-body, .think-body { color: $text-muted; border-left: solid $secondary; padding: 0 1; }
+    .tool, .think { margin: 0; padding: 0 0 0 2; background: transparent; color: $text-muted; }
+    .tool:hover, .think:hover, .tool:focus, .think:focus { color: $accent; background: transparent; }
+    .tool-failed, .tool-failed:hover { color: $error; }
+    .steer { height: auto; margin: 1 0 0 0; }
+    .steer-q { color: $accent; text-style: bold; }
     .note { padding: 0 0 0 2; color: $text-muted; }
     .note-error { color: $error; }
     .note-warn { color: $warning; }
@@ -287,7 +370,11 @@ class ICli2(App):
         self._side_jump = False                      # nach dem naechsten Kontext-Update ans Ende scrollen
         self._via_palette = False                    # Picker kam aus der Palette: ← fuehrt dorthin zurueck
         self.tool_cards: list[ToolCard] = []
-        self.think_boxes: list[Collapsible] = []
+        self.think_boxes: list[FoldLine] = []
+        self._dirty: set[RunView] = set()                # Laeufe mit noch nicht geschriebenem Text
+        self._last_scroll, self._last_scroll_y = 0.0, 0.0
+        self._trim_note = False
+        self._head_text = self._foot_text = self._side_cache = ""
         self.show_thinking = False
         self.focus_run = ""
         # Vorschlaege zur aktuellen Eingabe: (einzusetzender Text, Anzeige, Hinweis)
@@ -338,8 +425,30 @@ class ICli2(App):
 
     # ── Engine -> UI ─────────────────────────────────────────────────────────
     async def _pump(self) -> None:
-        for ev in self.engine.poll(EVENTS_PER_FRAME):
-            await self._handle(ev)
+        events = self.engine.poll(EVENTS_PER_FRAME)
+        if events:
+            with self.batch_update():                    # ein Neuzeichnen fuer das ganze Buendel
+                for ev in events:
+                    await self._handle(ev)
+        if not self._dirty:
+            return
+        # Text gebuendelt schreiben: unten mitlesen -> fluessig, hochgescrollt -> selten,
+        # waehrend gescrollt wird -> gar nicht (jeder Schreibvorgang kostet einen Layout-Durchlauf)
+        now, chat = time.monotonic(), self.chat
+        if chat.scroll_y != self._last_scroll_y:
+            self._last_scroll_y = chat.scroll_y
+            if chat.scroll_y < chat.max_scroll_y - 1:
+                self._last_scroll = now
+        at_end = chat.scroll_y >= chat.max_scroll_y - 1
+        if not at_end and now - self._last_scroll < SCROLL_QUIET:
+            return
+        every = TEXT_EVERY if at_end else TEXT_EVERY_AWAY
+        due = [v for v in self._dirty if now - v.last_flush >= every]
+        if due:
+            with self.batch_update():
+                for view in due:
+                    self._dirty.discard(view)
+                    await view.flush()
 
     async def _block(self, head: str, classes: str = "user") -> Vertical:
         box = Vertical(Static(head, classes=classes, markup=False), classes="run")
@@ -350,11 +459,15 @@ class ICli2(App):
         d, view = ev.data, self.runs.get(ev.run)
         if view and d.get("sub"):
             view = await view.sub(d["sub"])
-        if ev.kind == P.TEXT and view:
-            await view.text(d["text"])
-        elif ev.kind == P.THINK and view:
-            await view.thinking(d["text"])
-        elif ev.kind == P.TOOL_START and view:
+        if ev.kind in (P.TEXT, P.THINK):
+            if view:
+                view.add(ev.kind, d["text"])
+                self._dirty.add(view)
+            return
+        if view and view.queue:                          # Reihenfolge: erst der gesammelte Text
+            await view.flush()
+            self._dirty.discard(view)
+        if ev.kind == P.TOOL_START and view:
             await view.tool_start(d["id"], d["name"], d["summary"], d["detail"])
         elif ev.kind == P.TOOL_END and view:
             view.tool_end(d["id"], d["ok"], d["summary"], d["detail"], d["secs"])
@@ -373,14 +486,18 @@ class ICli2(App):
                 view = RunView(box, self)
             view.agent, view.query, view.session = d["agent"], d["query"], d["session"]
             view.started = time.monotonic()
+            target = self.runs.get(d.get("steer") or "")
+            if target is not None and target.status == "running":
+                await self._steer_into(view, target, d["query"])
             self.runs[ev.run] = view
             for old in list(self.runs)[:-KEEP_RUNS]:
                 if self.runs[old].status != "running":
                     del self.runs[old]
-            if d.get("tag") or not self.focus_run:
+            if (d.get("tag") and target is None) or not self.focus_run:
                 self._focus(ev.run)
             self._signal("run")
         elif ev.kind == P.RUN_END and view:
+            self._dirty.discard(view)
             await view.close()
             view.status, view.ended = d["status"], time.monotonic()
             mark = END_MARK.get(d["status"], d["status"])
@@ -395,6 +512,7 @@ class ICli2(App):
                              "done" if d["status"] == "done" else "")
             if self.focus_run == ev.run:
                 self._focus(next(reversed(self.active), ""))
+            await self._trim()
             if self.w_side.has_class("-open"):
                 self.engine.send(P.LIST, what="context", to="side")
         elif ev.kind == P.READY:
@@ -417,7 +535,7 @@ class ICli2(App):
             elif d.get("to") == "side":
                 self.side_rows[d["what"]] = d["rows"]
                 if d["what"] == "context":
-                    self.w_side_text.update(self._side_text())
+                    self._set_side()
                     if self._side_jump:
                         self._side_jump = False
                         self.call_after_refresh(self.w_side.scroll_end, animate=False)
@@ -431,6 +549,35 @@ class ICli2(App):
                 await view.note(d["text"], d.get("level", "info"))
             else:
                 await self._note(d["text"], d.get("level", "info"))
+
+    async def _steer_into(self, view: RunView, target: RunView, query: str) -> None:
+        """Nachsteuerung an der aktuellen Stelle IN den laufenden Lauf setzen: Frage und
+        Sidecar-Antwort stehen dort, alles Weitere des Hauptlaufs erscheint darunter."""
+        await target.flush()
+        await target.close_segment()                     # naechster Text des Hauptlaufs: neuer Abschnitt darunter
+        old = view.box
+        view.box = Vertical(Static(f"↪ {query}", classes="steer-q", markup=False), classes="steer")
+        await target.box.mount(view.box)
+        if old.is_attached:
+            await old.remove()
+
+    async def _trim(self) -> None:
+        """Sehr alte Bloecke aus dem Bild nehmen (jeder Block kostet bei jedem Layout-Durchlauf)."""
+        blocks = [w for w in self.chat.children if w.has_class("run")]
+        busy = {v.box for v in self.active.values()} | {v.box for v in self.pending.values()}
+        old = [w for w in blocks[:max(0, len(blocks) - MAX_BLOCKS)] if w not in busy]
+        if not old:
+            return
+        first = blocks[0]
+        drop = [w for w in self.chat.children if w is not first and w not in busy and w.id != "trim-note"
+                and self.chat.children.index(w) < self.chat.children.index(old[-1])] + old
+        await self.chat.remove_children(list(dict.fromkeys(drop)))
+        self.tool_cards = [c for c in self.tool_cards if c.is_attached]
+        self.think_boxes = [b for b in self.think_boxes if b.is_attached]
+        if not self._trim_note:
+            self._trim_note = True
+            await self.chat.mount(Static("… ältere Ausgaben ausgeblendet – der Verlauf bleibt in der Session",
+                                         classes="note", id="trim-note"), before=0)
 
     def _focus(self, run: str) -> None:
         self.focus_run = run
@@ -450,7 +597,7 @@ class ICli2(App):
         """Kopf-, Fusszeile, Seitenleiste. Rein lokal, auch bei blockierter Engine fluessig."""
         self._tick += 1
         mounts = f" · {self.mounts} mount{'s' if self.mounts != 1 else ''}" if self.mounts else ""
-        self.w_head.update(
+        self._set_line("_head_text", self.w_head,
             f"[{G.L4_BRIGHT}]{SYM['agent']} {self.agent}[/] "
             f"[{DIM}]· {self.model} · {self.session}{mounts}"
             f"{' · ' + self.user if self.user else ''}[/]"
@@ -470,9 +617,21 @@ class ICli2(App):
             left = f"[{G.L3_MID}]{SYM['done']}[/] bereit"
         if self.tokens:
             left += f" · {self.tokens[0] / 1000:.1f}k/{self.tokens[1] / 1000:.0f}k tok"
-        self.w_foot.update(left)
+        self._set_line("_foot_text", self.w_foot, left)
         if self._tick % 5 == 0 and self.w_side.has_class("-open"):
-            self.w_side_text.update(self._side_text())
+            self._set_side()
+
+    def _set_line(self, cache: str, widget: Static, text: str) -> None:
+        """Einzeilige Anzeige: nur bei Aenderung und ohne Layout-Durchlauf (Hoehe bleibt 1)."""
+        if getattr(self, cache) != text:
+            setattr(self, cache, text)
+            widget.update(text, layout=False)
+
+    def _set_side(self) -> None:
+        text = self._side_text()
+        if text != self._side_cache:
+            self._side_cache = text
+            self.w_side_text.update(text)
 
     def _side_text(self) -> str:
         def title(text: str) -> str:
@@ -788,7 +947,7 @@ class ICli2(App):
         if side.has_class("-open"):
             self._refresh_side()
             self.engine.send(P.LIST, what="context", to="side")
-            self.w_side_text.update(self._side_text())
+            self._set_side()
 
     def action_voice(self) -> None:
         """F4: Aufnahme starten bzw. beenden; der erkannte Text landet in der Eingabe."""

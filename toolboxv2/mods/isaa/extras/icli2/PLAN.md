@@ -173,6 +173,27 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 - **Geprüft:** `tests/check_plugin_install.py` mit echten lokalen Git-Repos (sauber, riskant, Symlink, kein Plugin, verschachtelt, umbenannt, defektes Manifest, Pfad-Ausbrüche, Option-Injection, Marketplaces); per absichtlich eingebauter Fehler nachgewiesen, dass der Test bei fehlender Symlink-, Pfad- und Quellen-Prüfung anschlägt. Dazu der echte Durchlauf: Installieren, Aktivieren, Deaktivieren, Entfernen gegen den realen isaa-Agenten, einmal direkt und einmal über die Oberfläche (`tests/e2e/plug.py`, `e2e.py`).
 - Geschrieben von einem Subagenten (vor dem Prüfskript wegen Rate-Limit abgebrochen); Code vollständig gegengelesen, an die alte icli angeglichen (Manifest-Name, verschachtelte Wurzel, `name@marketplace`), Prüfskript selbst geschrieben.
 
+### Schritt 12 – Flüssige Darstellung und Nachsteuerung (`icli2-12-fluessig-steering.patch`)
+- **Gemessen statt geraten** (`tests/bench_render.py`: 25 fertige Läufe als Verlauf, zwei parallel streamende Läufe mit Tool-Aufrufen, gleichzeitig Scrollen). Profiler-Befund: fast die ganze UI-Zeit ging in komplette Layout-Durchläufe, jeder kostete proportional zur Zahl der Widgets (bis ~2 800).
+- **Maßnahmen:**
+  - Fertige Antwort-Abschnitte werden eingefroren: aus vielen Markdown-Widgets wird ein einziges (`richmd.py`), zeilengleich und im selben Stil wie live (geprüft in `tests/check_render.py` bei drei Breiten). Ein Abschnitt endet bei einem Tool-Aufruf, einer Nachsteuerung oder am Laufende.
+  - Tool- und Gedanken-Zeilen sind ein Widget statt vier (`FoldLine`); zugeklappte Gedanken werden beim Streamen nicht neu gezeichnet.
+  - Antworttext wird pro Lauf gesammelt und gebündelt geschrieben: alle 80 ms beim Mitlesen, alle 600 ms wenn hochgescrollt, gar nicht während gescrollt wird. Andere Ereignisse schreiben vorher den gesammelten Text, damit die Reihenfolge stimmt.
+  - Ein Neuzeichnen pro Frame (`batch_update`); Kopf- und Fußzeile nur bei Änderung und ohne Layout-Durchlauf.
+  - Höchstens 60 Blöcke im Bild, ältere werden ausgeblendet (der Verlauf bleibt in der Session).
+  - Logging, das an Textual vorbei ins Terminal schreiben würde, geht während der TUI nach `<appdata>/icli2/icli2.log` (`termguard.py`).
+- **Ergebnis im Benchmark:**
+
+  | | vorher | nachher |
+  |---|---|---|
+  | Scroll-Taste verarbeitet (Median / p95) | 1,5 s / 2,6 s (mit Test-Pilot gemessen) bzw. Schleife eingefroren | 3 ms / 9 ms |
+  | UI-Schleife verzögert (p95 / max) | 280 ms / 1,1 s, unter Last fast völlig blockiert | 15–50 ms / 0,3–0,5 s |
+  | Widgets nach 25 Läufen | bis ~2 800 | ~70–380 |
+
+  Die alte Fassung stürzte im Benchmark einmal mit `MountError` ab (Markdown wurde befüllt, bevor es eingehängt war); die neue nicht.
+- **Nachsteuerung:** Die Engine erkennt selbst, ob in derselben Session schon ein Chat-Lauf arbeitet. Die UI setzt Frage und Sidecar-Antwort dann an der aktuellen Stelle IN diesen Lauf; alles Weitere des Hauptlaufs erscheint darunter. Vorher bekam die Nachsteuerung einen eigenen Block ganz unten und der Hauptlauf schrieb oberhalb weiter. Geprüft im UI-Test und im echten Durchlauf gegen den isaa-Agenten.
+- **Nicht übernommen:** Ein kürzeres GIL-Umschaltintervall wurde gemessen und brachte nichts. Was an Rucklern bleibt, kommt vom gemeinsamen GIL von UI- und Agenten-Thread; das löst erst die Engine als eigener Prozess (siehe „Danach“).
+
 ## Arbeitsanleitung für weitere Schritte
 
 Alle geplanten Schritte sind umgesetzt. Das Vorgehen gilt für jede Erweiterung; offene Ideen stehen unter „Danach“.
@@ -250,6 +271,7 @@ Kein `icli_web`-Bezug, keine Brücke, keine gemeinsame Prozessarchitektur.
 - **Plugins:** Hooks laufen nicht (auch nicht nach Installation). Abschaltliste `<appdata>/icli/plugins_disabled.json`; alle anderen Plugins werden beim Start geladen wie bisher.
 - **MCP:** neue Server werden nur gespeichert, wenn `agent.json` des Agenten existiert (liegt unter `data_dir/Agents/<name>/agent.json` und existiert immer nach dem Bauen).
 - **Plugins (Marketplace):** Die alte icli benutzt `<appdata>/icli/plugins/.staging` direkt als Staging und löscht es komplett; eine dort angefangene icli2-Installation geht verloren, wenn parallel in der alten icli installiert wird. Die icli2 überschreibt nie ein installiertes Plugin (die alte icli schon). **Marketplace-Einträge mit relativem Pfad (`./plugins/x`):** der Pfad wird gegen das Arbeitsverzeichnis aufgelöst statt gegen die Wurzel des geklonten Marketplace-Repos - deshalb scheitert die Installation. Die alte icli hat dieselbe Schwäche. **Geplant:** relativen Pfad gegen die Clone-Wurzel auflösen. Bei `git-subdir` wird wie in der alten icli das ganze Repo geklont.
+- **Darstellung:** Eingefrorene Abschnitte nutzen Richs Markdown; Tabellen, Bilder und verschachtelte Listen sind dort nicht zeilengleich geprüft und können beim Einfrieren um Zeilen springen. Alte Blöcke über 60 werden aus dem Bild genommen.
 - **UI-Prüfskript** ist zeitabhängig und kann unter hoher Last einmal fehlschlagen; ein zweiter Lauf geht dann durch.
 
 ## Patches anwenden
@@ -264,6 +286,7 @@ git apply icli2-08-09-cloudm-voice.patch
 git apply icli2-06-07-features-discord.patch   # baut auf 08-09 auf
 git apply icli2-10-e2e-settings-vfs.patch
 git apply icli2-11-plugin-install.patch
+git apply icli2-12-fluessig-steering.patch
 pip install "textual>=8"
 ```
 
