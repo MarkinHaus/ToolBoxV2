@@ -39,6 +39,7 @@ from .vfsview import VfsViewMixin    # /vfs: Dateien ansehen, Pfad-Vervollstaend
 from .cloudm import CloudMMixin      # Schritt 8: Login, ToolBox-Funktionen, LiveSync-Shares
 from .voice import VoiceMixin        # Schritt 9: Sprache (Audio-Importe erst bei Gebrauch)
 from .self_tool import SelfToolMixin  # T7: self-Agent steuert icli2-Settings + Agent-Config
+from .self_orchestrator import SelfOrchestratorMixin  # T9: self steuert andere Agenten + liest OBS
 
 AGENT_STATE = {"live": "geladen", "registered": "registriert", "disk": "gespeichert"}
 HISTORY_KEEP = 500
@@ -56,7 +57,7 @@ def _row(value: str, label: str = "", hint: str = "") -> dict[str, str]:
 
 _AGENT_MODEL_KEYS = ("fast_llm_model", "complex_llm_model")
 
-class IsaaBackend(SelfToolMixin, FeatureMixin, PluginInstallMixin, ConnectMixin, BridgeMixin, CloudMMixin, VoiceMixin, VfsViewMixin):
+class IsaaBackend(SelfToolMixin, SelfOrchestratorMixin, FeatureMixin, PluginInstallMixin, ConnectMixin, BridgeMixin, CloudMMixin, VoiceMixin, VfsViewMixin):
     def __init__(self, app: Any, agent: str = "self", session: str = "default"):
         self.app = app
         self.agent = agent

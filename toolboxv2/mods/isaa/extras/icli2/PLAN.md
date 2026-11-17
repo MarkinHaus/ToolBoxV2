@@ -194,6 +194,18 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 - **Nachsteuerung:** Die Engine erkennt selbst, ob in derselben Session schon ein Chat-Lauf arbeitet. Die UI setzt Frage und Sidecar-Antwort dann an der aktuellen Stelle IN diesen Lauf; alles Weitere des Hauptlaufs erscheint darunter. Vorher bekam die Nachsteuerung einen eigenen Block ganz unten und der Hauptlauf schrieb oberhalb weiter. Geprüft im UI-Test und im echten Durchlauf gegen den isaa-Agenten.
 - **Nicht übernommen:** Ein kürzeres GIL-Umschaltintervall wurde gemessen und brachte nichts. Was an Rucklern bleibt, kommt vom gemeinsamen GIL von UI- und Agenten-Thread; das löst erst die Engine als eigener Prozess (siehe „Danach“).
 
+### Schritt 13 – Sub-Agent-Kachel und verständliche Fehler (`icli2-13-subagent-fehler.patch`)
+- **Sub-Agent als Kachel** (`subtile.py`): klein ein einziges Widget mit Status, Aufgabe, Kennzahlen (Schritt x/max, Laufzeit, Restzeit bis Zeitlimit, Tokens/Budget) und den letzten drei Aktionen; Klick öffnet die große Ansicht mit voller Aufgabe oben, allen Aktionen in einem eigenen Scrollbereich (einzeln aufklappbar, bis 300) und Ergebnis bzw. Fehler unten; Klick auf den Kopf schließt sie. Laufzeit und Restzeit zählen jede Sekunde mit.
+- **Dafür in `mods/isaa/base/Agent/sub_agent.py` (additiv):** Jeder weitergereichte Chunk trägt `_sub_agent_meta` (volle Aufgabe, Status, Fehler, Schritt, Budget, Zeitlimit, Start, Verbrauch); vor dem Ende kommt immer eine Abschlussmeldung mit Endstatus, Fehler und Ergebnis (auch bei Ausnahme oder Abbruch – vorher erreichten Fehler von Sub-Agenten die Oberfläche gar nicht). Ältere Oberflächen ignorieren das Feld; die bestehenden Engine-Tests liefern vorher wie nachher dasselbe Ergebnis.
+- **Fehler** (`errors.py`): Die Engine las Fehler bisher unter dem falschen Schlüssel (`message` statt `error`) und zeigte dadurch keine Meldung; Iterationslimit, Warnungen und Abbruch wurden nicht ausgewertet. Jetzt gibt es am Laufende eine anklickbare Zeile, z. B. „✗ Anbieter-Limit erreicht (429) – Rate limit exceeded: …“. Aufgeklappt: was zu tun ist (mit icli2-Befehlen), die eigentliche Meldung des Anbieters (aus eingebettetem JSON bzw. hinter Hüllen wie „Agent crashed: ProviderError: litellm.RateLimitError: …“), Wartezeit falls genannt, vollständige Details mit lesbar eingerücktem JSON und Traceback. Erkannt werden Anbieter-Limit, Zugang, Guthaben, Modell, Kontextgröße, Verbindung, Störung, Zeitüberschreitung, Inhalts-Sperre, abgelehnte Anfrage, leere Antwort, interner Absturz, Iterationslimit (gelb, mit Zusammenfassung des Agenten). Warnungen des Agenten erscheinen als Hinweis im Lauf.
+- **Geprüft:** `tests/check_errors.py` (realistische Fehlertexte von litellm/Anbietern/Engine, darunter der genaue Text aus dem echten Lauf), `tests/check_ui.py` (Kachel klein/groß, 30 Aktionen, Ergebnis, Fehler; Fehler-, Limit- und Absturz-Lauf), echter Durchlauf gegen den isaa-Agenten mit echtem HTTP-429 und echtem Sub-Agenten (`tests/e2e/e2e_errors.py`).
+- **Aus dem echten Durchlauf behoben:** Der 429 kam als „Agent crashed: ProviderError: litellm.RateLimitError: …“ – die Hüllen werden jetzt alle entfernt (bei Python-Fehlern bleibt die Fehlerklasse stehen). Ein `tool_result` ohne vorheriges `tool_start` (kommt vor) wurde verschluckt und erscheint jetzt als fertige Zeile. Fertig eingehängte Tool-/Aktionszeilen blieben leer, bis sie sich änderten (Zeichnen während `on_mount`) – betraf die große Kachel und Tool-Zeilen ohne Ergebnis. Fehlerdetails sind jetzt lesbar statt komplett rot.
+
+### Schritt 14 – Endantwort kommt immer an (`icli2-14-endantwort.patch`)
+- **Ursache 1 (Engine):** Die Antwort aus `final_answer` wurde nur gezeigt, wenn vorher kein Text gestreamt war. Echte Modelle schreiben oft erst einen Satz („ich schaue nach …“) und liefern die Antwort dann über das `final_answer`-Tool – die Antwort fiel weg. Jetzt wird sie immer gezeigt, außer sie steht schon wörtlich im zuletzt gestreamten Text; kommt sie nur im `done`-Chunk, wird sie dort übernommen.
+- **Ursache 2 (UI, zeitabhängig):** Beim Einfrieren eines Abschnitts wurde der Text aus dem Markdown-Widget gelesen. Textuals `MarkdownStream.stop()` wartet ein laufendes `append` nicht ab – bei langsamem Zeichnen (z. B. Terminal im Hintergrund) fehlte der Rest oder der ganze Abschnitt. Jetzt führt jeder Lauf den Abschnittstext selbst.
+- **Geprüft:** `tests/check_final.py` (Zwischentext + Antwort, langsames Zeichnen, schon gestreamte Antwort genau einmal, Antwort nur in `done`; schlägt ohne Fix fehl) und echter Durchlauf gegen den isaa-Agenten mit Text und Tool-Aufruf in derselben Modellantwort (`tests/e2e/e2e_final.py`).
+
 ## Arbeitsanleitung für weitere Schritte
 
 Alle geplanten Schritte sind umgesetzt. Das Vorgehen gilt für jede Erweiterung; offene Ideen stehen unter „Danach“.
@@ -271,6 +283,8 @@ Kein `icli_web`-Bezug, keine Brücke, keine gemeinsame Prozessarchitektur.
 - **Plugins:** Hooks laufen nicht (auch nicht nach Installation). Abschaltliste `<appdata>/icli/plugins_disabled.json`; alle anderen Plugins werden beim Start geladen wie bisher.
 - **MCP:** neue Server werden nur gespeichert, wenn `agent.json` des Agenten existiert (liegt unter `data_dir/Agents/<name>/agent.json` und existiert immer nach dem Bauen).
 - **Plugins (Marketplace):** Die alte icli benutzt `<appdata>/icli/plugins/.staging` direkt als Staging und löscht es komplett; eine dort angefangene icli2-Installation geht verloren, wenn parallel in der alten icli installiert wird. Die icli2 überschreibt nie ein installiertes Plugin (die alte icli schon). **Marketplace-Einträge mit relativem Pfad (`./plugins/x`):** der Pfad wird gegen das Arbeitsverzeichnis aufgelöst statt gegen die Wurzel des geklonten Marketplace-Repos - deshalb scheitert die Installation. Die alte icli hat dieselbe Schwäche. **Geplant:** relativen Pfad gegen die Clone-Wurzel auflösen. Bei `git-subdir` wird wie in der alten icli das ganze Repo geklont.
+- **Agenten-Kern (nicht icli2):** Antwortet ein Modell nur noch mit dem `think`-Tool, greift das Iterationslimit nicht – im echten Durchlauf wuchs der Verlauf bei Limit 1 auf über 300 Nachrichten. Mit normalen Tools greift es nach einem Schritt. Nicht geändert, weil Verhalten des isaa-Engines.
+- **Sub-Agenten:** Laufzeit und Restzeit rechnen ab `started_at` des Sub-Agenten; wartet der Hauptlauf mit `wait=True`, kommen die Aktionen erst gesammelt nach dem Ende des Sub-Agenten an (so liefert der Engine sie).
 - **Darstellung:** Eingefrorene Abschnitte nutzen Richs Markdown; Tabellen, Bilder und verschachtelte Listen sind dort nicht zeilengleich geprüft und können beim Einfrieren um Zeilen springen. Alte Blöcke über 60 werden aus dem Bild genommen.
 - **UI-Prüfskript** ist zeitabhängig und kann unter hoher Last einmal fehlschlagen; ein zweiter Lauf geht dann durch.
 
@@ -287,6 +301,9 @@ git apply icli2-06-07-features-discord.patch   # baut auf 08-09 auf
 git apply icli2-10-e2e-settings-vfs.patch
 git apply icli2-11-plugin-install.patch
 git apply icli2-12-fluessig-steering.patch
+git apply icli2-12b-fix-termguard.patch
+git apply icli2-13-subagent-fehler.patch
+git apply icli2-14-endantwort.patch
 pip install "textual>=8"
 ```
 
@@ -300,3 +317,8 @@ backend.py/app.py (plus die im Schritt genannte neue Datei) anfassen, icli.py ni
 Prüfskripte in icli2/tests erweitern und alle drei ausführen, PLAN.md aktualisieren,
 committen, pushen und mir den Schritt als .patch (reiner Diff auf dem Vorgänger) schicken.
 ```
+
+## T9 - Orchestrierung (self steuert andere Agenten) - erledigt 17.11.
+- `self_orchestrator.py` (SelfOrchestratorMixin, verdrahtet backend.py:60): self_agent_start (a_stream im Hintergrund-Task, Ergebnis in `_orch_results`), self_agent_stop/pause (engine cancel/pause, alle oder run_id), self_agent_resume (nur solange Engine lebt), self_agent_status (list_executions), self_agent_obs (OBS-Dateien JEDES Agenten: run_*.json Summary + live_*.jsonl tail - niemals ganze 40MB-Datei)
+- Grenze bewusst: Starten/Steuern nur in derselben isaa-Instanz; OBS-Lesen agentenuebergreifend (auch fremde Prozesse). Kein Spawn-API-Missbrauch.
+- Tests: test_icli2_self_orchestrator.py 8/8 (Guard, Name-Regex, stop/pause/resume/status/obs/start), Gegenprobe Mixin-raus = rot
