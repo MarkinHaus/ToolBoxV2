@@ -52,6 +52,9 @@ def _row(value: str, label: str = "", hint: str = "") -> dict[str, str]:
     return {"value": value, "label": label or value, "hint": hint}
 
 
+
+_AGENT_MODEL_KEYS = ("fast_llm_model", "complex_llm_model")
+
 class IsaaBackend(FeatureMixin, PluginInstallMixin, ConnectMixin, BridgeMixin, CloudMMixin, VoiceMixin, VfsViewMixin):
     def __init__(self, app: Any, agent: str = "self", session: str = "default"):
         self.app = app
@@ -370,13 +373,36 @@ class IsaaBackend(FeatureMixin, PluginInstallMixin, ConnectMixin, BridgeMixin, C
         ]
 
     async def _do_set(self, key: str = "", value: str = "") -> dict[str, Any]:
+        # Agent-Config (nach dem Builder) - geht in agent.json via _persist_config
+        if key in _AGENT_MODEL_KEYS:
+            return await self._set_agent_value(key, value, cast=str)
+        if key == "immediate_offload_ratio":
+            return await self._set_agent_value(key, value, cast=float, lo=0.0, hi=1.0)
+        if key == "heavy_hitter_min_tokens":
+            return await self._set_agent_value(key, value, cast=int, lo=1)
         if key != "max_iterations":
-            raise ValueError("Einstellbar: max_iterations  (Beispiel: /set max_iterations 50)")
+            raise ValueError("Einstellbar: max_iterations, fast_llm_model, "
+                             "complex_llm_model, immediate_offload_ratio, "
+                             "heavy_hitter_min_tokens  (Beispiel: /set max_iterations 50)")
         if not value.isdigit() or not 1 <= int(value) <= 500:
             raise ValueError("max_iterations braucht eine Zahl von 1 bis 500")
         self.max_iterations = int(value)
         await asyncio.to_thread(self.save_setting, "max_iterations", self.max_iterations)
         return {"text": f"Max. Iterationen: {self.max_iterations} (gilt ab der nächsten Nachricht)"}
+
+    async def _set_agent_value(self, key: str, value: str, *, cast, lo=None, hi=None) -> dict[str, Any]:
+        path = self._agents_dir() / self.agent / "agent.json"
+        try:
+            num = cast(value)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"{key} braucht einen gueltigen Wert ({cast.__name__}): {value}") from e
+        if lo is not None and num < lo or hi is not None and num > hi:
+            raise ValueError(f"{key} muss zwischen {lo} und {hi} liegen: {value}")
+        if not path.exists():
+            return {"text": f"Agent {self.agent!r} ist nicht gebaut (keine agent.json unter "
+                            f"data/Agents/{self.agent}) - zuerst /agent bauen", "level": "warn"}
+        await asyncio.to_thread(self._persist_config, self.agent, {key: num})
+        return {"text": f"{key} = {num} (in agent.json von {self.agent})"}
 
     async def _do_credentials(self) -> dict[str, Any]:
         return {"text": "Zugangsdaten verwalten kommt in einem späteren Schritt – bis dahin über .env", "level": "warn"}
