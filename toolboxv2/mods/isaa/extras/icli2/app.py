@@ -155,6 +155,7 @@ class RunView:
         self.status_msg = ""
         self.iter: tuple[int, int] | None = None
         self.answer = ""
+        self.seg_text = ""                               # vollstaendiger Text des laufenden Abschnitts
         self.md: Markdown | None = None
         self.stream = None
         self.think: FoldLine | None = None
@@ -213,8 +214,10 @@ class RunView:
         if self.stream is not None:
             await self.stream.stop()
         if self.md is not None and self.md.is_attached:
-            # fertiger Abschnitt: viele Markdown-Widgets -> ein Widget (siehe richmd.py)
-            frozen = FrozenMarkdown(self.md.source)
+            # fertiger Abschnitt: viele Markdown-Widgets -> ein Widget (siehe richmd.py). Der Text kommt aus
+            # seg_text, nicht aus md.source: MarkdownStream.stop() wartet ein laufendes append nicht ab, bei
+            # langsamem Zeichnen fehlte sonst der Rest (oder alles).
+            frozen = FrozenMarkdown(self.seg_text)
             await self.md.parent.mount(frozen, after=self.md)
             await self.md.remove()
         self.md = self.stream = self.think = None
@@ -232,6 +235,8 @@ class RunView:
             self.md = Markdown("", classes="answer")
             await self.box.mount(self.md)
             self.stream = Markdown.get_stream(self.md)
+            self.seg_text = ""
+        self.seg_text += delta
         self.answer += delta
         await self.stream.write(delta)
 

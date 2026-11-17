@@ -54,7 +54,7 @@ def _show(value: Any, limit: int) -> dict[str, str]:
 
 class _Run:
     __slots__ = ("id", "agent", "session", "task", "buf", "kind", "sub", "timer", "ended", "result", "spoke",
-                 "origin")
+                 "origin", "seg")
 
     def __init__(self, run_id: str, agent: str, session: str):
         self.id, self.agent, self.session = run_id, agent, session
@@ -64,6 +64,7 @@ class _Run:
         self.sub = ""                                    # Sub-Agent, dem der Puffer gehoert
         self.spoke = False                               # wurde Antworttext gestreamt?
         self.origin = "chat"                             # chat | job | discord | telegram | …
+        self.seg = ""                                    # Antworttext seit dem letzten Tool-Aufruf
         self.result: asyncio.Future | None = None        # fuer von der Engine gestartete Laeufe
         self.timer: asyncio.TimerHandle | None = None
         self.ended = ""          # von aussen gesetzter Endstatus (stopped/paused)
@@ -245,6 +246,7 @@ class Engine:
             return
         if kind == P.TEXT and not sub:
             run.spoke = True
+            run.seg += text
         if kind != run.kind or sub != run.sub:
             self._flush(run)
             run.kind, run.sub = kind, sub
@@ -264,6 +266,15 @@ class Engine:
             return fmt.result_summary(result)
         except Exception:
             return ""
+
+    def _show_answer(self, run: _Run, answer: str) -> None:
+        """Endantwort anzeigen - ausser sie wurde schon wortgleich gestreamt. Haeufig schreibt das Modell
+        erst einen Satz ('ich schaue nach ...') und liefert die Antwort dann ueber das final_answer-Tool."""
+        norm = " ".join(answer.split())
+        if not norm or norm in " ".join(run.seg.split()):
+            return
+        self._push(run, P.TEXT, ("\n\n" if run.seg.strip() else "") + answer.strip())
+        self._flush(run)
 
     def _sub_info(self, run: _Run, sub: str, chunk: dict, seen: dict) -> None:
         """Rahmendaten eines Sub-Agenten an die UI - nur wenn sich etwas Sichtbares aendert."""
@@ -325,6 +336,7 @@ class Engine:
                 if not sub and chunk.get("iter") is not None:
                     iters = (int(chunk.get("iter") or 0), int(chunk.get("max_iter") or 0))
                 if t == "tool_start":
+                    run.seg = ""                         # neuer Abschnitt nach dem Tool-Aufruf
                     tid = str(chunk.get("id") or chunk.get("name", "?"))
                     started[tid] = time.monotonic()
                     args = fmt.parse(chunk.get("args", chunk.get("input", chunk.get("arguments", ""))))
@@ -343,9 +355,8 @@ class Engine:
                     answer = str(chunk.get("answer", chunk.get("content", "")) or "")
                     if chunk.get("success") is False and answer.startswith("Stopped after"):
                         status = "limit"                 # Page-Engine meldet ihr Limit so (wie sub_agent.py)
-                    if answer and not run.spoke:         # nichts gestreamt: Antwort jetzt zeigen
-                        self._push(run, P.TEXT, answer)
-                        self._flush(run)
+                    else:
+                        self._show_answer(run, answer)
                 elif t == "paused":
                     status = "paused"
                 elif t == "error":                       # der Engine liefert den Text unter "error"
@@ -359,6 +370,9 @@ class Engine:
                     status = run.ended or "stopped"
                 elif t == "warning" and chunk.get("message"):
                     self._emit(P.NOTICE, run.id, level="warn", text=f"⚠ {chunk['message']}")
+                elif t == "done" and chunk.get("success") is not False and not answer and chunk.get("final_answer"):
+                    answer = str(chunk["final_answer"])  # manche Pfade liefern die Antwort nur hier
+                    self._show_answer(run, answer)
                 elif t == "done" and chunk.get("success") is False and status == "done":
                     status = "failed"                    # Absturz: der Grund steht nur in final_answer
                     errors.append(str(chunk.get("final_answer") or "Lauf ohne Erfolg beendet"))
