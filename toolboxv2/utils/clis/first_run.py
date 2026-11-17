@@ -108,11 +108,19 @@ def account_state(app=None) -> dict:
                 "state": _LINK["state"], "error": _LINK["error"]}
 
 
-def onboarding_state() -> dict:
+def onboarding_state(app=None) -> dict:
     """Single source for "first run?" (CLI, local web UI, wizard API):
-    onboarding is done iff the manifest has app.profile."""
+    onboarding is done iff the manifest has app.profile.
+
+    WP3 A6: Kontodatei ueber die App bzw. _state_dir.data_root lesen,
+    nie relativ (get_app-Fallback wie in _start_account_link)."""
+    if app is None:
+        try:
+            from toolboxv2 import get_app
+            app = get_app("first_run.onboarding")
+        except Exception:
+            app = None
     try:
-        from toolboxv2 import tb_root_dir
         from toolboxv2.utils.manifest import ManifestLoader
         from toolboxv2._state_dir import manifest_base_dir
         loader = ManifestLoader(manifest_base_dir())
@@ -120,7 +128,7 @@ def onboarding_state() -> dict:
         profile = profile.value if profile is not None else None
     except Exception:
         profile = None
-    owner = _read_device_owner()
+    owner = _read_device_owner(app)
     return {"installed": True, "first_run": profile is None, "profile": profile,
             "needs_account": profile in ("local", "developer") and owner is None,
             "account": owner.get("username", "") if owner else None}
