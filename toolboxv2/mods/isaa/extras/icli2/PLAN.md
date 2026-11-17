@@ -71,6 +71,7 @@ Regeln, die für jeden weiteren Schritt gelten:
 | `/context` | fertig | `/context` (jetzt in der Seitenleiste) |
 | `/vfs [pfad]` | fertig | `/vfs` (ansehen, mit Pfad-Vervollständigung) |
 | `/feature`, `/skill`, `/mcp [name befehl …]`, `/plugin` | fertig | gleichnamige Befehle (Picker mit An/Aus) |
+| `/plugin install <quelle>`, `confirm`, `discard`, `remove`, `market [quelle]`, `markets` | fertig | `/plugin install`, `/plugin marketplace`, `/plugin browse`, `/plugin remove` |
 | `/discord [befehl …]`, `/telegram [befehl …]` | fertig | unverändert an die vorhandenen Erweiterungen durchgereicht |
 | `/login`, `/logout` | fertig | – |
 | `/tb [mod.fn key=wert]` | fertig | – (ToolBox-Funktion aufrufen) |
@@ -163,6 +164,15 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 - **`/vfs [pfad]`** (`vfsview.py`): Ordner auflisten, Datei anzeigen, nur lesend.
 - Leerzeile zwischen eigener Nachricht und Antwort; erste Taste nach verlorenem Fokus wird nicht mehr verschluckt.
 
+### Schritt 11 – Plugin-Installation (`icli2-11-plugin-install.patch`, Datei `plugin_install.py`)
+- `/plugin install <quelle>`: Quelle ist `owner/repo`, eine Git-URL, ein lokaler Pfad oder `name@marketplace` (wie die alte icli). Geklont wird mit `git clone --depth 1` in `<appdata>/icli/plugins/.staging/<name>`.
+- Wie die alte icli: Plugin = Ordner mit `.claude-plugin/plugin.json` (auch verschachtelt im Repo), installiert unter dem Namen aus `plugin.json`, danach sofort aktiv.
+- **Statt der Rückfrage im Terminal zwei Schritte:** ohne Funde wird direkt installiert. Mit Funden (gefährliche Muster, Hooks, `.mcp.json`, Symlinks nach außen) erscheint der Sicherheitsbericht, das Plugin bleibt im Staging: `/plugin confirm <name>` installiert, `/plugin discard <name>` verwirft.
+- `/plugin remove <name>` deaktiviert und löscht. `/plugin market owner/repo` merkt einen Marketplace (gleiche Datei wie die alte icli), `/plugin market` zeigt alle Plugins daraus – Enter installiert –, `/plugin markets` listet die gemerkten – Enter entfernt.
+- **Sicherheit:** git ohne Shell und mit `--` vor der Quelle, Quellen mit `-` am Anfang oder `::` werden abgelehnt, nur die Protokolle file/https/http/ssh. Jeder Name wird geprüft und jeder Pfad muss im Plugin-Ordner liegen – auch nach Auflösen von Symlinks. Aus dem Repo wird nichts ausgeführt, Hooks laufen nicht.
+- **Geprüft:** `tests/check_plugin_install.py` mit echten lokalen Git-Repos (sauber, riskant, Symlink, kein Plugin, verschachtelt, umbenannt, defektes Manifest, Pfad-Ausbrüche, Option-Injection, Marketplaces); per absichtlich eingebauter Fehler nachgewiesen, dass der Test bei fehlender Symlink-, Pfad- und Quellen-Prüfung anschlägt. Dazu der echte Durchlauf: Installieren, Aktivieren, Deaktivieren, Entfernen gegen den realen isaa-Agenten, einmal direkt und einmal über die Oberfläche (`tests/e2e/plug.py`, `e2e.py`).
+- Geschrieben von einem Subagenten (vor dem Prüfskript wegen Rate-Limit abgebrochen); Code vollständig gegengelesen, an die alte icli angeglichen (Manifest-Name, verschachtelte Wurzel, `name@marketplace`), Prüfskript selbst geschrieben.
+
 ## Arbeitsanleitung für weitere Schritte
 
 Alle geplanten Schritte sind umgesetzt. Das Vorgehen gilt für jede Erweiterung; offene Ideen stehen unter „Danach“.
@@ -183,7 +193,15 @@ Alle geplanten Schritte sind umgesetzt. Das Vorgehen gilt für jede Erweiterung;
 - **Lauf mit echtem LLM und auf Windows** – der echte Durchlauf lief unter Linux mit Ersatz-LLM.
 - **Zugangsdaten** in `/settings` verwalten.
 - **Volles Omni:** Delegations-/VFS-/Chat-Tools (`_make_omni_tools` `icli.py:11374`), Weltmodell, VAD, Sprecher-Erkennung, Pegelanzeige.
-- Große Features (docs, autodoc, autotest, autofix), Plugin-Installation und -Hooks.
+- **Zwei Sprachen (Deutsch/Englisch), umschaltbar in `/settings`:**
+  - Neue Datei `icli2/i18n.py`: ein Wörterbuch je Sprache und eine Funktion `t(schlüssel, **werte)`; fehlt ein Schlüssel, gilt der deutsche Text. Nur Standardbibliothek, damit `app.py` sie ohne Wartezeit laden kann.
+  - Alle sichtbaren Texte über `t(...)` führen: Befehlsbeschreibungen (`COMMANDS` in `app.py`), Platzhalter, Kopf-/Fußzeile, Seitenleiste, Picker-Titel, Hinweise und Fehlermeldungen in `backend.py` und den Mixin-Dateien (`cloudm`, `voice`, `features`, `connect`, `plugin_install`, `bridges`, `vfsview`, `models`), Begrüßung in `theme.py` (`get_greeting(lang)` kann bereits `de`/`en`).
+  - Einstellung `language` neben `max_iterations` in `<appdata>/icli2/settings.json`; Zeile „Sprache“ in `/settings` (Picker Deutsch/English) und `/set language en`. Die Sprache geht mit READY an die UI; nach dem Umschalten Kopfzeile, Platzhalter und Befehlsliste neu zeichnen.
+  - Befehlsnamen (`/agent`, `/model`, …) bleiben in beiden Sprachen gleich.
+  - Prüfskript `tests/check_i18n.py`: beide Wörterbücher haben dieselben Schlüssel, jeder im Code benutzte Schlüssel existiert, Umschalten wirkt ohne Neustart.
+  - Umfang: rund 300 Texte in 12 Dateien. Reihenfolge: erst `i18n.py` und `app.py`, dann Datei für Datei.
+- Große Features (docs, full_web_auto, desktop_auto).
+- Plugin-Hooks (`hooks/hooks.json`) – bewusst nicht ausgeführt; bräuchten eine eigene Freigabe pro Plugin.
 
 - Engine als eigener Prozess: `protocol.py` ist schon JSON-fähig; Transport analog `mods/icli_web/bridge.py`.
 - `icli_web` an `Engine.spawn`/Events anschließen statt an `run_agent_for_web`.
@@ -215,8 +233,9 @@ Alle geplanten Schritte sind umgesetzt. Das Vorgehen gilt für jede Erweiterung;
 - **Discord/Telegram nie real verbunden.** Die Erweiterungen selbst sind unverändert; geprüft ist nur, dass der Host-Ersatz genau die fünf Dinge bietet, die sie benutzen, und dass Läufe darüber in der UI erscheinen. Der Moderator-Agent (`discord_moderator` bzw. der Telegram-Moderator) muss in isaa existieren.
 - **Über Discord/Telegram gestartete Läufe** kennen kein `#new-ctx`, kein Fortsetzen pausierter Läufe und keine aktiven Skills (in der alten icli vorhanden).
 - **Features:** nur die sieben kleinen (desktop_auto, mini_web_auto, full_web_auto, isis_auto, coder, chain, execute); docs/autodoc/autotest/autofix fehlen. Abschalten wartet jetzt auf asynchrone Aufräumfunktionen (die alte icli tat das nicht).
-- **Plugins:** Installation, Marketplace und Hooks bleiben in der alten icli. Neu ist eine Abschaltliste `<appdata>/icli/plugins_disabled.json`; alle anderen Plugins werden beim Start geladen wie bisher.
+- **Plugins:** Hooks laufen nicht (auch nicht nach Installation). Abschaltliste `<appdata>/icli/plugins_disabled.json`; alle anderen Plugins werden beim Start geladen wie bisher.
 - **MCP:** neue Server werden nur gespeichert, wenn `agent.json` des Agenten existiert.
+- **Plugins:** Die alte icli benutzt `<appdata>/icli/plugins/.staging` direkt als Staging und löscht es komplett; eine dort angefangene Installation der icli2 geht verloren, wenn parallel in der alten icli installiert wird. Die icli2 überschreibt nie ein installiertes Plugin (die alte icli schon). Marketplace-Einträge mit relativem Pfad (`./plugins/x`) werden nicht unterstützt (in der alten icli ebenfalls nicht lauffähig). Bei `git-subdir` wird wie in der alten icli das ganze Repo geklont.
 - **UI-Prüfskript** ist zeitabhängig und kann unter hoher Last einmal fehlschlagen; ein zweiter Lauf geht dann durch.
 
 ## Patches anwenden
@@ -230,6 +249,7 @@ git apply icli2-05-laeufe-jobs-networks.patch
 git apply icli2-08-09-cloudm-voice.patch
 git apply icli2-06-07-features-discord.patch   # baut auf 08-09 auf
 git apply icli2-10-e2e-settings-vfs.patch
+git apply icli2-11-plugin-install.patch
 pip install "textual>=8"
 ```
 

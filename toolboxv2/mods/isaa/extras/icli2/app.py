@@ -43,7 +43,8 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "/feature": ("[name]", "Features des Agenten an/aus"),
     "/skill": ("[name]", "Skill für die nächsten Nachrichten an/aus"),
     "/mcp": ("[name befehl …]", "MCP-Server verbinden/trennen, mit Befehl: neu anlegen"),
-    "/plugin": ("[name]", "Plugins an/aus"),
+    "/plugin": ("[name | install <quelle> | remove <name> | market [quelle]]",
+                "Plugins an/aus, installieren, entfernen, Marketplace"),
     "/discord": ("[befehl …]", "Discord-Anbindung (wie in der alten icli)"),
     "/telegram": ("[befehl …]", "Telegram-Anbindung (wie in der alten icli)"),
     "/settings": ("", "Einstellungen: Iterationen, Kontext, Anmeldung, Zugangsdaten"),
@@ -594,7 +595,18 @@ class ICli2(App):
         elif name == "/mcp":
             (do("mcp_add", spec=arg) if " " in arg else do("mcp", name=arg)) if arg else ask("mcp")
         elif name == "/plugin":
-            do("plugin", name=arg) if arg else ask("plugins")
+            sub, _, rest = arg.partition(" ")
+            rest = rest.strip()
+            if sub in ("install", "confirm", "discard", "remove") and rest:
+                do(f"plugin_{sub}", **{"source" if sub == "install" else "name": rest})
+            elif sub == "market":                        # ohne Quelle: stoebern, mit Quelle: merken
+                do("market_add", source=rest) if rest else ask("market")
+            elif sub == "markets":
+                ask("markets")
+            elif sub in ("install", "confirm", "discard", "remove"):
+                await self._note(f"/plugin {sub} braucht eine Angabe, z. B. /plugin install owner/repo", "warn")
+            else:
+                do("plugin", name=arg) if arg else ask("plugins")
         elif name in ("/discord", "/telegram"):
             do(name[1:], args=arg) if arg else ask(name[1:])
         elif name == "/login":
@@ -643,6 +655,11 @@ class ICli2(App):
                 send(P.DO, action="mcp", name=value)
             elif what in ("discord", "telegram"):
                 send(P.DO, action=what, args=value)
+            elif what == "market":                       # Plugin aus dem Marketplace installieren
+                if value:
+                    send(P.DO, action="plugin_install", source=value)
+            elif what == "markets":                      # gespeicherten Marketplace entfernen
+                send(P.DO, action="market_remove", source=value)
             elif what == "settings":
                 if value.startswith("set:"):              # Wert eintippen lassen
                     self.prompt.set_text(f"/set {value[4:]} ")

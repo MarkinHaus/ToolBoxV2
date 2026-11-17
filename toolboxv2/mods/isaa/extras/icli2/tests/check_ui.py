@@ -48,6 +48,8 @@ class Fake:
                 "skills":{"title":"Skills","rows":[R("sk1","trigger")]},
                 "mcp":{"title":"MCP-Server","rows":[R("fs","npx …")]},
                 "plugins":{"title":"Plugins","rows":[R("demo","2 Skills")]},
+                "market":{"title":"Marketplace","rows":[R("owner/tool","offiziell · Werkzeug"),R("","nicht erreichbar")]},
+                "markets":{"title":"Marketplaces","rows":[R("owner/market")]},
                 "discord":{"title":"Discord","rows":[R("status","Verbindungsstatus"),R("connect","Bot starten")]},
                 "telegram":{"title":"Telegram","rows":[R("status","Verbindungsstatus")]},
                 "tb":{"title":"ToolBox-Funktionen","rows":[R("CloudM.get_user","name"),R("isaa.version")]},
@@ -67,7 +69,7 @@ class Fake:
             asyncio.ensure_future(s.spawn("self","default","nightly: aufräumen",kind="job")); return {"text":"Job nightly gestartet"}
         elif action in ("job_add","dream","network_save","network_load"): return {"text":action+" ok"}
         elif action=="feature": s.st["features"]=["coder"]; return {"ready":dict(s.st),"text":"Feature coder an"}
-        elif action in ("skill","mcp","plugin","mcp_add","discord","telegram"): return {"text":action+" ok"}
+        elif action in ("skill","mcp","plugin","mcp_add","discord","telegram","plugin_install","plugin_confirm","plugin_discard","plugin_remove","market_add","market_remove"): return {"text":action+" ok"}
         elif action=="vfs": return {"text":"INHALT "+a["path"]}
         elif action=="set": return {"text":"Max. Iterationen: "+a["value"]}
         elif action=="login": s.st.update(user="markin"); return {"ready":dict(s.st),"text":"Angemeldet als markin"}
@@ -231,6 +233,14 @@ async def main():
         await cmd("/discord","conn"); assert ("discord",{"args":"connect"}) in fake.log
         await cmd("/discord send #a hallo"); assert ("discord",{"args":"send #a hallo"}) in fake.log
         await cmd("/telegram",""); assert ("telegram",{"args":"status"}) in fake.log
+        await cmd("/plugin install owner/repo"); assert ("plugin_install",{"source":"owner/repo"}) in fake.log
+        await cmd("/plugin confirm repo"); assert ("plugin_confirm",{"name":"repo"}) in fake.log
+        await cmd("/plugin discard repo"); assert ("plugin_discard",{"name":"repo"}) in fake.log
+        await cmd("/plugin remove repo"); assert ("plugin_remove",{"name":"repo"}) in fake.log
+        await cmd("/plugin market owner/market"); assert ("market_add",{"source":"owner/market"}) in fake.log
+        await cmd("/plugin market",""); assert ("plugin_install",{"source":"owner/tool"}) in fake.log
+        await cmd("/plugin markets",""); assert ("market_remove",{"source":"owner/market"}) in fake.log
+        n=len(fake.log); await cmd("/plugin install"); assert not [x for x in fake.log[n:] if x[0]!="remember"]
         print("step6/7 ui ok")
         # ── Vervollstaendigung beim Tippen ──
         await pilot.press("/", "s", "e"); await pilot.pause(0.1)

@@ -33,6 +33,7 @@ from typing import Any, AsyncIterator
 
 from .bridges import BridgeMixin     # Schritt 7: Discord/Telegram ueber die unveraenderten Erweiterungen
 from .connect import ConnectMixin    # Schritt 6: MCP-Server und Plugins
+from .plugin_install import PluginInstallMixin   # Plugins installieren, entfernen, Marketplace
 from .features import FeatureMixin   # Schritt 6: Features und Skills
 from .vfsview import VfsViewMixin    # /vfs: Dateien ansehen, Pfad-Vervollstaendigung
 from .cloudm import CloudMMixin      # Schritt 8: Login, ToolBox-Funktionen, LiveSync-Shares
@@ -51,7 +52,7 @@ def _row(value: str, label: str = "", hint: str = "") -> dict[str, str]:
     return {"value": value, "label": label or value, "hint": hint}
 
 
-class IsaaBackend(FeatureMixin, ConnectMixin, BridgeMixin, CloudMMixin, VoiceMixin, VfsViewMixin):
+class IsaaBackend(FeatureMixin, PluginInstallMixin, ConnectMixin, BridgeMixin, CloudMMixin, VoiceMixin, VfsViewMixin):
     def __init__(self, app: Any, agent: str = "self", session: str = "default"):
         self.app = app
         self.agent = agent
