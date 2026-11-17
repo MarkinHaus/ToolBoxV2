@@ -99,13 +99,13 @@ async def main():
         await pilot.pause(1.0)
         app.save_screenshot("/tmp/icli2_shot_start.svg")
         from textual.widgets import Markdown
-        txt=[m.source for m in app.query(Markdown)]
+        txt=[m.source for m in app.query('.answer')]
         assert "wort19" in txt[-1], txt
         assert not app.active
         cards=list(app.query(".tool")); assert cards and "✗" in str(cards[0].title), cards[0].title
         for c in cards: print("  ", c.title); assert "{" not in str(c.title)
         assert "cmd using ls -la src" in str(cards[0].title) and "Konfiguration" in str(cards[1].title) and "path" not in str(cards[1].title)
-        body=str(cards[1]._body.render()); print(body); assert "{" not in body and "[" not in body
+        body=cards[1].body; print(body); assert "{" not in body and "[" not in body
         assert app.query_one("#row").has_class("-done")
         await pilot.press("alt+1"); await pilot.pause(0.1); assert [c.collapsed for c in cards]==[True,False]
         await pilot.press("ctrl+o"); await pilot.pause(0.1); assert [c.collapsed for c in cards]==[False,False]
@@ -202,6 +202,42 @@ async def main():
         await pilot.press(*"/network"); await pilot.press("enter"); await pilot.pause(0.2); assert ("network_save",{}) in fake.log
         await pilot.press("f2")
         print("step5 ui ok")
+        # ── Reihenfolge trotz gesammelter Textausgabe: Gedanken, Tool, Text ──
+        first=[r for r in app.runs.values() if r.query=="hallo"][0]
+        order=[("think" if w.has_class("think") else "tool" if w.has_class("tool") else "answer" if w.has_class("answer") else "")
+               for w in first.box.children]
+        assert [o for o in order if o][:4]==["think","tool","tool","answer"], order
+        from toolboxv2.mods.isaa.extras.icli2.richmd import FrozenMarkdown
+        assert all(isinstance(w, FrozenMarkdown) for w in first.box.children if w.has_class("answer")), "fertig = eingefroren"
+        # ── Nachsteuerung: Frage + Antwort IN den laufenden Lauf, Weiteres darunter ──
+        await pilot.press(*"long basis"); await pilot.press("enter"); await pilot.pause(0.6)
+        main=[v for v in app.active.values() if v.query=="long basis"][0]
+        await pilot.press(*"kurze frage"); await pilot.press("enter"); await pilot.pause(1.2)
+        steer=[v for v in app.runs.values() if v.query=="kurze frage"][0]
+        assert steer.box.parent is main.box and steer.box.has_class("steer"), "Steering-Block im Hauptlauf"
+        assert steer.status=="done" and main.status=="running" and app.focus_run in app.runs and app.runs[app.focus_run] is main
+        heads=[str(w.children[0].render()) for w in app.chat.children if w.has_class("run") and w.children]
+        assert not [h for h in heads if "kurze frage" in h], "kein eigener Block unten"
+        idx=list(main.box.children).index(steer.box)
+        await pilot.pause(0.6)
+        later=[w for w in list(main.box.children)[idx+1:] if w.has_class("answer")]
+        assert later and "wort" in later[0].source, "Hauptlauf schreibt unter der Nachsteuerung weiter"
+        before=[w for w in list(main.box.children)[:idx] if w.has_class("answer")]
+        assert before and all(isinstance(w, FrozenMarkdown) for w in before), "Abschnitt davor eingefroren"
+        await pilot.press("escape"); await pilot.press("escape"); await pilot.pause(0.6); assert not app.active
+        # ── alte Bloecke werden aus dem Bild genommen, laufende bleiben ──
+        import toolboxv2.mods.isaa.extras.icli2.app as appmod
+        keep=appmod.MAX_BLOCKS; appmod.MAX_BLOCKS=3
+        await pilot.press(*"long rest"); await pilot.press("enter"); await pilot.pause(0.4)
+        live=[v for v in app.active.values()][0]
+        await app._trim(); await pilot.pause(0.2)
+        blocks=[w for w in app.chat.children if w.has_class("run")]
+        assert len(blocks)<=3 and live.box in blocks, len(blocks)
+        assert "ausgeblendet" in str(app.chat.children[0].render()) and all(c.is_attached for c in app.tool_cards)
+        await app._trim(); assert "ausgeblendet" in str(app.chat.children[0].render())   # Hinweis bleibt beim naechsten Aufraeumen
+        appmod.MAX_BLOCKS=keep
+        await pilot.press("escape"); await pilot.press("escape"); await pilot.pause(0.6); assert not app.active
+        print("render/steer/trim ok")
         # ── Schritt 8/9 ──
         await pilot.press(*"/login"); await pilot.press("enter"); await pilot.pause(0.3)
         assert app.user=="markin" and "markin" in str(app.query_one("#head").render())

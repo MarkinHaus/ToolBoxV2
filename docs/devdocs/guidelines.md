@@ -266,6 +266,11 @@ Ein Modul ist erst "Production Ready", wenn:
 - [ ] **Registration:** Das `export = get_app(...).tb` Pattern wird genutzt.
 - [ ] **Integrity:** `__slots__` verwendet und Atomic Writes implementiert.
 - [ ] **Compatibility:** `REQUIRED_DEPS` definiert.
+- [ ] **Tests:** nach `docs/devdocs/testing_guide.md` – Doubles nur an der Prozessgrenze, Gegenprobe (Fix zurück → rot), bei Paket-/Import-Änderungen Test gegen das gebaute Wheel.
+
+## Anti-Muster: Der Test patcht weg, was im Betrieb kaputt ist
+
+**Verboten.** Ein Test darf weder den Code unter Test noch einen eigenen Mitspieler aus `toolboxv2` ersetzen, der im Betrieb zwischen Eingang und Prozessgrenze läuft. Ein solcher Test bleibt grün, während der Betrieb kaputt ist (belegt auf `master` @ `c36c3dc`: Kontopflicht, Kontodatei, Paket ohne LiveSync, Datei-Uploads). Regeln, Beispiele und Prüfliste: `docs/devdocs/testing_guide.md`; Arbeitsablauf für Agenten: `docs/devdocs/agent_arbeitsprotokoll.md`.
 
 ---
 

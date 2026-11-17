@@ -3125,6 +3125,17 @@ BEISPIELE:
         Cheap — no LLM, no disk. Safe to call before first yield.
         """
         session = await self.agent.session_manager.get_or_create(session_id)
+        if not self.is_sub_agent:
+            # Wie a_run/a_stream (flow_agent.py) - auch fuer Resume, das diese
+            # Einstiege umgeht: aktive Session setzen und ihre Tools sicherstellen
+            # (init_session_tools ist pro Session-Objekt idempotent).
+            self.agent.active_session = session_id
+            _init_tools = getattr(self.agent, "init_session_tools", None)
+            if callable(_init_tools):
+                try:
+                    _init_tools(session)
+                except Exception as e:
+                    self.live.log(f"[Setup] init_session_tools failed: {e}", logging.WARNING)
         is_resume = ctx is not None
         if ctx is None:
             ctx = ExecutionContext()
@@ -3145,12 +3156,11 @@ BEISPIELE:
             self._evict_if_over_limit(exclude_run_id=ctx.run_id)
 
         await self._wait_for_pending_finalize(session_id)
-
-        if not self.is_sub_agent and not is_resume:
+        if self._sub_agent_manager is None:
             self._sub_agent_manager = SubAgentManager(
                 parent_engine=self, parent_session=session, is_sub_agent=False
             )
-        else:
+        if self.is_sub_agent:
             if self.sub_agent_output_dir:
                 session.vfs = RestrictedVFSWrapper(
                     session.vfs, self.sub_agent_output_dir

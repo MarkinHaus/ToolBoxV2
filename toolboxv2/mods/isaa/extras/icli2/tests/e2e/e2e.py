@@ -24,7 +24,7 @@ async def main():
             return list(ui.runs.values())[-1] if ui.runs else None
         r = await say("hallo welt")
         print("RUN1", r and (r.status, round(r.seconds, 1)), "| answer:", repr(r.answer[:120]) if r else None, "| tools:", [str(c.title) for c in ui.tool_cards], "| think:", [str(b.title) for b in ui.think_boxes], "| notes", notes()[-3:])
-        if ui.tool_cards: print("TOOLBODY", str(ui.tool_cards[0]._body.render())[:300].replace("\n", " | "))
+        if ui.tool_cards: print("TOOLBODY", ui.tool_cards[0].body[:300].replace("\n", " | "))
         ui.save_screenshot("/tmp/e2e/run1.svg")
         for cmd in ("/settings", "/agent", "/model", "/session", "/feature", "/skill", "/mcp", "/plugin", "/job", "/tb", "/share", "/voice"):
             await pilot.press(*cmd); await pilot.press("enter"); await pilot.pause(1.5)
@@ -44,6 +44,23 @@ async def main():
                 await pilot.press("escape"); await pilot.pause(0.3)
                 continue
             print(f"DO {cmd}:", [x[:140] for x in notes()[n:]])
+        # Nachsteuerung gegen den echten isaa-Agenten: zweite Nachricht, waehrend der erste Lauf arbeitet
+        await pilot.press(*"/new"); await pilot.press("enter"); await pilot.pause(2)
+        await pilot.press(*[("space" if c == " " else c) for c in "lange aufgabe bitte"]); await pilot.press("enter")
+        t = time.time()
+        while not ui.active and time.time() - t < 20: await pilot.pause(0.1)
+        await pilot.pause(0.8)
+        main = next(iter(ui.active.values()), None)
+        await pilot.press(*[("space" if c == " " else c) for c in "kurze zwischenfrage"]); await pilot.press("enter")
+        t = time.time()
+        while (ui.active or ui.pending) and time.time() - t < 120: await pilot.pause(0.3)
+        steer = next((v for v in ui.runs.values() if v.query == "kurze zwischenfrage"), None)
+        print("STEER main lief:", main is not None, "| im Hauptlauf:", bool(main and steer and steer.box.parent is main.box),
+              "| status:", steer and steer.status, "| antwort:", repr((steer.answer if steer else "")[:70]))
+        if main and steer and steer.box.parent is main.box:
+            kids = list(main.box.children); i = kids.index(steer.box)
+            print("STEER danach im Hauptlauf:", [type(w).__name__ + ("." + " ".join(sorted(w.classes))) for w in kids[i + 1:]][:5])
+        print("FROZEN", sum(type(w).__name__ == "FrozenMarkdown" for w in ui.chat.query(".answer")), "live", sum(type(w).__name__ == "Markdown" for w in ui.chat.query(".answer")))
         r = await say("zweite frage nach dem mount")
         print("RUN2", r and (r.status, r.session), "| answer:", repr(r.answer[:80]) if r else None)
         ui.prompt.set_text(""); await pilot.press(*"/vfs"); await pilot.press("space"); await pilot.press(*"/pro"); await pilot.pause(1.2)
