@@ -14,12 +14,14 @@ class FoldLine(Static):
 
     can_focus = True
 
-    def __init__(self, title: str, body: str = "", collapsed: bool = True, classes: str = ""):
+    def __init__(self, title: str, body: str = "", collapsed: bool = True, classes: str = "",
+                 body_style: str = ""):
         super().__init__("", classes=classes, markup=False)
         self._title, self._fold_body, self._collapsed = title, body, collapsed
+        self._body_style = body_style                   # z. B. lesbare Farbe unter einer roten Fehlerzeile
 
     def on_mount(self) -> None:
-        self._draw()
+        self._draw(force=True)                          # waehrend on_mount gilt is_mounted noch nicht
 
     @property
     def title(self) -> str:
@@ -52,14 +54,14 @@ class FoldLine(Static):
             self._collapsed = value
             self._draw()
 
-    def _draw(self) -> None:
-        if not self.is_mounted:
+    def _draw(self, force: bool = False) -> None:
+        if not (force or self.is_mounted):
             return
         text = Text(("▶ " if self._collapsed else "▼ ") + self._title)
         if not self._collapsed and self._fold_body:
             for line in self._fold_body.splitlines() or [""]:
                 text.append("\n  │ ", style=G.L2_DARK)
-                text.append(line)
+                text.append(line, style=self._body_style)
         self.update(text)
 
     def on_click(self, event: events.Click) -> None:

@@ -26,6 +26,11 @@ class Fake:
                 yield {"type":"max_iterations","answer":"Ich konnte die Aufgabe nicht abschliessen. Zusammenfassung: drei Dateien gelesen.","iter":5,"max_iter":5}
                 yield {"type":"done","success":False,"final_answer":"…"}
                 return
+            if query.startswith("ohnestart"):              # wie im echten Lauf: tool_result ohne tool_start
+                yield {"type":"tool_result","name":"vfs_shell","id":"x9","result":{"success":True,"stdout":"a"}}
+                yield {"type":"max_iterations","answer":"Zusammenfassung","iter":1,"max_iter":1}
+                yield {"type":"done","success":False,"final_answer":"Zusammenfassung"}
+                return
             if query.startswith("absturz"):
                 yield {"type":"warning","message":"Tool rejected — correction injected."}
                 yield {"type":"done","success":False,"final_answer":"Agent crashed: KeyError: 'tool_calls'"}
@@ -218,6 +223,8 @@ async def main():
         b.tile.scroll_visible(animate=False); await pilot.pause(0.2)
         await pilot.click(b.tile); await pilot.pause(0.4)
         acts=list(b.tile.list.query("FoldLine")); assert len(acts)==31, len(acts)       # 30 Tools + Text
+        assert all(str(w.render()).strip() for w in acts), "jede Aktion zeigt ihren Titel (nicht leer)"
+        assert "vfs_read" in str(acts[0].render()) and "Teilergebnis" in str(acts[-1].render())
         assert b.tile.list.max_scroll_y>0                                                  # eigener Scrollbereich
         prob=b.tile.foot.query(".problem").first(); assert "Anbieter-Limit erreicht (429)" in prob.title
         prob.collapsed=False; await pilot.pause(0.1); assert "Meldung von Openrouter" in str(prob.render())
@@ -274,6 +281,9 @@ async def main():
         assert app.w_row.has_class("-ask")
         r=await lauf("absturz bitte"); assert r.problem_line.title.startswith("✗ Interner Fehler im Agenten")
         assert any("Tool rejected" in str(n.render()) for n in r.box.query(".note"))     # Warnung sichtbar
+        r=await lauf("ohnestart bitte"); cards=[w for w in r.box.children if w.has_class("tool")]
+        assert len(cards)==1 and "vfs_shell" in cards[0].title and cards[0].title.startswith("✓"), [c.title for c in cards]
+        assert r.status=="limit" and r.problem_line.title=="◷ Iterationslimit erreicht (1/1)"
         print("errors ui ok")
         # ── Reihenfolge trotz gesammelter Textausgabe: Gedanken, Tool, Text ──
         first=[r for r in app.runs.values() if r.query=="hallo"][0]

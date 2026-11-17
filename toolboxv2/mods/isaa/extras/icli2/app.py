@@ -24,7 +24,7 @@ from .errors import explain, render
 from .richmd import FrozenMarkdown
 from .subtile import SubView
 from .widgets import FoldLine
-from .theme import DIM, ISAA_THEME, SYM, G, banner
+from .theme import DIM, ISAA_THEME, SYM, G, ZEN, banner
 
 FRAME = 1 / 30                 # Abholtakt fuer Engine-Events
 TEXT_EVERY = 0.08              # Antworttext hoechstens so oft schreiben, wenn man unten mitliest
@@ -199,11 +199,12 @@ class RunView:
         if d["status"] == "limit":
             info = explain("", kind="limit", iters=(d.get("iter") or 0, d.get("max_iter") or 0))
             body = info["hint"] + (f"\n\nZusammenfassung des Agenten:\n{d['answer'].strip()}" if d.get("answer") else "")
-            line = FoldLine(f"◷ {info['title']}", body, classes="problem -limit")
+            line = FoldLine(f"◷ {info['title']}", body, classes="problem -limit", body_style=ZEN["white"])
         else:
             info = explain(d.get("error") or "", model=model, traceback=d.get("traceback") or "")
             short = f" – {info['message'][:90]}" if info["message"] else ""
-            line = FoldLine(f"{SYM['fail']} {info['title']}{short}", render(info), classes="problem -fail")
+            line = FoldLine(f"{SYM['fail']} {info['title']}{short}", render(info), classes="problem -fail",
+                            body_style=ZEN["white"])
         line.info = info
         await self.box.mount(line)
         return line
@@ -250,10 +251,12 @@ class RunView:
         self.app.tool_cards.append(card)
         await self.box.mount(card)
 
-    def tool_end(self, tid: str, ok: bool, summary: str, detail: str, secs: float) -> None:
+    async def tool_end(self, tid: str, name: str, ok: bool, summary: str, detail: str, secs: float) -> None:
         card = self.tools.pop(tid, None)
-        if card is not None:
-            card.finish(ok, summary, detail, secs)
+        if card is None:                                 # Ergebnis ohne Start (kommt vor): Zeile nachtragen
+            await self.tool_start(tid, name, "", "")
+            card = self.tools.pop(tid)
+        card.finish(ok, summary, detail, secs)
 
     async def note(self, text: str, level: str = "info") -> None:
         await self.box.mount(Static(text, classes=f"note note-{level}", markup=False))
@@ -440,7 +443,7 @@ class ICli2(App):
         elif ev.kind == P.TOOL_START and view:
             await view.tool_start(d["id"], d["name"], d["summary"], d["detail"])
         elif ev.kind == P.TOOL_END and view:
-            view.tool_end(d["id"], d["ok"], d["summary"], d["detail"], d["secs"])
+            await view.tool_end(d["id"], d.get("name", "?"), d["ok"], d["summary"], d["detail"], d["secs"])
         elif ev.kind == P.STATUS and view:
             if d.get("msg"):
                 view.status_msg = d["msg"]

@@ -133,11 +133,12 @@ class SubView:
         self._append(action)
         await self.tile.changed()
 
-    def tool_end(self, tid: str, ok: bool, summary: str, detail: str, secs: float) -> None:
+    async def tool_end(self, tid: str, name: str, ok: bool, summary: str, detail: str, secs: float) -> None:
         action = self.tools.pop(tid, None)
-        if action is None:
-            return
-        action.update(ok=ok, result=summary, secs=secs, body=f"{action['body']}\n\nErgebnis\n{detail}")
+        if action is None:                               # Ergebnis ohne Start: Aktion nachtragen
+            await self.tool_start(tid, name, "", "")
+            action = self.tools.pop(tid)
+        action.update(ok=ok, result=summary, secs=secs, body=f"{action['body']}\n\nErgebnis\n{detail}".strip())
         self.tile.redraw_action(action)
         self.tile.redraw()
 
@@ -327,7 +328,7 @@ class SubTile(Vertical):
         if v.status == "failed" and v.error:
             info = explain(v.error)
             parts.append(FoldLine(f"{SYM['fail']} {info['title']}" + (f" – {info['message'][:80]}" if info["message"] else ""),
-                                  render(info), classes="problem -fail"))
+                                  render(info), classes="problem -fail", body_style=ZEN["white"]))
         elif v.status in ("max_iterations", "timeout"):
             parts.append(Static(f"◷ {STATE[v.status]} erreicht", classes="problem -limit", markup=False))
         result = (v.result or (v.answer if v.status != "running" else "")).strip()

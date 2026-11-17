@@ -15,8 +15,29 @@ class H(BaseHTTPRequestHandler):
         user = last.get("content") if isinstance(last.get("content"), str) else json.dumps(last.get("content"))
         LOG.write(json.dumps({"stream": body.get("stream"), "n_msgs": len(msgs), "tools": tools[:40], "had_tool": had_tool, "user": (user or "")[-160:]}) + "\n"); LOG.flush()
         n_tool = sum(1 for m in msgs if m.get("role") == "tool")
+        first_user = next((m.get("content") for m in msgs if m.get("role") == "user"), "") or ""
+        first_user = first_user if isinstance(first_user, str) else json.dumps(first_user)
+        if "fehler429" in (user or ""):                  # echter 429 im OpenRouter-Format
+            body = json.dumps({"error": {"message": "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day", "code": 429}}).encode()
+            self.send_response(429); self.send_header("Content-Type", "application/json"); self.send_header("retry-after", "1")
+            self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
         call = None
-        if "think" in tools and n_tool == 0: call = ("think", {"thought": "Ich sehe zuerst im Dateisystem nach."})
+        if "limitshell" in (user or "") and "vfs_shell" in tools:
+            call = ("vfs_shell", {"command": f"ls /x{n_tool}"})
+        elif "limit-test" in (user or "") and "think" in tools:
+            call = ("think", {"thought": f"Ich denke weiter nach (Schritt {n_tool + 1})."})
+        elif "SUBTASK" in first_user and tools:          # Sub-Agent: zwei Werkzeug-Schritte, dann Ergebnis
+            open("/tmp/e2e/subtools.log", "a").write(json.dumps(tools) + "\n")
+            step = next((t for t in ("look", "vfs_shell", "plan") if t in tools), None)
+            if n_tool < 2 and step:
+                call = (step, {"path": f"/sub{n_tool}", "command": f"ls /sub{n_tool}", "reason": "Ordner ansehen"})
+            elif "final_answer" in tools:
+                call = ("final_answer", {"answer": "## Sub-Ergebnis\n\nZwei Ordner gelesen, alles in Ordnung.", "success": True})
+        elif "subagent-test" in (user or "") and "spawn_sub_agent" in tools and n_tool == 0:
+            call = ("spawn_sub_agent", {"task": "SUBTASK: Lies die Ordner /sub0 und /sub1.\nFasse danach kurz zusammen.", "wait": True, "budget": 20000, "max_iterations": 6})
+        if call is not None:
+            pass
+        elif "think" in tools and n_tool == 0: call = ("think", {"thought": "Ich sehe zuerst im Dateisystem nach."})
         elif "vfs_shell" in tools and n_tool == 1: call = ("vfs_shell", {"command": "ls /"})
         elif "final_answer" in tools: call = ("final_answer", {"answer": "## Fertig\n\nIch habe **vfs_shell** benutzt. Echo: " + (user or "")[-40:], "success": True})
         text = None if call else "Antwort ohne Tools. Echo: " + (user or "")[-60:]
