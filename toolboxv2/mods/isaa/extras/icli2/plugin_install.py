@@ -125,10 +125,24 @@ def _fetch_market(src: str) -> dict:
         return json.loads(r.read().decode("utf-8", errors="replace"))
 
 
-def _plugin_source(source) -> str | None:
-    """Marketplace-Eintrag `source` -> Installationsquelle (wie _source_to_git_url der alten icli)."""
+def _plugin_source(source, base=None) -> str | None:
+    """Marketplace-Eintrag `source` -> Installationsquelle (wie _source_to_git_url der alten icli).
+
+    Relative Pfade ("./plugins/x") werden gegen `base` (Wurzel des lokalen
+    Marketplace-Ordners) aufgeloest; ohne base bleiben sie ungueltig (wie alte icli).
+    """
     if isinstance(source, str):
-        return None if source.startswith(("./", "../")) else source  # relative Pfade nicht aufloesbar
+        if source.startswith(("./", "../")):
+            if base is None:
+                return None
+            root = Path(base).resolve()
+            try:
+                resolved = (root / source).resolve()
+                resolved.relative_to(root)          # Containment: nicht aus der Wurzel raus
+            except ValueError:
+                return None
+            return str(resolved)
+        return source
     if isinstance(source, dict):
         if source.get("source") == "github" and source.get("repo"):
             return f"https://github.com/{source['repo']}"
@@ -177,11 +191,15 @@ class PluginInstallMixin:
                 continue
             if market and data.get("name") != market:
                 continue
+            # Relative Pfad-Eintraege nur gegen eine lokale Marketplace-Wurzel aufloesbar
+            base = src if os.path.exists(src) and not src.startswith("file://") else None
             for pl in data.get("plugins", []):
                 if pl.get("name") == name:
-                    found = _plugin_source(pl.get("source", {}))
+                    found = _plugin_source(pl.get("source", {}), base=base)
                     if not found:
-                        raise ValueError(f"Quelle von '{name}' wird nicht unterstuetzt")
+                        hint = " (relativer Pfad nur bei lokalem Marketplace aufloesbar)" \
+                            if base is None else ""
+                        raise ValueError(f"Quelle von '{name}' wird nicht unterstuetzt{hint}")
                     return found
         raise ValueError(f"'{ref}' in keinem gespeicherten Marketplace gefunden")
 
