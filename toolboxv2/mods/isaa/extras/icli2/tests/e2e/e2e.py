@@ -35,8 +35,14 @@ async def main():
                 await pilot.press("escape"); await pilot.pause(0.2)
             else:
                 print(f"NOTE {cmd}:", notes()[-1][:160] if notes() else None)
-        for cmd in ("/login", "/new", "/mount /tmp/e2e", "/vfs /project/", "/vfs /project/fake_llm.py", "/vfs /gibtsnicht", "/set max_iterations 12", "/dream", "/network", "/pack"):
+        for cmd in ("/login", "/new", "/mount /tmp/e2e", "/vfs /project/", "/vfs /project/fake_llm.py", "/vfs /gibtsnicht", "/set max_iterations 12", "/plugin install /tmp/e2e/plug/demo-plugin", "/plugin", "/plugin remove demo-plugin", "/plugin markets", "/dream", "/network", "/pack"):
             n = len(notes()); await pilot.press(*[("space" if c == " " else c) for c in cmd]); await pilot.press("enter"); await pilot.pause(2.5)
+            if isinstance(ui.screen, Picker):            # Auswahl offen: Zeilen zeigen und schliessen
+                from textual.widgets import OptionList
+                ol = ui.screen.query_one(OptionList)
+                print(f"DO {cmd}: Picker {ui.screen._title!r}", [str(ol.get_option_at_index(i).prompt)[:60] for i in range(ol.option_count)][:4])
+                await pilot.press("escape"); await pilot.pause(0.3)
+                continue
             print(f"DO {cmd}:", [x[:140] for x in notes()[n:]])
         r = await say("zweite frage nach dem mount")
         print("RUN2", r and (r.status, r.session), "| answer:", repr(r.answer[:80]) if r else None)
