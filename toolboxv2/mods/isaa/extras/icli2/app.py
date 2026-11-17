@@ -40,11 +40,17 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "/job": ("[name: auftrag]", "Jobs verwalten, mit Argument: Job anlegen"),
     "/dream": ("", "Nächtlichen Dream-Job für den Agenten anlegen"),
     "/network": ("[datei]", "Agent-Network laden, ohne Argument: aktuelles speichern"),
+    "/feature": ("[name]", "Features des Agenten an/aus"),
+    "/skill": ("[name]", "Skill für die nächsten Nachrichten an/aus"),
+    "/mcp": ("[name befehl …]", "MCP-Server verbinden/trennen, mit Befehl: neu anlegen"),
+    "/plugin": ("[name]", "Plugins an/aus"),
+    "/discord": ("[befehl …]", "Discord-Anbindung (wie in der alten icli)"),
+    "/telegram": ("[befehl …]", "Telegram-Anbindung (wie in der alten icli)"),
     "/side": ("", "Seitenleiste ein/aus (F2)"),
     "/login": ("", "CloudM-Anmeldung prüfen oder starten"),
     "/tb": ("[mod.fn key=wert …]", "ToolBox-Funktion aufrufen"),
     "/share": ("", "LiveSync-Ordner verbinden oder trennen"),
-    "/voice": ("", "Vorlesen, Geräte, Omni (F4 = Spracheingabe)"),
+    "/voice": ("", "Omni-Session und Geräte (F4 = Spracheingabe, #audio = Antwort vorlesen)"),
     "/new": ("", "Neue Session mit leerem Kontext"),
     "/reset": ("", "Verlauf der aktuellen Session leeren"),
     "/open": ("[n]", "Letzte n Tool-Ergebnisse aufklappen"),
@@ -251,6 +257,7 @@ class ICli2(App):
         self.engine = engine
         self.agent, self.session, self.model = agent, session, "…"
         self.complex_model, self.mounts, self.user = "", 0, ""
+        self.features: list[str] = []
         self.history: list[str] = []
         self._hist_pos = 0
         self.ready = False
@@ -366,6 +373,7 @@ class ICli2(App):
             self.agent, self.session, self.model = d["agent"], d["session"], d["model"]
             self.complex_model, self.mounts = d["complex_model"], d["mounts"]
             self.user = d.get("user", "")
+            self.features = d.get("features", [])
             if "history" in d:
                 self.history, self._hist_pos = d["history"], len(d["history"])
             for role, text in d.get("recap", []):       # letzte Nachrichten der Session
@@ -405,7 +413,8 @@ class ICli2(App):
         self.query_one("#head", Static).update(
             f"[{G.L4_BRIGHT}]{SYM['agent']} {self.agent}[/] "
             f"[{DIM}]· {self.model} · {self.session}{mounts}"
-            f"{' · ' + self.user if self.user else ''}[/]")
+            f"{' · ' + self.user if self.user else ''}[/]"
+            f"{'  [' + G.L3_MID + ']' + ' '.join(self.features) + '[/]' if self.features else ''}")
         spin = SPIN[self._tick % len(SPIN)]
         active, focus = self.active, self.runs.get(self.focus_run)
         if not self.ready:
@@ -522,6 +531,16 @@ class ICli2(App):
             do("dream")
         elif name == "/network":
             do("network_load", path=arg) if arg else do("network_save")
+        elif name == "/feature":
+            do("feature", name=arg) if arg else ask("features")
+        elif name == "/skill":
+            do("skill", name=arg) if arg else ask("skills")
+        elif name == "/mcp":
+            (do("mcp_add", spec=arg) if " " in arg else do("mcp", name=arg)) if arg else ask("mcp")
+        elif name == "/plugin":
+            do("plugin", name=arg) if arg else ask("plugins")
+        elif name in ("/discord", "/telegram"):
+            do(name[1:], args=arg) if arg else ask(name[1:])
         elif name == "/login":
             do("login")
         elif name == "/logout":
@@ -558,6 +577,12 @@ class ICli2(App):
                 send(P.DO, action="session", name=value)
             elif what == "mounts":
                 send(P.DO, action="unmount", at=value)
+            elif what in ("features", "skills", "plugins"):
+                send(P.DO, action=what[:-1], name=value)
+            elif what == "mcp":
+                send(P.DO, action="mcp", name=value)
+            elif what in ("discord", "telegram"):
+                send(P.DO, action=what, args=value)
             elif what == "tb":
                 send(P.DO, action="tb", target=value)
             elif what == "shares":

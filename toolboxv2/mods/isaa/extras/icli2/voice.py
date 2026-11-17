@@ -1,4 +1,6 @@
-"""Sprache fuer icli2: Aufnahme -> Text (F4), Vorlesen der Antworten, Geraeteauswahl, Omni-Session.
+"""Sprache fuer icli2: Aufnahme -> Text (F4), Sprachausgabe pro Anfrage (#audio), Geraete, Omni.
+Es gibt bewusst keinen Dauer-Schalter fuers Vorlesen: gesprochen wird nur, wenn die Nachricht
+auf "#audio" endet (wie in der alten icli) - oder in einer Omni-Session.
 Alle Audio-/toolboxv2-Importe sind lazy: ohne Sprachnutzung wird kein Audio-Code geladen.
 Wiederverwendet: audio_recorder.LocalMicRecorder, Stt.transcribe, audioIo.AudioStreamPlayer/LocalPlayer,
 omni.OmniSession (wie flows/isaa/icli.py)."""
@@ -35,7 +37,6 @@ class VoiceMixin:
             return
         self._v_ready = True
         self._v_recording = False
-        self._v_speak = False
         self._v_buffer = ""
         self._v_in_code = False
         self._v_player = None
@@ -88,9 +89,7 @@ class VoiceMixin:
 
     async def _rows_voice(self) -> tuple[str, list[dict]]:
         self._voice_init()
-        on = lambda b: "an" if b else "aus"
         rows = [
-            {"value": "speak", "label": "Vorlesen", "hint": on(self._v_speak)},
             {"value": "omni", "label": "Omni-Session", "hint": "läuft" if self._v_omni else "aus"},
         ]
         try:
@@ -121,19 +120,10 @@ class VoiceMixin:
                 await self._v_player.stop()
             except Exception as e:
                 self.app.logger.warning(f"voice player stop: {e}")
-            self._v_player = None
-            if self._v_speak:
-                await self._ensure_player()
+            self._v_player = None                        # wird bei der naechsten #audio-Anfrage neu gebaut
 
     async def _do_voice(self, op: str) -> dict:
         self._voice_init()
-        if op == "speak":
-            self._v_speak = not self._v_speak
-            if self._v_speak:
-                await self._ensure_player()
-            else:
-                self._v_buffer, self._v_in_code = "", False
-            return {"text": f"Vorlesen {'an' if self._v_speak else 'aus'}"}
         if op == "omni":
             return await self._omni_toggle()
         kind, _, num = op.partition(":")
@@ -213,11 +203,21 @@ class VoiceMixin:
         self._v_tasks.add(t)
         t.add_done_callback(self._v_tasks.discard)
 
-    def _voice_feed(self, text: str) -> None:
+    async def _voice_begin(self) -> bool:
+        """Vor einer #audio-Antwort: Player bereitstellen. False (statt Fehler), wenn kein Audio geht."""
         try:
             self._voice_init()
-            if not self._v_speak:
-                return
+            self._v_buffer, self._v_in_code = "", False
+            await self._ensure_player()
+            return True
+        except Exception as e:
+            self.app.logger.warning(f"voice begin: {e}")
+            return False
+
+    def _voice_feed(self, text: str) -> None:
+        """Content-Chunk einer #audio-Antwort. Der Aufrufer entscheidet, ob gesprochen wird."""
+        try:
+            self._voice_init()
             out, self._v_buffer, self._v_in_code = split_speakable(self._v_buffer, text, self._v_in_code)
             for s in out:
                 self._speak(s)
@@ -228,7 +228,7 @@ class VoiceMixin:
         try:
             self._voice_init()
             rest, self._v_buffer, self._v_in_code = self._v_buffer, "", False
-            if self._v_speak and rest.strip():
+            if rest.strip():
                 self._speak(rest)
         except Exception as e:
             self.app.logger.warning(f"voice flush: {e}")

@@ -1,6 +1,6 @@
 # icli 2.0 – Plan
 
-Stand: Schritte 1–5, 8 und 9 umgesetzt; 6 und 7 offen (laufen lokal). Die alte `flows/isaa/icli.py` bleibt unverändert und parallel nutzbar.
+Stand: alle neun Schritte umgesetzt. Die alte `flows/isaa/icli.py` bleibt unverändert und parallel nutzbar.
 
 Start: `tb -m icli2` · Code: `toolboxv2/mods/isaa/extras/icli2/` · Starter: `toolboxv2/flows/isaa/icli2.py`
 
@@ -67,12 +67,12 @@ Regeln, die für jeden weiteren Schritt gelten:
 | `/job [zeitplan name: auftrag]`, `/dream` | fertig | `/job add/list/remove`, `/job dream create` |
 | `/network [datei]` | fertig | – (Agent-Network sichern/laden) |
 | `/side` | fertig | – |
-| `/feature`, `/skill`, `/mcp`, `/plugin` | Schritt 6 | gleichnamige Befehle, über Palette |
-| `/discord` | Schritt 7 | unverändert durchgereicht |
+| `/feature`, `/skill`, `/mcp [name befehl …]`, `/plugin` | fertig | gleichnamige Befehle (Picker mit An/Aus) |
+| `/discord [befehl …]`, `/telegram [befehl …]` | fertig | unverändert an die vorhandenen Erweiterungen durchgereicht |
 | `/login`, `/logout` | fertig | – |
 | `/tb [mod.fn key=wert]` | fertig | – (ToolBox-Funktion aufrufen) |
 | `/share` | fertig | `/vfs share` (nur verbinden/trennen) |
-| `/voice`, `F4` | fertig | `/audio`, `/omni` (Omni nur Grundfunktion) |
+| `/voice`, `F4`, `#audio` | fertig | `/omni`, F4-Aufnahme, `#audio` am Nachrichtenende |
 
 Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+R` Gedanken auf/zu, `Alt+1–9` letzte n Tools öffnen, `Strg+L` leeren, `Strg+Q` beenden. `Strg+P` Palette, `↑/↓` Eingabe-History, `F2` Seitenleiste, `F3` nächster Lauf, `Umschalt+Enter`/`Strg+J` neue Zeile. Geplant: `F4` Sprache.
 
@@ -127,13 +127,25 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 ### Schritt 9 – Sprache (gleicher Patch, Datei `voice.py`)
 - Audio-Code wird erst beim ersten Gebrauch geladen (per Test abgesichert).
 - `F4` startet/beendet die Aufnahme (`LocalMicRecorder`), transkribiert mit `Stt.transcribe` und setzt den Text in die Eingabe.
-- `/voice`: Vorlesen an/aus (`AudioStreamPlayer`, Satz-Pufferung wie in der alten icli, Code-Blöcke werden übersprungen), Ein-/Ausgabegerät wählen, Omni-Session starten/stoppen.
+- **Kein Dauer-Schalter fürs Vorlesen.** Gesprochen wird nur die Antwort auf eine Nachricht, die auf `#audio` endet (wie in der alten icli; das Kürzel kommt nicht beim Agenten an), oder in einer Omni-Session. `/voice`: Omni starten/stoppen, Ein-/Ausgabegerät wählen.
 - **Omni ist nur die Grundfunktion:** Backend, Mikrofon, Player und die Tools des Agenten. Es fehlen gegenüber der alten icli: Delegations-/VFS-/Chat-Tools, Weltmodell, JobManager, Zustandsspeicher, Silero-VAD, Sprecher-Erkennung, Pegelanzeige. Fest auf `omni_cloud` (Gemini Live).
 - Aufnahme und Omni schließen sich gegenseitig aus (beide brauchen das Mikrofon).
 
-## Offen – Arbeitsanleitung für die restlichen Schritte
+### Schritt 6 – Features, Skills, MCP, Plugins (`icli2-06-07-features-discord.patch`, Dateien `features.py`, `connect.py`)
+- `/feature`: `SimpleFeatureManager` und die sieben kleinen Lader aus der alten icli (Kopie, alte Datei unverändert); aktive Features stehen in der Kopfzeile.
+- `/skill`: Skills des Agenten über den vorhandenen `SkillsManager`; ein aktiver Skill wird jeder Anfrage vorangestellt, im Format der alten icli.
+- `/mcp`: Server aus `agent.json` verbinden/trennen (`MCPSessionManager`, `_register_mcp_session`); `/mcp name befehl args…` oder `/mcp name https://…` legt einen neuen an.
+- `/plugin`: Plugins aus `<appdata>/icli/plugins` an/aus (Skills und MCP-Server des Plugins); beim Start werden alle nicht abgeschalteten geladen.
 
-Geschrieben für einen kleinen Agenten. Ein Schritt pro Durchgang, in dieser Reihenfolge.
+### Schritt 7 – Discord und Telegram (gleicher Patch, Datei `bridges.py`)
+- Die vorhandenen Erweiterungen laufen **unverändert**: `HostShim` bietet genau, was sie vom alten Host benutzen (`isaa_tools`, `active_agent_name`, `_handle_command`, `_build_completer`, `run_agent_monitored`).
+- `/discord …` und `/telegram …` reichen den Befehl durch; die Terminal-Ausgabe der Erweiterung erscheint als Hinweis. Ohne Argument: Picker mit den Unterbefehlen.
+- Läufe, die über Discord/Telegram hereinkommen, erscheinen als normale Läufe (Block im Chat, Seitenleiste) und lassen sich mit `Esc` stoppen.
+- Die Erweiterungen werden erst beim ersten `/discord` bzw. `/telegram` geladen.
+
+## Arbeitsanleitung für weitere Schritte
+
+Alle geplanten Schritte sind umgesetzt. Das Vorgehen gilt für jede Erweiterung; offene Ideen stehen unter „Danach“.
 
 ### Vorgehen für jeden Schritt (immer gleich)
 
@@ -146,32 +158,11 @@ Geschrieben für einen kleinen Agenten. Ein Schritt pro Durchgang, in dieser Rei
 4. **Prüfen:** In `tests/check_ui.py` die Fake-Klasse um die neuen `rows`/`do` erweitern und die Bedienung per `pilot.press` durchspielen; in `tests/check_backend.py` das Backend gegen Nachbauten (oder echte, leicht importierbare Module) testen. Alle drei Skripte müssen durchlaufen.
 5. **Abschluss:** `PLAN.md` aktualisieren (Befehlstabelle, „Erledigt“, Lücken), committen, pushen, Patch als reinen Diff gegen den vorherigen Schritt erzeugen (`git diff <letzter-schritt-commit> HEAD > icli2-0N-name.patch`) und mit `git apply --check` auf dem Vorgänger prüfen.
 
-### Schritt 6 – Features, Skills, MCP, Plugins
-
-| Befehl | Vorhandenes im System (zuerst lesen) | Umsetzung |
-|---|---|---|
-| `/feature` | `icli.py:1912` `SimpleFeatureManager` (`list_features`, `enable`, `disable`, `is_enabled`, `set_agent`), Lader `load_*_feature(fm)` ab `icli.py:1950`; Nutzung `_cmd_feature` `icli.py:13494` | Die Klasse und die Lader hängen an `icli.py`. Kopie in neue Datei `icli2/features.py` (nur die Klasse und die kleinen Lader: desktop_auto, web_auto, isis, full_web_auto, coder_toolkit, chain_toolkit, execute; die großen docs/autodoc/autotest/autofix erst, wenn gebraucht). Picker mit `✓`/`·` im Label, Enter schaltet um. Aktive Features in READY als `features` und in der Kopfzeile. |
-| `/skill` | `_cmd_skill` `icli.py:12688`, `_cmd_skill_invoke` `icli.py:9952`, `_refresh_skill_names` `icli.py:9918`; SkillsManager in `mods/isaa/base/Agent/skills.py` | Picker listet Skills des aktiven Agenten; Enter aktiviert den Skill für die nächste Nachricht (alte Logik: Instruktion wird der Anfrage vorangestellt, siehe `_active_skill_context` in `icli.py:14505`). Dafür im Backend `self._skill_context` halten und in `stream()` vor die Query setzen. |
-| `/mcp` | `_cmd_mcp` `icli.py:9110`, `_mcp_connect_and_register` `icli.py:9382`, `mods/isaa/extras/mcp_session_manager.py` | Picker listet konfigurierte Server mit Status; Enter verbindet/trennt. Hinzufügen per `/mcp name befehl args…` (kein Wizard). |
-| `/plugin` | `_load_all_plugins` `icli.py:9461`, `ClaudeCodePluginParser` `icli.py:4273`, `scan_plugin_dir` `icli.py:4354`, `_cmd_plugin` `icli.py:9625` | Nur Liste und An/Aus. Installation aus Git/Marketplace bleibt in der alten icli. |
-
-Fertig, wenn: jeder der vier Befehle einen Picker öffnet, Umschalten eine Rückmeldung als Hinweis zeigt und der Zustand nach erneutem Öffnen stimmt.
-
-### Schritt 7 – Discord und Telegram (unverändert weiterverwenden)
-
-- **Vorhanden:** `mods/isaa/extras/discord_interface/integration_example.py:74` `patch_cli_for_discord(host)`, `discord_cli_extension.py` `DiscordCLIExtension(host)` mit `handle_command(args)` und `get_completer_dict`; Telegram: `mods/isaa/extras/telegram_interface/telegram_cli_extension.py` `TelegramCliExtension(host)` mit `handle_command(args_str)`. Aufruf in der alten icli: `icli.py:15427` (`run`).
-- **Was die Extension vom Host braucht** (per Suche bestätigt): `host.isaa_tools`, `host.active_agent_name`, `host._handle_command`, `host._build_completer`, `host.run_agent_monitored`, `host.discord_ext`.
-- **Umsetzung:** neue Datei `icli2/host_shim.py` mit Klasse `HostShim`:
-  - `isaa_tools` = `backend.isaa`, `active_agent_name` als Property auf `backend.agent`.
-  - `_handle_command(text)`: no-op (wird von `patch_cli_for_discord` umhüllt); `_build_completer()` gibt `({}, None)` zurück.
-  - `run_agent_monitored(agent_name, query, kind=…, **kw)`: Signatur und Chunk-Format aus `icli.py:6211` übernehmen. Als Async-Generator umsetzen, der die Chunks von `agent.a_stream` durchreicht **und** denselben Lauf über `Engine.spawn(..., stream=<tee>)` in der UI zeigt. Dafür die Chunks in eine `asyncio.Queue` spiegeln.
-  - Im Backend `boot()`: `patch_cli_for_discord(shim)` in `try/except ImportError`.
-  - `_do_discord(args)` ruft `shim._handle_command("/discord " + args)`; Telegram analog über `shim.telegram_ext.handle_command`.
-- **Ausgabe abfangen:** Die Extensions geben per `print`/`c_print` aus. Im `_do_discord` mit `contextlib.redirect_stdout(io.StringIO())` einfangen und als `{"text": …}` zurückgeben (ANSI mit `toolboxv2.remove_styles` entfernen).
-- `/discord` ohne Argument: Picker mit den Unterbefehlen aus `get_completer_dict()`.
-- Fertig, wenn: `/discord status` die Ausgabe der Extension als Hinweis zeigt und ein über den Shim gestarteter Lauf als Block mit `origin` „discord“ erscheint (im Test mit Fake-Extension prüfen).
-
 ### Danach
+
+- **Erster echter Lauf** mit isaa-Mod und LLM – bisher ist alles nur gegen Nachbauten geprüft.
+- **Volles Omni:** Delegations-/VFS-/Chat-Tools (`_make_omni_tools` `icli.py:11374`), Weltmodell, VAD, Sprecher-Erkennung, Pegelanzeige.
+- Große Features (docs, autodoc, autotest, autofix), Plugin-Installation und -Hooks.
 
 - Engine als eigener Prozess: `protocol.py` ist schon JSON-fähig; Transport analog `mods/icli_web/bridge.py`.
 - `icli_web` an `Engine.spawn`/Events anschließen statt an `run_agent_for_web`.
@@ -197,8 +188,14 @@ Fertig, wenn: jeder der vier Befehle einen Picker öffnet, Umschalten eine Rück
 
 - **Schritt 8/9 von Subagenten geschrieben**, von mir gegengelesen und die genutzten Signaturen im Quellcode nachgeprüft. Getestet nur gegen Nachbauten: kein echter Login, kein echter LiveSync-Server, kein Mikrofon, kein TTS, kein Gemini Live.
 - **Gerätewahl** bei `/voice` wird nicht gespeichert und gilt nur bis zum Beenden.
-- **Vorlesen** nutzt fest Groq-TTS mit Stimme „autumn“ (wie die alte icli); die Emotions-Erkennung ist vereinfacht.
-- **Patch 08-09 baut auf Patch 05 auf**, nicht auf 06/07. Beide Stränge ändern `app.py` und `backend.py`; beim Zusammenführen `git apply --3way` verwenden.
+- **`#audio`** nutzt fest Groq-TTS mit Stimme „autumn“ (wie die alte icli); die Emotions-Erkennung ist vereinfacht.
+- **Schritt 6/7 von Subagenten geschrieben.** `bridges.py` habe ich vollständig gegengelesen und gegen die echte Engine getestet; bei `features.py` und `connect.py` habe ich die genutzten Signaturen im Quellcode nachgeprüft, den Code aber nicht Zeile für Zeile gelesen.
+- **Discord/Telegram nie real verbunden.** Die Erweiterungen selbst sind unverändert; geprüft ist nur, dass der Host-Ersatz genau die fünf Dinge bietet, die sie benutzen, und dass Läufe darüber in der UI erscheinen. Der Moderator-Agent (`discord_moderator` bzw. der Telegram-Moderator) muss in isaa existieren.
+- **Über Discord/Telegram gestartete Läufe** kennen kein `#new-ctx`, kein Fortsetzen pausierter Läufe und keine aktiven Skills (in der alten icli vorhanden).
+- **Features:** nur die sieben kleinen (desktop_auto, mini_web_auto, full_web_auto, isis_auto, coder, chain, execute); docs/autodoc/autotest/autofix fehlen. Abschalten wartet jetzt auf asynchrone Aufräumfunktionen (die alte icli tat das nicht).
+- **Plugins:** Installation, Marketplace und Hooks bleiben in der alten icli. Neu ist eine Abschaltliste `<appdata>/icli/plugins_disabled.json`; alle anderen Plugins werden beim Start geladen wie bisher.
+- **MCP:** neue Server werden nur gespeichert, wenn `agent.json` des Agenten existiert.
+- **UI-Prüfskript** ist zeitabhängig und kann unter hoher Last einmal fehlschlagen; ein zweiter Lauf geht dann durch.
 
 ## Patches anwenden
 
@@ -208,7 +205,8 @@ git apply icli2-02-branding-agenten.patch
 git apply icli2-03-autopack-tools.patch
 git apply icli2-04-modell-session-mount.patch
 git apply icli2-05-laeufe-jobs-networks.patch
-git apply --3way icli2-08-09-cloudm-voice.patch   # nach den lokalen Schritten 6/7
+git apply icli2-08-09-cloudm-voice.patch
+git apply icli2-06-07-features-discord.patch   # baut auf 08-09 auf
 pip install "textual>=8"
 ```
 

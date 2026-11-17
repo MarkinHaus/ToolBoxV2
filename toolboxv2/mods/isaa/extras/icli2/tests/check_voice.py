@@ -56,17 +56,17 @@ class V(VoiceMixin):
 
 async def main():
     v = V(); v._voice_init(); v._voice_init()
-    v._voice_feed(s)
-    assert v._v_buffer == "" and v._v_player is None          # aus: nichts passiert
-    r = await v._do_voice("speak"); assert r == {"text": "Vorlesen an"}
+    assert v._v_player is None                                # ohne #audio: kein Player
+    try: await v._do_voice("speak"); assert 0                 # Dauer-Schalter gibt es nicht mehr
+    except ValueError: pass
+    assert await v._voice_begin() is True and v._v_player is not None
     v._voice_feed(s); v._voice_feed("Rest ohne Punkt"); await asyncio.sleep(0)
     assert v._v_player.said == [s], v._v_player.said
     v._voice_flush(); await asyncio.sleep(0)
     assert v._v_player.said == [s, "Rest ohne Punkt"] and v._v_buffer == ""
     t, rows = await v._rows_voice()
     assert t == "Sprache" and all(set(x) == {"value", "label", "hint"} for x in rows)
-    assert [x["value"] for x in rows] == ["speak", "omni", "in:0", "out:1"] and rows[0]["hint"] == "an"
-    await v._do_voice("speak"); assert (await v._rows_voice())[1][0]["hint"] == "aus"
+    assert [x["value"] for x in rows] == ["omni", "in:0", "out:1"] and rows[0]["hint"] == "aus"
     await v._do_voice("in:0"); assert v._v_dev_in == 0
     await v._do_voice("out:1"); assert v._v_dev_out == 1
     # Toggle
@@ -78,7 +78,7 @@ async def main():
     await v._do_voice_toggle(); await asyncio.sleep(0.1)
     r = await v._do_voice_toggle(); assert r == {"text": "Nichts verstanden", "level": "warn"}, r
     # close mit werfenden Fakes
-    await v._do_voice("speak"); v._v_recorder = Rec(); Rec.fail = True
+    await v._voice_begin(); v._v_recorder = Rec(); Rec.fail = True
     await v._voice_close(); assert v._v_player is None and v._v_recorder is None
     await v._voice_close()
 asyncio.run(main())

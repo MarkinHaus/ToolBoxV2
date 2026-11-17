@@ -31,11 +31,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from .bridges import BridgeMixin     # Schritt 7: Discord/Telegram ueber die unveraenderten Erweiterungen
+from .connect import ConnectMixin    # Schritt 6: MCP-Server und Plugins
+from .features import FeatureMixin   # Schritt 6: Features und Skills
 from .cloudm import CloudMMixin      # Schritt 8: Login, ToolBox-Funktionen, LiveSync-Shares
 from .voice import VoiceMixin        # Schritt 9: Sprache (Audio-Importe erst bei Gebrauch)
 
 AGENT_STATE = {"live": "geladen", "registered": "registriert", "disk": "gespeichert"}
 HISTORY_KEEP = 500
+AUDIO_TAG = "#audio"
 RECAP_MESSAGES = 4
 RESUMABLE = ("paused", "max_iterations")
 JOB_HELP = ("Zeitplan fehlt. Beispiele:  /job alle 30m name: auftrag   ·   /job um 09:00 name: auftrag"
@@ -46,7 +50,7 @@ def _row(value: str, label: str = "", hint: str = "") -> dict[str, str]:
     return {"value": value, "label": label or value, "hint": hint}
 
 
-class IsaaBackend(CloudMMixin, VoiceMixin):
+class IsaaBackend(FeatureMixin, ConnectMixin, BridgeMixin, CloudMMixin, VoiceMixin):
     def __init__(self, app: Any, agent: str = "self", session: str = "default"):
         self.app = app
         self.agent = agent
@@ -93,6 +97,7 @@ class IsaaBackend(CloudMMixin, VoiceMixin):
             "complex_model": getattr(agent.amd, "complex_llm_model", "?"),
             "mounts": len(getattr(vfs, "mounts", {}) or {}),
             "user": await self._cloud_user(),
+            "features": self._features_active(),
         }
 
     async def _switch(self, agent: str | None = None, session: str | None = None) -> dict[str, Any]:
@@ -114,7 +119,8 @@ class IsaaBackend(CloudMMixin, VoiceMixin):
             await self.isaa.register_agent(builder)
         ready = await self._ready()
         ready["history"] = await asyncio.to_thread(self._read_history)
-        for step in (self._restore_paused, self._start_jobs):   # darf den Start nie verhindern
+        # darf den Start nie verhindern; Discord/Telegram werden erst bei Gebrauch geladen
+        for step in (self._restore_paused, self._start_jobs, self._plugins_boot):
             try:
                 await step()
             except Exception as e:
@@ -471,15 +477,24 @@ class IsaaBackend(CloudMMixin, VoiceMixin):
     # ── Laeufe ───────────────────────────────────────────────────────────────
     async def stream(self, agent: str, session: str, query: str) -> AsyncIterator[dict]:
         instance = await self.isaa.get_agent(agent)
+        # "#audio" am Ende: nur diese Antwort wird gesprochen (kein Dauer-Schalter)
+        speak = query.rstrip().endswith(AUDIO_TAG)
+        if speak:
+            query = query.rstrip()[:-len(AUDIO_TAG)].rstrip()
+            speak = await self._voice_begin()
+            if not speak:
+                yield {"type": "status", "status_msg": "Sprachausgabe nicht verfügbar – Antwort nur als Text"}
+        query = self._skill_wrap(query)                  # aktive Skills voranstellen (wie alte icli)
         try:
             async for chunk in instance.a_stream(
                 query=query, session_id=session, max_iterations=self.max_iterations,
             ):
-                if chunk.get("type") == "content" and not chunk.get("_sub_agent_id"):
-                    self._voice_feed(chunk.get("chunk", ""))     # tut nichts, wenn Vorlesen aus ist
+                if speak and chunk.get("type") == "content" and not chunk.get("_sub_agent_id"):
+                    self._voice_feed(chunk.get("chunk", ""))
                 yield chunk
         finally:
-            self._voice_flush()
+            if speak:
+                self._voice_flush()
 
     async def _run_id(self, agent: str, session: str):
         instance = await self.isaa.get_agent(agent)
@@ -511,6 +526,7 @@ class IsaaBackend(CloudMMixin, VoiceMixin):
         if self.isaa is None:
             return
         await self._voice_close()
+        await self._bridges_close()
         try:
             await asyncio.to_thread(self._save_paused)
         except Exception as e:

@@ -17,7 +17,7 @@ DO = "do"                # data: action + Argumente (siehe backend.do)
 SHUTDOWN = "shutdown"
 
 # ── Events: Engine -> UI ─────────────────────────────────────────────────────
-READY = "ready"            # data: agent, session, model, complex_model, mounts, user[, history, recap]
+READY = "ready"            # data: agent, session, model, complex_model, mounts, user, features[, history, recap]
 RUN_START = "run_start"    # data: agent, session, query, tag, origin (chat|job)
 TEXT = "text"              # data: text            (gebuendelte Content-Deltas)
 THINK = "think"            # data: text            (gebuendeltes Reasoning)

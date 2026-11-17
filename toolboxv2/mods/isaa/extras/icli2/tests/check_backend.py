@@ -23,6 +23,11 @@ class SM:
 class Eng: 
     def __init__(s): s._session_last_run={"default":"r1"}; s._active_executions={"r1":1}
 class Agent:
+    async def a_stream(s,query,session_id,max_iterations):
+        s.asked=query
+        yield {"type":"content","chunk":"Das ist ein ganzer Satz zum Vorlesen. "}
+        yield {"type":"content","chunk":"unter","_sub_agent_id":"sub_1"}
+        yield {"type":"final_answer","answer":"x"}
     bind_manager=types.SimpleNamespace(bindings={"coder":1})
     def __init__(s,n): s._execution_engine_cache=None; s.amd=types.SimpleNamespace(fast_llm_model="a",complex_llm_model="b"); s.session_manager=SM(); s.e=Eng()
     def _get_execution_engine(s): s._execution_engine_cache=s.e; return s.e
@@ -71,6 +76,14 @@ async def main():
     except LookupError: pass
     assert (await b.do("agent",name="myagent"))["ready"]["agent"]=="myagent"
     await b.do("remember",text="hallo\nwelt"); await b.do("remember",text="/q"); assert b._read_history()==["hallo\nwelt","/q"]
+    # ── #audio: nur diese Antwort wird gesprochen, Tag kommt nicht beim Agenten an ──
+    said=[]; b._voice_begin=lambda: asyncio.sleep(0,True); b._voice_feed=said.append; b._voice_flush=lambda: said.append("<flush>")
+    [c async for c in b.stream("myagent","default","frage ohne ton")]; assert said==[] and isaa.a["myagent"].asked=="frage ohne ton"
+    [c async for c in b.stream("myagent","default","lies vor  #audio ")]; assert said==["Das ist ein ganzer Satz zum Vorlesen. ","<flush>"], said
+    assert isaa.a["myagent"].asked=="lies vor"
+    b._voice_begin=lambda: asyncio.sleep(0,False); said.clear()
+    out=[c async for c in b.stream("myagent","default","x #audio")]; assert said==[] and "nicht verfügbar" in out[0]["status_msg"]
+    del b._voice_begin, b._voice_feed, b._voice_flush
     # ── Schritt 5: Rueckblick ──
     rc=(await b.do("session",name="default"))["ready"]["recap"]; print("recap:",rc); assert rc==[("user","frage eins"),("assistant","antwort")]
     # ── Jobs gegen den echten JobScheduler ──

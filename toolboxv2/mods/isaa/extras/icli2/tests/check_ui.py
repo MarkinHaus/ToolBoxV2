@@ -31,15 +31,21 @@ class Fake:
             yield {"type":"final_answer","answer":"ok"}
             yield {"type":"done","success":True}
         finally: s.active.discard(session)
-    st={"agent":"self","session":"default","model":"fake-1","complex_model":"fake-c","mounts":0,"user":""}
+    st={"agent":"self","session":"default","model":"fake-1","complex_model":"fake-c","mounts":0,"user":"","features":[]}
     async def rows(s,what):
         R=lambda v,h="":{"value":v,"label":v,"hint":h}
         return {"agents":{"title":"Agent wechseln","rows":[R("self","geladen · aktiv"),R("myagent","gespeichert · eigene Tools"),R("coder","registriert")]},
                 "models":{"title":"Modell wählen","rows":[R("openrouter/a"),R("gateway/big-model")]},
                 "sessions":{"title":"Session wechseln","rows":[R("+"),R("default","aktiv"),R("work")]},
+                "features":{"title":"Features","rows":[R("coder","aus"),R("execute","aus")]},
+                "skills":{"title":"Skills","rows":[R("sk1","trigger")]},
+                "mcp":{"title":"MCP-Server","rows":[R("fs","npx …")]},
+                "plugins":{"title":"Plugins","rows":[R("demo","2 Skills")]},
+                "discord":{"title":"Discord","rows":[R("status","Verbindungsstatus"),R("connect","Bot starten")]},
+                "telegram":{"title":"Telegram","rows":[R("status","Verbindungsstatus")]},
                 "tb":{"title":"ToolBox-Funktionen","rows":[R("CloudM.get_user","name"),R("isaa.version")]},
                 "shares":{"title":"LiveSync","rows":[R("sh1","getrennt")]},
-                "voice":{"title":"Sprache","rows":[R("speak","aus"),R("omni","aus")]},
+                "voice":{"title":"Sprache","rows":[R("omni","aus")]},
                 "jobs":{"title":"Jobs","rows":[{"value":"j1","label":"nightly","hint":"on_cron · active · completed · 3x · self"}]},
                 "mounts":{"title":"Mounts","rows":[R("/project","/tmp/x")] if s.st["mounts"] else []} }[what] | ({"title":"Keine Mounts – /mount <ordner>"} if what=="mounts" and not s.st["mounts"] else {})
     async def do(s,action,**a):
@@ -53,10 +59,12 @@ class Fake:
         elif action=="job":
             asyncio.ensure_future(s.spawn("self","default","nightly: aufräumen",kind="job")); return {"text":"Job nightly gestartet"}
         elif action in ("job_add","dream","network_save","network_load"): return {"text":action+" ok"}
+        elif action=="feature": s.st["features"]=["coder"]; return {"ready":dict(s.st),"text":"Feature coder an"}
+        elif action in ("skill","mcp","plugin","mcp_add","discord","telegram"): return {"text":action+" ok"}
         elif action=="login": s.st.update(user="markin"); return {"ready":dict(s.st),"text":"Angemeldet als markin"}
         elif action=="tb": return {"text":"ergebnis\n  wert  "+a["target"]+" "+a.get("args","")}
         elif action=="share": return {"text":"share "+a["share"]+" verbunden"}
-        elif action=="voice": return {"text":"Vorlesen an"}
+        elif action=="voice": return {"text":"Omni-Session aktiv"}
         elif action=="voice_toggle":
             s.rec=not getattr(s,"rec",False); return {"text":"● Aufnahme läuft – F4 beendet"} if s.rec else {"draft":"gesprochener text"}
         elif action=="mount": s.st.update(mounts=1); return {"ready":dict(s.st),"text":"/tmp/x → /project · 12 Dateien"}
@@ -191,11 +199,30 @@ async def main():
         await pilot.press(*"/tb"); await pilot.press("space"); await pilot.press(*"CloudM.get_user"); await pilot.press("space"); await pilot.press(*"a=1"); await pilot.press("enter"); await pilot.pause(0.3)
         assert ("tb",{"target":"CloudM.get_user","args":"a=1"}) in fake.log
         await pilot.press(*"/share"); await pilot.press("enter"); await pilot.pause(0.3); await pilot.press("enter"); await pilot.pause(0.3); assert ("share",{"share":"sh1"}) in fake.log
-        await pilot.press(*"/voice"); await pilot.press("enter"); await pilot.pause(0.3); await pilot.press("enter"); await pilot.pause(0.3); assert ("voice",{"op":"speak"}) in fake.log
+        await pilot.press(*"/voice"); await pilot.press("enter"); await pilot.pause(0.3); await pilot.press("enter"); await pilot.pause(0.3); assert ("voice",{"op":"omni"}) in fake.log
         await pilot.press("f4"); await pilot.pause(0.3); await pilot.press(*"vorher"); await pilot.press("f4"); await pilot.pause(0.3)
         assert app.prompt.text=="vorher gesprochener text", app.prompt.text
         app.prompt.set_text("")
         print("step8/9 ui ok")
+        # ── Schritt 6/7 ──
+        async def cmd(text, pick=None):
+            await pilot.press(*[("space" if c==" " else c) for c in text]); await pilot.press("enter"); await pilot.pause(0.3)
+            if pick is not None:
+                assert isinstance(app.screen,P_), text
+                if pick: await pilot.press(*pick); await pilot.pause(0.1)
+                await pilot.press("enter"); await pilot.pause(0.3)
+            assert not isinstance(app.screen,P_), text
+        await cmd("/feature","")
+        assert ("feature",{"name":"coder"}) in fake.log and app.features==["coder"] and "coder" in str(app.query_one("#head").render())
+        await cmd("/feature execute"); assert ("feature",{"name":"execute"}) in fake.log
+        await cmd("/skill",""); assert ("skill",{"name":"sk1"}) in fake.log
+        await cmd("/mcp",""); assert ("mcp",{"name":"fs"}) in fake.log
+        await cmd("/mcp git uvx mcp-server-git"); assert ("mcp_add",{"spec":"git uvx mcp-server-git"}) in fake.log
+        await cmd("/plugin",""); assert ("plugin",{"name":"demo"}) in fake.log
+        await cmd("/discord","conn"); assert ("discord",{"args":"connect"}) in fake.log
+        await cmd("/discord send #a hallo"); assert ("discord",{"args":"send #a hallo"}) in fake.log
+        await cmd("/telegram",""); assert ("telegram",{"args":"status"}) in fake.log
+        print("step6/7 ui ok")
         await pilot.press(*"logs"); await pilot.press("enter"); await pilot.pause(0.8)
         app.save_screenshot("/tmp/icli2_shot.svg")
         await pilot.press(*"/q"); await pilot.press("enter")
