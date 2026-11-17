@@ -75,6 +75,9 @@ class UserData:
     last_login: float = 0.0
     settings: dict = field(default_factory=dict)
     mod_data: dict = field(default_factory=dict)
+    # Account sync key (Fernet/urlsafe-b64, 32 bytes). Leaves the server only via
+    # CloudM.Auth.get_sync_key to the account owner. Never in API responses.
+    user_pass_sync: str = ""
     oauth_providers: Dict[str, dict] = field(default_factory=dict)
     passkeys: List[dict] = field(default_factory=list)
 
@@ -87,6 +90,15 @@ class UserData:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    _SECRET_FIELDS = ("user_pass_sync", "minio_credentials")
+
+    def to_public_dict(self) -> dict:
+        """to_dict without secrets - the only form that may leave via an API."""
+        d = self.to_dict()
+        for k in self._SECRET_FIELDS:
+            d.pop(k, None)
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> "UserData":

@@ -46,7 +46,8 @@ class LocalTrustTest(unittest.TestCase):
     def test_async_request_with_trust_is_owner(self):
         m = _manager()
         m.enable_local_trust({"user_id": "usr_a", "username": "markin"})
-        s = asyncio.run(m.get_session_from_request({}))
+        env = {"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8467"}
+        s = asyncio.run(m.get_session_from_request(env))
         self.assertEqual(s.user_id, "usr_a")
         self.assertEqual(s.level, -1)
         self.assertFalse(s.anonymous)
@@ -59,7 +60,8 @@ class LocalTrustTest(unittest.TestCase):
     def test_sync_request_with_trust_is_owner(self):
         m = _manager()
         m.enable_local_trust({"user_id": "usr_a", "username": "markin"})
-        s = m.get_session_from_request_sync({})
+        env = {"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8467"}
+        s = m.get_session_from_request_sync(env)
         self.assertEqual(s.user_id, "usr_a")
         self.assertEqual(s.level, -1)
 
@@ -72,6 +74,106 @@ class LocalTrustTest(unittest.TestCase):
         s = m.get_session_from_request_sync({}, headers={"X-API-Key": "k-123"})
         self.assertEqual(s.user_id, "usr_key")
 
+
+
+    def test_async_loopback_v4(self):
+        m = _manager()
+        m.enable_local_trust({"user_id": "usr_a", "username": "markin"})
+        env = {"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8467"}
+        s = asyncio.run(m.get_session_from_request(env))
+        self.assertFalse(s.anonymous)
+        self.assertEqual(s.user_id, "usr_a")
+    def test_sync_loopback_v4(self):
+        m = _manager()
+        m.enable_local_trust({"user_id": "usr_a", "username": "markin"})
+        env = {"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8467"}
+        s = m.get_session_from_request_sync(env)
+        self.assertFalse(s.anonymous)
+        self.assertEqual(s.user_id, "usr_a")
+    def test_async_loopback_v6(self):
+        m = _manager()
+        m.enable_local_trust({"user_id": "usr_a", "username": "markin"})
+        env = {"REMOTE_ADDR": "::1", "HTTP_HOST": "[::1]:8467"}
+        s = asyncio.run(m.get_session_from_request(env))
+        self.assertFalse(s.anonymous)
+        self.assertEqual(s.user_id, "usr_a")
+    def test_sync_loopback_v6(self):
+        m = _manager()
+        m.enable_local_trust({"user_id": "usr_a", "username": "markin"})
+        env = {"REMOTE_ADDR": "::1", "HTTP_HOST": "[::1]:8467"}
+        s = m.get_session_from_request_sync(env)
+        self.assertFalse(s.anonymous)
+        self.assertEqual(s.user_id, "usr_a")
+    def test_async_remote_peer(self):
+        m = _manager()
+        m.enable_local_trust({"user_id": "usr_a", "username": "markin"})
+        env = {"REMOTE_ADDR": "192.168.1.5", "HTTP_HOST": "127.0.0.1:8467"}
+        s = asyncio.run(m.get_session_from_request(env))
+        self.assertTrue(s.anonymous)
+    def test_sync_remote_peer(self):
+        m = _manager()
+        m.enable_local_trust({"user_id": "usr_a", "username": "markin"})
+        env = {"REMOTE_ADDR": "192.168.1.5", "HTTP_HOST": "127.0.0.1:8467"}
+        s = m.get_session_from_request_sync(env)
+        self.assertTrue(s.anonymous)
+    def test_async_proxy_header(self):
+        m = _manager()
+        m.enable_local_trust({"user_id": "usr_a", "username": "markin"})
+        env = {"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8467", "HTTP_X_FORWARDED_FOR": "1.2.3.4"}
+        s = asyncio.run(m.get_session_from_request(env))
+        self.assertTrue(s.anonymous)
+    def test_sync_proxy_header(self):
+        m = _manager()
+        m.enable_local_trust({"user_id": "usr_a", "username": "markin"})
+        env = {"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8467", "HTTP_X_FORWARDED_FOR": "1.2.3.4"}
+        s = m.get_session_from_request_sync(env)
+        self.assertTrue(s.anonymous)
+    def test_async_evil_host(self):
+        m = _manager()
+        m.enable_local_trust({"user_id": "usr_a", "username": "markin"})
+        env = {"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "evil.example"}
+        s = asyncio.run(m.get_session_from_request(env))
+        self.assertTrue(s.anonymous)
+    def test_sync_evil_host(self):
+        m = _manager()
+        m.enable_local_trust({"user_id": "usr_a", "username": "markin"})
+        env = {"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "evil.example"}
+        s = m.get_session_from_request_sync(env)
+        self.assertTrue(s.anonymous)
+    def test_async_provider_none(self):
+        m = _manager()
+        m.enable_local_trust(None)
+        env = {"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8467"}
+        s = asyncio.run(m.get_session_from_request(env))
+        self.assertTrue(s.anonymous)
+    def test_sync_provider_none(self):
+        m = _manager()
+        m.enable_local_trust(None)
+        env = {"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8467"}
+        s = m.get_session_from_request_sync(env)
+        self.assertTrue(s.anonymous)
+    def test_async_provider_no_uid(self):
+        m = _manager()
+        m.enable_local_trust({"username": "x"})
+        env = {"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8467"}
+        s = asyncio.run(m.get_session_from_request(env))
+        self.assertTrue(s.anonymous)
+    def test_sync_provider_no_uid(self):
+        m = _manager()
+        m.enable_local_trust({"username": "x"})
+        env = {"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8467"}
+        s = m.get_session_from_request_sync(env)
+        self.assertTrue(s.anonymous)
+    def test_async_no_trust(self):
+        m = _manager()
+        env = {"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8467"}
+        s = asyncio.run(m.get_session_from_request(env))
+        self.assertTrue(s.anonymous)
+    def test_sync_no_trust(self):
+        m = _manager()
+        env = {"REMOTE_ADDR": "127.0.0.1", "HTTP_HOST": "127.0.0.1:8467"}
+        s = m.get_session_from_request_sync(env)
+        self.assertTrue(s.anonymous)
 
 if __name__ == "__main__":
     unittest.main()

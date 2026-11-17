@@ -1070,56 +1070,6 @@ async def sync(app: App, request: RequestData):
 
 _credential_broker = None
 
-def _get_credential_broker():
-    """Lazy-init CredentialBroker from environment."""
-    global _credential_broker
-    if _credential_broker is None:
-        import os
-        endpoint = os.environ.get('MINIO_ENDPOINT')
-        access_key = os.environ.get('MINIO_ACCESS_KEY')
-        secret_key = os.environ.get('MINIO_SECRET_KEY')
-        secure = os.environ.get('MINIO_SECURE', 'false').lower() == 'true'
-        if not endpoint or not access_key:
-            return None
-        try:
-            from .auth.minio_policy import CredentialBroker, MinIOPolicyConfig
-            config = MinIOPolicyConfig(
-                endpoint=endpoint, access_key=access_key, secret_key=secret_key,
-                secure=secure,
-            )
-            _credential_broker = CredentialBroker(config)
-        except Exception:
-            return None
-    return _credential_broker
-
-
-@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
-async def get_secure_storage_credentials(app: App, request: RequestData):
-    """
-    Vend scoped MinIO credentials for the authenticated user.
-    Client uses these to talk DIRECTLY to MinIO (encrypted, no server proxy).
-
-    Returns:
-        {endpoint, access_key, secret_key, secure, buckets, user_prefix}
-    """
-    provider = await _get_storage_provider(app, request)
-    if not provider:
-        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
-
-    broker = _get_credential_broker()
-    if not broker:
-        return Result.default_internal_error(
-            info="Storage credentials not available (MINIO_ENDPOINT not configured)"
-        )
-
-    try:
-        creds = broker.vend_user_credentials(provider.user.user_id)
-        return Result.ok(
-            data=creds,
-            data_info="Scoped storage credentials",
-        )
-    except Exception as e:
-        return Result.default_internal_error(info=f"Credential vending failed: {e}")
 
 
 class ModDataClient:

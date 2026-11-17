@@ -738,7 +738,7 @@ class SessionManager:
                 return cookie_session
 
         # 4. Device trust (loopback owner) or anonymous
-        if self._device_trust is not None:
+        if self._device_trust_allowed(environ, headers):
             return self._device_trust_session(self._device_trust)
         return SessionData.anonymous()
 
@@ -788,7 +788,7 @@ class SessionManager:
                 return cookie_session
 
         # 4. Device trust (loopback owner) or anonymous
-        if self._device_trust is not None:
+        if self._device_trust_allowed(environ, headers):
             return self._device_trust_session(self._device_trust)
         return SessionData.anonymous()
 
@@ -961,13 +961,36 @@ class SessionManager:
     # Local Device Trust (WP1 K2)
     # =========================================================================
 
+    _TRUST_HOSTS = ("127.0.0.1", "localhost", "[::1]", "::1")
+    _TRUST_ADDRS = ("127.0.0.1", "::1")
+    _PROXY_KEYS = ("HTTP_X_FORWARDED_FOR", "HTTP_X_REAL_IP", "HTTP_FORWARDED")
+
+    def _device_trust_allowed(self, environ: Dict, headers: Optional[Dict[str, str]]) -> bool:
+        """All must hold, else anonymous: loopback peer, no proxy headers, loopback Host."""
+        if self._device_trust is None or not self._device_trust.get("user_id"):
+            return False
+        if environ.get("REMOTE_ADDR", "") not in self._TRUST_ADDRS:
+            return False
+        if any(environ.get(k) for k in self._PROXY_KEYS):
+            return False
+        h = {k.lower(): v for k, v in (headers or {}).items()}
+        if any(h.get(k) for k in ("x-forwarded-for", "x-real-ip", "forwarded")):
+            return False
+        host = environ.get("HTTP_HOST", "") or h.get("host", "")
+        if host.startswith("["):
+            host = host.split("]")[0] + "]"
+        else:
+            host = host.split(":")[0]
+        return host.lower() in self._TRUST_HOSTS
+
     def enable_local_trust(self, provider: Optional[dict]) -> None:
         """Trust unauthenticated requests from this machine as the device owner.
 
         provider: dict with user_id and username of the local admin or the
         linked device account (from device_owner.json). None disables trust.
-        Call sites must guarantee local-only context (no remote base,
-        non-server profile) - the trust itself is not loopback-checked.
+        Each request is checked by _device_trust_allowed (loopback peer,
+        no proxy headers, loopback Host). API-key/Bearer/cookie sessions
+        are checked first and are never shadowed by this trust.
         """
         self._device_trust = provider
 

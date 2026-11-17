@@ -20,7 +20,7 @@ class SM:
     def __init__(s): s.s={}
     async def get_or_create(s,n): return s.s.setdefault(n,Sess())
     def list_sessions(s): return [None, *s.s]          # wie der echte SessionManager: auch leere Namen
-class Eng: 
+class Eng:
     def __init__(s): s._session_last_run={"default":"r1"}; s._active_executions={"r1":1}
 class Agent:
     async def a_stream(s,query,session_id,max_iterations):

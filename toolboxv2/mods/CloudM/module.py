@@ -90,27 +90,38 @@ class Tools(MainTool, FileHandler):
         from toolboxv2.mods.Minu.examples import initialize
         initialize(self.app)
 
-        # Zero-friction local root: ensure the anonymous local admin exists and
-        # is reflected in app.session — local contexts only, never on servers.
-        is_remote = bool(os.environ.get("TOOLBOXV2_REMOTE_BASE"))
+        # Zero-friction login (WP1 K2/K3 order):
+        # 1) server profile -> remote login as before.
+        # 2) linked device account -> local session, offline-capable, no
+        #    remote login; base stays as _apply_local_admin_to_session sets it.
+        # 3) else legacy path: remote login or local admin (CLI before linking).
         profile = getattr(getattr(self.app.manifest, "app", None), "profile", None)
         is_server = profile is not None and profile.value == "server"
 
-        if not is_remote and not is_server:
+        if is_server:
+            await self.app.session.login()
+        else:
             try:
                 from .auth.device_account import read_device_owner
-                from .auth.local_admin import ensure_local_admin
-                provider = read_device_owner(self.app)
-                if provider is None:
-                    admin = await ensure_local_admin(self.app)
-                    provider = {"user_id": admin.user_id,
-                                "username": admin.username}
-                self._apply_local_admin_to_session(provider)
+                owner = read_device_owner(self.app)
             except Exception as e:
-                self.logger.warning(f"local_admin init skipped: {e}")
-        else:
-            # Remote/server: keep the existing remote-login behaviour.
-            await self.app.session.login()
+                self.logger.warning(f"local_admin init skipped: {type(e).__name__}: {e}")
+            else:
+                if owner is not None:
+                    self._apply_local_admin_to_session(owner)
+                else:
+                    is_remote = bool(os.environ.get("TOOLBOXV2_REMOTE_BASE"))
+                    if is_remote:
+                        await self.app.session.login()
+                    else:
+                        try:
+                            from .auth.local_admin import ensure_local_admin
+                            admin = await ensure_local_admin(self.app)
+                            provider = {"user_id": admin.user_id,
+                                        "username": admin.username}
+                            self._apply_local_admin_to_session(provider)
+                        except Exception as e:
+                            self.logger.warning(f"local_admin init skipped: {type(e).__name__}: {e}")
 
     def _apply_local_admin_to_session(self, provider: dict) -> None:
         """Mark app.session as the local root without any remote round-trip.

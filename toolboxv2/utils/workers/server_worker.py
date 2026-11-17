@@ -1678,45 +1678,36 @@ class HTTPWorker:
             app=self._app,
         )
 
-        # Loopback trust: local installs (no remote base, non-production,
-        # non-server profile) auto-authenticate loopback requests as the
-        # local root admin — Tauri tray/HUD and the local web UI need no token.
-        if (
-            not os.environ.get("TOOLBOXV2_REMOTE_BASE")
-            and self.config.environment != "production"
-        ):
-            profile = getattr(getattr(getattr(self._app, "manifest", None), "app", None), "profile", None)
-            if profile is None or profile.value != "server":
-                try:
-                    import asyncio
-                    from toolboxv2.mods.CloudM.auth.device_account import read_device_owner
-                    from toolboxv2.mods.CloudM.auth.local_admin import ensure_local_admin
-                    provider = read_device_owner(self._app)
-                    if provider is None:
-                        user = asyncio.new_event_loop().run_until_complete(
-                            ensure_local_admin(self._app)
-                        )
-                        provider = {"user_id": user.user_id,
-                                    "username": user.username}
-                    self._session_manager.enable_local_trust(provider)
-                    # WP1 S3: periodic account sync (10 min, daemon, best-effort)
-                    import threading as _th
-                    def _sync_loop():
-                        import time as _t
-                        while True:
-                            _t.sleep(600)
-                            try:
-                                from toolboxv2.mods.CloudM.sync.global_sync import run_sync_once
-                                run_sync_once(self._app)
-                            except Exception:
-                                pass  # next interval retries
-                    if not any(getattr(t, "name", "") == "wp1-sync" for t in _th.enumerate()):
-                        _loop = _th.Thread(target=_sync_loop, daemon=True, name="wp1-sync")
-                        _loop.start()
-                except RuntimeError as e:
-                    logger.warning(f"Loopback trust not enabled (event loop busy): {e}")
-                except Exception as e:
-                    logger.warning(f"Loopback trust not enabled: {e}")
+        # Device trust (WP1 K2): profile local/developer + linked device account.
+        try:
+            from toolboxv2.mods.CloudM.auth.device_account import local_trust_provider
+            provider = local_trust_provider(self._app, self.config.environment == "production")
+        except Exception as e:
+            provider = None
+            logger.warning(f"Device trust check failed: {type(e).__name__}")
+        self._session_manager.enable_local_trust(provider)
+        if provider:
+            logger.info(f"Device trust on for {provider.get('username', '')}")
+            # Teil 10: periodic account sync (once per process, 30 s delay, 600 s cycle).
+        import threading as _th10
+        if not any(getattr(t, "name", "") == "account-sync" for t in _th10.enumerate()):
+            import asyncio as _a10
+
+            def _account_sync_loop():
+                import time as _t10
+                from toolboxv2.mods.CloudM.LiveSync.data_api_sync import sync_all
+                _t10.sleep(30)
+                while True:
+                    try:
+                        _a10.run(sync_all(self._app))
+                    except Exception as e:
+                        logger.warning(f"account-sync failed: {type(e).__name__}")
+                    _t10.sleep(600)
+
+            _th10.Thread(target=_account_sync_loop, daemon=True,
+                         name="account-sync").start()
+        else:
+            logger.info("Device trust off (no device account or not a local profile)")
 
     def _init_access_controller(self):
         """Initialize access controller."""

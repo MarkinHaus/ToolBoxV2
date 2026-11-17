@@ -166,7 +166,32 @@ async def get_user_data(app: App = None, request=None, user_id: str = None, data
             details={"accessed_by": "api"}
         )
     except Exception: pass
-    return Result.ok(user.to_dict())
+    return Result.ok(user.to_public_dict())
+
+
+@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
+async def get_sync_key(app: App = None, request=None, data: dict = None) -> ApiResult:
+    """Account sync key for the authenticated owner only (WP1, Auftrag 08).
+    The user comes from the Bearer token, never from parameters."""
+    if app is None:
+        app = get_app(f"{Name}.get_sync_key")
+    auth = await validate_session(app, request=request)
+    if auth.is_error():
+        return Result.default_user_error("Not authenticated", exec_code=401)
+    user_id = auth.get().get("user_id")
+    user = await _load_user(app, user_id)
+    if not user:
+        return Result.default_user_error("User not found", exec_code=404)
+    if not user.user_pass_sync:
+        from toolboxv2.utils.security.cryp import Code
+        user.user_pass_sync = Code.generate_symmetric_key()
+        await _save_user(app, user)
+    try:
+        app.audit_logger.log_action(user_id=user_id, action="user.sync_key",
+                                    resource=f"/users/{user_id}", status="SUCCESS",
+                                    details={})
+    except Exception: pass
+    return Result.ok({"key": user.user_pass_sync})
 
 
 @export(mod_name=Name, version=version, api=True)
@@ -207,7 +232,7 @@ async def update_user_data(
             details={"updated_fields": list(filter(None, [settings, level, mod_data]))}
         )
     except Exception: pass
-    return Result.ok(user.to_dict())
+    return Result.ok(user.to_public_dict())
 
 
 @export(mod_name=Name, version=version, api=False, interface=ToolBoxInterfaces.native)

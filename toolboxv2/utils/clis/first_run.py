@@ -60,16 +60,52 @@ def _start_account_link(app=None, method=None, timeout=180.0):
         return None
 
 
+import threading as _threading
+_LINK_LOCK = _threading.Lock()
+_LINK = {"state": "idle", "error": None}
+
+
+def start_account_link_bg(method=None) -> dict:
+    """Start one background link run (WP1 K3). Never blocks the caller."""
+    with _LINK_LOCK:
+        if _LINK["state"] == "waiting":
+            return dict(_LINK)
+        _LINK.update(state="waiting", error=None)
+
+    def _run():
+        owner = _start_account_link(None, method=method)
+        with _LINK_LOCK:
+            if owner:
+                _LINK.update(state="linked", error=None)
+            else:
+                _LINK.update(state="error", error="remote login failed or timed out")
+
+    _threading.Thread(target=_run, daemon=True, name="account-link").start()
+    return dict(_LINK)
+
+
 def account_state(app=None) -> dict:
     """Account-link status for UIs. Identity only - never tokens."""
     owner = _read_device_owner(app)
-    if not owner:
-        return {"linked": False}
-    return {"linked": True,
-            "user_id": owner.get("user_id", ""),
-            "username": owner.get("username", ""),
-            "base_url": owner.get("base_url", ""),
-            "migrated_from": owner.get("migrated_from")}
+    if owner:
+        try:
+            from toolboxv2.mods.CloudM.LiveSync.data_api_sync import _LAST
+            last_sync = _LAST.get("finished_at")
+            last_sync_error = _LAST.get("error")
+        except Exception:
+            last_sync = None
+            last_sync_error = None
+        return {"linked": True,
+                "user_id": owner.get("user_id", ""),
+                "username": owner.get("username", ""),
+                "base_url": owner.get("base_url", ""),
+                "migrated_from": owner.get("migrated_from"),
+                "state": "linked", "error": None,
+                "last_sync": last_sync,
+                "last_sync_error": last_sync_error}
+    with _LINK_LOCK:
+        return {"linked": False,
+                "state": _LINK["state"], "error": _LINK["error"]}
 
 
 def onboarding_state() -> dict:
@@ -86,7 +122,7 @@ def onboarding_state() -> dict:
         profile = None
     owner = _read_device_owner()
     return {"installed": True, "first_run": profile is None, "profile": profile,
-            "needs_account": owner is not None,
+            "needs_account": profile in ("local", "developer") and owner is None,
             "account": owner.get("username", "") if owner else None}
 
 

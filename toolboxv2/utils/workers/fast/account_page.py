@@ -32,8 +32,22 @@ _PAGE = """<!doctype html>
 </div>
 <script>
 const status = document.getElementById('status');
+let polling = null;
+async function poll() {
+  const r = await fetch('/api/account/status');
+  const d = await r.json();
+  if (d.state === 'linked') {
+    status.textContent = 'Linked as ' + (d.username || d.user_id);
+    if (polling) { clearInterval(polling); polling = null; }
+  } else if (d.state === 'error') {
+    status.textContent = 'Failed: ' + (d.error || 'unknown');
+    if (polling) { clearInterval(polling); polling = null; }
+  } else {
+    status.textContent = 'Waiting for login ...';
+  }
+}
 async function start(method) {
-  status.textContent = 'Opening login page ...';
+  status.textContent = 'Starting background login ...';
   try {
     const r = await fetch('/api/account/start', {
       method: 'POST',
@@ -41,19 +55,14 @@ async function start(method) {
       body: JSON.stringify({method})
     });
     const d = await r.json();
-    if (r.ok && d.ok) {
-      status.textContent = 'Linked as ' + (d.username || d.user_id) +
-        (d.migrated_from ? '\\nMigrated local admin: ' + d.migrated_from : '');
-    } else {
-      status.textContent = 'Failed: ' + (d.error || r.status);
-    }
+    if (!r.ok) { status.textContent = 'Failed: ' + (d.error || r.status); return; }
+    if (polling) clearInterval(polling);
+    polling = setInterval(poll, 1500);
   } catch (e) {
     status.textContent = 'Failed: ' + e;
   }
 }
-fetch('/api/account/status').then(r => r.json()).then(d => {
-  if (d.linked) status.textContent = 'Already linked as ' + (d.username || d.user_id);
-});
+poll();
 </script>
 </body>
 </html>

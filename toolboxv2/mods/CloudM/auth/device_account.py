@@ -39,6 +39,22 @@ def read_device_owner(app: App) -> Optional[dict]:
     return data if isinstance(data, dict) and data.get("user_id") else None
 
 
+def local_trust_provider(app, is_production: bool) -> Optional[dict]:
+    """Provider for SessionManager.enable_local_trust (WP1 K2).
+    Only profile local/developer, never production, only with a linked
+    device account. No local-admin fallback (account is mandatory)."""
+    if is_production:
+        return None
+    profile = getattr(getattr(getattr(app, "manifest", None), "app", None), "profile", None)
+    value = getattr(profile, "value", profile)
+    if value not in ("local", "developer"):
+        return None
+    owner = read_device_owner(app)
+    if not owner or not owner.get("user_id"):
+        return None
+    return {"user_id": owner["user_id"], "username": owner.get("username", ""), "level": -1}
+
+
 async def link_account(app: App, payload: dict) -> UserData:
     """Link this device to a SimpleCore account (idempotent per account).
 
@@ -100,13 +116,10 @@ async def link_account(app: App, payload: dict) -> UserData:
         "migrated_from": migrated_from,
     }, indent=2), encoding="utf-8")
 
-    # WP1 S3: best-effort sync kick-off right after linking (background,
-    # never blocks or fails the link itself)
+    # WP1 Teil 10: initial account sync right after linking (best-effort).
     try:
-        import threading
-        from toolboxv2.mods.CloudM.sync.global_sync import run_sync_once
-        threading.Thread(target=run_sync_once, args=(app,),
-                         daemon=True).start()
+        from toolboxv2.mods.CloudM.LiveSync.data_api_sync import run_sync_in_background
+        run_sync_in_background(app)
     except Exception:
         pass
     return user

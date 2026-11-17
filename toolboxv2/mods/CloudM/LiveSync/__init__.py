@@ -487,36 +487,6 @@ if _TB_AVAILABLE:
 
     # ── Credential & Share-Token API (Dashboard-facing) ──
 
-    @export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
-    def tb_get_my_minio_credentials(app: App, request: RequestData = None):
-        """
-        Return scoped MinIO credentials for the authenticated user.
-
-        Reads ``user_id`` from ``request.session``. Requires an
-        authenticated session (``session.is_authenticated``).
-
-        Returns:
-            Result.ok(data={endpoint, access_key, secret_key, secure,
-                buckets, user_prefix, policy_applied, expires_in})
-        """
-        if request is None:
-            return Result.error("request required")
-
-        user_id = _extract_user_id(request)
-        if not user_id:
-            return Result.error("Authentication required")
-
-        try:
-            env = load_env_config()
-            from .minio_helper import vend_user_credentials_for_user
-            creds = vend_user_credentials_for_user(user_id, env)
-            return Result.ok(data=creds)
-        except ValueError as e:
-            return Result.error(str(e))
-        except Exception as e:
-            logger.error(f"[LiveSync] get-my-credentials failed: {e}")
-            return Result.error(f"Credential generation failed: {e}")
-
     @export(mod_name=Name, api=True, version=version)
     def tb_generate_share_token(
         app: App,

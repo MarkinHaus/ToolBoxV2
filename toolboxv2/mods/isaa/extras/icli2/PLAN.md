@@ -190,9 +190,13 @@ Alle geplanten Schritte sind umgesetzt. Das Vorgehen gilt für jede Erweiterung;
 
 ### Danach
 
-- **Lauf mit echtem LLM und auf Windows** – der echte Durchlauf lief unter Linux mit Ersatz-LLM.
+- **Echter Durchlauf mit echtem LLM und auf Windows** - bisher nur Ersatz-LLM unter Linux.
 - **Zugangsdaten** in `/settings` verwalten.
-- **Volles Omni:** Delegations-/VFS-/Chat-Tools (`_make_omni_tools` `icli.py:11374`), Weltmodell, VAD, Sprecher-Erkennung, Pegelanzeige.
+- **Volles Omni** (bestehenden Adapter `toolboxv2/mods/isaa/base/audio_io/omni.py` verwenden - nichts Neues bauen, die bestehende Klasse elegant integrieren): Delegations-/VFS-/Chat-Tools (`_make_omni_tools` `icli.py:11374`), Weltmodell, VAD, Sprecher-Erkennung, Pegelanzeige.
+- **Modellliste aller Anbieter über den IntelligentRateLimiter** (`mods/isaa/base/IntelligentRateLimiter/free_providers/fetch_models.py:84` `fetch_available_models(only_free=True)` -> Cache `models_cache/free_models.json` mit `{provider, model_id, ..., context_length}`; `registry.py` kennt Provider-IDs wie `openrouter`, `gemini-cli`, `groq`). Ersatz/Erweiterung des Modell-Pickers in `models.py` (Gateway + litellm-Customs + `MODEL_MAPPING`) - kein litellm, keine separate OpenRouter-REST-Abfrage.
+- **Agenten-Konfiguration in `/settings` (nach dem Builder):** Agent-Config-Felder (Modell, `max_iterations`, Tools) über `/settings` editierbar; dazu max. Kontextgröße (auto-detektiert aus `context_length` der Modellliste) und Offloading-Limits (`cleanup_max_message_count`, `cleanup_summary_max_chars`, `conversation_max_context_size` aus `agent.json`). Wirkt nur, wenn `agent.json` existiert (`data_dir/Agents/<name>/agent.json` - existiert immer nach dem Bauen des Agenten); sonst Hinweis.
+- **Autocompletion für Subcommands:** Befehlstabelle in `app.py` um Argumente erweitern (z.B. `/plugin install|confirm|discard|remove`, `/job alle|um|start`, `/mcp <name> <cmd>`, `/set <key>`); Tab/Pfeiltasten vervollständigt den vollen Befehl.
+- **icli2-Tool für den Agenten `self`:** Settings lesen/setzen, Modell wechseln - auch ANDERER Agenten (Agent laden, `agent.json` patchen, speichern; Agent muss nicht aktiv laufen). Falls isaa keine Spawn-API für fremde Agenten bietet, auch Spawn+Konfiguration+Aufgaben über das Tool. Registrierung nur für Agent `self`.
 - **Zwei Sprachen (Deutsch/Englisch), umschaltbar in `/settings`:**
   - Neue Datei `icli2/i18n.py`: ein Wörterbuch je Sprache und eine Funktion `t(schlüssel, **werte)`; fehlt ein Schlüssel, gilt der deutsche Text. Nur Standardbibliothek, damit `app.py` sie ohne Wartezeit laden kann.
   - Alle sichtbaren Texte über `t(...)` führen: Befehlsbeschreibungen (`COMMANDS` in `app.py`), Platzhalter, Kopf-/Fußzeile, Seitenleiste, Picker-Titel, Hinweise und Fehlermeldungen in `backend.py` und den Mixin-Dateien (`cloudm`, `voice`, `features`, `connect`, `plugin_install`, `bridges`, `vfsview`, `models`), Begrüßung in `theme.py` (`get_greeting(lang)` kann bereits `de`/`en`).
@@ -200,12 +204,25 @@ Alle geplanten Schritte sind umgesetzt. Das Vorgehen gilt für jede Erweiterung;
   - Befehlsnamen (`/agent`, `/model`, …) bleiben in beiden Sprachen gleich.
   - Prüfskript `tests/check_i18n.py`: beide Wörterbücher haben dieselben Schlüssel, jeder im Code benutzte Schlüssel existiert, Umschalten wirkt ohne Neustart.
   - Umfang: rund 300 Texte in 12 Dateien. Reihenfolge: erst `i18n.py` und `app.py`, dann Datei für Datei.
-- Große Features (docs, autodoc, autotest, autofix).
-- Plugin-Hooks (`hooks/hooks.json`) – bewusst nicht ausgeführt; bräuchten eine eigene Freigabe pro Plugin.
+- **Dynamische Widgets (interaktiv, nur Planung, keine Umsetzung):** NUR über das icli2-Tool des Agenten `self` verwendbar (nicht als eigenständiges Feature): Neuer Event-Typ `widget` in `protocol.py`; Agent liefert JSON (Titel, Text, Knöpfe/Felder, Callback-Id). `app.py` rendert Panel; Antwort geht als Nutzer-Eingabe mit Präfix `widget:<id>` zurück in den Lauf. Nur vordefinierte Aktionen aus dem Widget-JSON - kein Freitext.
 
-- Engine als eigener Prozess: `protocol.py` ist schon JSON-fähig; Transport analog `mods/icli_web/bridge.py`.
-- `icli_web` an `Engine.spawn`/Events anschließen statt an `run_agent_for_web`.
-- OpenRouter-Modellliste im Hintergrund nachladen (`fetch_openrouter_models` `icli.py:951`).
+### Verbindung zu `mods/isaa/ui` (Web-Oberfläche) - geplant
+
+Beide Oberflächen bleiben unabhängig startbar und nutzen dieselben Sessions (das System verifiziert das bereits). Kopplung nur über:
+
+1. **Gemeinsamen Datenordner** (`data_dir/Agents/...`): Sessions/Verläufe in denselben Dateien.
+2. **isaa-Kern als Vermittler:** beide nutzen dieselbe isaa-API (`get_agent`, Lauf-Start, Events). Ein in der icli2 gestarteter Lauf erscheint auch in der Web-UI und umgekehrt.
+
+Kein `icli_web`-Bezug, keine Brücke, keine gemeinsame Prozessarchitektur.
+
+### Plugin-Hooks - sicher einbauen (Standpunkt Markin)
+
+`hooks/hooks.json`-Ausführung bleibt standardmäßig aus. Einbau nur mit:
+
+1. Freigabe pro Plugin beim Installationszeitpunkt (Confirm-Flow `plugin_install.py`), nicht beim ersten Lauf.
+2. Hooks laufen im Sandbox-Profil des Plugins; kein Zugriff auf andere Agenten/Ordner.
+3. Timeouts und Zwangsbeenden bei Hänger; Ausgaben ins Lauf-Log.
+4. Kein Env-Zugriff des Hosts, keine Netzwerkfreigabe per Default.
 
 ## Bekannte Lücken und Risiken
 
@@ -218,24 +235,21 @@ Alle geplanten Schritte sind umgesetzt. Das Vorgehen gilt für jede Erweiterung;
 - **Frage-Erkennung ist eine Heuristik:** Gelb erscheint bei pausiertem Lauf oder wenn die Antwort mit `?` endet.
 - **`Alt+Ziffer`** wird nicht von jedem Terminal weitergegeben; `/open n` funktioniert immer.
 - **Referenzbilder** für das Design konnten nicht geöffnet werden; das Aussehen folgt dem Branding im Code.
-- `/mount` und `/model` sind gegen nachgebaute isaa-Objekte getestet, nicht gegen das echte VFS.
-
+- `/mount` und `/model` sind gegen nachgebaute isaa-Objekte getestet, nicht gegen das echte VFS. **Bedeutung:** das echte VFS (VFS-Layer des isaa-Mods, Berechtigungen, Mount-Pfade) wurde nicht mit echten Objekten geprüft - die Tests nutzen Nachbauten mit gleicher Schnittstelle.
 - **Jobs:** gegen den echten `JobScheduler` aus dem Repo getestet; Networks, Rückblick und Resume nur gegen Nachbauten.
-- **Job-Fehler:** Scheitert ein Job-Lauf, meldet die icli2 das dem Scheduler als Fehler (die alte icli meldete „completed“).
+- **Job-Fehler:** Scheitert ein Job-Lauf, meldet die icli2 das dem Scheduler als Fehler (die alte icli meldete "completed").
 - **`Umschalt+Enter`** kommt nicht in jedem Terminal an; `Strg+J` funktioniert überall.
-- OpenRouter-Modellliste wird nicht nachgeladen (Netzwerkabruf); Modellnamen lassen sich mit `/model name` direkt setzen.
-- Beendete Job-/Dream-Läufe aus `on_cli_exit` sind nach dem Schließen der UI nicht mehr sichtbar.
-
+- Beendete Job-/Dream-Läufe aus `on_cli_exit` sind nach dem Schliessen der UI nicht mehr sichtbar.
 - **Schritt 8/9 von Subagenten geschrieben**, von mir gegengelesen und die genutzten Signaturen im Quellcode nachgeprüft. Getestet nur gegen Nachbauten: kein echter Login, kein echter LiveSync-Server, kein Mikrofon, kein TTS, kein Gemini Live.
-- **Gerätewahl** bei `/voice` wird nicht gespeichert und gilt nur bis zum Beenden.
-- **`#audio`** nutzt fest Groq-TTS mit Stimme „autumn“ (wie die alte icli); die Emotions-Erkennung ist vereinfacht.
-- **Schritt 6/7 von Subagenten geschrieben.** `bridges.py` habe ich vollständig gegengelesen und gegen die echte Engine getestet; bei `features.py` und `connect.py` habe ich die genutzten Signaturen im Quellcode nachgeprüft, den Code aber nicht Zeile für Zeile gelesen.
+- **Gerätewahl bei `/voice`:** wird NICHT dauerhaft gespeichert - gilt nur bis zum Beenden. **Geplant:** `voice_input_device`, `voice_output_device` in `<appdata>/icli2/settings.json`, beim Start automatisch anwenden; zusätzlich in `/settings` anpassbar.
+- **`#audio`:** nutzt fest Groq-TTS mit Stimme "autumn" (wie die alte icli); Emotions-Erkennung vereinfacht. **Geplant:** `tts_provider`, `tts_voice` (+ Emotions-Schärfe) in `/settings` anpassbar.
+- **Schritt 6/7 von Subagenten geschrieben.** `bridges.py` vollständig gegengelesen und gegen die echte Engine getestet; bei `features.py` und `connect.py` genutzte Signaturen nachgeprüft, nicht Zeile für Zeile gelesen.
 - **Discord/Telegram nie real verbunden.** Die Erweiterungen selbst sind unverändert; geprüft ist nur, dass der Host-Ersatz genau die fünf Dinge bietet, die sie benutzen, und dass Läufe darüber in der UI erscheinen. Der Moderator-Agent (`discord_moderator` bzw. der Telegram-Moderator) muss in isaa existieren.
 - **Über Discord/Telegram gestartete Läufe** kennen kein `#new-ctx`, kein Fortsetzen pausierter Läufe und keine aktiven Skills (in der alten icli vorhanden).
 - **Features:** nur die sieben kleinen (desktop_auto, mini_web_auto, full_web_auto, isis_auto, coder, chain, execute); docs/autodoc/autotest/autofix fehlen. Abschalten wartet jetzt auf asynchrone Aufräumfunktionen (die alte icli tat das nicht).
 - **Plugins:** Hooks laufen nicht (auch nicht nach Installation). Abschaltliste `<appdata>/icli/plugins_disabled.json`; alle anderen Plugins werden beim Start geladen wie bisher.
-- **MCP:** neue Server werden nur gespeichert, wenn `agent.json` des Agenten existiert.
-- **Plugins:** Die alte icli benutzt `<appdata>/icli/plugins/.staging` direkt als Staging und löscht es komplett; eine dort angefangene Installation der icli2 geht verloren, wenn parallel in der alten icli installiert wird. Die icli2 überschreibt nie ein installiertes Plugin (die alte icli schon). Marketplace-Einträge mit relativem Pfad (`./plugins/x`) werden nicht unterstützt (in der alten icli ebenfalls nicht lauffähig). Bei `git-subdir` wird wie in der alten icli das ganze Repo geklont.
+- **MCP:** neue Server werden nur gespeichert, wenn `agent.json` des Agenten existiert (liegt unter `data_dir/Agents/<name>/agent.json` und existiert immer nach dem Bauen).
+- **Plugins (Marketplace):** Die alte icli benutzt `<appdata>/icli/plugins/.staging` direkt als Staging und löscht es komplett; eine dort angefangene icli2-Installation geht verloren, wenn parallel in der alten icli installiert wird. Die icli2 überschreibt nie ein installiertes Plugin (die alte icli schon). **Marketplace-Einträge mit relativem Pfad (`./plugins/x`):** der Pfad wird gegen das Arbeitsverzeichnis aufgelöst statt gegen die Wurzel des geklonten Marketplace-Repos - deshalb scheitert die Installation. Die alte icli hat dieselbe Schwäche. **Geplant:** relativen Pfad gegen die Clone-Wurzel auflösen. Bei `git-subdir` wird wie in der alten icli das ganze Repo geklont.
 - **UI-Prüfskript** ist zeitabhängig und kann unter hoher Last einmal fehlschlagen; ein zweiter Lauf geht dann durch.
 
 ## Patches anwenden

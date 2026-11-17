@@ -55,7 +55,7 @@ class B(BridgeMixin):
         if s.fail: raise RuntimeError("spawn kaputt")
         chunks = [c async for c in stream]; s.rec.append((agent, session, query, kind, chunks)); return "x"
 
-async def settle(): 
+async def settle():
     for _ in range(5): await asyncio.sleep(0)
 
 async def main():

@@ -164,40 +164,44 @@ def register_wizard_routes(app) -> None:
                 "env_saved": bool(env_out), "generated": generated,
                 "profile": profile, "first_run": False}
     # --- Account link (WP1 K3) ------------------------------------------------
+    # --- Account link (WP1 K3) ------------------------------------------------
+    def _loopback_guard(request: ParsedRequest):
+        from toolboxv2.utils.workers.fast.local_ui import _ensure_local
+        return _ensure_local(request)
+
     @app.get("/api/account/status", auth=False)
     def account_status(request: ParsedRequest):
+        err = _loopback_guard(request)
+        if err is not None:
+            return err
         from toolboxv2.utils.clis.first_run import account_state
         return account_state()
 
     @app.post("/api/account/sync", auth=False)
     def account_sync(request: ParsedRequest):
-        """Trigger a local <-> cloud sync run (WP1 S3). Loopback only,
-        non-blocking: fire-and-forget background thread."""
-        import threading
-        from toolboxv2.mods.CloudM.sync.global_sync import run_sync_once
+        """Trigger one account sync run (WP1 Teil 10). Loopback only."""
+        err = _loopback_guard(request)
+        if err is not None:
+            return err
+        from toolboxv2.mods.CloudM.auth.device_account import read_device_owner
         from toolboxv2 import get_app
-
-        def _bg():
-            try:
-                app = get_app("sync.trigger")
-                run_sync_once(app)
-            except Exception:
-                pass  # sync is best-effort, never breaks the API
-
-        threading.Thread(target=_bg, daemon=True).start()
+        app = get_app()
+        if not read_device_owner(app):
+            return 409, {"error": "no-account"}
+        from toolboxv2.mods.CloudM.LiveSync.data_api_sync import run_sync_in_background
+        run_sync_in_background(app)
         return 202, {"started": True}
 
     @app.post("/api/account/start", auth=False)
     def account_start(request: ParsedRequest):
-        from toolboxv2.utils.clis.first_run import _start_account_link, account_state
+        err = _loopback_guard(request)
+        if err is not None:
+            return err
+        from toolboxv2.utils.clis.first_run import start_account_link_bg, account_state
         data = _json(request)
         method = data.get("method")
         if method is not None and method not in ("discord", "google", "passkey"):
             return 400, {"error": f"unknown method '{method}'"}
-        owner = _start_account_link(None, method=method)
-        if owner is None:
-            return 502, {"error": "remote login failed or timed out"}
-        st = account_state()
-        st["ok"] = True
-        return st
+        start_account_link_bg(method)
+        return 202, account_state()
 
