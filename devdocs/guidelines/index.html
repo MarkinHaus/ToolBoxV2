@@ -1201,6 +1201,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#anti-muster-der-test-patcht-weg-was-im-betrieb-kaputt-ist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Anti-Muster: Der Test patcht weg, was im Betrieb kaputt ist
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#environment-regel-genau-eine-env-r1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3229,6 +3240,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#anti-muster-der-test-patcht-weg-was-im-betrieb-kaputt-ist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Anti-Muster: Der Test patcht weg, was im Betrieb kaputt ist
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#environment-regel-genau-eine-env-r1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3510,7 +3532,10 @@
 <li>[ ] <strong>Registration:</strong> Das <code>export = get_app(...).tb</code> Pattern wird genutzt.</li>
 <li>[ ] <strong>Integrity:</strong> <code>__slots__</code> verwendet und Atomic Writes implementiert.</li>
 <li>[ ] <strong>Compatibility:</strong> <code>REQUIRED_DEPS</code> definiert.</li>
+<li>[ ] <strong>Tests:</strong> nach <code>docs/devdocs/testing_guide.md</code> – Doubles nur an der Prozessgrenze, Gegenprobe (Fix zurück → rot), bei Paket-/Import-Änderungen Test gegen das gebaute Wheel.</li>
 </ul>
+<h2 id="anti-muster-der-test-patcht-weg-was-im-betrieb-kaputt-ist">Anti-Muster: Der Test patcht weg, was im Betrieb kaputt ist<a class="headerlink" href="#anti-muster-der-test-patcht-weg-was-im-betrieb-kaputt-ist" title="Permanent link">&para;</a></h2>
+<p><strong>Verboten.</strong> Ein Test darf weder den Code unter Test noch einen eigenen Mitspieler aus <code>toolboxv2</code> ersetzen, der im Betrieb zwischen Eingang und Prozessgrenze läuft. Ein solcher Test bleibt grün, während der Betrieb kaputt ist (belegt auf <code>master</code> @ <code>c36c3dc</code>: Kontopflicht, Kontodatei, Paket ohne LiveSync, Datei-Uploads). Regeln, Beispiele und Prüfliste: <code>docs/devdocs/testing_guide.md</code>; Arbeitsablauf für Agenten: <code>docs/devdocs/agent_arbeitsprotokoll.md</code>.</p>
 <hr />
 <h2 id="environment-regel-genau-eine-env-r1">Environment-Regel: Genau eine <code>.env</code> (R1)<a class="headerlink" href="#environment-regel-genau-eine-env-r1" title="Permanent link">&para;</a></h2>
 <p><strong>Kein Test, sondern Entwicklungsregel.</strong> Gilt für jeden Contributor und jeden Agenten-Run:</p>
