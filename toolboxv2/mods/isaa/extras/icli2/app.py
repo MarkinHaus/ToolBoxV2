@@ -337,8 +337,6 @@ class ICli2(App):
             if d.get("tag") or not self.focus_run:
                 self._focus(ev.run)
             self._signal("run")
-            if d.get("steer"):
-                await view.note("↪ Nachsteuerung an laufenden Lauf gesendet")
         elif ev.kind == P.RUN_END and view:
             await view.close()
             view.status, view.ended = d["status"], time.monotonic()
@@ -372,7 +370,10 @@ class ICli2(App):
             else:
                 self._pick(d["what"], d["title"], d["rows"])
         elif ev.kind == P.NOTICE:
-            await self._note(d["text"], d.get("level", "info"))
+            if view:                                     # gehoert zu einem Lauf
+                await view.note(d["text"], d.get("level", "info"))
+            else:
+                await self._note(d["text"], d.get("level", "info"))
 
     def _focus(self, run: str) -> None:
         self.focus_run = run

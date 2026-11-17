@@ -15,6 +15,7 @@ REASON_KEYS = ("reason", "reasoning", "thought", "why", "purpose", "intent",
 PRIMARY_KEYS = ("command", "cmd", "path", "query", "url", "filename", "file", "task",
                 "pattern", "code", "name", "tools", "category")
 LINE = 72
+MAX_DEPTH = 6        # tiefer verschachtelte Werte werden als Text gezeigt
 
 
 def parse(value: Any) -> Any:
@@ -31,11 +32,11 @@ def parse(value: Any) -> Any:
     return value
 
 
-def _one_line(value: Any, limit: int = LINE) -> str:
-    if isinstance(value, dict):
-        text = ", ".join(f"{k} {_one_line(v, 24)}" for k, v in value.items())
-    elif isinstance(value, (list, tuple)):
-        text = ", ".join(_one_line(v, 24) for v in value)
+def _one_line(value: Any, limit: int = LINE, depth: int = 0) -> str:
+    if isinstance(value, dict) and depth < 2:
+        text = ", ".join(f"{k} {_one_line(v, 24, depth + 1)}" for k, v in value.items())
+    elif isinstance(value, (list, tuple)) and depth < 2:
+        text = ", ".join(_one_line(v, 24, depth + 1) for v in value)
     else:
         text = " ".join(str(value).split())
     return text[: limit - 1] + "…" if len(text) > limit else text
@@ -62,7 +63,7 @@ def summary(args: Any) -> str:
         return ""
     first = keys[0]
     rest = len(args) - 1
-    text = f"{first} using {_one_line(args[first], LINE - len(first) - 12)}"
+    text = f"{first} using {_one_line(args[first], max(20, LINE - len(str(first)) - 12))}"
     return text + (f"  +{rest}" if rest else "")
 
 
@@ -70,6 +71,8 @@ def detail(value: Any, indent: int = 0) -> str:
     """Mehrzeilige Ansicht ohne Klammern und Anfuehrungszeichen."""
     value = parse(value)
     pad = "  " * indent
+    if indent >= MAX_DEPTH and isinstance(value, (dict, list, tuple)):
+        return f"{pad}{_one_line(value)}"
     if isinstance(value, dict):
         if not value:
             return f"{pad}(leer)"

@@ -54,6 +54,8 @@ class IsaaBackend:
         self._spawn: Any = None                          # Engine.spawn, gesetzt ueber attach()
         self._jobs: Any = None
         self._job_callback: Any = None
+        self._unrestored: dict[str, dict] = {}           # pausierte Laeufe, die nicht ladbar waren
+        self._tasks: set[asyncio.Task] = set()
 
     def attach(self, spawn: Any) -> None:
         self._spawn = spawn
@@ -88,6 +90,16 @@ class IsaaBackend:
             "complex_model": getattr(agent.amd, "complex_llm_model", "?"),
             "mounts": len(getattr(vfs, "mounts", {}) or {}),
         }
+
+    async def _switch(self, agent: str | None = None, session: str | None = None) -> dict[str, Any]:
+        """Agent/Session wechseln; schlaegt das Laden fehl, bleibt der alte Zustand."""
+        old = (self.agent, self.session)
+        self.agent, self.session = agent or self.agent, session or self.session
+        try:
+            return await self._ready(recap=True)
+        except BaseException:
+            self.agent, self.session = old
+            raise
 
     async def boot(self) -> dict[str, Any]:
         self.isaa = self.app.get_mod("isaa")             # schwerer Import: hier, nicht in der UI
@@ -159,7 +171,9 @@ class IsaaBackend:
         if entry is None:
             raise LookupError(f"Job {job} nicht gefunden")
         if op == "fire":
-            asyncio.ensure_future(self._jobs._fire_job(entry))      # wie module.py
+            task = asyncio.ensure_future(self._jobs._fire_job(entry))   # wie module.py
+            self._tasks.add(task)
+            task.add_done_callback(self._job_done)
             return {"text": f"Job {entry.name} gestartet"}
         if op == "pause":
             paused = entry.status == "paused"
@@ -170,6 +184,11 @@ class IsaaBackend:
             return {"text": f"Job {entry.name} gelöscht"}
         raise ValueError(f"Unbekannte Job-Aktion {op}")
 
+    def _job_done(self, task: asyncio.Task) -> None:
+        self._tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            self.app.logger.warning(f"icli2 job: {task.exception()}")
+
     async def _do_job_add(self, spec: str) -> dict[str, Any]:
         """'/job alle 30m name: auftrag' | '/job um 09:00 name: auftrag' | '/job start name: auftrag'"""
         from toolboxv2.mods.isaa.extras.jobs import JobDefinition, TriggerConfig
@@ -178,6 +197,8 @@ class IsaaBackend:
         if not match:
             raise ValueError(JOB_HELP)
         every, amount, unit, at, hour, minute, _start, name, query = match.groups()
+        if (every and int(amount) < 1) or (at and (int(hour) > 23 or int(minute) > 59)):
+            raise ValueError(JOB_HELP)
         if every:
             trigger = TriggerConfig(trigger_type="on_interval",
                                     interval_seconds=int(amount) * (60 if unit.lower() == "m" else 3600))
@@ -213,9 +234,12 @@ class IsaaBackend:
         return found
 
     def _save_paused(self) -> None:
-        path, found = self._resume_file(), self._collect_paused()
+        path = self._resume_file()
+        found = {**self._unrestored, **self._collect_paused()}
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(found, default=str), encoding="utf-8")
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(found, default=str), encoding="utf-8")
+        os.replace(tmp, path)                            # nie eine halbe Datei hinterlassen
 
     async def _restore_paused(self) -> None:
         """Wie icli.py:_restore_resumable_executions - Kontexte als 'paused' zurueck in
@@ -226,14 +250,18 @@ class IsaaBackend:
         from toolboxv2.mods.isaa.base.Agent.execution_engine import ExecutionContext
         pending = json.loads(await asyncio.to_thread(path.read_text, "utf-8"))
         for run_id, entry in pending.items():
-            agent = await self._agent(entry.get("agent_name", "self"))
-            engine = agent._get_execution_engine()
-            if run_id in engine._active_executions:
-                continue
-            ctx = ExecutionContext.from_checkpoint(entry.get("checkpoint", {}))
-            ctx.status = "paused"
-            engine._active_executions[ctx.run_id] = ctx
-            engine._session_last_run.setdefault(ctx.session_id, ctx.run_id)
+            try:
+                agent = await self._agent(entry.get("agent_name", "self"))
+                engine = agent._get_execution_engine()
+                if run_id in engine._active_executions:
+                    continue
+                ctx = ExecutionContext.from_checkpoint(entry.get("checkpoint", {}))
+                ctx.status = "paused"
+                engine._active_executions[ctx.run_id] = ctx
+                engine._session_last_run.setdefault(ctx.session_id, ctx.run_id)
+            except Exception as e:                       # Eintrag behalten, naechster Start versucht es erneut
+                self._unrestored[run_id] = entry
+                self.app.logger.warning(f"icli2 resume {run_id}: {e}")
 
     # ── Picker-Zeilen ────────────────────────────────────────────────────────
     async def rows(self, what: str) -> dict[str, Any]:
@@ -316,9 +344,7 @@ class IsaaBackend:
             return await self._do_network_load(name[4:])
         if name not in await self._agents():
             raise LookupError(f"Agent '{name}' ist nicht registriert")
-        await self._agent(name)                          # baut ihn, haengt gepackte Tools an
-        self.agent = name
-        return {"ready": await self._ready(recap=True)}
+        return {"ready": await self._switch(agent=name)}   # baut ihn, haengt gepackte Tools an
 
     # ── Agent-Networks ───────────────────────────────────────────────────────
     async def _do_network_save(self) -> dict[str, Any]:
@@ -342,9 +368,9 @@ class IsaaBackend:
         agents, warnings = await self.isaa.import_agent_network(str(file))
         if not agents:
             raise RuntimeError("; ".join(warnings) or "Network leer")
-        self.agent = file.name[:-7] if file.name[:-7] in agents else next(iter(agents))
+        entry = file.name[:-7] if file.name[:-7] in agents else next(iter(agents))
         text = f"Network geladen: {', '.join(agents)}"
-        return {"ready": await self._ready(recap=True),
+        return {"ready": await self._switch(agent=entry),
                 "text": text + (f" · {len(warnings)} Warnungen" if warnings else "")}
 
     async def _do_model(self, name: str, target: str = "both") -> dict[str, Any]:
@@ -371,9 +397,7 @@ class IsaaBackend:
     async def _do_session(self, name: str) -> dict[str, Any]:
         if name == "+":
             name = datetime.now().strftime("s-%m%d-%H%M%S")
-        self.session = name
-        await self._session()
-        return {"ready": await self._ready(recap=True)}
+        return {"ready": await self._switch(session=name)}
 
     async def _do_session_clear(self) -> dict[str, Any]:
         """Wie '/session clear' der alten icli: Page-Engine ueber clear_session,
@@ -482,8 +506,9 @@ class IsaaBackend:
         except Exception as e:
             self.app.logger.warning(f"icli2 save paused: {e}")
         if self._jobs is not None and self._job_callback is not None:
-            try:
-                await self._jobs.fire_lifecycle("on_cli_exit")
-                await self._jobs.stop()
-            finally:
-                self._jobs._fire_callback = self._job_callback
+            for step in (lambda: self._jobs.fire_lifecycle("on_cli_exit"), self._jobs.stop):
+                try:
+                    await step()
+                except Exception as e:
+                    self.app.logger.warning(f"icli2 job shutdown: {e}")
+            self._jobs._fire_callback = self._job_callback

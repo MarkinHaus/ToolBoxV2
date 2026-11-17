@@ -114,38 +114,69 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 - **Session-Rückblick:** Beim Agent- oder Session-Wechsel werden die letzten Nachrichten angezeigt.
 - **Pausierte Läufe überleben den Neustart:** Beim Beenden nach `<appdata>/icli2/resume.json` gesichert, beim Start als „paused“ zurück in die Engine; die nächste Nachricht in der Session setzt fort.
 - Behoben: `Esc` schließt jetzt offene Picker (wurde vorher vom Stopp-Kürzel abgefangen).
+- Unabhängiges Code-Review eingearbeitet (10 Funde): übergebener Stream wurde verworfen (Dream-Jobs liefen als normaler Chat), früh scheiternde Läufe blieben in der UI hängen, Shutdown ließ Tasks zurück, Scheduler-Stopp, Resume-Datei atomar und pro Eintrag, Wertebereiche bei `/job`, Formatierer gegen kaputte/tief verschachtelte Werte, Zustand wechselt erst nach Erfolg.
+- Prüfskripte liegen jetzt im Repo: `tests/check_ui.py`, `tests/check_backend.py`, `tests/check_autopack.py`.
 
-## Offen
+## Offen – Arbeitsanleitung für die restlichen Schritte
 
-### Schritt 6 – Skills, MCP, Plugins, Features
-- Ein Picker je Bereich mit An/Aus-Schalter statt Subcommands.
-- Feature-Lader aus der alten icli (`load_*_feature`) wiederverwenden; dafür ggf. aus `icli.py` in ein eigenes Modul auslagern (Kopie in neue Datei, alte Datei bleibt).
-- Aktive Features in der Kopfzeile.
+Geschrieben für einen kleinen Agenten. Ein Schritt pro Durchgang, in dieser Reihenfolge.
 
-### Schritt 7 – Discord (und Telegram)
-- Ziel: `patch_cli_for_discord(host)` und `DiscordCLIExtension` laufen unverändert.
-- Die Integration braucht vom Host nur: `isaa_tools`, `active_agent_name`, `_handle_command`, `_build_completer`, `run_agent_monitored`. Dafür ein schlanker Host-Adapter im Engine-Thread, der genau diese fünf Punkte bereitstellt.
-- `/discord …` wird unverändert an die Extension durchgereicht; ihre Textausgabe landet als Hinweis im Chat.
-- Discord-Läufe erscheinen als normale Läufe in der Seitenleiste.
-- Telegram funktioniert nach demselben Muster (`TelegramCliExtension`).
-- Risiko: Die Extension gibt per `print` aus; die Ausgabe muss in der Engine abgefangen werden.
+### Vorgehen für jeden Schritt (immer gleich)
+
+1. **Erst nachsehen, dann nutzen.** Zu jedem Punkt steht unten, wo die Funktion im System schon existiert. Stelle öffnen, Signatur lesen, erst dann schreiben. Nichts nachbauen, was es gibt. `flows/isaa/icli.py` nie importieren (lädt Audio/Omni) und nie ändern – nur lesen.
+2. **Nur drei Stellen anfassen:**
+   - `backend.py`: `_rows_<was>()` liefert `(titel, [ _row(value, label, hint) ])`, `_do_<aktion>(**args)` liefert `{"ready": …}` und/oder `{"text": …}`. Fehler als Exception werfen, die Engine zeigt sie an.
+   - `app.py`: Eintrag in `COMMANDS`, ein `elif` in `_command` (`do("aktion", …)` oder `ask("was")`), bei Picker-Auswahl ein `elif` in `_pick`.
+   - `engine.py` und `protocol.py` bleiben unverändert, außer der Schritt verlangt es ausdrücklich.
+3. **Regeln:** `app.py` wartet auf nichts (kein Datei-, Netz- oder isaa-Zugriff). Blockierendes im Backend in `asyncio.to_thread`. Lang laufende Dinge über `self._spawn(agent, session, query, kind=…)`, damit sie als Lauf in der UI erscheinen.
+4. **Prüfen:** In `tests/check_ui.py` die Fake-Klasse um die neuen `rows`/`do` erweitern und die Bedienung per `pilot.press` durchspielen; in `tests/check_backend.py` das Backend gegen Nachbauten (oder echte, leicht importierbare Module) testen. Alle drei Skripte müssen durchlaufen.
+5. **Abschluss:** `PLAN.md` aktualisieren (Befehlstabelle, „Erledigt“, Lücken), committen, pushen, Patch als reinen Diff gegen den vorherigen Schritt erzeugen (`git diff <letzter-schritt-commit> HEAD > icli2-0N-name.patch`) und mit `git apply --check` auf dem Vorgänger prüfen.
+
+### Schritt 6 – Features, Skills, MCP, Plugins
+
+| Befehl | Vorhandenes im System (zuerst lesen) | Umsetzung |
+|---|---|---|
+| `/feature` | `icli.py:1912` `SimpleFeatureManager` (`list_features`, `enable`, `disable`, `is_enabled`, `set_agent`), Lader `load_*_feature(fm)` ab `icli.py:1950`; Nutzung `_cmd_feature` `icli.py:13494` | Die Klasse und die Lader hängen an `icli.py`. Kopie in neue Datei `icli2/features.py` (nur die Klasse und die kleinen Lader: desktop_auto, web_auto, isis, full_web_auto, coder_toolkit, chain_toolkit, execute; die großen docs/autodoc/autotest/autofix erst, wenn gebraucht). Picker mit `✓`/`·` im Label, Enter schaltet um. Aktive Features in READY als `features` und in der Kopfzeile. |
+| `/skill` | `_cmd_skill` `icli.py:12688`, `_cmd_skill_invoke` `icli.py:9952`, `_refresh_skill_names` `icli.py:9918`; SkillsManager in `mods/isaa/base/Agent/skills.py` | Picker listet Skills des aktiven Agenten; Enter aktiviert den Skill für die nächste Nachricht (alte Logik: Instruktion wird der Anfrage vorangestellt, siehe `_active_skill_context` in `icli.py:14505`). Dafür im Backend `self._skill_context` halten und in `stream()` vor die Query setzen. |
+| `/mcp` | `_cmd_mcp` `icli.py:9110`, `_mcp_connect_and_register` `icli.py:9382`, `mods/isaa/extras/mcp_session_manager.py` | Picker listet konfigurierte Server mit Status; Enter verbindet/trennt. Hinzufügen per `/mcp name befehl args…` (kein Wizard). |
+| `/plugin` | `_load_all_plugins` `icli.py:9461`, `ClaudeCodePluginParser` `icli.py:4273`, `scan_plugin_dir` `icli.py:4354`, `_cmd_plugin` `icli.py:9625` | Nur Liste und An/Aus. Installation aus Git/Marketplace bleibt in der alten icli. |
+
+Fertig, wenn: jeder der vier Befehle einen Picker öffnet, Umschalten eine Rückmeldung als Hinweis zeigt und der Zustand nach erneutem Öffnen stimmt.
+
+### Schritt 7 – Discord und Telegram (unverändert weiterverwenden)
+
+- **Vorhanden:** `mods/isaa/extras/discord_interface/integration_example.py:74` `patch_cli_for_discord(host)`, `discord_cli_extension.py` `DiscordCLIExtension(host)` mit `handle_command(args)` und `get_completer_dict`; Telegram: `mods/isaa/extras/telegram_interface/telegram_cli_extension.py` `TelegramCliExtension(host)` mit `handle_command(args_str)`. Aufruf in der alten icli: `icli.py:15427` (`run`).
+- **Was die Extension vom Host braucht** (per Suche bestätigt): `host.isaa_tools`, `host.active_agent_name`, `host._handle_command`, `host._build_completer`, `host.run_agent_monitored`, `host.discord_ext`.
+- **Umsetzung:** neue Datei `icli2/host_shim.py` mit Klasse `HostShim`:
+  - `isaa_tools` = `backend.isaa`, `active_agent_name` als Property auf `backend.agent`.
+  - `_handle_command(text)`: no-op (wird von `patch_cli_for_discord` umhüllt); `_build_completer()` gibt `({}, None)` zurück.
+  - `run_agent_monitored(agent_name, query, kind=…, **kw)`: Signatur und Chunk-Format aus `icli.py:6211` übernehmen. Als Async-Generator umsetzen, der die Chunks von `agent.a_stream` durchreicht **und** denselben Lauf über `Engine.spawn(..., stream=<tee>)` in der UI zeigt. Dafür die Chunks in eine `asyncio.Queue` spiegeln.
+  - Im Backend `boot()`: `patch_cli_for_discord(shim)` in `try/except ImportError`.
+  - `_do_discord(args)` ruft `shim._handle_command("/discord " + args)`; Telegram analog über `shim.telegram_ext.handle_command`.
+- **Ausgabe abfangen:** Die Extensions geben per `print`/`c_print` aus. Im `_do_discord` mit `contextlib.redirect_stdout(io.StringIO())` einfangen und als `{"text": …}` zurückgeben (ANSI mit `toolboxv2.remove_styles` entfernen).
+- `/discord` ohne Argument: Picker mit den Unterbefehlen aus `get_completer_dict()`.
+- Fertig, wenn: `/discord status` die Ausgabe der Extension als Hinweis zeigt und ein über den Shim gestarteter Lauf als Block mit `origin` „discord“ erscheint (im Test mit Fake-Extension prüfen).
 
 ### Schritt 8 – CloudM
-- Anmeldestatus in der Kopfzeile, `/login` über die vorhandene CloudM-Auth.
-- `/mount` zeigt zusätzlich per LiveSync geteilte Ordner (`CloudM/LiveSync/vfs_adapter.py`).
-- ToolBox-Mod-Funktionen aus der Palette aufrufen, Ergebnis im Chat.
+
+- **Vorhanden:** `mods/CloudM/` (`Auth.py`, `LogInSystem.py`, `UserAccountManager.py`), `mods/CloudM/LiveSync/vfs_adapter.py`; ToolBox-Funktionen über `app.functions`, Aufruf über `app.a_run_any((mod, fn), **kwargs)`; VFS-Shares der alten icli: `_load_vfs_shares` `icli.py:4895`, `_autostart_vfs_shares` `icli.py:4914`, `flows/isaa/vfs_remote_sync.py`.
+- **Zuerst klären (lesen, nicht raten):** wie die CLI den Anmeldestatus liest (in `LogInSystem.py` nach der CLI-Login-Funktion suchen) und welche Funktion in `vfs_adapter.py` einen geteilten Ordner in ein VFS einhängt.
+- **Umsetzung:** `/login` (Status anzeigen, sonst Login-Funktion aufrufen; Eingaben nie in der UI-Schicht verarbeiten), Benutzername in READY als `user` und in der Kopfzeile; `_rows_mounts` um geteilte Ordner ergänzen (Wert `share:<id>`), `_do_unmount`/`_do_mount` entsprechend verzweigen; `/tb` öffnet einen Picker über `app.functions` (Label `mod.funktion`), Enter ruft ohne Argumente auf, `/tb mod fn key=wert …` mit Argumenten; Ergebnis über `fmt.detail` als Hinweis.
 
 ### Schritt 9 – Audio und Omni
-- `F4` Spracheingabe, Vorlesen, Omni-Session; alles erst beim ersten Gebrauch geladen.
-- Pegelanzeige in der Fußzeile.
+
+- **Vorhanden:** `_handle_audio_command` `icli.py:11005`, `_ensure_audio_setup` `icli.py:4613`, `_record_audio`/`_process_recorded_audio` `icli.py:5446`/`5478`, `_enqueue_speech` `icli.py:10726`, Satz-Pufferung beim Vorlesen in `_drain_agent_stream` `icli.py:14672`; Omni: `_handle_omni_command` `icli.py:11567`, `_make_omni_tools` `icli.py:11374`; Module unter `mods/isaa/base/audio_io/`.
+- **Umsetzung:** neue Datei `icli2/voice.py`, die alle Audio-Importe erst beim ersten Aufruf lädt. `F4` sendet `DO voice_toggle`; Backend nimmt auf, transkribiert und gibt den Text als READY-Zusatz `draft` zurück, den die UI in die Eingabe setzt. Vorlesen: in `backend.stream` Content-Chunks satzweise an den Player geben (Logik aus `_drain_agent_stream`). `/voice` Picker: Vorlesen an/aus, Gerät wählen, Omni starten/stoppen. Pegel als STATUS-Feld in die Fußzeile.
 
 ### Danach
-- Engine als eigener Prozess (Läufe überleben `/q`, erneutes Verbinden).
-- Web-Brücke (`icli_web`) an das neue Protokoll anschließen.
-- Automatisierte Tests ins Repo übernehmen.
+
+- Engine als eigener Prozess: `protocol.py` ist schon JSON-fähig; Transport analog `mods/icli_web/bridge.py`.
+- `icli_web` an `Engine.spawn`/Events anschließen statt an `run_agent_for_web`.
+- OpenRouter-Modellliste im Hintergrund nachladen (`fetch_openrouter_models` `icli.py:951`).
 
 ## Bekannte Lücken und Risiken
 
+- **Review-Fixes** sind über die Prüfskripte abgedeckt, aber wie alles andere nicht gegen den echten isaa-Mod gelaufen.
 - **Nur mit Fake-Agent getestet.** Der Pfad über den echten isaa-Mod (Agent bauen, `a_stream`, Pause, Auto-Pack mit echten Tools) ist noch nie gelaufen.
 - **Datenordner:** `data_dir` hängt vom App-Namen ab. Läuft ein Flow unter einem anderen Namen als `isaa-host`, liegen seine Agenten evtl. in einem anderen Ordner und erscheinen nicht.
 - **Nicht jedes Tool ist packbar:** Tools mit offenen Verbindungen, Prozessen oder Locks lassen sich nicht serialisieren und fehlen nach dem Laden.
@@ -175,9 +206,10 @@ pip install "textual>=8"
 ## Mini-Prompt zum Fortfahren
 
 ```
-Lies toolboxv2/mods/isaa/extras/icli2/PLAN.md und setze den nächsten offenen Schritt um.
-Regeln aus dem Plan einhalten (UI wartet auf nichts, nur backend.py kennt isaa,
-vorhandene Funktionen nutzen, alte icli.py nicht ändern). Headless testen,
-PLAN.md aktualisieren, committen, pushen und mir den Schritt als .patch
-(reiner Diff, aufbauend auf den vorherigen) schicken.
+Lies toolboxv2/mods/isaa/extras/icli2/PLAN.md, Abschnitt "Offen – Arbeitsanleitung".
+Setze genau den nächsten offenen Schritt um und halte dich an "Vorgehen für jeden Schritt":
+zuerst die genannten Stellen im System lesen und vorhandene Funktionen nutzen, nur
+backend.py/app.py (plus die im Schritt genannte neue Datei) anfassen, icli.py nie ändern.
+Prüfskripte in icli2/tests erweitern und alle drei ausführen, PLAN.md aktualisieren,
+committen, pushen und mir den Schritt als .patch (reiner Diff auf dem Vorgänger) schicken.
 ```

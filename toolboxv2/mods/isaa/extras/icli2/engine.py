@@ -40,6 +40,14 @@ def _succeeded(result: Any) -> bool:
     return result.get("success", True) is not False if isinstance(result, dict) else True
 
 
+def _show(value: Any, limit: int) -> dict[str, str]:
+    """Kopfzeile + Details; ein Formatierfehler darf nie einen Lauf beenden."""
+    try:
+        return {"summary": fmt.summary(value), "detail": fmt.clip(fmt.detail(value), limit)}
+    except Exception:
+        return {"summary": "", "detail": fmt.clip(str(value), limit)}
+
+
 class _Run:
     __slots__ = ("id", "agent", "session", "task", "buf", "kind", "sub", "timer", "ended", "result")
 
@@ -146,7 +154,15 @@ class Engine:
                 await asyncio.wait_for(self._backend.close(), 10)
             except Exception as e:
                 self._emit(P.NOTICE, level="warn", text=f"close: {e}")
-            heart.cancel()
+            # alles, was jetzt noch lebt (Admin-Tasks, beim Schliessen gestartete Laeufe)
+            rest = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+            for task in rest:
+                task.cancel()
+            await asyncio.gather(*rest, return_exceptions=True)
+            for run in list(self._runs.values()):        # Laeufe, die nie anliefen
+                if run.result is not None and not run.result.done():
+                    run.result.cancel()
+            self._runs.clear()
 
     async def _boot(self) -> None:
         try:
@@ -230,18 +246,23 @@ class Engine:
                     return str(meta)
             except Exception:
                 pass
-        return fmt.result_summary(result)
+        try:
+            return fmt.result_summary(result)
+        except Exception:
+            return ""
 
     async def _chat(self, run: _Run, query: str, boot: asyncio.Task, tag: str = "",
                     kind: str = "chat", stream: Any = None) -> None:
         status, answer, error = "done", "", ""
         started: dict[str, float] = {}
-        stream = None
+        # 2) RUN_START vor allem, was scheitern kann: die UI sieht jeden Lauf und sein Ende
+        self._emit(P.RUN_START, run.id, agent=run.agent, session=run.session,
+                   query=query, tag=tag, origin=kind)
         try:
             await asyncio.shield(boot)
-            steer = await self._backend.is_running(run.agent, run.session)
-            self._emit(P.RUN_START, run.id, agent=run.agent, session=run.session,
-                       query=query, steer=steer and kind == "chat", tag=tag, origin=kind)
+            if kind == "chat" and await self._backend.is_running(run.agent, run.session):
+                self._emit(P.NOTICE, run.id, level="info",
+                           text="↪ Nachsteuerung an laufenden Lauf gesendet")
             if stream is None:
                 stream = self._backend.stream(run.agent, run.session, query)
             async for chunk in stream:
@@ -264,8 +285,7 @@ class Engine:
                     started[tid] = time.monotonic()
                     args = fmt.parse(chunk.get("args", chunk.get("input", chunk.get("arguments", ""))))
                     self._emit(P.TOOL_START, run.id, id=tid, name=chunk.get("name", "?"),
-                               sub=sub, summary=fmt.summary(args), reason=bool(fmt.reason_of(args)),
-                               detail=fmt.clip(fmt.detail(args), ARGS_LIMIT))
+                               sub=sub, **_show(args, ARGS_LIMIT))
                 elif t in ("tool_result", "tool_error"):
                     tid = str(chunk.get("id") or chunk.get("name", "?"))
                     secs = time.monotonic() - started.pop(tid, time.monotonic())
@@ -273,8 +293,7 @@ class Engine:
                     name = chunk.get("name", "?")
                     self._emit(P.TOOL_END, run.id, id=tid, name=name, sub=sub,
                                ok=t == "tool_result" and _succeeded(result),
-                               summary=self._meta(name, result),
-                               detail=fmt.clip(fmt.detail(result), RESULT_LIMIT),
+                               **{**_show(result, RESULT_LIMIT), "summary": self._meta(name, result)},
                                secs=round(secs, 2))
                 elif t == "final_answer":
                     answer = str(chunk.get("answer", chunk.get("content", "")) or "")
