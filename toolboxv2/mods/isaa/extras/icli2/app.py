@@ -12,7 +12,8 @@ from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Collapsible, Input, Markdown, Static
+from textual.message import Message
+from textual.widgets import Collapsible, Markdown, Static, TextArea
 
 from . import VERSION
 from . import protocol as P
@@ -23,6 +24,9 @@ from .theme import DIM, ISAA_THEME, SYM, G, banner
 FRAME = 1 / 30                 # Abholtakt fuer Engine-Events
 EVENTS_PER_FRAME = 200         # Obergrenze je Frame: UI bleibt auch bei Flut bedienbar
 SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+RUN_SYM = {"running": SYM["agent"], "done": SYM["done"], "failed": SYM["fail"],
+           "stopped": "■", "paused": SYM["pause"]}
+KEEP_RUNS = 30
 END_MARK = {"done": "", "failed": f"{SYM['fail']} fehlgeschlagen", "stopped": "■ gestoppt",
             "paused": f"{SYM['pause']} pausiert – nächste Nachricht setzt fort"}
 
@@ -32,6 +36,11 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "/model": ("[name] [fast|complex]", "Modell des Agenten wählen"),
     "/session": ("[name|+]", "Session wechseln oder neu anlegen"),
     "/mount": ("[ordner]", "Ordner einhängen, ohne Argument: Mounts verwalten"),
+    "/task": ("", "Läufe ansehen, Fokus wechseln"),
+    "/job": ("[name: auftrag]", "Jobs verwalten, mit Argument: Job anlegen"),
+    "/dream": ("", "Nächtlichen Dream-Job für den Agenten anlegen"),
+    "/network": ("[datei]", "Agent-Network laden, ohne Argument: aktuelles speichern"),
+    "/side": ("", "Seitenleiste ein/aus (F2)"),
     "/new": ("", "Neue Session mit leerem Kontext"),
     "/reset": ("", "Verlauf der aktuellen Session leeren"),
     "/open": ("[n]", "Letzte n Tool-Ergebnisse aufklappen"),
@@ -42,6 +51,8 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "/q": ("", "Beenden"),
 }
 ALIASES = {"/quit": "/q", "/exit": "/q"}
+JOB_ACTIONS = [("fire", "jetzt ausführen", ""), ("pause", "pausieren / fortsetzen", ""),
+               ("remove", "löschen", "")]
 MODEL_TARGETS = [("both", "beide", "schnell und komplex"), ("fast", "schnell", "Standard-Antworten"),
                  ("complex", "komplex", "schwere Aufgaben")]
 
@@ -67,18 +78,68 @@ class ToolCard(Collapsible):
         self._body.update(f"{self._detail}\n\nErgebnis\n{detail}")
 
 
-class RunView:
-    """Widgets eines Laufs. Text und Tool-Karten erscheinen in Stream-Reihenfolge."""
+class PromptArea(TextArea):
+    """Mehrzeilige Eingabe: Enter sendet, Umschalt+Enter oder Strg+J neue Zeile.
+    Pfeil hoch/runter blaettert in der History, wenn der Cursor am Rand steht."""
 
-    def __init__(self, chat: VerticalScroll, app: "ICli2"):
-        self.chat, self.app = chat, app
+    class Submitted(Message):
+        def __init__(self, value: str):
+            super().__init__()
+            self.value = value
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            event.prevent_default().stop()
+            self.post_message(self.Submitted(self.text))
+        elif event.key in ("shift+enter", "ctrl+j"):
+            event.prevent_default().stop()
+            self.insert("\n")
+        elif event.key == "up" and self.cursor_location[0] == 0:
+            event.prevent_default().stop()
+            self.app.action_history(-1)
+        elif event.key == "down" and self.cursor_location[0] == self.document.line_count - 1:
+            event.prevent_default().stop()
+            self.app.action_history(1)
+        else:
+            await super()._on_key(event)
+
+    def set_text(self, text: str) -> None:
+        self.load_text(text)
+        self.move_cursor(self.document.end)
+
+
+class RunView:
+    """Widgets eines Laufs in einem eigenen Block. Parallele Laeufe vermischen
+    sich dadurch nicht; Sub-Agenten sind eingerueckte Bloecke im Eltern-Block."""
+
+    def __init__(self, box: Vertical, app: "ICli2", agent: str = "", query: str = "", session: str = ""):
+        self.box, self.app = box, app
+        self.agent, self.query, self.session = agent, query, session
+        self.status = "running"
+        self.status_msg = ""
+        self.iter: tuple[int, int] | None = None
         self.answer = ""
         self.md: Markdown | None = None
         self.stream = None
         self.think: Static | None = None
         self.think_text = ""
         self.tools: dict[str, ToolCard] = {}
+        self.subs: dict[str, RunView] = {}
         self.started = time.monotonic()
+        self.ended = 0.0
+
+    @property
+    def seconds(self) -> float:
+        return (self.ended or time.monotonic()) - self.started
+
+    async def sub(self, name: str) -> "RunView":
+        view = self.subs.get(name)
+        if view is None:
+            await self.close_segment()
+            box = Vertical(Static(f"{SYM['sub']} {name}", classes="sub-head", markup=False), classes="sub")
+            await self.box.mount(box)
+            view = self.subs[name] = RunView(box, self.app, agent=name)
+        return view
 
     async def close_segment(self) -> None:
         if self.stream is not None:
@@ -86,11 +147,16 @@ class RunView:
         self.md = self.stream = self.think = None
         self.think_text = ""
 
+    async def close(self) -> None:
+        await self.close_segment()
+        for view in self.subs.values():
+            await view.close()
+
     async def text(self, delta: str) -> None:
         if self.md is None:
             await self.close_segment()
             self.md = Markdown("", classes="answer")
-            await self.chat.mount(self.md)
+            await self.box.mount(self.md)
             self.stream = Markdown.get_stream(self.md)
         self.answer += delta
         await self.stream.write(delta)
@@ -102,7 +168,7 @@ class RunView:
             box = Collapsible(self.think, title=f"{SYM['think']} Gedanken",
                               collapsed=not self.app.show_thinking, classes="think")
             self.app.think_boxes.append(box)
-            await self.chat.mount(box)
+            await self.box.mount(box)
         self.think_text += delta
         self.think.update(self.think_text)
 
@@ -110,30 +176,42 @@ class RunView:
         await self.close_segment()
         card = self.tools[tid] = ToolCard(name, summary, detail)
         self.app.tool_cards.append(card)
-        await self.chat.mount(card)
+        await self.box.mount(card)
 
     def tool_end(self, tid: str, ok: bool, summary: str, detail: str, secs: float) -> None:
         card = self.tools.pop(tid, None)
         if card is not None:
             card.finish(ok, summary, detail, secs)
 
+    async def note(self, text: str, level: str = "info") -> None:
+        await self.box.mount(Static(text, classes=f"note note-{level}", markup=False))
+
 
 class ICli2(App):
     TITLE = "icli"
     CSS = """
     #head { height: 1; padding: 0 1; color: $text-muted; }
+    #main { height: 1fr; }
     #chat { padding: 0 1; scrollbar-size-vertical: 1; }
+    #side { width: 38; display: none; border-left: solid $secondary; padding: 0 1;
+            scrollbar-size-vertical: 1; }
+    #side.-open { display: block; }
     #banner { margin: 1 0; }
     #bottom { height: auto; }
-    #row { height: 3; border: tall #3b5568; background: #0c161c; padding: 0 1; }
+    #row { height: auto; border: tall #3b5568; background: #0c161c; padding: 0 1; }
     #row.-run { border: tall $primary; }
     #row.-done { border: tall $success; }
     #row.-ask { border: tall $warning; }
     #row.-fail { border: tall $error; }
     #mark { width: 2; color: $accent; }
-    #prompt, #prompt:focus { border: none; height: 1; padding: 0; background: transparent; }
+    #prompt, #prompt:focus { border: none; height: auto; max-height: 8; padding: 0;
+                             background: transparent; }
     #foot { height: 1; padding: 0 1; color: $text-muted; }
-    .user { margin: 1 0 0 0; color: $accent; text-style: bold; }
+    .run { height: auto; margin: 1 0 0 0; }
+    .run.-focus { border-left: thick $primary; }
+    .sub { height: auto; margin: 0 0 0 2; border-left: solid $secondary; }
+    .sub-head { padding: 0 0 0 1; color: $secondary; }
+    .user { color: $accent; text-style: bold; }
     .answer { margin: 0; padding: 0 0 0 2; background: transparent; }
     .answer MarkdownH1, .answer MarkdownH2, .answer MarkdownH3 {
         content-align: left middle; text-style: bold; color: $accent;
@@ -156,8 +234,8 @@ class ICli2(App):
         Binding("ctrl+q", "quit_app", "Beenden", priority=True),
         Binding("ctrl+l", "clear", "Leeren"),
         Binding("ctrl+p", "palette", "Befehle", priority=True),
-        Binding("up", "history(-1)", show=False),
-        Binding("down", "history(1)", show=False),
+        Binding("f2", "side", "Seitenleiste", priority=True),
+        Binding("f3", "next_run", "Nächster Lauf", priority=True),
         Binding("ctrl+o", "fold_tools", "Tools auf/zu", priority=True),
         Binding("ctrl+r", "fold_thinking", "Gedanken auf/zu", priority=True),
         *[Binding(f"alt+{n}", f"open_last({n})", show=False, priority=True) for n in range(1, 10)],
@@ -171,25 +249,36 @@ class ICli2(App):
         self.history: list[str] = []
         self._hist_pos = 0
         self.ready = False
-        self.runs: dict[str, RunView] = {}
+        self.runs: dict[str, RunView] = {}          # alle Laeufe, auch beendete (begrenzt)
+        self.pending: dict[str, RunView] = {}       # tag -> Block, bis die Engine den Lauf meldet
+        self.side_rows: dict[str, list[dict]] = {"jobs": [], "mounts": []}
         self.tool_cards: list[ToolCard] = []
         self.think_boxes: list[Collapsible] = []
         self.show_thinking = False
         self.focus_run = ""
-        self.status_msg = ""
         self.tokens: tuple[int, int] | None = None
         self._tick = 0
+        self._tag = 0
         self._esc_run = ""
+
+    @property
+    def active(self) -> dict[str, RunView]:
+        return {rid: v for rid, v in self.runs.items() if v.status == "running"}
 
     # ── Aufbau ───────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
         yield Static(id="head")
-        with VerticalScroll(id="chat"):
-            yield Static(banner(VERSION), id="banner")
+        with Horizontal(id="main"):
+            with VerticalScroll(id="chat"):
+                yield Static(banner(VERSION), id="banner")
+            with VerticalScroll(id="side"):
+                yield Static(id="side-text")
         with Vertical(id="bottom"):
             with Horizontal(id="row"):
                 yield Static(SYM["progress"], id="mark")
-                yield Input(placeholder="Nachricht oder /befehl", id="prompt")
+                yield PromptArea(placeholder="Nachricht oder /befehl", id="prompt", compact=True,
+                                 show_line_numbers=False, highlight_cursor_line=False,
+                                 soft_wrap=True, tab_behavior="focus")
             yield Static(id="foot")
 
     def on_mount(self) -> None:
@@ -197,9 +286,11 @@ class ICli2(App):
         self.theme = "isaa"
         self.chat = self.query_one("#chat", VerticalScroll)
         self.chat.anchor()                               # bleibt unten, solange nicht gescrollt wird
-        self.query_one("#prompt", Input).focus()
+        self.prompt = self.query_one("#prompt", PromptArea)
+        self.prompt.focus()
         self.set_interval(FRAME, self._pump)
         self.set_interval(0.1, self._chrome)
+        self.set_interval(2.0, self._refresh_side)
         self._chrome()
 
     # ── Engine -> UI ─────────────────────────────────────────────────────────
@@ -207,8 +298,15 @@ class ICli2(App):
         for ev in self.engine.poll(EVENTS_PER_FRAME):
             await self._handle(ev)
 
+    async def _block(self, head: str, classes: str = "user") -> Vertical:
+        box = Vertical(Static(head, classes=classes, markup=False), classes="run")
+        await self.chat.mount(box)
+        return box
+
     async def _handle(self, ev: P.Event) -> None:
         d, view = ev.data, self.runs.get(ev.run)
+        if view and d.get("sub"):
+            view = await view.sub(d["sub"])
         if ev.kind == P.TEXT and view:
             await view.text(d["text"])
         elif ev.kind == P.THINK and view:
@@ -217,48 +315,70 @@ class ICli2(App):
             await view.tool_start(d["id"], d["name"], d["summary"], d["detail"])
         elif ev.kind == P.TOOL_END and view:
             view.tool_end(d["id"], d["ok"], d["summary"], d["detail"], d["secs"])
-        elif ev.kind == P.STATUS:
+        elif ev.kind == P.STATUS and view:
             if d.get("msg"):
-                self.status_msg = d["msg"]
-            if d.get("tokens") is not None and d.get("tokens_max"):
+                view.status_msg = d["msg"]
+            if d.get("iter") is not None:
+                view.iter = (d["iter"], d.get("max_iter") or 0)
+            if d.get("tokens") is not None and d.get("tokens_max") and not d.get("sub"):
                 self.tokens = (d["tokens"], d["tokens_max"])
         elif ev.kind == P.RUN_START:
-            self.runs[ev.run] = RunView(self.chat, self)
-            self.focus_run = ev.run
+            view = self.pending.pop(d.get("tag", ""), None)
+            if view is None:                             # von der Engine gestartet (Job, Resume, …)
+                box = await self._block(f"{SYM['agent']} {d.get('origin', 'lauf')} · {d['agent']} · "
+                                        f"{' '.join(d['query'].split())[:70]}", "note")
+                view = RunView(box, self)
+            view.agent, view.query, view.session = d["agent"], d["query"], d["session"]
+            view.started = time.monotonic()
+            self.runs[ev.run] = view
+            for old in list(self.runs)[:-KEEP_RUNS]:
+                if self.runs[old].status != "running":
+                    del self.runs[old]
+            if d.get("tag") or not self.focus_run:
+                self._focus(ev.run)
             self._signal("run")
             if d.get("steer"):
-                await self._note("↪ Nachsteuerung an laufenden Lauf gesendet")
-        elif ev.kind == P.RUN_END:
-            if view:
-                await view.close_segment()
-                secs = time.monotonic() - view.started
-                mark = END_MARK.get(d["status"], d["status"])
-                if d.get("error"):
-                    await self._note(f"✗ {d['error']}", "error")
-                elif mark:
-                    await self._note(f"{mark} · {secs:.1f}s")
-            self.runs.pop(ev.run, None)
-            if not self.runs:
+                await view.note("↪ Nachsteuerung an laufenden Lauf gesendet")
+        elif ev.kind == P.RUN_END and view:
+            await view.close()
+            view.status, view.ended = d["status"], time.monotonic()
+            mark = END_MARK.get(d["status"], d["status"])
+            if d.get("error"):
+                await view.note(f"{SYM['fail']} {d['error']}", "error")
+            elif mark:
+                await view.note(f"{mark} · {view.seconds:.1f}s")
+            if not self.active:
                 # Signalfarbe der Eingabeleiste: fertig / Frage / Absturz
-                asks = d["status"] == "paused" or (view and (d.get("answer") or view.answer).rstrip().endswith("?"))
+                asks = d["status"] == "paused" or (d.get("answer") or view.answer).rstrip().endswith("?")
                 self._signal("fail" if d["status"] == "failed" else "ask" if asks else
                              "done" if d["status"] == "done" else "")
             if self.focus_run == ev.run:
-                self.focus_run = next(reversed(self.runs), "")
-            self.status_msg = ""
+                self._focus(next(reversed(self.active), ""))
         elif ev.kind == P.READY:
-            if self.ready and (d["agent"], d["session"], d["model"], d["complex_model"]) != \
-                    (self.agent, self.session, self.model, self.complex_model):
+            changed = (d["agent"], d["session"], d["model"], d["complex_model"]) != \
+                      (self.agent, self.session, self.model, self.complex_model)
+            if self.ready and changed:
                 await self._note(f"{SYM['agent']} {d['agent']} · {d['model']} · {d['session']}")
             self.ready = True
             self.agent, self.session, self.model = d["agent"], d["session"], d["model"]
             self.complex_model, self.mounts = d["complex_model"], d["mounts"]
             if "history" in d:
                 self.history, self._hist_pos = d["history"], len(d["history"])
+            for role, text in d.get("recap", []):       # letzte Nachrichten der Session
+                await self._note(f"{SYM['progress'] if role == 'user' else ' '} {text}")
         elif ev.kind == P.ROWS:
-            self._pick(d["what"], d["title"], d["rows"])
+            if d.get("to") == "side":
+                self.side_rows[d["what"]] = d["rows"]
+            else:
+                self._pick(d["what"], d["title"], d["rows"])
         elif ev.kind == P.NOTICE:
             await self._note(d["text"], d.get("level", "info"))
+
+    def _focus(self, run: str) -> None:
+        self.focus_run = run
+        many = len(self.active) > 1
+        for rid, view in self.runs.items():
+            view.box.set_class(many and rid == run, "-focus")
 
     def _signal(self, state: str) -> None:
         row = self.query_one("#row")
@@ -269,45 +389,87 @@ class ICli2(App):
         await self.chat.mount(Static(text, classes=f"note note-{level}", markup=False))
 
     def _chrome(self) -> None:
-        """Kopf- und Fusszeile. Rein lokal, deshalb auch bei blockierter Engine fluessig."""
+        """Kopf-, Fusszeile, Seitenleiste. Rein lokal, auch bei blockierter Engine fluessig."""
         self._tick += 1
         mounts = f" · {self.mounts} mount{'s' if self.mounts != 1 else ''}" if self.mounts else ""
         self.query_one("#head", Static).update(
             f"[{G.L4_BRIGHT}]{SYM['agent']} {self.agent}[/] "
             f"[{DIM}]· {self.model} · {self.session}{mounts}[/]")
         spin = SPIN[self._tick % len(SPIN)]
+        active, focus = self.active, self.runs.get(self.focus_run)
         if not self.ready:
             left = f"{spin} Engine startet …"
         elif self.engine.lag() > 1.5:
             left = f"{spin} Engine beschäftigt ({self.engine.lag():.0f}s) – Eingabe bleibt frei"
-        elif self.runs:
-            more = f" (+{len(self.runs) - 1})" if len(self.runs) > 1 else ""
-            left = f"{spin} {self.status_msg or 'arbeitet'}{more}"
+        elif active:
+            view = focus if focus and focus.status == "running" else next(iter(active.values()))
+            step = f" {view.iter[0]}/{view.iter[1]}" if view.iter and view.iter[1] else ""
+            more = f" · {len(active)} Läufe (F3)" if len(active) > 1 else ""
+            left = f"{spin} {view.agent}{step} · {view.status_msg or 'arbeitet'}{more}"
         else:
             left = f"[{G.L3_MID}]{SYM['done']}[/] bereit"
         if self.tokens:
             left += f" · {self.tokens[0] / 1000:.1f}k/{self.tokens[1] / 1000:.0f}k tok"
         self.query_one("#foot", Static).update(left)
+        if self._tick % 5 == 0 and self.query_one("#side").has_class("-open"):
+            self.query_one("#side-text", Static).update(self._side_text())
+
+    def _side_text(self) -> str:
+        def title(text: str) -> str:
+            return f"[{G.L4_BRIGHT}]{text}[/]"
+
+        from rich.markup import escape
+        lines = [title("Läufe")]
+        for rid, view in reversed(list(self.runs.items())[-10:]):
+            mark = "▸" if rid == self.focus_run else " "
+            color = {"running": G.L3_MID, "failed": "red", "paused": "yellow"}.get(view.status, DIM)
+            lines.append(f"{mark}[{color}]{RUN_SYM.get(view.status, '?')}[/] {escape(view.agent)} "
+                         f"[{DIM}]{view.seconds:.0f}s[/]")
+            lines.append(f"   [{DIM}]{escape(' '.join(view.query.split())[:30])}[/]")
+            for name, sub in view.subs.items():
+                lines.append(f"   [{DIM}]{SYM['sub']} {escape(name)}[/]")
+        if len(lines) == 1:
+            lines.append(f" [{DIM}]keine[/]")
+        for what, head in (("jobs", "Jobs"), ("mounts", "Mounts")):
+            lines += ["", title(head)]
+            rows = [r for r in self.side_rows[what] if r["value"] not in ("*", "+")]
+            lines += [f" {escape(r['label'])}\n   [{DIM}]{escape(r['hint'][:32])}[/]" for r in rows] \
+                or [f" [{DIM}]keine[/]"]
+        if self.tokens:
+            used, top = self.tokens
+            fill = int(20 * min(used, top) / top)
+            lines += ["", title("Kontext"),
+                      f" [{G.L3_MID}]{SYM['bar_fill'] * fill}[/][{DIM}]{SYM['bar_empty'] * (20 - fill)}[/] "
+                      f"{100 * used // top}%"]
+        return "\n".join(lines)
+
+    def _refresh_side(self) -> None:
+        if self.ready and self.query_one("#side").has_class("-open"):
+            for what in self.side_rows:
+                self.engine.send(P.LIST, what=what, to="side")
 
     # ── UI -> Engine ─────────────────────────────────────────────────────────
-    @on(Input.Submitted, "#prompt")
-    async def _submit(self, message: Input.Submitted) -> None:
+    @on(PromptArea.Submitted)
+    async def _submit(self, message: PromptArea.Submitted) -> None:
         text = message.value.strip()
-        message.input.value = ""
+        self.prompt.set_text("")
         if not text:
             return
-        if not self.runs:
+        if not self.active:
             self._signal("")
         if not self.history or self.history[-1] != text:
             self.history.append(text)
             self.engine.send(P.DO, action="remember", text=text)
         self._hist_pos = len(self.history)
-        if text.startswith("/"):
+        if text.startswith("/") and "\n" not in text:
             await self._command(text)
             return
-        await self.chat.mount(Static(f"{SYM['progress']} {text}", classes="user", markup=False))
+        self._tag += 1
+        tag = f"t{self._tag}"
+        box = await self._block(f"{SYM['progress']} {text}")
+        self.pending[tag] = RunView(box, self, agent=self.agent, query=text, session=self.session)
         self.chat.scroll_end(animate=False)
-        self.engine.send(P.CHAT, query=text, agent=self.agent, session=self.session)
+        self.engine.send(P.CHAT, query=text, agent=self.agent, session=self.session, tag=tag)
 
     async def _command(self, text: str) -> None:
         name, _, arg = text.partition(" ")
@@ -323,6 +485,10 @@ class ICli2(App):
                 self.engine.send(P.STOP, run=self.focus_run)
         elif name == "/clear":
             await self.action_clear()
+        elif name == "/side":
+            self.action_side()
+        elif name == "/task":
+            self._pick_run()
         elif name == "/agent":
             do("agent", name=arg) if arg else ask("agents")
         elif name == "/model":
@@ -339,6 +505,12 @@ class ICli2(App):
             do("session_clear")
         elif name == "/mount":
             do("mount", path=arg) if arg else ask("mounts")
+        elif name == "/job":
+            do("job_add", spec=arg) if arg else ask("jobs")
+        elif name == "/dream":
+            do("dream")
+        elif name == "/network":
+            do("network_load", path=arg) if arg else do("network_save")
         elif name == "/open":
             self.action_open_last(int(arg) if arg.isdigit() else 1)
         elif name == "/fold":
@@ -364,12 +536,31 @@ class ICli2(App):
                 send(P.DO, action="session", name=value)
             elif what == "mounts":
                 send(P.DO, action="unmount", at=value)
+            elif what == "jobs":
+                self.push_screen(
+                    Picker(f"Job {value}", JOB_ACTIONS),
+                    lambda act: act and send(P.DO, action="job", job=value, op=act))
             elif what == "models":
                 self.push_screen(
                     Picker(f"{value} für", MODEL_TARGETS),
                     lambda target: target and send(P.DO, action="model", name=value, target=target))
 
         self.push_screen(Picker(title, [(r["value"], r["label"], r["hint"]) for r in rows]), chosen)
+
+    def _pick_run(self) -> None:
+        items = [(rid, f"{RUN_SYM.get(v.status, '?')} {v.agent}",
+                  f"{v.status} · {v.seconds:.0f}s · {' '.join(v.query.split())[:40]}")
+                 for rid, v in reversed(self.runs.items())]
+        if not items:
+            self.run_worker(self._note("Noch keine Läufe", "warn"))
+            return
+
+        def chosen(rid: str | None) -> None:
+            if rid and rid in self.runs:
+                self._focus(rid)
+                self.runs[rid].box.scroll_visible(top=True)
+
+        self.push_screen(Picker("Läufe – Enter setzt den Fokus", items), chosen)
 
     def action_palette(self) -> None:
         items = [(name, name, f"{hint}  {text}".strip()) for name, (hint, text) in COMMANDS.items()]
@@ -381,25 +572,45 @@ class ICli2(App):
         self.push_screen(Picker("Befehle", items), chosen)
 
     def action_history(self, step: int) -> None:
-        prompt = self.query_one("#prompt", Input)
-        if not prompt.has_focus or not self.history:
+        if not self.history:
             return
         self._hist_pos = max(0, min(len(self.history), self._hist_pos + step))
-        prompt.value = self.history[self._hist_pos] if self._hist_pos < len(self.history) else ""
-        prompt.cursor_position = len(prompt.value)
+        self.prompt.set_text(self.history[self._hist_pos] if self._hist_pos < len(self.history) else "")
+
+    def action_side(self) -> None:
+        side = self.query_one("#side")
+        side.toggle_class("-open")
+        if side.has_class("-open"):
+            self._refresh_side()
+            self.query_one("#side-text", Static).update(self._side_text())
+
+    def action_next_run(self) -> None:
+        """Fokus auf den naechsten laufenden Lauf (Esc wirkt auf den Fokus)."""
+        ids = list(self.active)
+        if ids:
+            nxt = ids[(ids.index(self.focus_run) + 1) % len(ids)] if self.focus_run in ids else ids[0]
+            self._focus(nxt)
+            self.runs[nxt].box.scroll_visible(top=True)
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        # Ist ein Picker offen, gehoeren Esc & Co. ihm (sonst schloesse Esc ihn nicht).
+        if len(self.screen_stack) > 1 and action in ("stop", "palette", "side", "next_run"):
+            return False
+        return True
 
     def action_stop(self) -> None:
         """Esc pausiert den fokussierten Lauf (fortsetzbar), ein zweites Esc bricht hart ab.
         Kann der Lauf nicht pausieren, stoppt die Engine ihn sofort."""
-        if not self.focus_run:
+        if self.focus_run not in self.active:
             return
         hard = self._esc_run == self.focus_run
         self.engine.send(P.STOP if hard else P.PAUSE, run=self.focus_run)
         self._esc_run = self.focus_run
 
     async def action_clear(self) -> None:
-        if not self.runs:
+        if not self.active and not self.pending:
             await self.chat.remove_children()
+            self.runs.clear()
             self.tool_cards.clear()
             self.think_boxes.clear()
 
@@ -425,6 +636,5 @@ class ICli2(App):
         self.exit()
 
     def on_key(self, event: events.Key) -> None:
-        prompt = self.query_one("#prompt", Input)
-        if not prompt.has_focus and event.is_printable:
-            prompt.focus()
+        if not self.prompt.has_focus and event.is_printable and len(self.screen_stack) == 1:
+            self.prompt.focus()

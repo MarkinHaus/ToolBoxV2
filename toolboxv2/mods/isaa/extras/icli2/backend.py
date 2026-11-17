@@ -4,6 +4,9 @@ Nutzt ausschliesslich vorhandene Funktionen:
   isaa.get_agent / get_agent_builder / register_agent / save_agent   (mods/isaa/module.py)
   agent.a_stream / pause_execution / cancel_execution                 (base/Agent/flow_agent.py)
   agent.session_manager, session.vfs.mount / unmount / sync_all       (session_manager, vfs_v2)
+  isaa.job_scheduler (list/add/pause/resume/remove, add_dream_job)    (extras/jobs)
+  isaa.export_agent_network / import_agent_network                    (mods/isaa/module.py)
+  ExecutionContext.to_checkpoint / from_checkpoint                    (execution_engine.py)
 Nachsteuern im Lauf uebernimmt a_stream selbst (Sidecar-Steering).
 
 Zwei generische Eingaenge fuer die UI, damit neue Bereiche ohne Aenderung an
@@ -22,12 +25,18 @@ import ast
 import asyncio
 import json
 import os
+import re
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 AGENT_STATE = {"live": "geladen", "registered": "registriert", "disk": "gespeichert"}
 HISTORY_KEEP = 500
+RECAP_MESSAGES = 4
+RESUMABLE = ("paused", "max_iterations")
+JOB_HELP = ("Zeitplan fehlt. Beispiele:  /job alle 30m name: auftrag   ·   /job um 09:00 name: auftrag"
+            "   ·   /job start name: auftrag")
 
 
 def _row(value: str, label: str = "", hint: str = "") -> dict[str, str]:
@@ -42,13 +51,25 @@ class IsaaBackend:
         self.isaa: Any = None
         self.max_iterations = int(os.getenv("DEFAULT_MAX_ITERATIONS", 30))
         self._models: list[dict[str, str]] | None = None
+        self._spawn: Any = None                          # Engine.spawn, gesetzt ueber attach()
+        self._jobs: Any = None
+        self._job_callback: Any = None
+
+    def attach(self, spawn: Any) -> None:
+        self._spawn = spawn
 
     # ── Zustand ──────────────────────────────────────────────────────────────
     def _agents_dir(self) -> Path:
         return Path(self.app.data_dir) / "Agents"
 
+    def _state_dir(self) -> Path:
+        return Path(self.app.appdata) / "icli2"
+
     def _history_file(self) -> Path:
-        return Path(self.app.appdata) / "icli2" / "history.txt"
+        return self._state_dir() / "history.txt"
+
+    def _networks_dir(self) -> Path:
+        return self._agents_dir() / "_networks"
 
     async def _agent(self, name: str | None = None):
         return await self.isaa.get_agent(name or self.agent)
@@ -56,11 +77,12 @@ class IsaaBackend:
     async def _session(self):
         return await (await self._agent()).session_manager.get_or_create(self.session)
 
-    async def _ready(self) -> dict[str, Any]:
+    async def _ready(self, recap: bool = False) -> dict[str, Any]:
         agent = await self._agent()
         session = await self._session()
         vfs = getattr(session, "vfs", None)
         return {
+            **({"recap": self._recap(session)} if recap else {}),
             "agent": self.agent, "session": self.session,
             "model": getattr(agent.amd, "fast_llm_model", "?"),
             "complex_model": getattr(agent.amd, "complex_llm_model", "?"),
@@ -76,7 +98,142 @@ class IsaaBackend:
             await self.isaa.register_agent(builder)
         ready = await self._ready()
         ready["history"] = await asyncio.to_thread(self._read_history)
+        for step in (self._restore_paused, self._start_jobs):   # darf den Start nie verhindern
+            try:
+                await step()
+            except Exception as e:
+                self.app.logger.warning(f"icli2 {step.__name__}: {e}")
         return ready
+
+    @staticmethod
+    def _recap(session: Any) -> list[tuple[str, str]]:
+        """Letzte Nachrichten einer Session als (rolle, kurztext)."""
+        out = []
+        for message in session.get_history(RECAP_MESSAGES):
+            role, content = str(message.get("role", "")), message.get("content", "")
+            if isinstance(content, list):                # Teile: nur Text zeigen
+                content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
+            text = " ".join(str(content).split())
+            if text and role[:1] in ("u", "a"):
+                out.append(("user" if role[:1] == "u" else "assistant",
+                            text[:160] + ("…" if len(text) > 160 else "")))
+        return out
+
+    # ── Jobs ─────────────────────────────────────────────────────────────────
+    async def _start_jobs(self) -> None:
+        """Scheduler wie in der alten icli starten; Job-Laeufe gehen durch die Engine
+        und erscheinen dadurch als normale Laeufe in der UI."""
+        self._jobs = getattr(self.isaa, "job_scheduler", None)
+        if self._jobs is None:
+            return
+        self._job_callback = self._jobs._fire_callback
+        self._jobs._fire_callback = self._fire_job
+        await self._jobs.start()
+        await self._jobs.fire_lifecycle("on_cli_start")
+        await self._jobs.fire_missed_jobs()
+
+    async def _fire_job(self, job: Any) -> str:
+        stream = self._dream_stream(job) if job.query == "__dream__" else None
+        return await self._spawn(job.agent_name, job.session_id, f"{job.name}: {job.query}",
+                                 kind="job", stream=stream)
+
+    async def _dream_stream(self, job: Any) -> AsyncIterator[dict]:
+        """Dream-Jobs laufen ueber den vorhandenen isaa-Callback (a_dream)."""
+        yield {"type": "status", "status_msg": "Dream läuft"}
+        report = await self._job_callback(job)
+        yield {"type": "final_answer", "answer": str(report)}
+
+    async def _rows_jobs(self):
+        if self._jobs is None:
+            return "Kein Job-Scheduler verfügbar", []
+        rows = []
+        for job in self._jobs.list_jobs():
+            state = "läuft" if job.job_id in getattr(self._jobs, "_firing", ()) else job.status
+            rows.append(_row(job.job_id, job.name,
+                             f"{job.trigger.trigger_type} · {state} · {job.last_result or '–'} · "
+                             f"{job.run_count}x · {job.agent_name}"))
+        return ("Jobs" if rows else "Keine Jobs – /job alle 30m name: auftrag  oder  /dream"), rows
+
+    async def _do_job(self, job: str, op: str) -> dict[str, Any]:
+        entry = self._jobs.get_job(job)
+        if entry is None:
+            raise LookupError(f"Job {job} nicht gefunden")
+        if op == "fire":
+            asyncio.ensure_future(self._jobs._fire_job(entry))      # wie module.py
+            return {"text": f"Job {entry.name} gestartet"}
+        if op == "pause":
+            paused = entry.status == "paused"
+            (self._jobs.resume_job if paused else self._jobs.pause_job)(job)
+            return {"text": f"Job {entry.name} {'fortgesetzt' if paused else 'pausiert'}"}
+        if op == "remove":
+            self._jobs.remove_job(job)
+            return {"text": f"Job {entry.name} gelöscht"}
+        raise ValueError(f"Unbekannte Job-Aktion {op}")
+
+    async def _do_job_add(self, spec: str) -> dict[str, Any]:
+        """'/job alle 30m name: auftrag' | '/job um 09:00 name: auftrag' | '/job start name: auftrag'"""
+        from toolboxv2.mods.isaa.extras.jobs import JobDefinition, TriggerConfig
+        match = re.match(r"(?:(alle)\s+(\d+)\s*([mh])|(um)\s+(\d{1,2}):(\d{2})|(start))\s+([^:]+):\s*(.+)",
+                         spec, re.S | re.I)
+        if not match:
+            raise ValueError(JOB_HELP)
+        every, amount, unit, at, hour, minute, _start, name, query = match.groups()
+        if every:
+            trigger = TriggerConfig(trigger_type="on_interval",
+                                    interval_seconds=int(amount) * (60 if unit.lower() == "m" else 3600))
+        elif at:
+            trigger = TriggerConfig(trigger_type="on_cron", cron_expression=f"{int(minute)} {int(hour)} * * *")
+        else:
+            trigger = TriggerConfig(trigger_type="on_cli_start")
+        job = JobDefinition(job_id=uuid.uuid4().hex[:8], name=name.strip(), agent_name=self.agent,
+                            query=query.strip(), trigger=trigger, session_id=self.session,
+                            created_at=datetime.now().isoformat())
+        self._jobs.add_job(job)
+        return {"text": f"Job {job.name} angelegt ({trigger.trigger_type}, Agent {self.agent})"}
+
+    async def _do_dream(self) -> dict[str, Any]:
+        await self._agent()
+        self._jobs.add_dream_job(self.agent)             # wie '/job dream create': nachts 03:00
+        return {"text": f"Dream-Job für {self.agent} angelegt (täglich 03:00)"}
+
+    # ── Pausierte Laeufe ueber einen Neustart retten ─────────────────────────
+    def _resume_file(self) -> Path:
+        return self._state_dir() / "resume.json"
+
+    def _collect_paused(self) -> dict[str, dict]:
+        found = {}
+        for key, agent in list(self.isaa.config.items()):
+            if not str(key).startswith("agent-instance-"):
+                continue
+            engine = getattr(agent, "_execution_engine_cache", None)
+            for run_id, ctx in list(getattr(engine, "_active_executions", {}).items()):
+                if getattr(ctx, "status", "") in RESUMABLE:
+                    found[run_id] = {"agent_name": key[len("agent-instance-"):],
+                                     "checkpoint": ctx.to_checkpoint()}
+        return found
+
+    def _save_paused(self) -> None:
+        path, found = self._resume_file(), self._collect_paused()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(found, default=str), encoding="utf-8")
+
+    async def _restore_paused(self) -> None:
+        """Wie icli.py:_restore_resumable_executions - Kontexte als 'paused' zurueck in
+        die Engine; die naechste Nachricht in der Session setzt sie fort."""
+        path = self._resume_file()
+        if not path.exists():
+            return
+        from toolboxv2.mods.isaa.base.Agent.execution_engine import ExecutionContext
+        pending = json.loads(await asyncio.to_thread(path.read_text, "utf-8"))
+        for run_id, entry in pending.items():
+            agent = await self._agent(entry.get("agent_name", "self"))
+            engine = agent._get_execution_engine()
+            if run_id in engine._active_executions:
+                continue
+            ctx = ExecutionContext.from_checkpoint(entry.get("checkpoint", {}))
+            ctx.status = "paused"
+            engine._active_executions[ctx.run_id] = ctx
+            engine._session_last_run.setdefault(ctx.session_id, ctx.run_id)
 
     # ── Picker-Zeilen ────────────────────────────────────────────────────────
     async def rows(self, what: str) -> dict[str, Any]:
@@ -101,6 +258,10 @@ class IsaaBackend:
                      + (" · eigene Tools" if a["pack"] else "")
                      + (" · aktiv" if name == self.agent else ""))
                 for name, a in (await self._agents()).items()]
+        nets = self._networks_dir()
+        if nets.is_dir():
+            rows += [_row(f"net:{f}", f"⧉ {f.name[:-7]}", "Agent-Network laden")
+                     for f in sorted(nets.glob("*.tar.gz"))]
         return "Agent wechseln", rows
 
     def _load_models(self) -> list[dict[str, str]]:
@@ -151,11 +312,40 @@ class IsaaBackend:
         return await getattr(self, f"_do_{action}")(**args)
 
     async def _do_agent(self, name: str) -> dict[str, Any]:
+        if name.startswith("net:"):
+            return await self._do_network_load(name[4:])
         if name not in await self._agents():
             raise LookupError(f"Agent '{name}' ist nicht registriert")
         await self._agent(name)                          # baut ihn, haengt gepackte Tools an
         self.agent = name
-        return {"ready": await self._ready()}
+        return {"ready": await self._ready(recap=True)}
+
+    # ── Agent-Networks ───────────────────────────────────────────────────────
+    async def _do_network_save(self) -> dict[str, Any]:
+        """Aktiven Agenten samt gebundener Agenten als ein Archiv sichern."""
+        agent = await self._agent()
+        partners = list(getattr(getattr(agent, "bind_manager", None), "bindings", {}) or {})
+        names = [self.agent, *[p for p in partners if p != self.agent]]
+        path = self._networks_dir() / f"{self.agent}.tar.gz"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        ok, message = await self.isaa.export_agent_network(names, str(path), entry_agent=self.agent)
+        if not ok:
+            raise RuntimeError(message)
+        return {"text": f"Network {self.agent} gesichert: {', '.join(names)}"}
+
+    async def _do_network_load(self, path: str) -> dict[str, Any]:
+        file = Path(path).expanduser()
+        if not file.exists():
+            file = self._networks_dir() / (path if path.endswith(".tar.gz") else f"{path}.tar.gz")
+        if not file.exists():
+            raise FileNotFoundError(f"Network nicht gefunden: {path}")
+        agents, warnings = await self.isaa.import_agent_network(str(file))
+        if not agents:
+            raise RuntimeError("; ".join(warnings) or "Network leer")
+        self.agent = file.name[:-7] if file.name[:-7] in agents else next(iter(agents))
+        text = f"Network geladen: {', '.join(agents)}"
+        return {"ready": await self._ready(recap=True),
+                "text": text + (f" · {len(warnings)} Warnungen" if warnings else "")}
 
     async def _do_model(self, name: str, target: str = "both") -> dict[str, Any]:
         agent = await self._agent()
@@ -183,7 +373,7 @@ class IsaaBackend:
             name = datetime.now().strftime("s-%m%d-%H%M%S")
         self.session = name
         await self._session()
-        return {"ready": await self._ready()}
+        return {"ready": await self._ready(recap=True)}
 
     async def _do_session_clear(self) -> dict[str, Any]:
         """Wie '/session clear' der alten icli: Page-Engine ueber clear_session,
@@ -283,4 +473,17 @@ class IsaaBackend:
         return ZenRenderer._extract_tool_meta(name, result) or ""
 
     async def close(self) -> None:
-        pass          # app.a_exit() ruft der Flow-Starter nach dem UI-Ende auf
+        """Pausierte Laeufe sichern, Scheduler wie die alte icli beenden.
+        app.a_exit() ruft der Flow-Starter nach dem UI-Ende auf."""
+        if self.isaa is None:
+            return
+        try:
+            await asyncio.to_thread(self._save_paused)
+        except Exception as e:
+            self.app.logger.warning(f"icli2 save paused: {e}")
+        if self._jobs is not None and self._job_callback is not None:
+            try:
+                await self._jobs.fire_lifecycle("on_cli_exit")
+                await self._jobs.stop()
+            finally:
+                self._jobs._fire_callback = self._job_callback

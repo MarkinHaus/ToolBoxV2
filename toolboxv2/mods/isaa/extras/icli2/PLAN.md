@@ -1,6 +1,6 @@
 # icli 2.0 – Plan
 
-Stand: Schritt 4 von 9 umgesetzt. Die alte `flows/isaa/icli.py` bleibt unverändert und parallel nutzbar.
+Stand: Schritt 5 von 9 umgesetzt. Die alte `flows/isaa/icli.py` bleibt unverändert und parallel nutzbar.
 
 Start: `tb -m icli2` · Code: `toolboxv2/mods/isaa/extras/icli2/` · Starter: `toolboxv2/flows/isaa/icli2.py`
 
@@ -63,14 +63,16 @@ Regeln, die für jeden weiteren Schritt gelten:
 | `/model` | fertig | `/agent model` |
 | `/session [name]`, `/new`, `/reset` | fertig | `/session new/clear/show` |
 | `/mount [pfad]` | fertig | `/vfs mount/unmount/save` |
-| `/task` | Schritt 5 | `/task log/view`, Fokuswechsel |
-| `/job` | Schritt 5 | `/job`, `/job dream` |
+| `/task` | fertig | `/task log/view`, Fokuswechsel |
+| `/job [zeitplan name: auftrag]`, `/dream` | fertig | `/job add/list/remove`, `/job dream create` |
+| `/network [datei]` | fertig | – (Agent-Network sichern/laden) |
+| `/side` | fertig | – |
 | `/feature`, `/skill`, `/mcp`, `/plugin` | Schritt 6 | gleichnamige Befehle, über Palette |
 | `/discord` | Schritt 7 | unverändert durchgereicht |
 | `/login` | Schritt 8 | – |
 | `/voice` | Schritt 9 | `/audio`, `/omni` |
 
-Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+R` Gedanken auf/zu, `Alt+1–9` letzte n Tools öffnen, `Strg+L` leeren, `Strg+Q` beenden. `Strg+P` Palette, `↑/↓` Eingabe-History. Geplant: `F2` Seitenleiste, `F4` Sprache.
+Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+R` Gedanken auf/zu, `Alt+1–9` letzte n Tools öffnen, `Strg+L` leeren, `Strg+Q` beenden. `Strg+P` Palette, `↑/↓` Eingabe-History, `F2` Seitenleiste, `F3` nächster Lauf, `Umschalt+Enter`/`Strg+J` neue Zeile. Geplant: `F4` Sprache.
 
 ## Erledigt
 
@@ -102,18 +104,18 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 - Palette `Strg+P` (auch `/` + Enter), Eingabe-History mit `↑/↓`, gespeichert unter `<appdata>/icli2/history.txt`.
 - Kopfzeile zeigt Anzahl der Mounts.
 
-## Offen
+### Schritt 5 – Läufe, Seitenleiste, Sub-Agenten, Jobs, Networks (`icli2-05-laeufe-jobs-networks.patch`)
+- **Parallele Läufe:** Jeder Lauf hat einen eigenen Block im Chat, Streams vermischen sich nicht. `F3` oder `/task` wechselt den Fokus; `Esc` wirkt nur auf den fokussierten Lauf.
+- **Seitenleiste `F2`:** Läufe mit Status und Sub-Agenten, Jobs, Mounts, Kontext-Auslastung. Jobs und Mounts werden nur bei offener Leiste alle 2 s nachgeladen.
+- **Sub-Agenten:** Chunks mit `_sub_agent_id` erscheinen als eingerückter Unterblock mit dem Auftrag als Überschrift; sie verändern nie Status oder Antwort des Elternlaufs.
+- **Mehrzeilige Eingabe:** Enter sendet, `Umschalt+Enter` oder `Strg+J` neue Zeile, bis 8 Zeilen hoch.
+- **Jobs:** Scheduler wird wie in der alten icli gestartet (`on_cli_start`, verpasste Jobs nachholen) und beim Beenden gestoppt. Job-Läufe gehen über `Engine.spawn` und erscheinen als normale Läufe. `/job` listet (ausführen, pausieren/fortsetzen, löschen); anlegen mit `/job alle 30m name: auftrag`, `/job um 09:00 name: auftrag`, `/job start name: auftrag`. `/dream` legt den nächtlichen Dream-Job an.
+- **Agent-Networks:** `/network` sichert den aktiven Agenten samt gebundener Agenten nach `<data_dir>/Agents/_networks/<agent>.tar.gz`; gesicherte Networks stehen im Agent-Picker (`⧉ name`), `/network datei` lädt ein beliebiges Archiv.
+- **Session-Rückblick:** Beim Agent- oder Session-Wechsel werden die letzten Nachrichten angezeigt.
+- **Pausierte Läufe überleben den Neustart:** Beim Beenden nach `<appdata>/icli2/resume.json` gesichert, beim Start als „paused“ zurück in die Engine; die nächste Nachricht in der Session setzt fort.
+- Behoben: `Esc` schließt jetzt offene Picker (wurde vorher vom Stopp-Kürzel abgefangen).
 
-### Schritt 5 – Tasks, Jobs, Parallel-Läufe, Networks
-- Mehrzeilige Eingabe (`TextArea`, Enter senden, Umschalt+Enter neue Zeile).
-- Beim Session-Wechsel die letzten Nachrichten der Session anzeigen (`session.get_history`).
-- OpenRouter-Modellliste optional nachladen (Netzwerkabruf, deshalb bisher weggelassen).
-- Seitenleiste `F2`: laufende und beendete Läufe, Jobs, Mounts, Kontext-Auslastung.
-- Fokuswechsel zwischen Läufen; Lauf in den Hintergrund schieben; Stream je Lauf getrennt puffern.
-- Sub-Agenten-Chunks (`_sub_agent_id`) als eingerückte Unterläufe statt wie bisher verworfen.
-- Jobs über den vorhandenen `isaa.job_scheduler` inklusive `dream`.
-- Agent-Networks: `export_agent_network`/`import_agent_network` in den Agent-Picker; ein Network erscheint als Gruppe.
-- Paused-Läufe nach Neustart fortsetzen (`resume_from_disk`).
+## Offen
 
 ### Schritt 6 – Skills, MCP, Plugins, Features
 - Ein Picker je Bereich mit An/Aus-Schalter statt Subcommands.
@@ -151,8 +153,13 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 - **Frage-Erkennung ist eine Heuristik:** Gelb erscheint bei pausiertem Lauf oder wenn die Antwort mit `?` endet.
 - **`Alt+Ziffer`** wird nicht von jedem Terminal weitergegeben; `/open n` funktioniert immer.
 - **Referenzbilder** für das Design konnten nicht geöffnet werden; das Aussehen folgt dem Branding im Code.
-- Eingabe ist noch einzeilig, Sub-Agenten-Ausgaben werden noch verworfen.
 - `/mount` und `/model` sind gegen nachgebaute isaa-Objekte getestet, nicht gegen das echte VFS.
+
+- **Jobs:** gegen den echten `JobScheduler` aus dem Repo getestet; Networks, Rückblick und Resume nur gegen Nachbauten.
+- **Job-Fehler:** Scheitert ein Job-Lauf, meldet die icli2 das dem Scheduler als Fehler (die alte icli meldete „completed“).
+- **`Umschalt+Enter`** kommt nicht in jedem Terminal an; `Strg+J` funktioniert überall.
+- OpenRouter-Modellliste wird nicht nachgeladen (Netzwerkabruf); Modellnamen lassen sich mit `/model name` direkt setzen.
+- Beendete Job-/Dream-Läufe aus `on_cli_exit` sind nach dem Schließen der UI nicht mehr sichtbar.
 
 ## Patches anwenden
 
@@ -161,6 +168,7 @@ git apply icli2-01-grundgeruest.patch
 git apply icli2-02-branding-agenten.patch
 git apply icli2-03-autopack-tools.patch
 git apply icli2-04-modell-session-mount.patch
+git apply icli2-05-laeufe-jobs-networks.patch
 pip install "textual>=8"
 ```
 

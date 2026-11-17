@@ -9,16 +9,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # ── Commands: UI -> Engine ───────────────────────────────────────────────────
-CHAT = "chat"          # data: query, agent, session
+CHAT = "chat"          # data: query, agent, session[, tag]
 STOP = "stop"          # data: run
 PAUSE = "pause"        # data: run
-LIST = "list"            # data: what (agents|models|sessions|mounts)
+LIST = "list"            # data: what (agents|models|sessions|mounts|jobs)[, to=side]
 DO = "do"                # data: action + Argumente (siehe backend.do)
 SHUTDOWN = "shutdown"
 
 # ── Events: Engine -> UI ─────────────────────────────────────────────────────
 READY = "ready"            # data: agent, session, model, complex_model, mounts[, history]
-RUN_START = "run_start"    # data: agent, session, query, steer
+RUN_START = "run_start"    # data: agent, session, query, steer, tag, origin (chat|job)
 TEXT = "text"              # data: text            (gebuendelte Content-Deltas)
 THINK = "think"            # data: text            (gebuendeltes Reasoning)
 TOOL_START = "tool_start"  # data: id, name, summary, reason, detail

@@ -22,6 +22,7 @@ ARGS_LIMIT = 2000
 class Backend(Protocol):
     """Was die Engine von der Agenten-Seite braucht (siehe backend.py)."""
 
+    def attach(self, spawn: Any) -> None: ...
     async def boot(self) -> dict[str, Any]: ...
     async def rows(self, what: str) -> dict[str, Any]: ...
     async def do(self, action: str, **args: Any) -> dict[str, Any]: ...
@@ -40,13 +41,15 @@ def _succeeded(result: Any) -> bool:
 
 
 class _Run:
-    __slots__ = ("id", "agent", "session", "task", "buf", "kind", "timer", "ended")
+    __slots__ = ("id", "agent", "session", "task", "buf", "kind", "sub", "timer", "ended", "result")
 
     def __init__(self, run_id: str, agent: str, session: str):
         self.id, self.agent, self.session = run_id, agent, session
         self.task: asyncio.Task | None = None
         self.buf: list[str] = []
         self.kind = P.TEXT
+        self.sub = ""                                    # Sub-Agent, dem der Puffer gehoert
+        self.result: asyncio.Future | None = None        # fuer von der Engine gestartete Laeufe
         self.timer: asyncio.TimerHandle | None = None
         self.ended = ""          # von aussen gesetzter Endstatus (stopped/paused)
 
@@ -62,6 +65,7 @@ class Engine:
         self._inbox: asyncio.Queue[P.Command] | None = None
         self._runs: dict[str, _Run] = {}
         self._counter = 0
+        self._boot_task: asyncio.Task | None = None
         self._started = threading.Event()
         self._thread = threading.Thread(target=self._main, name="icli2-engine", daemon=True)
         self.beat = time.monotonic()                    # Herzschlag des Engine-Loops
@@ -102,6 +106,7 @@ class Engine:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         self._inbox = asyncio.Queue()
+        self._backend.attach(self.spawn)
         self._started.set()
         try:
             self._loop.run_until_complete(self._serve())
@@ -119,7 +124,7 @@ class Engine:
 
     async def _serve(self) -> None:
         heart = asyncio.create_task(self._heartbeat())
-        boot = asyncio.create_task(self._boot())
+        boot = self._boot_task = asyncio.create_task(self._boot())
         try:
             while True:
                 cmd = await self._inbox.get()
@@ -152,10 +157,7 @@ class Engine:
     async def _dispatch(self, cmd: P.Command, boot: asyncio.Task) -> None:
         d = cmd.data
         if cmd.kind == P.CHAT:
-            self._counter += 1
-            run = _Run(f"r{self._counter}", d["agent"], d["session"])
-            self._runs[run.id] = run
-            run.task = asyncio.create_task(self._chat(run, d["query"], boot))
+            self._start(d["agent"], d["session"], d["query"], tag=d.get("tag", ""))
         elif cmd.kind in (P.LIST, P.DO):
             # kann dauern (Agent bauen, Paket laden): eigener Task, Inbox bleibt frei
             asyncio.create_task(self._admin(cmd, boot))
@@ -170,11 +172,27 @@ class Engine:
             if run.task:
                 run.task.cancel()
 
+    def _start(self, agent: str, session: str, query: str, *, tag: str = "", kind: str = "chat",
+               stream: Any = None) -> _Run:
+        self._counter += 1
+        run = _Run(f"r{self._counter}", agent, session)
+        run.result = self._loop.create_future()
+        self._runs[run.id] = run
+        run.task = asyncio.create_task(self._chat(run, query, self._boot_task, tag, kind, stream))
+        return run
+
+    async def spawn(self, agent: str, session: str, query: str, kind: str = "job",
+                    stream: Any = None) -> str:
+        """Lauf aus der Engine heraus starten (Jobs, spaeter Discord). Erscheint in der
+        UI wie jeder andere Lauf; liefert die Antwort zurueck. Nur im Engine-Loop aufrufen."""
+        return await self._start(agent, session, query, kind=kind, stream=stream).result
+
     async def _admin(self, cmd: P.Command, boot: asyncio.Task) -> None:
         try:
             await asyncio.shield(boot)
             if cmd.kind == P.LIST:
-                self._emit(P.ROWS, what=cmd.data["what"], **await self._backend.rows(cmd.data["what"]))
+                self._emit(P.ROWS, what=cmd.data["what"], to=cmd.data.get("to", ""),
+                           **await self._backend.rows(cmd.data["what"]))
                 return
             args = dict(cmd.data)
             out = await self._backend.do(args.pop("action"), **args)
@@ -191,15 +209,15 @@ class Engine:
             run.timer.cancel()
             run.timer = None
         if run.buf:
-            self._emit(run.kind, run.id, text="".join(run.buf))
+            self._emit(run.kind, run.id, text="".join(run.buf), sub=run.sub)
             run.buf.clear()
 
-    def _push(self, run: _Run, kind: str, text: str) -> None:
+    def _push(self, run: _Run, kind: str, text: str, sub: str = "") -> None:
         if not text:
             return
-        if kind != run.kind:
+        if kind != run.kind or sub != run.sub:
             self._flush(run)
-            run.kind = kind
+            run.kind, run.sub = kind, sub
         run.buf.append(text)
         if run.timer is None:
             run.timer = self._loop.call_later(FLUSH_SECONDS, self._flush, run)
@@ -214,7 +232,8 @@ class Engine:
                 pass
         return fmt.result_summary(result)
 
-    async def _chat(self, run: _Run, query: str, boot: asyncio.Task) -> None:
+    async def _chat(self, run: _Run, query: str, boot: asyncio.Task, tag: str = "",
+                    kind: str = "chat", stream: Any = None) -> None:
         status, answer, error = "done", "", ""
         started: dict[str, float] = {}
         stream = None
@@ -222,32 +241,37 @@ class Engine:
             await asyncio.shield(boot)
             steer = await self._backend.is_running(run.agent, run.session)
             self._emit(P.RUN_START, run.id, agent=run.agent, session=run.session,
-                       query=query, steer=steer)
-            stream = self._backend.stream(run.agent, run.session, query)
+                       query=query, steer=steer and kind == "chat", tag=tag, origin=kind)
+            if stream is None:
+                stream = self._backend.stream(run.agent, run.session, query)
             async for chunk in stream:
-                if chunk.get("_sub_agent_id"):
-                    continue                             # Sub-Agenten: eigener Schritt
+                # Sub-Agent: gleiche Darstellung, eingerueckt; beeinflusst nie den Status des Laufs
+                sub = str(chunk.get("_sub_agent_id") or "")
+                if sub:
+                    sub = f"{chunk.get('_sub_agent_task') or sub}"
                 t = chunk.get("type", "")
                 if t == "content":
-                    self._push(run, P.TEXT, chunk.get("chunk", ""))
+                    self._push(run, P.TEXT, chunk.get("chunk", ""), sub)
                     continue
                 if t == "reasoning":
-                    self._push(run, P.THINK, chunk.get("chunk", ""))
+                    self._push(run, P.THINK, chunk.get("chunk", ""), sub)
                     continue
                 self._flush(run)
+                if sub and t not in ("tool_start", "tool_result", "tool_error"):
+                    continue
                 if t == "tool_start":
                     tid = str(chunk.get("id") or chunk.get("name", "?"))
                     started[tid] = time.monotonic()
                     args = fmt.parse(chunk.get("args", chunk.get("input", chunk.get("arguments", ""))))
                     self._emit(P.TOOL_START, run.id, id=tid, name=chunk.get("name", "?"),
-                               summary=fmt.summary(args), reason=bool(fmt.reason_of(args)),
+                               sub=sub, summary=fmt.summary(args), reason=bool(fmt.reason_of(args)),
                                detail=fmt.clip(fmt.detail(args), ARGS_LIMIT))
                 elif t in ("tool_result", "tool_error"):
                     tid = str(chunk.get("id") or chunk.get("name", "?"))
                     secs = time.monotonic() - started.pop(tid, time.monotonic())
                     result = fmt.parse(chunk.get("result", chunk.get("error", "")))
                     name = chunk.get("name", "?")
-                    self._emit(P.TOOL_END, run.id, id=tid, name=name,
+                    self._emit(P.TOOL_END, run.id, id=tid, name=name, sub=sub,
                                ok=t == "tool_result" and _succeeded(result),
                                summary=self._meta(name, result),
                                detail=fmt.clip(fmt.detail(result), RESULT_LIMIT),
@@ -260,7 +284,7 @@ class Engine:
                     status, error = "failed", str(chunk.get("message", chunk.get("chunk", "")))
                 elif t == "done" and chunk.get("success") is False and status == "done":
                     status = "failed"
-                if chunk.get("status_msg") or chunk.get("iter") is not None:
+                if not sub and (chunk.get("status_msg") or chunk.get("iter") is not None):
                     self._emit(P.STATUS, run.id, msg=chunk.get("status_msg", ""),
                                iter=chunk.get("iter"), max_iter=chunk.get("max_iter"),
                                tokens=chunk.get("tokens_used"), tokens_max=chunk.get("tokens_max"))
@@ -281,3 +305,9 @@ class Engine:
             self._flush(run)
             self._runs.pop(run.id, None)
             self._emit(P.RUN_END, run.id, status=status, answer=answer, error=error)
+            if run.result is not None and not run.result.done():
+                if status == "failed":
+                    run.result.set_exception(RuntimeError(error or "Lauf fehlgeschlagen"))
+                    run.result.exception()               # nie als 'never retrieved' melden
+                else:
+                    run.result.set_result(answer)
