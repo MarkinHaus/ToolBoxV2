@@ -1,0 +1,3311 @@
+
+<!doctype html>
+<html lang="de" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Modulares Python-Framework für Tools, Funktionen und komplette Anwendungen.">
+      
+      
+      
+        <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/devdocs/testing_guide/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Testen in ToolBoxV2 – Leitfaden und Anti-Muster - ToolBoxV2 Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=IBM+Plex+Sans:300,300i,400,400i,700,700i%7CIBM+Plex+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"IBM Plex Sans";--md-code-font:"IBM Plex Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#testen-in-toolboxv2-leitfaden-und-anti-muster" class="md-skip">
+          Zum Inhalt
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Kopfzeile">
+    <a href="../.." title="ToolBoxV2 Docs" class="md-header__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ToolBoxV2 Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Testen in ToolBoxV2 – Leitfaden und Anti-Muster
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Suche" placeholder="Suche" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Suche">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Zurücksetzen" aria-label="Zurücksetzen" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Suche wird initialisiert
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Zum Repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    MarkinHaus/ToolBoxV2
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Hauptnavigation" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../foundations/onboarding/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../services/cli/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../mods/isaa/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  ISAA
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../mods/CloudM/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  CloudM
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../runtime/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Runtime
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../storage/ref_database/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Storage
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../frontend/tbjs/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Frontend
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../registry/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Infrastructure
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/toolboxv2/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ToolBoxV2 Docs" class="md-nav__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ToolBoxV2 Docs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Zum Repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    MarkinHaus/ToolBoxV2
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../foundations/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../foundations/first_run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run & Profile
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLIs & Flows
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CLIs & Flows
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flows/icli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    icli
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flows/minicli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MiniCLI & Macros
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flows/chain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chains (Flows)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flows/adaptive_prompt_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adaptive Prompt System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Module Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guidelines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coding Guidelines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mod_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mod Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docs_toolchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docs Toolchain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../mods/isaa/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ISAA
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ISAA
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents (FlowAgent)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/chains/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chains
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/jobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/isaa/reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Full Reference (legacy)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../mods/CloudM/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CloudM
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CloudM
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/user_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/developer_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Auth System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/login_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Login System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/user_data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/mod_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mod Manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/folder_sync/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Folder Sync
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mods/CloudM/dashboards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dashboards
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../runtime/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runtime
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/workers_core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workers (Core)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/service_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ServiceManager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/server_worker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Server Worker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/fast_tb_handler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FastTB Handler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/fasttb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FastTB
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/session_custom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Custom Sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/event_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Event Manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/ws_bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WS Bridge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/toolbox_integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Toolbox Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/tauri_integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tauri Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runtime/debug_runner/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debug Runner
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Storage
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage/ref_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database Modes (LC/LR/RR/CB)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage/ref_blobdb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    BlobDB & Offline Fallback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage/blob_sharing_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blob Sharing API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../storage/blob_watch_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blob Watch API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Frontend
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Frontend
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../frontend/tbjs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    tbjs Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../frontend/tauri/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tauri App Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../frontend/p2p_rpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P2P RPC Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../frontend/tb_browser/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    tb_browser Extension
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../registry/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Infrastructure
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Infrastructure
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../registry/USER_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — User Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../registry/DEVELOPERS_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — Developers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../registry/CONTRIBUTORS_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — Contributors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../registry/API_REFERENCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../llm_gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM Gateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/toolboxv2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    toolboxv2 Core API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging & Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Inhaltsverzeichnis">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Inhaltsverzeichnis
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-das-anti-muster-der-test-patcht-weg-was-im-betrieb-kaputt-ist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Das Anti-Muster: „Der Test patcht weg, was im Betrieb kaputt ist“
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Das Anti-Muster: „Der Test patcht weg, was im Betrieb kaputt ist“">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#belegte-falle-aus-c36c3dc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Belegte Fälle aus c36c3dc
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#woran-man-das-anti-muster-erkennt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Woran man das Anti-Muster erkennt
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-regeln" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Regeln
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Regeln">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#regel-1-echt-vor-fake-vor-stub-vor-mock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regel 1 – Echt vor Fake vor Stub vor Mock
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regel-2-doubles-nur-an-der-prozessgrenze" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regel 2 – Doubles nur an der Prozessgrenze
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regel-3-uber-den-eingang-testen-den-der-betrieb-benutzt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regel 3 – Über den Eingang testen, den der Betrieb benutzt
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regel-4-zustand-prufen-nicht-aufrufe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regel 4 – Zustand prüfen, nicht Aufrufe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regel-5-wenn-doch-ein-mock-dann-streng" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regel 5 – Wenn doch ein Mock, dann streng
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regel-6-kein-globaler-zustand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regel 6 – Kein globaler Zustand
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regel-7-jeder-test-muss-rot-werden-konnen-gegenprobe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regel 7 – Jeder Test muss rot werden können (Gegenprobe)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regel-8-das-paket-testen-nicht-nur-den-checkout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regel 8 – Das Paket testen, nicht nur den Checkout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regel-9-betriebstests-fur-die-ziele" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regel 9 – Betriebstests für die Ziele
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regel-10-fakes-werden-selbst-gepruft" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regel 10 – Fakes werden selbst geprüft
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regel-11-fehler-sind-laut" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regel 11 – Fehler sind laut
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regel-12-zeitlimit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Regel 12 – Zeitlimit
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-prufliste-fur-jeden-test-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Prüfliste für jeden Test (Review)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-quellen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Quellen
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/MarkinHaus/ToolBoxV2/edit/master/docs/devdocs/testing_guide.md" title="Seite editieren" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="testen-in-toolboxv2-leitfaden-und-anti-muster">Testen in ToolBoxV2 – Leitfaden und Anti-Muster<a class="headerlink" href="#testen-in-toolboxv2-leitfaden-und-anti-muster" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>Stand 2026-11-17. Verbindlich für jeden Contributor und jeden Agenten-Lauf.
+Anlass: Prüfung von <code>master</code> @ <code>c36c3dc</code>. Die neuen Konto- und Sync-Funktionen waren in den Unit-Tests grün (Konto 67 passed, Sync 229 passed), im Betrieb aber an mindestens sechs Stellen kaputt. Die Tests hatten genau die Stellen weggepatcht oder nicht ausgeführt, an denen die Fehler saßen.
+Arbeitsablauf für Agenten: <code>docs/devdocs/agent_arbeitsprotokoll.md</code>.</p>
+</blockquote>
+<hr />
+<h2 id="1-das-anti-muster-der-test-patcht-weg-was-im-betrieb-kaputt-ist">1. Das Anti-Muster: „Der Test patcht weg, was im Betrieb kaputt ist“<a class="headerlink" href="#1-das-anti-muster-der-test-patcht-weg-was-im-betrieb-kaputt-ist" title="Permanent link">&para;</a></h2>
+<p><strong>Ein Test, der den fehlerhaften Teil durch ein Double ersetzt, kann diesen Fehler nie finden.</strong> Er wird grün, beweist aber nur, dass der Rest um das Double herum funktioniert. Ein grüner Lauf solcher Tests ist kein Beleg für das Produkt.</p>
+<h3 id="belegte-falle-aus-c36c3dc">Belegte Fälle aus <code>c36c3dc</code><a class="headerlink" href="#belegte-falle-aus-c36c3dc" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Nr.</th>
+<th>Was der Test gemacht hat</th>
+<th>Was im Betrieb kaputt war</th>
+<th>Warum der Test es nicht finden konnte</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>first_run._read_device_owner</code> per <code>mock.patch</code> ersetzt</td>
+<td><code>onboarding_state()</code> ruft die Funktion ohne <code>app</code> auf, <code>device_owner.json</code> wird relativ zum Arbeitsordner gesucht → nach dem Verknüpfen bleibt <code>needs_account</code> true</td>
+<td>Die kaputte Funktion war gepatcht</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>get_installation_state</code> gemockt, der Zustand vorgegeben</td>
+<td>Die Kontopflicht hängt vom echten Profil und der echten Kontodatei ab</td>
+<td>Der Zustand wurde behauptet, nicht erzeugt</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>DataApiTransport</code> weggepatcht</td>
+<td>Echte Antwortformen der Data-API, 401-Behandlung („offline“ statt „reauth_required“)</td>
+<td>Die Strecke zwischen Gerät und Server lief nie</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Alle Tests laufen aus dem Checkout</td>
+<td><code>CloudM/LiveSync</code> ist in <code>pyproject.toml</code> vom Paket ausgeschlossen. In der installierten App stirbt der Sync mit <code>ModuleNotFoundError</code></td>
+<td>Im Checkout liegt das Modul; das Paket wurde nie getestet</td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>test_needs_account_false_after_link</code> setzt kein Profil</td>
+<td>–</td>
+<td>Der Test ist ohne Profil immer grün, er kann nicht rot werden</td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>test_stubs.py</code> schreibt beim Import <code>sys.modules["toolboxv2.utils.system.types"] = &lt;Stub&gt;</code></td>
+<td>Andere Testdateien (<code>test_account_bridge</code>) bekommen den Stub und schlagen im Gesamtlauf fehl, einzeln sind sie grün</td>
+<td>Globaler Zustand zwischen Testdateien</td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>server_worker.py:47-57</code>: zweimal derselbe Import im <code>try/except</code>, danach nur eine Warnung</td>
+<td>Falsches Paket deklariert (<code>python-multipart</code> statt <code>multipart</code>), Datei-Uploads sind in <strong>jeder</strong> Installation abgeschaltet</td>
+<td>Kein Test lädt eine Datei hoch; der Fehler wird zur Log-Zeile</td>
+</tr>
+</tbody>
+</table>
+<h3 id="woran-man-das-anti-muster-erkennt">Woran man das Anti-Muster erkennt<a class="headerlink" href="#woran-man-das-anti-muster-erkennt" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Das Patch-Ziel liegt in <code>toolboxv2.…</code>, also im eigenen Code, und zwar im Modul unter Test oder einem direkten Mitspieler.</li>
+<li>Der Test behauptet einen Zustand (<code>return_value = {...}</code>), statt ihn herzustellen (Datei schreiben, Profil setzen).</li>
+<li>Der Test bleibt grün, wenn man die Produktänderung, die er absichern soll, wieder zurücknimmt.</li>
+<li>Der Test läuft nur aus dem Repo-Ordner, nie gegen das gebaute Paket.</li>
+<li>Ein <code>except Exception: pass</code> oder eine reine Log-Warnung macht aus einem Fehler einen „Erfolg“.</li>
+</ol>
+<hr />
+<h2 id="2-regeln">2. Regeln<a class="headerlink" href="#2-regeln" title="Permanent link">&para;</a></h2>
+<h3 id="regel-1-echt-vor-fake-vor-stub-vor-mock">Regel 1 – Echt vor Fake vor Stub vor Mock<a class="headerlink" href="#regel-1-echt-vor-fake-vor-stub-vor-mock" title="Permanent link">&para;</a></h3>
+<p>Wenn möglich die <strong>echte</strong> Implementierung verwenden: echte Dateien im Temp-Ordner, echte <code>BlobStorage</code>, echte App-Instanz mit <code>TB_DATA_DIR</code> im Temp-Ordner, echter Worker auf einem freien Port. Geht das nicht (Netz, Kosten, Zeit), dann ein <strong>Fake</strong>: eine kleine, funktionierende In-Memory-Implementierung derselben Schnittstelle. Stubs (feste Rückgabe) und Mocks (Aufrufprüfung) nur, wenn weder echt noch Fake geht. So empfiehlt es <em>Software Engineering at Google</em>, Kapitel 13 („prefer realism over isolation“), und der Google Testing Blog warnt, dass Mocks die Logik des Codes doppeln und Refactoring erschweren.</p>
+<h3 id="regel-2-doubles-nur-an-der-prozessgrenze">Regel 2 – Doubles nur an der Prozessgrenze<a class="headerlink" href="#regel-2-doubles-nur-an-der-prozessgrenze" title="Permanent link">&para;</a></h3>
+<p>Ersetzt werden darf nur, was <strong>außerhalb des eigenen Prozesses</strong> liegt oder nicht deterministisch ist:</p>
+<table>
+<thead>
+<tr>
+<th>erlaubt zu ersetzen</th>
+<th>Stelle</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Netz zu <code>simplecore.app</code></td>
+<td><code>App.run_http</code> bzw. <code>app.session.fetch</code> – mit einem Fake, der die <strong>echten Antwortformen</strong> liefert (<code>Result.as_dict()</code>)</td>
+</tr>
+<tr>
+<td>LLM-Anbieter</td>
+<td>Router-Adapter (<code>llm_router</code>)</td>
+</tr>
+<tr>
+<td>Uhr, Zufall</td>
+<td><code>time.time</code>, Zufallsquelle, mit festem Wert</td>
+</tr>
+<tr>
+<td>Betriebssystem-Programme (crontab, winget, apt)</td>
+<td>Aufruf des Programms, z. B. ein Schein-Programm im <code>PATH</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Nicht</strong> ersetzt wird der Code unter Test und kein Modul aus <code>toolboxv2</code>, das im Betrieb zwischen Eingang und Grenze läuft. „Don't mock types you don't own“ (Google TotT) gilt dazu umgekehrt: Fremde Bibliotheken nicht direkt mocken, sondern hinter der eigenen Grenzfunktion.</p>
+<h3 id="regel-3-uber-den-eingang-testen-den-der-betrieb-benutzt">Regel 3 – Über den Eingang testen, den der Betrieb benutzt<a class="headerlink" href="#regel-3-uber-den-eingang-testen-den-der-betrieb-benutzt" title="Permanent link">&para;</a></h3>
+<p>Eine Route über HTTP gegen den echten Worker, eine CLI über den echten Befehl, eine Modulfunktion so, wie ihr Aufrufer sie aufruft (mit denselben Argumenten, z. B. <strong>ohne</strong> <code>app</code>, wenn der Aufrufer <code>app</code> nicht übergibt). Google TotT: <em>Prefer Testing Public APIs Over Implementation-Detail Classes</em>.</p>
+<h3 id="regel-4-zustand-prufen-nicht-aufrufe">Regel 4 – Zustand prüfen, nicht Aufrufe<a class="headerlink" href="#regel-4-zustand-prufen-nicht-aufrufe" title="Permanent link">&para;</a></h3>
+<p>Geprüft wird das Ergebnis, das der Nutzer sieht oder das auf der Platte liegt: Antwort, Datei, Datensatz. Nicht, welche interne Funktion wie oft aufgerufen wurde. Aufrufprüfungen nur an der Grenze („genau 1 <code>set_data</code> für 1 geändertes Feld“ ist richtig, weil es das Übertragungsverhalten prüft). Tests, die bei jedem Refactoring brechen, ohne dass sich Verhalten ändert, sind <em>Change-Detector-Tests</em> (Google TotT) und werden umgeschrieben.</p>
+<h3 id="regel-5-wenn-doch-ein-mock-dann-streng">Regel 5 – Wenn doch ein Mock, dann streng<a class="headerlink" href="#regel-5-wenn-doch-ein-mock-dann-streng" title="Permanent link">&para;</a></h3>
+<ol>
+<li><code>autospec=True</code> (oder <code>create_autospec</code>): Der Mock scheitert wie das Original, wenn er falsch aufgerufen wird.</li>
+<li>Dort patchen, wo nachgeschlagen wird (Python-Doku, „Where to patch“), und das Ziel als vollständigen Pfad schreiben.</li>
+<li>Patch nur im Test (<code>with patch(...)</code>, Dekorator oder <code>addCleanup</code>), nie auf Modulebene.</li>
+<li>Jeder Patch steht mit einem Satz Begründung im Test („Netzgrenze zu simplecore.app“).</li>
+</ol>
+<h3 id="regel-6-kein-globaler-zustand">Regel 6 – Kein globaler Zustand<a class="headerlink" href="#regel-6-kein-globaler-zustand" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Kein <code>sys.modules[...] = ...</code> auf Modulebene. Wenn nötig: <code>with patch.dict(sys.modules, {...}):</code> innerhalb des Tests.</li>
+<li>Umgebungsvariablen mit <code>patch.dict(os.environ, ...)</code> und <code>self.addCleanup(patcher.stop)</code> direkt nach <code>start()</code>.</li>
+<li>Daten nur in <code>tempfile.mkdtemp()</code>; nie in den Checkout, nie ins Benutzerprofil, nie relativ zum Arbeitsordner.</li>
+<li>Singletons (<code>get_app</code>, <code>Session</code>) vor und nach dem Test zurücksetzen (vorhanden: <code>tests/conftest.py</code>, <code>tests/a_util.py</code>).</li>
+<li>Ein Test, der allein grün und im Gesamtlauf rot ist, ist ein Fehler, nicht „flaky“.</li>
+</ol>
+<h3 id="regel-7-jeder-test-muss-rot-werden-konnen-gegenprobe">Regel 7 – Jeder Test muss rot werden können (Gegenprobe)<a class="headerlink" href="#regel-7-jeder-test-muss-rot-werden-konnen-gegenprobe" title="Permanent link">&para;</a></h3>
+<p>Für jeden Bugfix-Test gilt: <strong>vor</strong> dem Fix ausführen → rot, mit der Fehlermeldung des Bugs; Fix anwenden → grün; Fix zurücknehmen (<code>git stash</code>) → wieder rot; Fix zurück → grün. Befehl und Ausgabe aller drei Läufe kommen in den Bericht. Ein Test, den man nicht rot bekommt, prüft nichts. (Das ist die Handform des Mutation Testing; für ganze Module kann <code>mutmut</code> das automatisch zeigen.)</p>
+<h3 id="regel-8-das-paket-testen-nicht-nur-den-checkout">Regel 8 – Das Paket testen, nicht nur den Checkout<a class="headerlink" href="#regel-8-das-paket-testen-nicht-nur-den-checkout" title="Permanent link">&para;</a></h3>
+<p>Wer <code>pyproject.toml</code>, Imports zwischen Modulen, <code>package-data</code> oder Einstiegspunkte ändert, prüft das <strong>gebaute Paket</strong>: Wheel bauen, in eine frische venv installieren, aus einem fremden Ordner mit <code>python -I</code> starten (der Checkout liegt dann nicht im <code>sys.path</code>) und den betroffenen Pfad ausführen. Muster aus der Python-Packaging-Diskussion: bauen, in frische Umgebung installieren, mit <code>python -I</code> testen.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python<span class="w"> </span>-m<span class="w"> </span>build<span class="w"> </span>--wheel<span class="w"> </span>-o<span class="w"> </span>/tmp/tbwheel
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>python<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>/tmp/tbvenv<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>/tmp/tbvenv/bin/pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"/tmp/tbwheel/toolboxv2-*.whl[cli,web,isaa,desktop]"</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nb">cd</span><span class="w"> </span>/tmp<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>/tmp/tbvenv/bin/python<span class="w"> </span>-I<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import toolboxv2.mods.CloudM.LiveSync.data_api_sync"</span>
+</code></pre></div>
+<h3 id="regel-9-betriebstests-fur-die-ziele">Regel 9 – Betriebstests für die Ziele<a class="headerlink" href="#regel-9-betriebstests-fur-die-ziele" title="Permanent link">&para;</a></h3>
+<p>Für jedes Produktziel gibt es mindestens einen Test, der den echten Ablauf fährt: isolierte Umgebung (<code>HOME</code>, <code>TB_DATA_DIR</code>, <code>LOCALAPPDATA</code>/<code>APPDATA</code> umgebogen), <code>tb workers start</code> bzw. der Worker auf freiem Port, HTTP-Anfragen von außen, Prüfung des Ergebnisses, sauberes Stoppen. Kontopflicht z. B.: ohne Kontodatei liefert <strong>jede</strong> geschützte Route 403/Weiterleitung, nicht nur <code>/</code>. Diese Tests sind langsam; sie laufen in der CI in einem eigenen Schritt.</p>
+<h3 id="regel-10-fakes-werden-selbst-gepruft">Regel 10 – Fakes werden selbst geprüft<a class="headerlink" href="#regel-10-fakes-werden-selbst-gepruft" title="Permanent link">&para;</a></h3>
+<p>Ein Fake (z. B. In-Memory-Data-API) bekommt einen kleinen Vertragstest: Dieselben Fälle laufen gegen den Fake und gegen die echte Implementierung (lokal gegen die echte <code>CloudM.UserDataAPI</code> mit Temp-Datenbank). Weichen die Antworten ab, ist der Fake falsch. Google TotT: <em>Exercise Service Call Contracts in Tests</em>, <em>Fake Your Way to Better Tests</em>.</p>
+<h3 id="regel-11-fehler-sind-laut">Regel 11 – Fehler sind laut<a class="headerlink" href="#regel-11-fehler-sind-laut" title="Permanent link">&para;</a></h3>
+<p>Kein <code>except Exception: pass</code> im Produktcode. Wird ein Fehler bewusst behandelt, dann mit einem konkreten Typ und einem Zustand, den ein Test sehen kann (z. B. <code>state="error", error="..."</code>). Ein fehlendes Pflichtpaket bricht den Start ab oder schaltet die Funktion sichtbar ab, und dafür gibt es einen Test.</p>
+<h3 id="regel-12-zeitlimit">Regel 12 – Zeitlimit<a class="headerlink" href="#regel-12-zeitlimit" title="Permanent link">&para;</a></h3>
+<p>Jeder Test hat ein Zeitlimit (in der CI <code>timeout-minutes</code> am Job, für Tests mit Netz- oder Thread-Anteil ein Limit im Test). Ein hängender Test soll <strong>einen</strong> Test rot machen, nicht den Job nach 6 Stunden abbrechen (so geschehen: 3.10/ubuntu, Lauf 44002714075).</p>
+<hr />
+<h2 id="3-prufliste-fur-jeden-test-review">3. Prüfliste für jeden Test (Review)<a class="headerlink" href="#3-prufliste-fur-jeden-test-review" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Nr.</th>
+<th>Frage</th>
+<th>muss</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Welche Patches/Doubles gibt es? Jedes liegt an einer Prozessgrenze (Regel 2)?</td>
+<td>ja</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Wird ein Zustand behauptet statt hergestellt?</td>
+<td>nein</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Läuft der Test über denselben Eingang und mit denselben Argumenten wie der Betrieb?</td>
+<td>ja</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Gegenprobe gemacht: Fix zurück → rot (Regel 7)? Ausgabe im Bericht?</td>
+<td>ja</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Schreibt der Test nur in Temp-Ordner und räumt Umgebung/Singletons auf?</td>
+<td>ja</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Allein <strong>und</strong> im Gesamtlauf grün?</td>
+<td>ja</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Betrifft die Änderung Paket/Imports → Paket-Test (Regel 8) gelaufen?</td>
+<td>ja</td>
+</tr>
+<tr>
+<td>8</td>
+<td><code>unittest</code>, kein <code>skip</code>/<code>xfail</code>/<code>importorskip</code> als Ausweg?</td>
+<td>ja</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="4-quellen">4. Quellen<a class="headerlink" href="#4-quellen" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Google Testing Blog, Testing on the Toilet: <a href="https://testing.googleblog.com/2013/05/testing-on-toilet-dont-overuse-mocks.html">Don't Overuse Mocks</a>, <a href="https://testing.googleblog.com/2013/07/testing-on-toilet-know-your-test-doubles.html">Know Your Test Doubles</a>, <a href="https://testing.googleblog.com/2013/06/testing-on-toilet-fake-your-way-to.html">Fake Your Way to Better Tests</a>, <a href="https://testing.googleblog.com/2015/01/testing-on-toilet-prefer-testing-public.html">Prefer Testing Public APIs Over Implementation-Detail Classes</a>, <a href="https://testing.googleblog.com/2015/01/testing-on-toilet-change-detector-tests.html">Change-Detector Tests Considered Harmful</a>, <a href="https://testing.googleblog.com/2020/07/testing-on-toilet-dont-mock-types-you.html">Don't Mock Types You Don't Own</a>, <a href="https://testing.googleblog.com/2014/05/testing-on-toilet-effective-testing.html">Effective Testing</a>, <a href="https://testing.googleblog.com/2018/11">Exercise Service Call Contracts in Tests</a></li>
+<li><em>Software Engineering at Google</em>, Kapitel 13 „Test Doubles“ (Realismus vor Isolation, Fakes, Zustand statt Interaktion): <a href="https://study-notes-dge.pages.dev/engineering-practices/software-engineering-at-google/chapters/ch13-test-doubles">Zusammenfassung</a></li>
+<li>Martin Fowler: <a href="https://martinfowler.com/bliki/UnitTest.html">UnitTest</a> (solitary/sociable, Begriffe von Jay Fields)</li>
+<li>Python-Doku: <a href="https://docs.python.org/3.15/library/unittest.mock.html">unittest.mock</a> (Abschnitte „Where to patch“, „Autospeccing“)</li>
+<li>Python Discourse: <a href="https://discuss.python.org/t/a-test-design-pattern-to-reuse-integration-tests-on-newly-built-distribution-packages/17006">Integrationstests gegen frisch gebaute Pakete</a> (bauen, frische Umgebung, <code>python -I</code>)</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Zurück zum Seitenanfang
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      © 2022–2026 Markin Hausmanns
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.tabs", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "In Zwischenablage kopiert", "clipboard.copy": "In Zwischenablage kopieren", "search.result.more.one": "1 weiteres Suchergebnis auf dieser Seite", "search.result.more.other": "# weitere Suchergebnisse auf dieser Seite", "search.result.none": "Keine Suchergebnisse", "search.result.one": "1 Suchergebnis", "search.result.other": "# Suchergebnisse", "search.result.placeholder": "Suchbegriff eingeben", "search.result.term.missing": "Es fehlt", "select.version": "Version ausw\u00e4hlen"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>
