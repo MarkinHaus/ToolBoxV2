@@ -3,9 +3,21 @@ from __future__ import annotations
 
 from rich.text import Text
 from textual import events
+from textual.widget import Widget
 from textual.widgets import Static
 
-from .theme import G
+from .theme import BG, G
+
+
+class Fade(Widget):
+    """Eine Zeile Abstand ueber der Eingabe mit weichem Uebergang: Halbbloecke in einer Farbe zwischen
+    Hintergrund und Eingabeleiste (eine Zeichenzeile kann keinen echten Verlauf zeigen)."""
+
+    DEFAULT_CSS = "Fade { height: 1; }"
+    TONE = "#0a1317"                                    # zwischen BG (#070d10) und Eingabe (#0c161c)
+
+    def render(self) -> Text:
+        return Text("▄" * max(1, self.size.width), style=f"{self.TONE} on {BG}")
 
 
 class FoldLine(Static):

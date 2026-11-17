@@ -142,6 +142,8 @@ async def main():
         await pilot.press("ctrl+o"); await pilot.pause(0.1); assert [c.collapsed for c in cards]==[True,True]
         await pilot.press("ctrl+r"); await pilot.pause(0.1); assert not app.think_boxes[0].collapsed
         await pilot.press("ctrl+r"); await pilot.press("alt+2"); await pilot.pause(0.2)
+        gap=app.query_one("#gap"); assert gap.size.height==1 and gap.region.y+1==app.query_one("#bottom").region.y+1
+        assert app.chat.region.bottom<=gap.region.y, (app.chat.region, gap.region)            # Abstand direkt ueber der Eingabe
         print("stream ok")
         # UI bleibt bedienbar waehrend Engine-Loop blockiert ist
         await pilot.press(*"block"); await pilot.press("enter"); await pilot.pause(0.4)

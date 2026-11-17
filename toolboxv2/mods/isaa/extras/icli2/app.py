@@ -23,7 +23,7 @@ from .picker import BACK, Picker, fuzzy
 from .errors import explain, render
 from .richmd import FrozenMarkdown
 from .subtile import SubView
-from .widgets import FoldLine
+from .widgets import Fade, FoldLine
 from .theme import DIM, ISAA_THEME, SYM, G, ZEN, banner
 
 FRAME = 1 / 30                 # Abholtakt fuer Engine-Events
@@ -374,6 +374,7 @@ class ICli2(App):
             with VerticalScroll(id="side"):
                 yield Static(id="side-text")
         with Vertical(id="bottom"):
+            yield Fade(id="gap")                         # Abstand zwischen Chat und Eingabe
             yield Static(id="complete")
             with Horizontal(id="row"):
                 yield Static(SYM["progress"], id="mark")
