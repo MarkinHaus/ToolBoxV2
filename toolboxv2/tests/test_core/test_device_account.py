@@ -28,6 +28,10 @@ class _FakeSession:
     def _save_session_token(self, access, refresh, user_id):
         self.saved = (access, refresh, user_id)
 
+    def _clear_session_token(self):
+        # WP3 A6e: echter Session-Kern hat sie (session.py:223) - Stub nachziehen
+        self.saved = None
+
     async def login(self, verbose=False):
         return self.login_result
 

@@ -138,8 +138,8 @@ class Tools(MainTool, FileHandler):
         s.valid = True
         # No remote base for a purely local session — prevents accidental
         # remote validate_session calls on later login() attempts.
-        if not os.environ.get("TOOLBOXV2_REMOTE_BASE"):
-            s.base = None
+        # WP3 A6d: base bleibt unangetastet - der lokale Admin behaelt die
+        # konfigurierte Basis; None brach spaetere login()-Versuche.
 
     def s_version(self):
         return self.version

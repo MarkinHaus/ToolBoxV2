@@ -80,10 +80,14 @@ async def link_account(app: App, payload: dict) -> UserData:
 
     # Tokens via the existing session path (F17a); base points at the remote.
     s = app.session
+    old_base = s.base
     s.base = os.environ.get("TOOLBOXV2_REMOTE_BASE") or DEFAULT_BASE_URL
     s._save_session_token(payload.get("access_token", ""),
                           payload.get("refresh_token", ""), user_id)
     if not await s.login():
+        # WP3 A6e: failed login must not leave tokens/base behind.
+        s._clear_session_token()
+        s.base = old_base
         raise RuntimeError("remote login failed - device not linked")
 
     user = await _load_user(app, user_id)
