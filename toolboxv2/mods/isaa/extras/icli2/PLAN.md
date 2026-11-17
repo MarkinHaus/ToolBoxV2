@@ -1,6 +1,6 @@
 # icli 2.0 – Plan
 
-Stand: alle neun Schritte umgesetzt. Die alte `flows/isaa/icli.py` bleibt unverändert und parallel nutzbar.
+Stand: alle Schritte umgesetzt und einmal real durchgefahren (Schritt 10). Die alte `flows/isaa/icli.py` bleibt unverändert und parallel nutzbar.
 
 Start: `tb -m icli2` · Code: `toolboxv2/mods/isaa/extras/icli2/` · Starter: `toolboxv2/flows/isaa/icli2.py`
 
@@ -67,6 +67,9 @@ Regeln, die für jeden weiteren Schritt gelten:
 | `/job [zeitplan name: auftrag]`, `/dream` | fertig | `/job add/list/remove`, `/job dream create` |
 | `/network [datei]` | fertig | – (Agent-Network sichern/laden) |
 | `/side` | fertig | – |
+| `/settings`, `/set name wert` | fertig | `/set_max_iterations` |
+| `/context` | fertig | `/context` (jetzt in der Seitenleiste) |
+| `/vfs [pfad]` | fertig | `/vfs` (ansehen, mit Pfad-Vervollständigung) |
 | `/feature`, `/skill`, `/mcp [name befehl …]`, `/plugin` | fertig | gleichnamige Befehle (Picker mit An/Aus) |
 | `/discord [befehl …]`, `/telegram [befehl …]` | fertig | unverändert an die vorhandenen Erweiterungen durchgereicht |
 | `/login`, `/logout` | fertig | – |
@@ -143,6 +146,23 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 - Läufe, die über Discord/Telegram hereinkommen, erscheinen als normale Läufe (Block im Chat, Seitenleiste) und lassen sich mit `Esc` stoppen.
 - Die Erweiterungen werden erst beim ersten `/discord` bzw. `/telegram` geladen.
 
+### Schritt 10 – Echter Durchlauf und Nacharbeiten (`icli2-10-e2e-settings-vfs.patch`)
+- **Echter Durchlauf:** toolboxv2 samt isaa-Mod installiert und die icli2 gegen den echten Agenten gefahren, mit einem lokalen Ersatz-LLM (`tests/e2e/`). Geprüft: Start, Lauf mit `think`, echtem Tool und Antwort, alle Picker, alle Aktionen, Job-Lauf, Discord/Telegram-Status über die unveränderten Erweiterungen.
+- **Dabei gefundene und behobene Fehler:**
+  - Antwort kam nur als Tool-Zeile: der Agent antwortet über das Tool `final_answer`; `think` wird jetzt als Gedanken gezeigt.
+  - Absturz des Modell-Pickers bei gleichem schnellem und komplexem Modell (doppelte Werte).
+  - Absturz bei offener Auswahl: Kopf-/Fußzeile wurden im Picker statt im Hauptbild gesucht.
+  - Session-Liste enthielt leere Namen und brachte den Picker zum Absturz.
+  - `/dream` legte bei jedem Aufruf einen weiteren Dream-Job an.
+  - Tool-Fehler, die nur als Text gemeldet werden, galten als Erfolg.
+- **Modell-Picker dynamisch** (`models.py`): liest bei jedem Öffnen Gateway (`TB_LLM_GATEWAY_URL`) und alle in litellm registrierten Custom-Provider neu, dann das Register der alten icli; der Titel nennt die Router-Präfixe des Agenten. Nebenbefund: Gateway-Modelle erschienen bisher nie (auch nicht in der alten icli), weil dort das Modul statt einer Instanz abgefragt wurde.
+- **Autovervollständigung** beim Tippen von `/befehl` (Tab übernimmt, ↑↓ wählt, Enter führt aus) und für Pfade bei `/vfs`.
+- **Befehlsmenü:** ↑↓ oder W/S wählen, → / D / Enter öffnet, ← / A zurück in die Befehlsliste, `/` startet das Filtern.
+- **`/settings`:** Max. Iterationen (auch `/set max_iterations 50`, wird gespeichert), Kontext, Anmeldestatus, Datenordner; Zugangsdaten sind als „kommt“ vorgemerkt.
+- **`/context`** öffnet die Seitenleiste und zeigt dort unten die Aufschlüsselung (`agent.context_overview`).
+- **`/vfs [pfad]`** (`vfsview.py`): Ordner auflisten, Datei anzeigen, nur lesend.
+- Leerzeile zwischen eigener Nachricht und Antwort; erste Taste nach verlorenem Fokus wird nicht mehr verschluckt.
+
 ## Arbeitsanleitung für weitere Schritte
 
 Alle geplanten Schritte sind umgesetzt. Das Vorgehen gilt für jede Erweiterung; offene Ideen stehen unter „Danach“.
@@ -160,7 +180,8 @@ Alle geplanten Schritte sind umgesetzt. Das Vorgehen gilt für jede Erweiterung;
 
 ### Danach
 
-- **Erster echter Lauf** mit isaa-Mod und LLM – bisher ist alles nur gegen Nachbauten geprüft.
+- **Lauf mit echtem LLM und auf Windows** – der echte Durchlauf lief unter Linux mit Ersatz-LLM.
+- **Zugangsdaten** in `/settings` verwalten.
 - **Volles Omni:** Delegations-/VFS-/Chat-Tools (`_make_omni_tools` `icli.py:11374`), Weltmodell, VAD, Sprecher-Erkennung, Pegelanzeige.
 - Große Features (docs, autodoc, autotest, autofix), Plugin-Installation und -Hooks.
 
@@ -171,7 +192,8 @@ Alle geplanten Schritte sind umgesetzt. Das Vorgehen gilt für jede Erweiterung;
 ## Bekannte Lücken und Risiken
 
 - **Review-Fixes** sind über die Prüfskripte abgedeckt, aber wie alles andere nicht gegen den echten isaa-Mod gelaufen.
-- **Nur mit Fake-Agent getestet.** Der Pfad über den echten isaa-Mod (Agent bauen, `a_stream`, Pause, Auto-Pack mit echten Tools) ist noch nie gelaufen.
+- **Echter Durchlauf nur mit Ersatz-LLM unter Linux**, ohne MinIO, ohne Embedding-Modell (kein Download möglich), ohne Mikrofon. Nicht real geprüft: echtes LLM, Windows-Terminal, verbundenes Discord/Telegram, MCP-Server, LiveSync, Sprache, `#audio`.
+- **Früher Stand:** Der Pfad über den echten isaa-Mod (Agent bauen, `a_stream`, Pause, Auto-Pack mit echten Tools) ist noch nie gelaufen.
 - **Datenordner:** `data_dir` hängt vom App-Namen ab. Läuft ein Flow unter einem anderen Namen als `isaa-host`, liegen seine Agenten evtl. in einem anderen Ordner und erscheinen nicht.
 - **Nicht jedes Tool ist packbar:** Tools mit offenen Verbindungen, Prozessen oder Locks lassen sich nicht serialisieren und fehlen nach dem Laden.
 - **Pakete führen Code aus:** Beim Laden wird der enthaltene Code ausgeführt. Geladen wird nur aus dem eigenen `Agents`-Ordner; fremde Pakete dort nicht ablegen.
@@ -207,6 +229,7 @@ git apply icli2-04-modell-session-mount.patch
 git apply icli2-05-laeufe-jobs-networks.patch
 git apply icli2-08-09-cloudm-voice.patch
 git apply icli2-06-07-features-discord.patch   # baut auf 08-09 auf
+git apply icli2-10-e2e-settings-vfs.patch
 pip install "textual>=8"
 ```
 

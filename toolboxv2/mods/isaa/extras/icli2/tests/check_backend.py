@@ -19,7 +19,7 @@ class Sess:
 class SM:
     def __init__(s): s.s={}
     async def get_or_create(s,n): return s.s.setdefault(n,Sess())
-    def list_sessions(s): return list(s.s)
+    def list_sessions(s): return [None, *s.s]          # wie der echte SessionManager: auch leere Namen
 class Eng: 
     def __init__(s): s._session_last_run={"default":"r1"}; s._active_executions={"r1":1}
 class Agent:
@@ -92,7 +92,7 @@ async def main():
         try: await b.do("job_add",spec=bad); assert 0
         except ValueError: pass
     print((await b.do("job_add",spec="alle 30m aufräumen: lösche alte logs"))["text"])
-    await b.do("job_add",spec="um 9:05 bericht: schreibe: den bericht"); await b.do("dream")
+    await b.do("job_add",spec="um 9:05 bericht: schreibe: den bericht"); await b.do("dream"); assert "gibt es schon" in (await b.do("dream"))["text"]
     jobs=sch.list_jobs(); assert [j.name for j in jobs]==["aufräumen","bericht","auto-dream"], [j.name for j in jobs]
     assert jobs[0].trigger.interval_seconds==1800 and jobs[1].trigger.cron_expression=="5 9 * * *" and jobs[1].query=="schreibe: den bericht" and jobs[0].agent_name=="myagent"
     rows=(await b.rows("jobs"))["rows"]; print(rows[0]); assert len(rows)==3 and "on_interval · active" in rows[0]["hint"]

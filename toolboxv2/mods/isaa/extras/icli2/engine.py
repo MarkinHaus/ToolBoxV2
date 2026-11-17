@@ -15,6 +15,7 @@ from . import fmt
 from . import protocol as P
 
 FLUSH_SECONDS = 0.04      # Content-Deltas werden auf ~25 Events/s gebuendelt
+INLINE_TOOLS = ("final_answer", "think")
 RESULT_LIMIT = 4000       # Zeichen pro Tool-Ergebnis, die zur UI gehen
 ARGS_LIMIT = 2000
 
@@ -37,6 +38,8 @@ class Backend(Protocol):
 def _succeeded(result: Any) -> bool:
     """Tools melden Erfolg im JSON-Ergebnis ({"success": bool}), wie in der alten icli."""
     result = fmt.parse(result)
+    if isinstance(result, str) and result.lstrip().lower().startswith(("error", "fehler", "traceback")):
+        return False                                     # Tools melden Fehler oft nur als Text
     return result.get("success", True) is not False if isinstance(result, dict) else True
 
 
@@ -49,7 +52,7 @@ def _show(value: Any, limit: int) -> dict[str, str]:
 
 
 class _Run:
-    __slots__ = ("id", "agent", "session", "task", "buf", "kind", "sub", "timer", "ended", "result")
+    __slots__ = ("id", "agent", "session", "task", "buf", "kind", "sub", "timer", "ended", "result", "spoke")
 
     def __init__(self, run_id: str, agent: str, session: str):
         self.id, self.agent, self.session = run_id, agent, session
@@ -57,6 +60,7 @@ class _Run:
         self.buf: list[str] = []
         self.kind = P.TEXT
         self.sub = ""                                    # Sub-Agent, dem der Puffer gehoert
+        self.spoke = False                               # wurde Antworttext gestreamt?
         self.result: asyncio.Future | None = None        # fuer von der Engine gestartete Laeufe
         self.timer: asyncio.TimerHandle | None = None
         self.ended = ""          # von aussen gesetzter Endstatus (stopped/paused)
@@ -207,8 +211,10 @@ class Engine:
         try:
             await asyncio.shield(boot)
             if cmd.kind == P.LIST:
-                self._emit(P.ROWS, what=cmd.data["what"], to=cmd.data.get("to", ""),
-                           **await self._backend.rows(cmd.data["what"]))
+                arg = cmd.data.get("arg")
+                rows = await (self._backend.rows(cmd.data["what"]) if arg is None
+                              else self._backend.rows(cmd.data["what"], arg))
+                self._emit(P.ROWS, what=cmd.data["what"], to=cmd.data.get("to", ""), arg=arg or "", **rows)
                 return
             args = dict(cmd.data)
             out = await self._backend.do(args.pop("action"), **args)
@@ -233,6 +239,8 @@ class Engine:
     def _push(self, run: _Run, kind: str, text: str, sub: str = "") -> None:
         if not text:
             return
+        if kind == P.TEXT and not sub:
+            run.spoke = True
         if kind != run.kind or sub != run.sub:
             self._flush(run)
             run.kind, run.sub = kind, sub
@@ -279,6 +287,14 @@ class Engine:
                 if t == "reasoning":
                     self._push(run, P.THINK, chunk.get("chunk", ""), sub)
                     continue
+                # Der Agent antwortet ueber die Tools 'final_answer' und 'think': keine Tool-Zeilen,
+                # sondern Antworttext bzw. Gedanken (wie ZenRenderer in der alten icli).
+                if t in ("tool_start", "tool_result", "tool_error") and chunk.get("name") in INLINE_TOOLS:
+                    if t == "tool_start" and chunk.get("name") == "think":
+                        args = fmt.parse(chunk.get("args", ""))
+                        if isinstance(args, dict) and args.get("thought"):
+                            self._push(run, P.THINK, str(args["thought"]) + "\n", sub)
+                    continue
                 self._flush(run)
                 if sub and t not in ("tool_start", "tool_result", "tool_error"):
                     continue
@@ -299,6 +315,9 @@ class Engine:
                                secs=round(secs, 2))
                 elif t == "final_answer":
                     answer = str(chunk.get("answer", chunk.get("content", "")) or "")
+                    if answer and not run.spoke:         # nichts gestreamt: Antwort jetzt zeigen
+                        self._push(run, P.TEXT, answer)
+                        self._flush(run)
                 elif t == "paused":
                     status = "paused"
                 elif t == "error":

@@ -18,7 +18,7 @@ from textual.widgets import Collapsible, Markdown, Static, TextArea
 from . import VERSION
 from . import protocol as P
 from .engine import Engine
-from .picker import Picker
+from .picker import BACK, Picker, fuzzy
 from .theme import DIM, ISAA_THEME, SYM, G, banner
 
 FRAME = 1 / 30                 # Abholtakt fuer Engine-Events
@@ -46,6 +46,10 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "/plugin": ("[name]", "Plugins an/aus"),
     "/discord": ("[befehl …]", "Discord-Anbindung (wie in der alten icli)"),
     "/telegram": ("[befehl …]", "Telegram-Anbindung (wie in der alten icli)"),
+    "/settings": ("", "Einstellungen: Iterationen, Kontext, Anmeldung, Zugangsdaten"),
+    "/set": ("<name> <wert>", "Einstellung direkt setzen, z. B. /set max_iterations 50"),
+    "/context": ("", "Kontext-Übersicht in der Seitenleiste zeigen"),
+    "/vfs": ("[pfad]", "Dateien im VFS ansehen (Tab vervollständigt den Pfad)"),
     "/side": ("", "Seitenleiste ein/aus (F2)"),
     "/login": ("", "CloudM-Anmeldung prüfen oder starten"),
     "/tb": ("[mod.fn key=wert …]", "ToolBox-Funktion aufrufen"),
@@ -98,8 +102,21 @@ class PromptArea(TextArea):
             self.value = value
 
     async def _on_key(self, event: events.Key) -> None:
-        if event.key == "enter":
+        hints = self.app.completions                    # Vorschlaege zu einem angefangenen /befehl
+        if event.key == "tab" and hints:
             event.prevent_default().stop()
+            self.app.complete_accept()
+        elif event.key in ("up", "down") and hints:
+            event.prevent_default().stop()
+            self.app.complete_move(-1 if event.key == "up" else 1)
+        elif event.key == "escape" and hints:
+            event.prevent_default().stop()
+            self.app.complete_hide()
+        elif event.key == "enter":
+            event.prevent_default().stop()
+            if self.app.complete_on_enter():
+                self.app.complete_accept()               # angefangenes Wort: Vorschlag uebernehmen
+            self.app.complete_hide()
             self.post_message(self.Submitted(self.text))
         elif event.key in ("shift+enter", "ctrl+j"):
             event.prevent_default().stop()
@@ -217,11 +234,13 @@ class ICli2(App):
     #prompt, #prompt:focus { border: none; height: auto; max-height: 8; padding: 0;
                              background: transparent; }
     #foot { height: 1; padding: 0 1; color: $text-muted; }
+    #complete { height: auto; display: none; padding: 0 2; color: $text-muted; }
+    #complete.-open { display: block; }
     .run { height: auto; margin: 1 0 0 0; }
     .run.-focus { border-left: thick $primary; }
     .sub { height: auto; margin: 0 0 0 2; border-left: solid $secondary; }
     .sub-head { padding: 0 0 0 1; color: $secondary; }
-    .user { color: $accent; text-style: bold; }
+    .user { color: $accent; text-style: bold; margin: 0 0 1 0; }
     .answer { margin: 0; padding: 0 0 0 2; background: transparent; }
     .answer MarkdownH1, .answer MarkdownH2, .answer MarkdownH3 {
         content-align: left middle; text-style: bold; color: $accent;
@@ -263,11 +282,16 @@ class ICli2(App):
         self.ready = False
         self.runs: dict[str, RunView] = {}          # alle Laeufe, auch beendete (begrenzt)
         self.pending: dict[str, RunView] = {}       # tag -> Block, bis die Engine den Lauf meldet
-        self.side_rows: dict[str, list[dict]] = {"jobs": [], "mounts": []}
+        self.side_rows: dict[str, list[dict]] = {"jobs": [], "mounts": [], "context": []}
+        self._side_jump = False                      # nach dem naechsten Kontext-Update ans Ende scrollen
+        self._via_palette = False                    # Picker kam aus der Palette: ← fuehrt dorthin zurueck
         self.tool_cards: list[ToolCard] = []
         self.think_boxes: list[Collapsible] = []
         self.show_thinking = False
         self.focus_run = ""
+        # Vorschlaege zur aktuellen Eingabe: (einzusetzender Text, Anzeige, Hinweis)
+        self.completions: list[tuple[str, str, str]] = []
+        self._complete_pos = 0
         self.tokens: tuple[int, int] | None = None
         self._tick = 0
         self._tag = 0
@@ -286,6 +310,7 @@ class ICli2(App):
             with VerticalScroll(id="side"):
                 yield Static(id="side-text")
         with Vertical(id="bottom"):
+            yield Static(id="complete")
             with Horizontal(id="row"):
                 yield Static(SYM["progress"], id="mark")
                 yield PromptArea(placeholder="Nachricht oder /befehl", id="prompt", compact=True,
@@ -299,6 +324,11 @@ class ICli2(App):
         self.chat = self.query_one("#chat", VerticalScroll)
         self.chat.anchor()                               # bleibt unten, solange nicht gescrollt wird
         self.prompt = self.query_one("#prompt", PromptArea)
+        # feste Referenzen: App.query_one sucht im obersten Screen und findet bei offenem Picker nichts
+        base = self.screen
+        self.w_head, self.w_foot = base.query_one("#head", Static), base.query_one("#foot", Static)
+        self.w_side, self.w_side_text = base.query_one("#side"), base.query_one("#side-text", Static)
+        self.w_row, self.w_complete = base.query_one("#row"), base.query_one("#complete", Static)
         self.prompt.focus()
         self.set_interval(FRAME, self._pump)
         self.set_interval(0.1, self._chrome)
@@ -364,6 +394,8 @@ class ICli2(App):
                              "done" if d["status"] == "done" else "")
             if self.focus_run == ev.run:
                 self._focus(next(reversed(self.active), ""))
+            if self.w_side.has_class("-open"):
+                self.engine.send(P.LIST, what="context", to="side")
         elif ev.kind == P.READY:
             changed = (d["agent"], d["session"], d["model"], d["complex_model"]) != \
                       (self.agent, self.session, self.model, self.complex_model)
@@ -379,8 +411,15 @@ class ICli2(App):
             for role, text in d.get("recap", []):       # letzte Nachrichten der Session
                 await self._note(f"{SYM['progress'] if role == 'user' else ' '} {text}")
         elif ev.kind == P.ROWS:
-            if d.get("to") == "side":
+            if d.get("to") == "complete":
+                self._complete_paths(d.get("arg", ""), d["rows"])
+            elif d.get("to") == "side":
                 self.side_rows[d["what"]] = d["rows"]
+                if d["what"] == "context":
+                    self.w_side_text.update(self._side_text())
+                    if self._side_jump:
+                        self._side_jump = False
+                        self.call_after_refresh(self.w_side.scroll_end, animate=False)
             else:
                 self._pick(d["what"], d["title"], d["rows"])
         elif ev.kind == P.DRAFT:
@@ -399,7 +438,7 @@ class ICli2(App):
             view.box.set_class(many and rid == run, "-focus")
 
     def _signal(self, state: str) -> None:
-        row = self.query_one("#row")
+        row = self.w_row
         for name in ("run", "done", "ask", "fail"):
             row.set_class(name == state, f"-{name}")
 
@@ -410,7 +449,7 @@ class ICli2(App):
         """Kopf-, Fusszeile, Seitenleiste. Rein lokal, auch bei blockierter Engine fluessig."""
         self._tick += 1
         mounts = f" · {self.mounts} mount{'s' if self.mounts != 1 else ''}" if self.mounts else ""
-        self.query_one("#head", Static).update(
+        self.w_head.update(
             f"[{G.L4_BRIGHT}]{SYM['agent']} {self.agent}[/] "
             f"[{DIM}]· {self.model} · {self.session}{mounts}"
             f"{' · ' + self.user if self.user else ''}[/]"
@@ -430,9 +469,9 @@ class ICli2(App):
             left = f"[{G.L3_MID}]{SYM['done']}[/] bereit"
         if self.tokens:
             left += f" · {self.tokens[0] / 1000:.1f}k/{self.tokens[1] / 1000:.0f}k tok"
-        self.query_one("#foot", Static).update(left)
-        if self._tick % 5 == 0 and self.query_one("#side").has_class("-open"):
-            self.query_one("#side-text", Static).update(self._side_text())
+        self.w_foot.update(left)
+        if self._tick % 5 == 0 and self.w_side.has_class("-open"):
+            self.w_side_text.update(self._side_text())
 
     def _side_text(self) -> str:
         def title(text: str) -> str:
@@ -455,17 +494,21 @@ class ICli2(App):
             rows = [r for r in self.side_rows[what] if r["value"] not in ("*", "+")]
             lines += [f" {escape(r['label'])}\n   [{DIM}]{escape(r['hint'][:32])}[/]" for r in rows] \
                 or [f" [{DIM}]keine[/]"]
-        if self.tokens:
-            used, top = self.tokens
-            fill = int(20 * min(used, top) / top)
-            lines += ["", title("Kontext"),
-                      f" [{G.L3_MID}]{SYM['bar_fill'] * fill}[/][{DIM}]{SYM['bar_empty'] * (20 - fill)}[/] "
-                      f"{100 * used // top}%"]
+        lines += ["", title("Kontext")]
+        context = self.side_rows["context"]
+        if context:
+            for row in context:
+                text = escape(row["label"])
+                head = text and not text.startswith(("━", "─")) and "  " not in text.strip() and text[:1].isupper()
+                lines.append(f" [{G.L3_MID}]{text}[/]" if text.startswith(("━", "─")) else
+                             f" {text}" if head else f" [{DIM}]{text}[/]")
+        else:
+            lines.append(f" [{DIM}]wird geladen …[/]")
         return "\n".join(lines)
 
     def _refresh_side(self) -> None:
-        if self.ready and self.query_one("#side").has_class("-open"):
-            for what in self.side_rows:
+        if self.ready and self.w_side.has_class("-open"):
+            for what in ("jobs", "mounts"):             # Kontext ist teurer: nur bei Bedarf
                 self.engine.send(P.LIST, what=what, to="side")
 
     # ── UI -> Engine ─────────────────────────────────────────────────────────
@@ -531,6 +574,19 @@ class ICli2(App):
             do("dream")
         elif name == "/network":
             do("network_load", path=arg) if arg else do("network_save")
+        elif name == "/settings":
+            ask("settings")
+        elif name == "/set":
+            key, _, value = arg.partition(" ")
+            do("set", key=key, value=value.strip())
+        elif name == "/context":
+            if not self.w_side.has_class("-open"):
+                self.w_side.add_class("-open")
+                self._refresh_side()
+            self._side_jump = True
+            self.engine.send(P.LIST, what="context", to="side")
+        elif name == "/vfs":
+            do("vfs", path=arg)
         elif name == "/feature":
             do("feature", name=arg) if arg else ask("features")
         elif name == "/skill":
@@ -568,8 +624,12 @@ class ICli2(App):
             return
         send = self.engine.send
 
+        via_palette, self._via_palette = self._via_palette, False
+
         def chosen(value: str | None) -> None:
-            if value is None:
+            if value == BACK and via_palette:            # ← : zurueck in die Befehlsliste
+                return self.action_palette()
+            if value in (None, BACK):
                 return
             if what == "agents":
                 send(P.DO, action="agent", name=value)
@@ -583,6 +643,14 @@ class ICli2(App):
                 send(P.DO, action="mcp", name=value)
             elif what in ("discord", "telegram"):
                 send(P.DO, action=what, args=value)
+            elif what == "settings":
+                if value.startswith("set:"):              # Wert eintippen lassen
+                    self.prompt.set_text(f"/set {value[4:]} ")
+                    self.prompt.focus()
+                elif value == "context":
+                    self.run_worker(self._command("/context"))
+                else:
+                    send(P.DO, action=value)
             elif what == "tb":
                 send(P.DO, action="tb", target=value)
             elif what == "shares":
@@ -592,11 +660,11 @@ class ICli2(App):
             elif what == "jobs":
                 self.push_screen(
                     Picker(f"Job {value}", JOB_ACTIONS),
-                    lambda act: act and send(P.DO, action="job", job=value, op=act))
+                    lambda act: act not in (None, BACK) and send(P.DO, action="job", job=value, op=act))
             elif what == "models":
                 self.push_screen(
                     Picker(f"{value} für", MODEL_TARGETS),
-                    lambda target: target and send(P.DO, action="model", name=value, target=target))
+                    lambda target: target not in (None, BACK) and send(P.DO, action="model", name=value, target=target))
 
         self.push_screen(Picker(title, [(r["value"], r["label"], r["hint"]) for r in rows]), chosen)
 
@@ -609,7 +677,7 @@ class ICli2(App):
             return
 
         def chosen(rid: str | None) -> None:
-            if rid and rid in self.runs:
+            if rid in self.runs:
                 self._focus(rid)
                 self.runs[rid].box.scroll_visible(top=True)
 
@@ -619,10 +687,77 @@ class ICli2(App):
         items = [(name, name, f"{hint}  {text}".strip()) for name, (hint, text) in COMMANDS.items()]
 
         def chosen(name: str | None) -> None:
-            if name:
+            if name not in (None, BACK):
+                self._via_palette = True                 # ← im Unter-Picker fuehrt hierher zurueck
                 self.run_worker(self._command(name))     # ohne Argument: Auswahl bzw. Standard
 
         self.push_screen(Picker("Befehle", items), chosen)
+
+    # ── Vervollstaendigung beim Tippen (Befehle und VFS-Pfade) ───────────────
+    @on(TextArea.Changed, "#prompt")
+    def _complete_update(self) -> None:
+        text = self.prompt.text
+        word = text.strip()
+        if text.startswith("/vfs ") and "\n" not in text:
+            arg = text[5:].strip()
+            if " " not in arg:                           # Vorschlaege kommen aus der Engine
+                self.engine.send(P.LIST, what="vfs", arg=arg, to="complete")
+                return
+        if not word.startswith("/") or " " in word or "\n" in text or word in COMMANDS:
+            return self.complete_hide()
+        starts = [c for c in COMMANDS if c.startswith(word)]
+        names = (starts + [c for c in COMMANDS if c not in starts and fuzzy(word[1:], c)])[:6]
+        self.completions = [(n + (" " if COMMANDS[n][0] else ""), n, " ".join(COMMANDS[n]).strip())
+                            for n in names]
+        self._complete_pos = 0
+        self._complete_draw()
+
+    def _complete_paths(self, arg: str, rows: list[dict]) -> None:
+        """Antwort der Engine auf einen angefangenen VFS-Pfad; veraltete Antworten verwerfen."""
+        text = self.prompt.text
+        if not text.startswith("/vfs ") or text[5:].strip() != arg:
+            return
+        self.completions = [("/vfs " + r["value"], r["label"], r["hint"]) for r in rows
+                            if r["value"] != arg][:8]
+        self._complete_pos = 0
+        self._complete_draw()
+
+    def _complete_draw(self) -> None:
+        from rich.markup import escape
+        box = self.w_complete
+        box.set_class(bool(self.completions), "-open")
+        box.update("\n".join(
+            (f"[{G.L4_BRIGHT}]{SYM['progress']} {escape(label)}[/]" if i == self._complete_pos
+             else f"  {escape(label)}") + f"  [{DIM}]{escape(hint)}[/]"
+            for i, (_insert, label, hint) in enumerate(self.completions))
+            + (f"\n  [{DIM}]Tab übernimmt · ↑↓ wählt · Enter führt aus[/]" if self.completions else ""))
+
+    def complete_move(self, step: int) -> None:
+        if self.completions:
+            self._complete_pos = (self._complete_pos + step) % len(self.completions)
+            self._complete_draw()
+
+    def complete_accept(self) -> None:
+        if self.completions:
+            insert = self.completions[self._complete_pos][0]
+            self.completions = []
+            self._complete_draw()
+            self.prompt.set_text(insert)                 # loest bei Ordnern die naechste Ebene aus
+
+    def complete_on_enter(self) -> bool:
+        """Enter bei sichtbaren Vorschlaegen: angefangenes Wort erst vervollstaendigen."""
+        if not self.completions:
+            return False
+        text = self.prompt.text.strip()
+        insert = self.completions[self._complete_pos][0].strip()
+        if text.startswith("/vfs"):                      # Ordner (endet auf /) wird wie getippt gezeigt
+            return not text.endswith("/") and text != "/vfs" and insert.startswith(text) and insert != text
+        return text not in COMMANDS and text not in ALIASES
+
+    def complete_hide(self) -> None:
+        if self.completions or self.w_complete.has_class("-open"):
+            self.completions = []
+            self._complete_draw()
 
     def action_history(self, step: int) -> None:
         if not self.history:
@@ -631,11 +766,12 @@ class ICli2(App):
         self.prompt.set_text(self.history[self._hist_pos] if self._hist_pos < len(self.history) else "")
 
     def action_side(self) -> None:
-        side = self.query_one("#side")
+        side = self.w_side
         side.toggle_class("-open")
         if side.has_class("-open"):
             self._refresh_side()
-            self.query_one("#side-text", Static).update(self._side_text())
+            self.engine.send(P.LIST, what="context", to="side")
+            self.w_side_text.update(self._side_text())
 
     def action_voice(self) -> None:
         """F4: Aufnahme starten bzw. beenden; der erkannte Text landet in der Eingabe."""
@@ -695,3 +831,6 @@ class ICli2(App):
     def on_key(self, event: events.Key) -> None:
         if not self.prompt.has_focus and event.is_printable and len(self.screen_stack) == 1:
             self.prompt.focus()
+            if event.character:                          # die Taste selbst gehoert schon zur Eingabe
+                self.prompt.insert(event.character)
+                event.prevent_default().stop()

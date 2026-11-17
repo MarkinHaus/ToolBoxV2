@@ -34,6 +34,7 @@ from typing import Any, AsyncIterator
 from .bridges import BridgeMixin     # Schritt 7: Discord/Telegram ueber die unveraenderten Erweiterungen
 from .connect import ConnectMixin    # Schritt 6: MCP-Server und Plugins
 from .features import FeatureMixin   # Schritt 6: Features und Skills
+from .vfsview import VfsViewMixin    # /vfs: Dateien ansehen, Pfad-Vervollstaendigung
 from .cloudm import CloudMMixin      # Schritt 8: Login, ToolBox-Funktionen, LiveSync-Shares
 from .voice import VoiceMixin        # Schritt 9: Sprache (Audio-Importe erst bei Gebrauch)
 
@@ -50,14 +51,13 @@ def _row(value: str, label: str = "", hint: str = "") -> dict[str, str]:
     return {"value": value, "label": label or value, "hint": hint}
 
 
-class IsaaBackend(FeatureMixin, ConnectMixin, BridgeMixin, CloudMMixin, VoiceMixin):
+class IsaaBackend(FeatureMixin, ConnectMixin, BridgeMixin, CloudMMixin, VoiceMixin, VfsViewMixin):
     def __init__(self, app: Any, agent: str = "self", session: str = "default"):
         self.app = app
         self.agent = agent
         self.session = session
         self.isaa: Any = None
         self.max_iterations = int(os.getenv("DEFAULT_MAX_ITERATIONS", 30))
-        self._models: list[dict[str, str]] | None = None
         self._spawn: Any = None                          # Engine.spawn, gesetzt ueber attach()
         self._jobs: Any = None
         self._job_callback: Any = None
@@ -117,6 +117,7 @@ class IsaaBackend(FeatureMixin, ConnectMixin, BridgeMixin, CloudMMixin, VoiceMix
             builder = self.isaa.get_agent_builder(
                 name="self", add_base_tools=True, with_dangerous_shell=True)
             await self.isaa.register_agent(builder)
+        await asyncio.to_thread(self._load_settings)
         ready = await self._ready()
         ready["history"] = await asyncio.to_thread(self._read_history)
         # darf den Start nie verhindern; Discord/Telegram werden erst bei Gebrauch geladen
@@ -224,6 +225,8 @@ class IsaaBackend(FeatureMixin, ConnectMixin, BridgeMixin, CloudMMixin, VoiceMix
 
     async def _do_dream(self) -> dict[str, Any]:
         await self._agent()
+        if any(j.query == "__dream__" and j.agent_name == self.agent for j in self._jobs.list_jobs()):
+            return {"text": f"Dream-Job für {self.agent} gibt es schon (siehe /job)", "level": "warn"}
         self._jobs.add_dream_job(self.agent)             # wie '/job dream create': nachts 03:00
         return {"text": f"Dream-Job für {self.agent} angelegt (täglich 03:00)"}
 
@@ -274,8 +277,9 @@ class IsaaBackend(FeatureMixin, ConnectMixin, BridgeMixin, CloudMMixin, VoiceMix
                 self.app.logger.warning(f"icli2 resume {run_id}: {e}")
 
     # ── Picker-Zeilen ────────────────────────────────────────────────────────
-    async def rows(self, what: str) -> dict[str, Any]:
-        title, rows = await getattr(self, f"_rows_{what}")()
+    async def rows(self, what: str, arg: str | None = None) -> dict[str, Any]:
+        method = getattr(self, f"_rows_{what}")
+        title, rows = await (method() if arg is None else method(arg))
         return {"title": title, "rows": rows}
 
     async def _agents(self) -> dict[str, dict[str, Any]]:
@@ -302,37 +306,83 @@ class IsaaBackend(FeatureMixin, ConnectMixin, BridgeMixin, CloudMMixin, VoiceMix
                      for f in sorted(nets.glob("*.tar.gz"))]
         return "Agent wechseln", rows
 
-    def _load_models(self) -> list[dict[str, str]]:
-        """Modell-Register der alten icli lesen, ohne icli.py zu importieren
-        (der Import wuerde Audio/Omni laden). Dazu die Gateway-Modelle."""
-        found: dict[str, str] = {}
-        try:
-            import toolboxv2.flows.isaa as flows_isaa
-            source = (Path(flows_isaa.__file__).parent / "icli.py").read_text(encoding="utf-8")
-            for node in ast.parse(source).body:
-                if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "MODEL_MAPPING":
-                    found.update(ast.literal_eval(node.value))
-                    break
-        except Exception as e:
-            self.app.logger.warning(f"icli2 model registry: {e}")
-        try:
-            from toolboxv2.mods.isaa.base.IntelligentRateLimiter import gateway
-            found.update({m: f"gateway/{m}" for m in gateway.get_available_models()})
-        except Exception:
-            pass
-        return [_row(full, alias, full) for alias, full in sorted(found.items())]
-
     async def _rows_models(self):
-        if self._models is None:
-            self._models = await asyncio.to_thread(self._load_models)
+        """Bei jedem Oeffnen neu gelesen (models.py): Custom-Router/Gateways zuerst, dann das
+        Register der alten icli. Freie Namen gehen immer ueber '/model <praefix>/<name>'."""
+        from . import models
         agent = await self._agent()
-        current = [_row(m, m, f"aktuell {kind}") for kind, m in
-                   (("schnell", agent.amd.fast_llm_model), ("komplex", agent.amd.complex_llm_model))]
-        return "Modell wählen", current + self._models
+        current = [(agent.amd.fast_llm_model, "aktuell schnell"), (agent.amd.complex_llm_model, "aktuell komplex")]
+        rows = await asyncio.to_thread(models.all_models, current)
+        try:                                             # Praefixe des Routers dieses Agenten
+            prefixes = sorted(getattr(agent.router, "_adapters", {}) or {})
+        except Exception:
+            prefixes = []
+        return "Modell wählen" + (f" · Router: {', '.join(prefixes)}" if prefixes else ""), rows
+
+    # ── Einstellungen und Kontext ────────────────────────────────────────────
+    def _settings_file(self) -> Path:
+        return self._state_dir() / "settings.json"
+
+    def _load_settings(self) -> None:
+        try:
+            data = json.loads(self._settings_file().read_text(encoding="utf-8"))
+            self.max_iterations = int(data.get("max_iterations", self.max_iterations))
+        except Exception:
+            pass                                         # keine Datei / kaputt: Standardwerte
+
+    async def _rows_settings(self):
+        user = await self._cloud_user()
+        return "Einstellungen", [
+            _row("set:max_iterations", "Max. Iterationen", f"{self.max_iterations} · Enter zum Ändern"),
+            _row("context", "Kontext", "Auslastung der Session aufschlüsseln"),
+            _row("login", "Anmeldung", f"angemeldet als {user}" if user else "nicht angemeldet"),
+            _row("credentials", "Zugangsdaten", "API-Schlüssel verwalten · kommt"),
+            _row("paths", "Datenordner", str(self.app.data_dir)),
+        ]
+
+    async def _do_set(self, key: str = "", value: str = "") -> dict[str, Any]:
+        if key != "max_iterations":
+            raise ValueError("Einstellbar: max_iterations  (Beispiel: /set max_iterations 50)")
+        if not value.isdigit() or not 1 <= int(value) <= 500:
+            raise ValueError("max_iterations braucht eine Zahl von 1 bis 500")
+        self.max_iterations = int(value)
+        path = self._settings_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(path.write_text, json.dumps({"max_iterations": self.max_iterations}), "utf-8")
+        return {"text": f"Max. Iterationen: {self.max_iterations} (gilt ab der nächsten Nachricht)"}
+
+    async def _do_credentials(self) -> dict[str, Any]:
+        return {"text": "Zugangsdaten verwalten kommt in einem späteren Schritt – bis dahin über .env", "level": "warn"}
+
+    async def _do_paths(self) -> dict[str, Any]:
+        return {"text": f"Daten    {self.app.data_dir}\nZustand  {self._state_dir()}\nAgenten  {self._agents_dir()}"}
+
+    async def _rows_context(self):
+        """Kontext-Aufschluesselung fuer die Seitenleiste (schmal), ueber das vorhandene
+        agent.context_overview wie '/context' der alten icli."""
+        agent = await self._agent()
+        data = await agent.context_overview(self.session, print_visual=False)
+        used, limit = int(data.get("t_effective") or data.get("t_total") or 0), int(data.get("limit") or 0) or 1
+
+        def bar(part: int, whole: int, width: int) -> str:
+            fill = min(width, round(width * part / whole)) if whole else 0
+            return "━" * fill + "─" * (width - fill)
+
+        lines = [f"{bar(used, limit, 20)} {100 * used / limit:.1f} %",
+                 f"{used / 1000:.1f}k von {limit / 1000:.0f}k · {data.get('model', '?')}"]
+        for title, part in (("Aufteilung", data.get("breakdown") or {}),
+                            ("System im Detail", data.get("system_details") or {})):
+            top = max([int(v or 0) for v in part.values()] or [1]) or 1
+            lines += ["", title]
+            lines += [f"{str(k)[:19]:<19}{int(v or 0):>6} {bar(int(v or 0), top, 7)}" for k, v in part.items()]
+        meta = data.get("meta") or {}
+        lines += ["", *[f"{str(k)[:24]:<24}{v:>9}" for k, v in meta.items()]]
+        return "Kontext", [_row(str(i), line or " ") for i, line in enumerate(lines)]
 
     async def _rows_sessions(self):
         manager = (await self._agent()).session_manager
-        names = list(dict.fromkeys([self.session, *manager.list_sessions()]))
+        # der echte SessionManager liefert auch leere Namen (None) - die sind nicht waehlbar
+        names = list(dict.fromkeys(str(n) for n in [self.session, *manager.list_sessions()] if n))
         rows = [_row("+", "+ neue Session", "leerer Kontext")]
         rows += [_row(n, hint="aktiv" if n == self.session else "") for n in names]
         return "Session wechseln", rows

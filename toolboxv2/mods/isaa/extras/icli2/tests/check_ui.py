@@ -32,8 +32,15 @@ class Fake:
             yield {"type":"done","success":True}
         finally: s.active.discard(session)
     st={"agent":"self","session":"default","model":"fake-1","complex_model":"fake-c","mounts":0,"user":"","features":[]}
-    async def rows(s,what):
+    async def rows(s,what,arg=None):
         R=lambda v,h="":{"value":v,"label":v,"hint":h}
+        if what=="vfs":
+            tree=["/project/","/project/src/","/project/src/main.py","/project/README.md","/notes.txt"]
+            base=arg.rsplit("/",1)[0]+"/" if "/" in arg else "/"
+            kids=[p for p in tree if p.startswith(arg or "/") and p.rstrip("/").rsplit("/",1)[0]+"/"==base and p!=base]
+            return {"title":"VFS "+base,"rows":[{"value":p,"label":p.rstrip("/").rsplit("/",1)[1]+("/" if p.endswith("/") else ""),"hint":"Ordner" if p.endswith("/") else "9 Zeichen"} for p in kids]}
+        if what=="context": return {"title":"Kontext","rows":[R(str(i)) | {"label":l} for i,l in enumerate(["━━━━──────────────── 1.8 %","4.6k von 262k · fake","","Aufteilung","System Prompt Total   2422 ━━━━━━━"])]}
+        if what=="settings": return {"title":"Einstellungen","rows":[{"value":"set:max_iterations","label":"Max. Iterationen","hint":"30"},{"value":"context","label":"Kontext","hint":""},{"value":"login","label":"Anmeldung","hint":""}]}
         return {"agents":{"title":"Agent wechseln","rows":[R("self","geladen · aktiv"),R("myagent","gespeichert · eigene Tools"),R("coder","registriert")]},
                 "models":{"title":"Modell wählen","rows":[R("openrouter/a"),R("gateway/big-model")]},
                 "sessions":{"title":"Session wechseln","rows":[R("+"),R("default","aktiv"),R("work")]},
@@ -61,6 +68,8 @@ class Fake:
         elif action in ("job_add","dream","network_save","network_load"): return {"text":action+" ok"}
         elif action=="feature": s.st["features"]=["coder"]; return {"ready":dict(s.st),"text":"Feature coder an"}
         elif action in ("skill","mcp","plugin","mcp_add","discord","telegram"): return {"text":action+" ok"}
+        elif action=="vfs": return {"text":"INHALT "+a["path"]}
+        elif action=="set": return {"text":"Max. Iterationen: "+a["value"]}
         elif action=="login": s.st.update(user="markin"); return {"ready":dict(s.st),"text":"Angemeldet als markin"}
         elif action=="tb": return {"text":"ergebnis\n  wert  "+a["target"]+" "+a.get("args","")}
         elif action=="share": return {"text":"share "+a["share"]+" verbunden"}
@@ -223,6 +232,58 @@ async def main():
         await cmd("/discord send #a hallo"); assert ("discord",{"args":"send #a hallo"}) in fake.log
         await cmd("/telegram",""); assert ("telegram",{"args":"status"}) in fake.log
         print("step6/7 ui ok")
+        # ── Vervollstaendigung beim Tippen ──
+        await pilot.press("/", "s", "e"); await pilot.pause(0.1)
+        assert app.completions[0][1]=="/session" and app.query_one("#complete").has_class("-open"), app.completions
+        await pilot.press("tab"); await pilot.pause(0.1); assert app.prompt.text=="/session " and not app.completions
+        app.prompt.set_text(""); await pilot.pause(0.1)
+        await pilot.press("/", "m", "o"); await pilot.pause(0.1); assert [c[1] for c in app.completions[:2]]==["/model","/mount"], app.completions
+        await pilot.press("down"); await pilot.press("tab"); await pilot.pause(0.1); assert app.prompt.text=="/mount "
+        app.prompt.set_text(""); await pilot.pause(0.1)
+        await pilot.press("/", "r", "e", "s"); await pilot.pause(0.1); n=len(fake.log)
+        await pilot.press("enter"); await pilot.pause(0.3); assert ("session_clear",{}) in fake.log[n:], fake.log[n:]   # Enter fuehrt Vorschlag aus
+        await pilot.press("/", "x", "y", "z", "q"); await pilot.pause(0.1); await pilot.press("escape"); await pilot.pause(0.1)
+        assert not app.query_one("#complete").has_class("-open"); app.prompt.set_text("")
+        await pilot.press(*"hallo"); await pilot.pause(0.1); assert not app.completions; app.prompt.set_text(""); await pilot.pause(0.1)
+        print("completion ok")
+        # ── /vfs mit Pfad-Vervollstaendigung ──
+        await pilot.press(*"/vfs"); await pilot.press("space"); await pilot.pause(0.3)
+        assert [c[1] for c in app.completions]==["project/","notes.txt"], app.completions
+        await pilot.press("tab"); await pilot.pause(0.3); assert app.prompt.text=="/vfs /project/"
+        assert [c[1] for c in app.completions]==["src/","README.md"], app.completions      # naechste Ebene
+        await pilot.press("s"); await pilot.pause(0.3); assert [c[1] for c in app.completions]==["src/"]
+        await pilot.press("tab"); await pilot.pause(0.3); await pilot.press("m","a"); await pilot.pause(0.3)
+        n=len(fake.log); await pilot.press("enter"); await pilot.pause(0.3)                   # Enter vervollstaendigt und zeigt
+        assert ("vfs",{"path":"/project/src/main.py"}) in fake.log[n:], fake.log[n:]
+        assert "INHALT /project/src/main.py" in [str(x.render()) for x in app.query(".note")][-1]
+        await pilot.press(*"/vfs"); await pilot.press("space"); await pilot.press(*"/project/"); await pilot.pause(0.3)
+        n=len(fake.log); await pilot.press("enter"); await pilot.pause(0.3); assert ("vfs",{"path":"/project/"}) in fake.log[n:]   # Ordner wie getippt
+        # ── Picker: WASD und Pfeile, zurueck in die Palette ──
+        await pilot.press("ctrl+p"); await pilot.pause(0.2); assert isinstance(app.screen,P_) and app.screen._title=="Befehle"
+        await pilot.press("s","s","w"); await pilot.pause(0.1)
+        from textual.widgets import OptionList
+        assert app.screen.query_one(OptionList).highlighted==1                                 # /model
+        await pilot.press("d"); await pilot.pause(0.4); assert app.screen._title.startswith("Modell")      # → oeffnet
+        await pilot.press("left"); await pilot.pause(0.3); assert app.screen._title=="Befehle"             # ← zurueck
+        await pilot.press("right"); await pilot.pause(0.4); assert app.screen._title=="Agent wechseln"
+        await pilot.press("a"); await pilot.pause(0.3); assert app.screen._title=="Befehle"
+        await pilot.press("slash","s","e","t","t"); await pilot.pause(0.2)                      # '/' startet Filter, s filtert
+        assert app.screen.query_one(OptionList).option_count==1
+        await pilot.press("enter"); await pilot.pause(0.4); assert app.screen._title=="Einstellungen"
+        await pilot.press("enter"); await pilot.pause(0.3); assert app.prompt.text=="/set max_iterations " and len(app.screen_stack)==1
+        await pilot.press(*"50"); await pilot.press("enter"); await pilot.pause(0.3); assert ("set",{"key":"max_iterations","value":"50"}) in fake.log
+        await pilot.press("ctrl+p"); await pilot.pause(0.2); await pilot.press("escape"); await pilot.pause(0.2); assert len(app.screen_stack)==1
+        # ── /context oeffnet die Seitenleiste und zeigt die Uebersicht ──
+        assert not app.w_side.has_class("-open")
+        await pilot.press(*"/context"); await pilot.press("enter"); await pilot.pause(0.6)
+        side=str(app.w_side_text.render()); assert app.w_side.has_class("-open") and "System Prompt Total" in side and "1.8 %" in side, side[-300:]
+        app.save_screenshot("/tmp/icli2_shot_context.svg")
+        await pilot.press("f2"); await pilot.pause(0.2)
+        # ── Mini-Fix: erste Taste nach verlorenem Fokus wird nicht verschluckt ──
+        app.prompt.set_text(""); app.set_focus(None); await pilot.pause(0.1); assert not app.prompt.has_focus
+        await pilot.press("h","i"); await pilot.pause(0.1); assert app.prompt.text=="hi", repr(app.prompt.text)
+        app.prompt.set_text("")
+        print("nav/vfs/context ok")
         await pilot.press(*"logs"); await pilot.press("enter"); await pilot.pause(0.8)
         app.save_screenshot("/tmp/icli2_shot.svg")
         await pilot.press(*"/q"); await pilot.press("enter")
