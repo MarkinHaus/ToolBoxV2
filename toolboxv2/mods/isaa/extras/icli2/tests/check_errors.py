@@ -64,4 +64,10 @@ assert unk["kind"] == "unknown" and unk["message"] == "etwas Seltsames ist passi
 assert explain("")["kind"] == "unknown"
 huge = explain("x" * 20000)
 assert len(huge["detail"]) < 8200 and "Zeichen)" in huge["detail"]
+# genau so aus dem echten Durchlauf (isaa-Agent, 429 vom Anbieter, als Absturz gemeldet)
+REAL = ("Agent crashed: ProviderError: litellm.RateLimitError: RateLimitError: OpenAIException - Rate limit exceeded: "
+        "free-models-per-day. Add 10 credits to unlock 1000 free model requests per day")
+real = explain(REAL)
+assert real["kind"] == "rate_limit" and real["message"].startswith("Rate limit exceeded: free-models-per-day"), real["message"]
+assert explain("⚠️ INTERNAL ERROR: KeyError: 'x'")["message"] == "KeyError: 'x'"
 print("errors ok")

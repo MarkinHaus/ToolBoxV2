@@ -105,12 +105,39 @@ def _message(text: str, data) -> str:
     m = re.search(r'"message"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
     if m:
         return m.group(1).encode().decode("unicode_escape", errors="ignore")
-    # "litellm.XError: XError: AnbieterException - eigentliche Meldung"
+    # "Agent crashed: ProviderError: litellm.XError: XError: AnbieterException - eigentliche Meldung"
     line = text.strip().splitlines()[0] if text.strip() else ""
-    line = re.sub(r"^(litellm\.)?\w+(Error|Exception)?:\s*", "", line)
-    line = re.sub(r"^\w+(Error|Exception):\s*", "", line)
-    line = re.sub(r"^\w+Exception\s*-\s*", "", line)
-    return line.strip()
+    return _strip_wrappers(line)
+
+
+_OUTER = [                                               # immer nur Huelle
+    r"^(Agent crashed|Es ist ein Fehler aufgetreten|Stream aborted|LLM call failed)\s*:\s*",
+    r"^\W*INTERNAL ERROR\s*:\s*",
+    r"^[A-Za-z]+Exception\s*-\s*",                    # "OpenAIException - " (litellm)
+]
+_CLASS = r"^(litellm\.)?[A-Za-z]*(Error|Exception)\s*:\s*"  # Huelle nur, wenn danach noch eine kommt
+
+
+def _is_wrapped(line: str) -> bool:
+    return any(re.match(rx, line) for rx in _OUTER) or bool(re.match(_CLASS, line))
+
+
+def _strip_wrappers(line: str) -> str:
+    """Huellen vor der eigentlichen Meldung entfernen. Eine Fehlerklasse ("KeyError: ...") bleibt
+    stehen, wenn danach nur noch die Meldung kommt - bei Python-Fehlern ist sie die Information."""
+    line = line.strip()
+    while line:
+        for rx in _OUTER:
+            if re.match(rx, line):
+                line = re.sub(rx, "", line).strip()
+                break
+        else:
+            rest = re.sub(_CLASS, "", line).strip()
+            if rest != line and _is_wrapped(rest):
+                line = rest
+                continue
+            return line
+    return line
 
 
 def _retry(text: str) -> str:

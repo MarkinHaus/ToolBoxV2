@@ -341,6 +341,8 @@ class Engine:
                                secs=round(secs, 2))
                 elif t == "final_answer":
                     answer = str(chunk.get("answer", chunk.get("content", "")) or "")
+                    if chunk.get("success") is False and answer.startswith("Stopped after"):
+                        status = "limit"                 # Page-Engine meldet ihr Limit so (wie sub_agent.py)
                     if answer and not run.spoke:         # nichts gestreamt: Antwort jetzt zeigen
                         self._push(run, P.TEXT, answer)
                         self._flush(run)
