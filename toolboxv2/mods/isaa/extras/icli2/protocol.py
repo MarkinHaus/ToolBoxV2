@@ -24,7 +24,10 @@ THINK = "think"            # data: text            (gebuendeltes Reasoning)
 TOOL_START = "tool_start"  # data: id, name, summary, reason, detail
 TOOL_END = "tool_end"      # data: id, name, ok, summary, detail, secs
 STATUS = "status"          # data: msg, iter, max_iter, tokens, tokens_max
-RUN_END = "run_end"        # data: status (done|failed|stopped|paused), answer, error
+RUN_END = "run_end"        # data: status (done|failed|stopped|paused|limit), answer, error (roh, letzter),
+                           #       errors (bis zu 3 roh), traceback, iter, max_iter
+SUB = "sub"                # data: sub (id), task (voll), status, iter, max_iter, tokens, budget, timeout,
+                           #       started (epoch), error, result, final
 ROWS = "rows"              # data: what, title, rows=[{value, label, hint}]
 DRAFT = "draft"            # data: text  -> in die Eingabe setzen (Spracheingabe)
 NOTICE = "notice"          # data: level (info|warn|error), text
