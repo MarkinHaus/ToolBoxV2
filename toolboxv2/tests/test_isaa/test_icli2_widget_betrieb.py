@@ -60,6 +60,16 @@ def _show_via_agent(b: Betrieb, agent: str, session: str, spec: dict, tag: str) 
     return ids[-1]
 
 
+# ── 0. Ein echter Lauf braucht kein litellm ────────────────────────────────
+def test_0_lauf_ohne_litellm():
+    with Betrieb() as b:
+        assert sys.modules.get("litellm", None) is None    # gesperrt: Import wuerde scheitern
+        b.ready()
+        end = b.chat("self", "default", "hallo ohne litellm", "t0")
+        assert end["status"] == "done", end
+        assert any("hallo ohne litellm" in p for p in b.llm.prompts()), "Ersatz-LLM nicht erreicht"
+
+
 # ── 1. Tool-Bindung: jeder Agent der icli2 hat die Widget-Tools ─────────────
 def test_1_jeder_agent_hat_widget_tools():
     with Betrieb() as b:

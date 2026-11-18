@@ -4,6 +4,14 @@ LLM ueber das Ersatz-LLM (HTTP, Prozessgrenze). Alle Daten in einem Temp-Ordner 
 
 Einziges weiteres Double: `local_embeddings.local_embed` liefert Nullen. Grund: das echte Embedding-Modell
 wird beim ersten Gebrauch aus dem Netz geladen (HuggingFace) - Netzgrenze, siehe icli2/tests/e2e/e2e_bg.py.
+
+Ohne litellm: Das Modell heisst `gateway/fake` und geht ueber den nativen OpenAICompatAdapter des
+CompletionRouter (aiohttp, `TB_LLM_GATEWAY_URL`). `litellm` ist im Testprozess gesperrt
+(sys.modules["litellm"] = None): jeder Versuch, es zu laden, scheitert - auch wenn es installiert ist.
+
+Schreibschutz: HOME, XDG_*, APPDATA, LOCALAPPDATA und TB_DATA_DIR zeigen in den Temp-Ordner. Zusaetzlich
+vergleicht `Schreibschutz` die echten Zustandsordner (Profil, .data/.info/.config des Checkouts) vor und
+nach dem Test; jede Aenderung dort laesst den Test scheitern.
 """
 from __future__ import annotations
 
@@ -16,9 +24,71 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
+import sys
+
 from icli2_fake_llm import FakeLLM
 
 TIMEOUT = 120
+MODEL = "gateway/fake"
+
+_REPO_PKG = Path(__file__).resolve().parents[2]          # <repo>/toolboxv2 (Zustand im Source-Checkout)
+
+
+def echte_zustandsordner() -> list[Path]:
+    """Ordner, in die ein Test NIE schreiben darf (beim Import bestimmt, vor jedem Umbiegen)."""
+    home = Path.home()
+    dirs = [home / ".config" / "ToolBoxV2", home / ".local" / "share" / "toolboxv2",
+            _REPO_PKG / ".data", _REPO_PKG / ".info", _REPO_PKG / ".config", _REPO_PKG.parent / ".data"]
+    for var in ("APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME"):
+        if os.environ.get(var):
+            dirs.append(Path(os.environ[var]) / "ToolBoxV2")
+    return dirs
+
+
+_ECHT = echte_zustandsordner()
+
+
+@contextmanager
+def _ohne_litellm():
+    """litellm sperren (Import scheitert) und danach den alten Eintrag zurueck. Nur dieser Schluessel:
+    patch.dict(sys.modules) wuerde beim Verlassen alle seither geladenen Module entfernen (numpy & Co.)."""
+    missing = object()
+    old = sys.modules.get("litellm", missing)
+    sys.modules["litellm"] = None
+    try:
+        yield
+    finally:
+        if old is missing:
+            sys.modules.pop("litellm", None)
+        else:
+            sys.modules["litellm"] = old
+
+
+class Schreibschutz:
+    """Stand (Pfad -> mtime, Groesse) der geschuetzten Ordner vorher/nachher; Unterschied = Fehler."""
+
+    def __init__(self, dirs: list[Path] | None = None):
+        self.dirs = list(_ECHT if dirs is None else dirs)
+        self.vorher = self._stand()
+
+    def _stand(self) -> dict[str, tuple[int, int]]:
+        out = {}
+        for d in self.dirs:
+            if d.is_dir():
+                for f in d.rglob("*"):
+                    if f.is_file():
+                        st = f.stat()
+                        out[str(f)] = (st.st_mtime_ns, st.st_size)
+        return out
+
+    def pruefen(self) -> None:
+        nachher = self._stand()
+        neu = sorted(set(nachher) - set(self.vorher))
+        weg = sorted(set(self.vorher) - set(nachher))
+        geaendert = sorted(k for k in set(nachher) & set(self.vorher) if nachher[k] != self.vorher[k])
+        if neu or weg or geaendert:
+            raise AssertionError(f"Test hat echte Zustandsordner veraendert: neu={neu[:10]} "
+                                 f"geaendert={geaendert[:10]} geloescht={weg[:10]}")
 
 
 async def _zero_embed(texts, dimensions=None):
@@ -40,11 +110,15 @@ class Betrieb:
 
     # -- Aufbau ------------------------------------------------------------
     def env(self) -> dict[str, str]:
-        return dict(OPENAI_API_BASE=self.llm.base, OPENAI_API_KEY="x",
+        root = Path(self.root)
+        return dict(TB_LLM_GATEWAY_URL=self.llm.base,
                     NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost",
-                    FASTMODEL="openai/fake", COMPLEXMODEL="openai/fake", BLITZMODEL="openai/fake",
-                    SUMMARYMODEL="openai/fake", TB_DATA_DIR=self.root,
-                    XDG_CONFIG_HOME=str(Path(self.root) / "cfg"), ISAA_AUTO_PACK="0")
+                    FASTMODEL=MODEL, COMPLEXMODEL=MODEL, BLITZMODEL=MODEL, SUMMARYMODEL=MODEL,
+                    TB_DATA_DIR=self.root, HOME=str(root / "home"),
+                    XDG_CONFIG_HOME=str(root / "cfg"), XDG_DATA_HOME=str(root / "share"),
+                    XDG_CACHE_HOME=str(root / "cache"), XDG_STATE_HOME=str(root / "state"),
+                    APPDATA=str(root / "appdata"), LOCALAPPDATA=str(root / "localappdata"),
+                    ISAA_AUTO_PACK="0")
 
     @classmethod
     @contextmanager
@@ -52,15 +126,19 @@ class Betrieb:
         """Nur Ersatz-LLM + Umgebung (fuer einen icli2-Kindprozess); liefert die Umgebungsvariablen."""
         b = cls()
         b.llm = FakeLLM().start()
+        schutz = Schreibschutz()
         try:
             yield b.env()
         finally:
             b.llm.stop()
+        schutz.pruefen()
 
     def __enter__(self) -> "Betrieb":
+        self._schutz = Schreibschutz()
         self.llm = FakeLLM().start()
         self._stack.callback(self.llm.stop)
         self._stack.enter_context(patch.dict(os.environ, self.env()))
+        self._stack.enter_context(_ohne_litellm())
         from toolboxv2.mods.isaa.base import local_embeddings
         self._stack.enter_context(patch.object(local_embeddings, "local_embed", _zero_embed))
         self.start_engine()
@@ -70,11 +148,7 @@ class Betrieb:
         from toolboxv2 import get_app
         from toolboxv2.mods.isaa.extras.icli2.backend import IsaaBackend
         from toolboxv2.mods.isaa.extras.icli2.engine import Engine
-        from toolboxv2.tests.a_util import reset_app_singleton
-        # Eine schon vorhandene App (z. B. beim Import von icli2/app.py angelegt) zeigt aufs echte
-        # Profil: verwerfen, damit die App mit der umgebogenen Umgebung entsteht (Regel 6).
-        reset_app_singleton(force_exit=True)
-        self.app = get_app("isaa-host")
+        self.app = get_app("isaa-host")         # darf noch nicht existieren (kein Import legt sie an)
         root = str(Path(self.root).resolve())
         for path in (self.app.appdata, self.app.data_dir):
             if not str(Path(path).resolve()).startswith(root):
@@ -90,11 +164,17 @@ class Betrieb:
             self.engine.join(30)
             self.engine = None
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, exc_type, exc, tb) -> None:
         try:
             self.stop_engine()
         finally:
             self._stack.close()
+        try:
+            self._schutz.pruefen()
+        except AssertionError as leak:
+            if exc is None:
+                raise
+            exc.add_note(str(leak))                     # Testfehler bleibt sichtbar, Leck auch
 
     # -- Engine-Seite (ohne UI) ---------------------------------------------
     def pump(self) -> list:
