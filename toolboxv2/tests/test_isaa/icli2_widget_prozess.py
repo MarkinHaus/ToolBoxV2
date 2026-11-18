@@ -5,9 +5,12 @@ Ersatz-LLM aus der Umgebung, bedient das Widget-Modal und meldet Marken 'BETRIEB
 Einziges Double ausser dem LLM: Embedding-Modell (Netzgrenze, wie icli2/tests/e2e/e2e_bg.py)."""
 import asyncio
 import json
+import sys
 import time
 import traceback
 from pathlib import Path
+
+sys.modules["litellm"] = None          # eigener Prozess: litellm gesperrt, der Lauf muss ohne gehen
 
 
 def mark(text: str) -> None:

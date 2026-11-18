@@ -1045,7 +1045,16 @@ class TestDocsFeatureLive(_FeatureEnableTestBase):
         fm = DummyFM()
 
         # Loader-Funktion aufrufen (füllt self.feature_callbacks["docs"])
+        from toolboxv2.flows.isaa import icli
         from toolboxv2.flows.isaa.icli import load_docs_feature
+        # docs/.docs_index.json nicht ins Checkout schreiben: Projekt- und Startordner -> Temp-Ordner
+        import tempfile
+        tmp = Path(tempfile.mkdtemp(prefix="tb_docs_test_"))
+        (tmp / "toolboxv2").mkdir()
+        for name, value in (("init_cwd", tmp), ("tb_root_dir", tmp / "toolboxv2")):
+            patcher = patch.object(icli, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         load_docs_feature(fm)
 
         # Falls der Mock-Agent in _FeatureEnableTestBase kein 'add_tools' hat,

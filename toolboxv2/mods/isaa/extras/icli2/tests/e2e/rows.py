@@ -1,5 +1,5 @@
 import asyncio, os, traceback
-os.environ.update(OPENAI_API_BASE="http://127.0.0.1:8765/v1", OPENAI_API_KEY="x", NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost",
+os.environ.update(OPENAI_API_BASE="http://127.0.0.1:8765/v1", OPENAI_API_KEY="x", TB_DATA_DIR="/tmp/e2e/state", XDG_CONFIG_HOME="/tmp/e2e/state/cfg", APPDATA="/tmp/e2e/state/appdata", NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost",
                   FASTMODEL="openai/fake", COMPLEXMODEL="openai/fake", BLITZMODEL="openai/fake", SUMMARYMODEL="openai/fake")
 async def main():
     from toolboxv2 import get_app

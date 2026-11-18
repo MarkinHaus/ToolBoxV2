@@ -87,3 +87,16 @@ def test_schreibschutz_erkennt_aenderungen(tmp_path):
     fehlt.mkdir()                                          # z. B. App-Start mit makedirs(appdata)
     with pytest.raises(AssertionError, match="noch_nicht_da"):
         schutz.pruefen()
+
+
+def test_schreibschutz_erkennt_neue_dateien_im_checkout(tmp_path):
+    repo = tmp_path / "checkout"                           # eigenes git-Repo statt des echten Checkouts
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "docs").mkdir()
+    schutz = Schreibschutz([], repo=repo)
+    schutz.pruefen()
+    (repo / "docs" / ".docs_index.json").write_text("{}")    # wie frueher TestDocsFeatureLive
+    with pytest.raises(AssertionError, match="docs_index"):
+        schutz.pruefen()
+

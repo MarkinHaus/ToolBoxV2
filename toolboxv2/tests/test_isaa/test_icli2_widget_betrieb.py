@@ -60,6 +60,16 @@ def _show_via_agent(b: Betrieb, agent: str, session: str, spec: dict, tag: str) 
     return ids[-1]
 
 
+# ── 0. Ein echter Lauf braucht kein litellm ────────────────────────────────
+def test_0_lauf_ohne_litellm():
+    with Betrieb() as b:
+        assert sys.modules.get("litellm", None) is None    # gesperrt: Import wuerde scheitern
+        b.ready()
+        end = b.chat("self", "default", "hallo ohne litellm", "t0")
+        assert end["status"] == "done", end
+        assert any("hallo ohne litellm" in p for p in b.llm.prompts()), "Ersatz-LLM nicht erreicht"
+
+
 # ── 1. Tool-Bindung: jeder Agent der icli2 hat die Widget-Tools ─────────────
 def test_1_jeder_agent_hat_widget_tools():
     with Betrieb() as b:
@@ -259,14 +269,17 @@ def test_7_antwort_rundweg_ueber_app():
                 await _until(pilot, lambda: any(v.origin == "widget" and v.status != "running"
                                                 for v in ui.runs.values()), 60, "Folgelauf des Erzeugers")
                 await pilot.pause(0.5)
-                return _chat_text(ui)
+                from textual.widgets import Static
+                return _chat_text(ui), [str(w.render()) for w in ui.chat.query(Static) if w.has_class("note")]
 
-        chat = asyncio.run(go())
+        chat, notes = asyncio.run(go())
         wid, entry = next(iter(b.widgets_json().items()))
         assert entry["values"] == {"ort": "Hamburg", "bahn": True, "prio": "h"}, entry
         line = "Reise planen – Ort: Hamburg, Mit der Bahn: True, Prioritaet: h"
         assert line in chat, chat[-1500:]
-        answer_lines = [l for l in chat.splitlines() if "Reise planen –" in l]
+        # nur Zeilen, die die UI selbst schreibt (Antwortzeile, Lauf-Kopf); der Antworttext des Agenten
+        # darf zitieren, was er bekommen hat (das Ersatz-LLM echot die Nachricht samt id/values)
+        answer_lines = [l for l in notes if "Reise planen –" in l]
         assert answer_lines and not any(wid in l or "{" in l for l in answer_lines), answer_lines
         got = [p for p in b.llm.prompts() if "[Widget-Antwort]" in p]
         assert got and "Ort: Hamburg" in got[-1] and '"ort": "Hamburg"' in got[-1], got

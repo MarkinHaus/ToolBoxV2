@@ -12,11 +12,27 @@ import pytest
 import sys
 
 
-# HARD ISOLATION: the test suite must NEVER touch real user data (.data / global VFS).
-# Set at conftest import time — before the first get_app() resolves data_dir.
+# HARD ISOLATION: the test suite must NEVER touch real user data (.data / global VFS / appdata).
+# Set at conftest import time — before the first get_app() resolves data_dir and appdata.
+# appdata kommt aus XDG_CONFIG_HOME (Linux/macOS) bzw. APPDATA (Windows), siehe utils/toolbox.py.
+from toolboxv2.tests.schreibschutz import Schreibschutz  # noqa: E402
+
+_SCHREIBSCHUTZ = Schreibschutz()          # echte Ordner, bestimmt VOR dem Umbiegen
 if not os.environ.get("TB_TEST_DATA_LOCK"):
     os.environ["TB_DATA_DIR"] = tempfile.mkdtemp(prefix="tb_test_data_")
+    _iso = tempfile.mkdtemp(prefix="tb_test_home_")
+    for _var, _sub in (("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "share"),
+                       ("XDG_STATE_HOME", "state"), ("APPDATA", "appdata"), ("LOCALAPPDATA", "local")):
+        os.environ[_var] = os.path.join(_iso, _sub)
     os.environ["TB_TEST_DATA_LOCK"] = "1"
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Am Ende: hat irgendein Test echte Zustandsordner veraendert, scheitert der Lauf (Regel 6.3)."""
+    text = _SCHREIBSCHUTZ.unterschiede()
+    if text:
+        session.config.get_terminal_writer().line(f"SCHREIBSCHUTZ: {text}", red=True)
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 # Files that create one real App for ALL their tests in setUpClass.
 # The reset fixture must not interfere with them.

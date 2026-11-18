@@ -7,6 +7,7 @@ Benutzt von conftest.py (ganze Sitzung) und icli2_betrieb.py (jeder Betriebstest
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 _PKG = Path(__file__).resolve().parents[1]          # <repo>/toolboxv2 (Zustand im Source-Checkout)
@@ -26,6 +27,16 @@ def echte_zustandsordner() -> list[Path]:
     return list(dict.fromkeys(dirs))
 
 
+def checkout_stand(repo: Path = _PKG.parent) -> set[str] | None:
+    """`git status` des Checkouts (neue unversionierte + geaenderte Dateien); None ohne git/Checkout."""
+    try:
+        out = subprocess.run(["git", "-C", str(repo), "status", "--porcelain", "--untracked-files=all"],
+                             capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return set(out.stdout.splitlines()) if out.returncode == 0 else None
+
+
 #: beim ERSTEN Import bestimmt - conftest.py importiert dieses Modul, bevor es die Umgebung umbiegt
 ECHTE_ZUSTANDSORDNER: list[Path] = echte_zustandsordner()
 
@@ -33,9 +44,11 @@ ECHTE_ZUSTANDSORDNER: list[Path] = echte_zustandsordner()
 class Schreibschutz:
     """Stand (Pfad -> mtime, Groesse) der geschuetzten Ordner vorher/nachher; jeder Unterschied = Fehler."""
 
-    def __init__(self, dirs: list[Path] | None = None):
+    def __init__(self, dirs: list[Path] | None = None, repo: Path | None = None):
         self.dirs = list(ECHTE_ZUSTANDSORDNER if dirs is None else dirs)
         self.vorher = self._stand()
+        self.repo = repo or (_PKG.parent if dirs is None else None)     # Standard: das echte Checkout
+        self.checkout = checkout_stand(self.repo) if self.repo is not None else None
 
     def _stand(self) -> dict[str, tuple[int, int]]:
         out = {}
@@ -58,10 +71,14 @@ class Schreibschutz:
         neu = sorted(set(nachher) - set(self.vorher))
         weg = sorted(set(self.vorher) - set(nachher))
         geaendert = sorted(k for k in set(nachher) & set(self.vorher) if nachher[k] != self.vorher[k])
-        if not (neu or weg or geaendert):
+        im_checkout = []
+        if self.checkout is not None:
+            jetzt = checkout_stand(self.repo)
+            im_checkout = sorted((jetzt or set()) - self.checkout)
+        if not (neu or weg or geaendert or im_checkout):
             return ""
         return (f"Test hat echte Zustandsordner veraendert: neu={neu[:10]} geaendert={geaendert[:10]} "
-                f"geloescht={weg[:10]}")
+                f"geloescht={weg[:10]} im_checkout={im_checkout[:10]}")
 
     def pruefen(self) -> None:
         text = self.unterschiede()

@@ -331,6 +331,9 @@ ignore = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "icli2_betrieb: icli2-Betriebstests (echte App + Engine + Textual, Ersatz-LLM); eigener CI-Schritt",
+]
 # addopts = "--cov=toolboxv2 --cov-report=term-missing --cov-report=html"
 
 [dependency-groups]

@@ -77,6 +77,7 @@ def setup_default_adapters(router: CompletionRouter, env: dict | None = None):
 
     # All other OpenAI-compatible providers
     OPENAI_COMPAT: dict[str, tuple[str, str]] = {
+        "openai":      ("OPENAI_API_KEY",      _get("OPENAI_API_BASE") or "https://api.openai.com/v1"),
         "cerebras":    ("CEREBRAS_API_KEY",    "https://api.cerebras.ai/v1"),
         "mistral":     ("MISTRAL_API_KEY",     "https://api.mistral.ai/v1"),
         "openrouter":  ("OPENROUTER_API_KEY",  "https://openrouter.ai/api/v1"),
