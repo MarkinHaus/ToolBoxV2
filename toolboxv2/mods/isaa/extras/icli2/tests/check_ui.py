@@ -366,7 +366,22 @@ async def main():
         # ── Vervollstaendigung beim Tippen ──
         await pilot.press("/", "s", "e"); await pilot.pause(0.1)
         assert app.completions[0][1]=="/session" and app.query_one("#complete").has_class("-open"), app.completions
-        await pilot.press("tab"); await pilot.pause(0.1); assert app.prompt.text=="/session " and not app.completions
+        await pilot.press("tab"); await pilot.pause(0.3); assert app.prompt.text=="/session "
+        assert [c[1] for c in app.completions]==["default","work"], app.completions   # Sessions aus der Engine
+        app.prompt.set_text(""); await pilot.pause(0.1)
+        # Unterbefehle: /agent s -> self, Tab uebernimmt, exakter Wert -> Enter fuehrt aus
+        await pilot.press(*"/agent", "space", "s"); await pilot.pause(0.3)
+        assert [c[1] for c in app.completions]==["self"], app.completions
+        app.prompt.set_text("/agent c"); await pilot.pause(0.2); assert app.completions[0][1]=="coder", app.completions
+        await pilot.press("tab"); await pilot.pause(0.1); assert app.prompt.text=="/agent coder" and not app.completions
+        n=len(fake.log); await pilot.press("enter"); await pilot.pause(0.3); assert ("agent",{"name":"coder"}) in fake.log[n:]
+        await pilot.press(*"/job", "space"); await pilot.pause(0.2)
+        assert [c[1] for c in app.completions]==["fire","pause","remove"], app.completions
+        await pilot.press("tab"); await pilot.pause(0.3); assert app.prompt.text=="/job fire "
+        assert [(c[0],c[1]) for c in app.completions]==[("/job fire j1","nightly")], app.completions
+        await pilot.press("tab"); await pilot.pause(0.1); n=len(fake.log)
+        await pilot.press("enter"); await pilot.pause(0.3); assert ("job",{"job":"j1","op":"fire"}) in fake.log[n:], fake.log[n:]
+        app.prompt.set_text("/model gate"); await pilot.pause(0.3); assert app.completions[0][0]=="/model gateway/big-model ", app.completions
         app.prompt.set_text(""); await pilot.pause(0.1)
         await pilot.press("/", "m", "o"); await pilot.pause(0.1); assert [c[1] for c in app.completions[:2]]==["/model","/mount"], app.completions
         await pilot.press("down"); await pilot.press("tab"); await pilot.pause(0.1); assert app.prompt.text=="/mount "

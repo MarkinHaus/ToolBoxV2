@@ -6,6 +6,7 @@ kein Dateizugriff, kein Netzwerk.
 """
 from __future__ import annotations
 
+import logging
 import time
 
 from textual import events, on
@@ -42,6 +43,7 @@ END_MARK = {"done": "", "failed": f"{SYM['fail']} fehlgeschlagen", "stopped": "�
 # Befehl -> (Argument-Hinweis, Beschreibung). Reihenfolge = Reihenfolge in der Palette.
 # Spiegel von autocomplete.SUBCOMMANDS (AST-pruefbar; Quelle: autocomplete.py)
 from toolboxv2.mods.isaa.extras.icli2.autocomplete import SUBCOMMANDS as _AC_SUBS
+from toolboxv2.mods.isaa.extras.icli2.autocomplete import dynamic_kind, is_exact, suggest
 
 SUBCOMMANDS = _AC_SUBS
 
@@ -51,7 +53,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "/session": ("[name|+]", "Session wechseln oder neu anlegen"),
     "/mount": ("[ordner]", "Ordner einhängen, ohne Argument: Mounts verwalten"),
     "/task": ("", "Läufe ansehen, Fokus wechseln"),
-    "/job": ("[name: auftrag]", "Jobs verwalten, mit Argument: Job anlegen"),
+    "/job": ("[fire|pause|remove <job> | name: auftrag]", "Jobs verwalten, ausführen, anlegen"),
     "/dream": ("", "Nächtlichen Dream-Job für den Agenten anlegen"),
     "/network": ("[datei]", "Agent-Network laden, ohne Argument: aktuelles speichern"),
     "/feature": ("[name]", "Features des Agenten an/aus"),
@@ -80,6 +82,8 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "/q": ("", "Beenden"),
 }
 ALIASES = {"/quit": "/q", "/exit": "/q"}
+STALL_SECONDS = 5.0       # ab hier meldet der Wachhund, wo die Engine haengt
+LOCAL_COMMANDS = {"/", "/q", "/clear", "/side", "/task", "/open", "/fold"}   # ohne Engine
 JOB_ACTIONS = [("fire", "jetzt ausführen", ""), ("pause", "pausieren / fortsetzen", ""),
                ("remove", "löschen", "")]
 MODEL_TARGETS = [("both", "beide", "schnell und komplex"), ("fast", "schnell", "Standard-Antworten"),
@@ -350,6 +354,8 @@ class ICli2(App):
         self.side_rows: dict[str, list[dict]] = {"jobs": [], "mounts": [], "context": []}
         self._side_jump = False                      # nach dem naechsten Kontext-Update ans Ende scrollen
         self._via_palette = False                    # Picker kam aus der Palette: ← fuehrt dorthin zurueck
+        self._arg_rows: dict[str, tuple[float, list[dict]]] = {}   # Werte fuer die Vervollstaendigung
+        self._arg_asked: dict[str, float] = {}
         self.tool_cards: list[ToolCard] = []
         self.think_boxes: list[FoldLine] = []
         self._dirty: set[RunView] = set()                # Laeufe mit noch nicht geschriebenem Text
@@ -363,6 +369,7 @@ class ICli2(App):
         self._complete_pos = 0
         self.tokens: tuple[int, int] | None = None
         self._tick = 0
+        self._stall = False                          # Wachhund hat die aktuelle Blockade schon gemeldet
         self._tag = 0
         self._esc_run = ""
 
@@ -515,7 +522,11 @@ class ICli2(App):
             for role, text in d.get("recap", []):       # letzte Nachrichten der Session
                 await self._note(f"{SYM['progress'] if role == 'user' else ' '} {text}")
         elif ev.kind == P.ROWS:
-            if d.get("to") == "complete":
+            if d.get("to") == "complete" and d["what"] != "vfs":
+                self._arg_rows[d["what"]] = (time.monotonic(), d["rows"])
+                if dynamic_kind(self.prompt.text) == d["what"]:
+                    self._complete_update()
+            elif d.get("to") == "complete":
                 self._complete_paths(d.get("arg", ""), d["rows"])
             elif d.get("to") == "side":
                 self.side_rows[d["what"]] = d["rows"]
@@ -575,12 +586,27 @@ class ICli2(App):
         for name in ("run", "done", "ask", "fail"):
             row.set_class(name == state, f"-{name}")
 
+    def _watchdog(self) -> None:
+        """Steht die Engine laenger als STALL_SECONDS, einmal melden, WO sie steht (Stack ins Log)."""
+        lag = self.engine.lag() if self.ready else 0.0
+        if lag < 1.0:
+            self._stall = False
+        elif lag > STALL_SECONDS and not self._stall:
+            self._stall = True
+            where = self.engine.culprit()
+            logging.getLogger("icli2").warning(
+                "Engine blockiert seit %.0fs:\n%s", lag, "".join(self.engine.stack()))
+            self.run_worker(self._note(
+                f"Engine blockiert seit {lag:.0f}s in {where} – Befehle warten, bis sie frei ist "
+                f"(voller Stack im Log)", "warn"))
+
     async def _note(self, text: str, level: str = "info") -> None:
         await self.chat.mount(Static(text, classes=f"note note-{level}", markup=False))
 
     def _chrome(self) -> None:
         """Kopf-, Fusszeile, Seitenleiste. Rein lokal, auch bei blockierter Engine fluessig."""
         self._tick += 1
+        self._watchdog()
         mounts = f" · {self.mounts} mount{'s' if self.mounts != 1 else ''}" if self.mounts else ""
         self._set_line("_head_text", self.w_head,
             f"[{G.L4_BRIGHT}]{SYM['agent']} {self.agent}[/] "
@@ -687,6 +713,9 @@ class ICli2(App):
     async def _command(self, text: str) -> None:
         name, _, arg = text.partition(" ")
         name, arg = ALIASES.get(name.lower(), name.lower()), arg.strip()
+        if name not in LOCAL_COMMANDS and self.engine.lag() > 1.5:   # sonst wirkt der Befehl verschluckt
+            await self._note(f"{name}: Engine ist seit {self.engine.lag():.0f}s beschäftigt – "
+                             f"der Befehl läuft, sobald sie frei ist", "warn")
         do = lambda action, **kw: self.engine.send(P.DO, action=action, **kw)   # noqa: E731
         ask = lambda what: self.engine.send(P.LIST, what=what)                  # noqa: E731
         if name == "/":
@@ -719,7 +748,11 @@ class ICli2(App):
         elif name == "/mount":
             do("mount", path=arg) if arg else ask("mounts")
         elif name == "/job":
-            do("job_add", spec=arg) if arg else ask("jobs")
+            op, _, job = arg.partition(" ")
+            if op in ("fire", "pause", "remove") and job.strip():
+                do("job", job=job.strip(), op=op)
+            else:
+                do("job_add", spec=arg) if arg else ask("jobs")
         elif name == "/dream":
             do("dream")
         elif name == "/network":
@@ -869,12 +902,30 @@ class ICli2(App):
             if " " not in arg:                           # Vorschlaege kommen aus der Engine
                 self.engine.send(P.LIST, what="vfs", arg=arg, to="complete")
                 return
+        if text.startswith("/") and " " in text and "\n" not in text:
+            self._complete_args(text)
+            return
         if not word.startswith("/") or " " in word or "\n" in text or word in COMMANDS:
             return self.complete_hide()
         starts = [c for c in COMMANDS if c.startswith(word)]
         names = (starts + [c for c in COMMANDS if c not in starts and fuzzy(word[1:], c)])[:6]
         self.completions = [(n + (" " if COMMANDS[n][0] else ""), n, " ".join(COMMANDS[n]).strip())
                             for n in names]
+        self._complete_pos = 0
+        self._complete_draw()
+
+    def _complete_args(self, text: str) -> None:
+        """Argumente eines Befehls: feste Unterbefehle sofort, Werte (Agenten, Sessions, Jobs …)
+        aus einem kurzen Zwischenspeicher; ist er alt, holt die Engine ihn neu (Antwort zeichnet nach)."""
+        kind, rows = dynamic_kind(text), None
+        if kind:
+            now = time.monotonic()
+            cached = self._arg_rows.get(kind)
+            rows = cached[1] if cached else None
+            if (cached is None or now - cached[0] > 5) and now - self._arg_asked.get(kind, 0) > 2:
+                self._arg_asked[kind] = now
+                self.engine.send(P.LIST, what=kind, to="complete")
+        self.completions = suggest(text, rows)
         self._complete_pos = 0
         self._complete_draw()
 
@@ -918,6 +969,9 @@ class ICli2(App):
         insert = self.completions[self._complete_pos][0].strip()
         if text.startswith("/vfs"):                      # Ordner (endet auf /) wird wie getippt gezeigt
             return not text.endswith("/") and text != "/vfs" and insert.startswith(text) and insert != text
+        if " " in text:                                  # Argument: fertiger Wert -> ausfuehren
+            cached = self._arg_rows.get(dynamic_kind(text) or "")
+            return not is_exact(text, cached[1] if cached else None)
         return text not in COMMANDS and text not in ALIASES
 
     def complete_hide(self) -> None:

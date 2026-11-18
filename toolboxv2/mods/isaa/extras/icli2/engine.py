@@ -6,6 +6,7 @@ Tool-Call haelt hoechstens diesen Loop an, nie die UI.
 from __future__ import annotations
 
 import asyncio
+import sys
 import threading
 import time
 import traceback
@@ -106,6 +107,19 @@ class Engine:
         while events and len(out) < limit:
             out.append(events.popleft())
         return out
+
+    def stack(self) -> list[str]:
+        """Wo der Engine-Thread gerade steht (fuer den Wachhund der UI). Innerste Zeile zuletzt."""
+        frame = sys._current_frames().get(self._thread.ident or -1)
+        return traceback.format_stack(frame) if frame is not None else []
+
+    def culprit(self) -> str:
+        """Innerste Stelle ausserhalb von asyncio/threading - meist der blockierende Aufruf."""
+        for entry in reversed(self.stack()):
+            head = entry.strip().splitlines()[0]          # File "...", line N, in fn
+            if not any(part in head for part in ("asyncio", "threading.py", "selectors.py")):
+                return head.replace('File "', "").replace('", line ', ":").replace(", in ", "  ")
+        return "unbekannt"
 
     def lag(self) -> float:
         """Sekunden seit dem letzten Herzschlag (>1 = Engine-Loop blockiert)."""

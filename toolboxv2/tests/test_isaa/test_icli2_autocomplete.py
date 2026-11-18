@@ -36,9 +36,31 @@ def test_model_targets_after_dynamic_name():
     assert ac.suggest_args("/model x fast c") == []   # kein 3. Argument im Dispatcher
 
 
-def test_job_dynamic_first_token():
-    # /job: erster Token ist frei (Jobname) -> kein statischer Vorschlag
-    assert ac.suggest_args("/job ") == []
+def test_job_ops_first_token():
+    # /job fire|pause|remove <job>; anderes 1. Token = Beginn einer Job-Definition
+    assert ac.suggest_args("/job ") == ["fire ", "pause ", "remove "]
+    assert ac.suggest_args("/job morgens: ") == []
+
+
+def test_dynamic_kind():
+    assert ac.dynamic_kind("/agent s") == "agents"
+    assert ac.dynamic_kind("/agent") is None              # ohne Leerzeichen: Befehl wird noch getippt
+    assert ac.dynamic_kind("/job fire ") == "jobs"
+    assert ac.dynamic_kind("/job morgens: x") is None
+    assert ac.dynamic_kind("/plugin remove d") == "plugins"
+    assert ac.dynamic_kind("/plugin install d") is None
+    assert ac.dynamic_kind("/model x ") is None           # 2. Position ist statisch (fast|complex|both)
+
+
+def test_suggest_values():
+    rows = [{"value": "self", "label": "self", "hint": "live"}, {"value": "coder", "label": "coder", "hint": ""},
+            {"value": "+", "label": "+", "hint": "neu"}]
+    assert ac.suggest("/agent s", rows) == [("/agent self", "self", "live")]
+    assert ac.suggest("/agent cdr", rows)[0][1] == "coder"          # Teilfolge
+    assert ac.suggest("/agent self", rows) == []                     # exakt getippt -> Enter fuehrt aus
+    assert ac.suggest("/model gp", [{"value": "gpt", "label": "gpt"}]) == [("/model gpt ", "gpt", "")]
+    assert ac.suggest("/job fire n", [{"value": "j1", "label": "nightly", "hint": "cron"}]) == \
+        [("/job fire j1", "nightly", "cron")]
 
 
 def test_no_subcommands():

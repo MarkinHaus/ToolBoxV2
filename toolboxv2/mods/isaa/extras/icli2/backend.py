@@ -184,9 +184,11 @@ class IsaaBackend(SelfToolMixin, SelfOrchestratorMixin, FeatureMixin, PluginInst
         return ("Jobs" if rows else "Keine Jobs – /job alle 30m name: auftrag  oder  /dream"), rows
 
     async def _do_job(self, job: str, op: str) -> dict[str, Any]:
-        entry = self._jobs.get_job(job)
+        entry = self._jobs.get_job(job) or next(        # /job fire <name> geht auch mit dem Namen
+            (j for j in self._jobs.list_jobs() if j.name == job), None)
         if entry is None:
             raise LookupError(f"Job {job} nicht gefunden")
+        job = entry.job_id
         if op == "fire":
             task = asyncio.ensure_future(self._jobs._fire_job(entry))   # wie module.py
             self._tasks.add(task)
