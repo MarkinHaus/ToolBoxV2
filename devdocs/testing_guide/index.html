@@ -2829,6 +2829,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#belegte-falle-aus-a2cae2b-wp3-nach-dem-leitfaden-geschrieben" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Belegte Fälle aus a2cae2b (WP3, nach dem Leitfaden geschrieben)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#woran-man-das-anti-muster-erkennt" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3104,6 +3115,49 @@ Arbeitsablauf für Agenten: <code>docs/devdocs/agent_arbeitsprotokoll.md</code>.
 </tr>
 </tbody>
 </table>
+<h3 id="belegte-falle-aus-a2cae2b-wp3-nach-dem-leitfaden-geschrieben">Belegte Fälle aus <code>a2cae2b</code> (WP3, nach dem Leitfaden geschrieben)<a class="headerlink" href="#belegte-falle-aus-a2cae2b-wp3-nach-dem-leitfaden-geschrieben" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Nr.</th>
+<th>Was der Test gemacht hat</th>
+<th>Was im Betrieb kaputt war</th>
+<th>Warum der Test es nicht finden konnte</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>8</td>
+<td><code>test_a3_betriebsbefunde</code>, Nr. 5: liest den Quelltext von <code>server_worker</code> und sucht die Wörter <code>refresh</code>/<code>revalidate</code></td>
+<td>Vertrauen wird nach dem Verknüpfen ohne Neustart <strong>nicht</strong> eingeschaltet: Der Prüf-Thread startet nur, wenn beim Start schon ein Konto da war (<code>server_worker.py:1684</code>, 1707, 1732)</td>
+<td>Der Test ist grün, sobald das Wort im Code steht</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Nr. 3: sucht das Wort <code>origin</code> im Quelltext von <code>ws_worker</code></td>
+<td>– (Fix steht noch aus)</td>
+<td>Ein Kommentar mit dem Wort macht ihn grün</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Nr. 6: misst die Einrückung einer Zeile</td>
+<td>–</td>
+<td>Prüft die Form, nicht ob der Thread ohne Konto läuft</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Nr. 4: übergibt <code>onboarding_state(app)</code> eine Fake-App</td>
+<td>Der Betrieb ruft ohne <code>app</code> auf (<code>local_ui.py:89</code>, <code>wizard_api.py:103</code>, <code>__main__.py:1788</code>)</td>
+<td>Anderer Eingang als im Betrieb (Regel 3)</td>
+</tr>
+<tr>
+<td>12</td>
+<td><code>test_a4</code>, Nr. 2 (Multipart) im Checkout</td>
+<td>Fehler war die <strong>fehlende Abhängigkeit</strong>; sobald <code>multipart</code> von Hand in die venv installiert ist, ist der Test auch auf dem alten Code grün</td>
+<td>Gegenprobe nur im Checkout statt gegen das Wheel (Regel 8)</td>
+</tr>
+</tbody>
+</table>
 <h3 id="woran-man-das-anti-muster-erkennt">Woran man das Anti-Muster erkennt<a class="headerlink" href="#woran-man-das-anti-muster-erkennt" title="Permanent link">&para;</a></h3>
 <ol>
 <li>Das Patch-Ziel liegt in <code>toolboxv2.…</code>, also im eigenen Code, und zwar im Modul unter Test oder einem direkten Mitspieler.</li>
@@ -3111,6 +3165,8 @@ Arbeitsablauf für Agenten: <code>docs/devdocs/agent_arbeitsprotokoll.md</code>.
 <li>Der Test bleibt grün, wenn man die Produktänderung, die er absichern soll, wieder zurücknimmt.</li>
 <li>Der Test läuft nur aus dem Repo-Ordner, nie gegen das gebaute Paket.</li>
 <li>Ein <code>except Exception: pass</code> oder eine reine Log-Warnung macht aus einem Fehler einen „Erfolg“.</li>
+<li>Der Test liest Quelltext (<code>inspect.getsource</code>, Textsuche, Einrückung) statt das Programm auszuführen. <strong>Verboten</strong> – ein solcher Test prüft Wörter, nicht Verhalten.</li>
+<li>Die Gegenprobe ist nur grün/rot, weil die eigene venv anders ist (Paket von Hand installiert).</li>
 </ol>
 <hr />
 <h2 id="2-regeln">2. Regeln<a class="headerlink" href="#2-regeln" title="Permanent link">&para;</a></h2>
@@ -3149,6 +3205,7 @@ Arbeitsablauf für Agenten: <code>docs/devdocs/agent_arbeitsprotokoll.md</code>.
 <p>Eine Route über HTTP gegen den echten Worker, eine CLI über den echten Befehl, eine Modulfunktion so, wie ihr Aufrufer sie aufruft (mit denselben Argumenten, z. B. <strong>ohne</strong> <code>app</code>, wenn der Aufrufer <code>app</code> nicht übergibt). Google TotT: <em>Prefer Testing Public APIs Over Implementation-Detail Classes</em>.</p>
 <h3 id="regel-4-zustand-prufen-nicht-aufrufe">Regel 4 – Zustand prüfen, nicht Aufrufe<a class="headerlink" href="#regel-4-zustand-prufen-nicht-aufrufe" title="Permanent link">&para;</a></h3>
 <p>Geprüft wird das Ergebnis, das der Nutzer sieht oder das auf der Platte liegt: Antwort, Datei, Datensatz. Nicht, welche interne Funktion wie oft aufgerufen wurde. Aufrufprüfungen nur an der Grenze („genau 1 <code>set_data</code> für 1 geändertes Feld“ ist richtig, weil es das Übertragungsverhalten prüft). Tests, die bei jedem Refactoring brechen, ohne dass sich Verhalten ändert, sind <em>Change-Detector-Tests</em> (Google TotT) und werden umgeschrieben.</p>
+<p><strong>Kein Quelltext als Testobjekt.</strong> <code>inspect.getsource</code>, Suche nach Wörtern oder Einrückung im Produktcode sind keine Tests. Was ein Thread, eine Prüfung oder ein Handshake tun soll, wird durch Ausführen gezeigt: Worker starten, Zustand ändern, Anfrage schicken, Ergebnis prüfen (z. B. <code>threading.enumerate()</code> nach dem Start, HTTP-Antwort nach dem Verknüpfen).</p>
 <h3 id="regel-5-wenn-doch-ein-mock-dann-streng">Regel 5 – Wenn doch ein Mock, dann streng<a class="headerlink" href="#regel-5-wenn-doch-ein-mock-dann-streng" title="Permanent link">&para;</a></h3>
 <ol>
 <li><code>autospec=True</code> (oder <code>create_autospec</code>): Der Mock scheitert wie das Original, wenn er falsch aufgerufen wird.</li>
@@ -3230,6 +3287,11 @@ Arbeitsablauf für Agenten: <code>docs/devdocs/agent_arbeitsprotokoll.md</code>.
 <td>8</td>
 <td><code>unittest</code>, kein <code>skip</code>/<code>xfail</code>/<code>importorskip</code> als Ausweg?</td>
 <td>ja</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Liest der Test Quelltext (<code>inspect.getsource</code>, Textsuche) statt auszuführen?</td>
+<td>nein</td>
 </tr>
 </tbody>
 </table>

@@ -1,0 +1,3184 @@
+
+<!doctype html>
+<html lang="de" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Modulares Python-Framework für Tools, Funktionen und komplette Anwendungen.">
+      
+      
+      
+        <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/devdocs/wp3_prompts/ISAA_WP3_05_lokal_kontopflicht/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>ISAA-Auftrag WP3-05 – Eine Lokal-Prüfung, eine Kontopflicht, WS-Origin, Vertrauen ohne Neustart - ToolBoxV2 Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=IBM+Plex+Sans:300,300i,400,400i,700,700i%7CIBM+Plex+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"IBM Plex Sans";--md-code-font:"IBM Plex Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#isaa-auftrag-wp3-05-eine-lokal-prufung-eine-kontopflicht-ws-origin-vertrauen-ohne-neustart" class="md-skip">
+          Zum Inhalt
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Kopfzeile">
+    <a href="../../.." title="ToolBoxV2 Docs" class="md-header__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ToolBoxV2 Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ISAA-Auftrag WP3-05 – Eine Lokal-Prüfung, eine Kontopflicht, WS-Origin, Vertrauen ohne Neustart
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Suche" placeholder="Suche" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Suche">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Zurücksetzen" aria-label="Zurücksetzen" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Suche wird initialisiert
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Zum Repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    MarkinHaus/ToolBoxV2
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Hauptnavigation" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../foundations/onboarding/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../services/cli/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../mods/isaa/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  ISAA
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../mods/CloudM/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  CloudM
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../runtime/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Runtime
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../storage/ref_database/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Storage
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../frontend/tbjs/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Frontend
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../registry/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Infrastructure
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../reference/toolboxv2/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="ToolBoxV2 Docs" class="md-nav__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ToolBoxV2 Docs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Zum Repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    MarkinHaus/ToolBoxV2
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../foundations/onboarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../foundations/first_run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run & Profile
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLIs & Flows
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CLIs & Flows
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../services/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../flows/icli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    icli
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../flows/minicli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MiniCLI & Macros
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../flows/chain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chains (Flows)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../flows/adaptive_prompt_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adaptive Prompt System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Module Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Module Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guidelines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coding Guidelines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mod_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mod Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../docs_toolchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docs Toolchain
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../mods/isaa/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ISAA
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ISAA
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../mods/isaa/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../mods/isaa/agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents (FlowAgent)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../mods/isaa/chains/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chains
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../mods/isaa/jobs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Job System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../mods/isaa/reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Full Reference (legacy)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../mods/CloudM/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CloudM
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CloudM
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../mods/CloudM/user_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../mods/CloudM/developer_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../mods/CloudM/auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Auth System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../mods/CloudM/login_system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Login System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../mods/CloudM/user_data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../mods/CloudM/mod_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mod Manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../mods/CloudM/folder_sync/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Folder Sync
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../mods/CloudM/dashboards/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dashboards
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../runtime/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runtime
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../runtime/workers_core/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workers (Core)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../runtime/service_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ServiceManager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../runtime/config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../runtime/server_worker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Server Worker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../runtime/fast_tb_handler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FastTB Handler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../runtime/fasttb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FastTB
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../runtime/session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../runtime/session_custom/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Custom Sessions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../runtime/event_manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Event Manager
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../runtime/ws_bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WS Bridge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../runtime/toolbox_integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Toolbox Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../runtime/tauri_integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tauri Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../runtime/debug_runner/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debug Runner
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Storage
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../storage/ref_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database Modes (LC/LR/RR/CB)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../storage/ref_blobdb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    BlobDB & Offline Fallback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../storage/blob_sharing_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blob Sharing API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../storage/blob_watch_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blob Watch API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Frontend
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Frontend
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../frontend/tbjs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    tbjs Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../frontend/tauri/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tauri App Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../frontend/p2p_rpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    P2P RPC Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../frontend/tb_browser/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    tb_browser Extension
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../registry/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Infrastructure
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Infrastructure
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../registry/USER_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — User Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../registry/DEVELOPERS_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — Developers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../registry/CONTRIBUTORS_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — Contributors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../registry/API_REFERENCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry — API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../llm_gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM Gateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/toolboxv2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    toolboxv2 Core API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging & Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Inhaltsverzeichnis">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Inhaltsverzeichnis
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#0-rahmen-gleich-in-allen-wp3-startprompts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0. Rahmen (gleich in allen WP3-Startprompts)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="0. Rahmen (gleich in allen WP3-Startprompts)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#01-arbeitskopie-einmal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.1 Arbeitskopie (einmal)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#02-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.2 Gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#03-commit-und-push-owner-entscheidung-direkt-auf-master" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3 Commit und Push (Owner-Entscheidung: direkt auf master)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#04-bericht" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.4 Bericht
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-deine-dateien" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Deine Dateien
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-teilaufgaben-in-dieser-reihenfolge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Teilaufgaben in dieser Reihenfolge
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Teilaufgaben in dieser Reihenfolge">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-zuerst-die-tests-ehrlich-machen-rot-auf-dca1ffa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 Zuerst die Tests ehrlich machen (rot auf dca1ffa)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-eine-lokal-prufung" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 Eine Lokal-Prüfung
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-kontopflicht-an-einer-stelle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 Kontopflicht an einer Stelle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24-ws-origin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.4 WS-Origin
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#25-vertrauen-und-sync-thread-ohne-neustart" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.5 Vertrauen und Sync-Thread ohne Neustart
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-fertig-wenn" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Fertig, wenn
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/MarkinHaus/ToolBoxV2/edit/master/docs/devdocs/wp3_prompts/ISAA_WP3_05_lokal_kontopflicht.md" title="Seite editieren" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="isaa-auftrag-wp3-05-eine-lokal-prufung-eine-kontopflicht-ws-origin-vertrauen-ohne-neustart">ISAA-Auftrag WP3-05 – Eine Lokal-Prüfung, eine Kontopflicht, WS-Origin, Vertrauen ohne Neustart<a class="headerlink" href="#isaa-auftrag-wp3-05-eine-lokal-prufung-eine-kontopflicht-ws-origin-vertrauen-ohne-neustart" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>Basis: <code>master</code> @ <code>dca1ffa</code> (geprüft 2026-11-18). Welle 1, läuft parallel zu WP3-09 (getrennte Dateien).
+Abnahme: <code>toolboxv2/tests/test_core/test_a3_betriebsbefunde.py</code> komplett grün, mit den hier verlangten neuen Fassungen von Nr. 1, 3, 4, 5, 6.</p>
+</blockquote>
+<h2 id="0-rahmen-gleich-in-allen-wp3-startprompts">0. Rahmen (gleich in allen WP3-Startprompts)<a class="headerlink" href="#0-rahmen-gleich-in-allen-wp3-startprompts" title="Permanent link">&para;</a></h2>
+<p><strong>Du bist eine ISAA-Instanz und arbeitest diesen Auftrag selbstständig ab.</strong> Verbindlich und vor dem ersten Edit vollständig zu lesen (liegen auf <code>master</code>):</p>
+<ol>
+<li><code>docs/devdocs/agent_arbeitsprotokoll.md</code> – Rahmen, die 11 Pflichtschritte je Änderung, isolierte Umgebung, Bericht.</li>
+<li><code>docs/devdocs/testing_guide.md</code> – Anti-Muster und Regeln. Besonders: Doubles nur an der Prozessgrenze (Regel 2), Eingang wie im Betrieb (Regel 3), <strong>kein Quelltext als Testobjekt</strong> (kein <code>inspect.getsource</code>, keine Wortsuche), Gegenprobe (Regel 7), Wheel-Test bei Paket-/Importänderungen (Regel 8).</li>
+<li><code>docs/devdocs/WP3_ordnung_und_betriebstests_2026-11.md</code> – Entscheidungen (Abschnitt 2), Befunde (Abschnitte 4, 9).</li>
+</ol>
+<p>Kurzfassung der harten Regeln (die Dateien gehen vor):</p>
+<ul>
+<li><strong>Nur deine Dateien</strong> (Abschnitt 1 unten). Alles andere, was dir auffällt: Bericht, „Gefunden, nicht geändert“.</li>
+<li><strong>Keine Dopplung:</strong> Vor jeder neuen Funktion <code>git grep -n</code> nach dem <strong>Zweck</strong>; Fund in den Bericht. Kein Wrapper, kein Fallback-Zweig, keine zweite Prüfung neben einer vorhandenen.</li>
+<li><strong>Hypothese vor Edit</strong> (Protokoll Schritte 3–4), <strong>isolierter Lauf mit vollen Abhängigkeiten nach jedem Edit</strong> (Schritt 7, Protokoll Abschnitt 3), <strong>Gegenprobe</strong> mit <code>git stash</code> (Schritt 8).</li>
+<li><strong>Kein Grün durch Wegsehen:</strong> kein <code>skip</code>/<code>xfail</code>/<code>importorskip</code>, keine abgeschwächte Assertion, kein Test gelöscht, außer der Auftrag nennt ihn ausdrücklich zum Ersetzen.</li>
+<li><strong>Owner-Umgebung schützen:</strong> Ports 8467/8468 nicht belegen, wenn die Owner-Instanz läuft (dann fragen, nicht ausweichen). Daten nur unter <code>$T</code> (Protokoll 3.1). Keine Geheimnisse in Dateien, Logs, Commits, Bericht.</li>
+<li><strong>Stoppen und melden</strong> bei: Hypothese widerlegt und keine neue belegbar; Datei außerhalb der Liste nötig; Code sieht anders aus als hier beschrieben; dritter Reparaturversuch am selben Fehler.</li>
+</ul>
+<h3 id="01-arbeitskopie-einmal">0.1 Arbeitskopie (einmal)<a class="headerlink" href="#01-arbeitskopie-einmal" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">cd </span><span class="n">C</span><span class="p">:\</span><span class="n">Users</span><span class="p">\</span><span class="n">Markin</span><span class="p">\</span><span class="n">Workspace</span><span class="p">\</span><span class="n">ISAABOX</span><span class="p">\</span><span class="n">Toolboxv2</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">git</span> <span class="n">fetch</span> <span class="n">origin</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">git</span> <span class="n">worktree</span> <span class="n">add</span> <span class="n">-B</span> <span class="n">isaa</span><span class="p">/</span><span class="n">05</span> <span class="n">C</span><span class="p">:\</span><span class="n">Users</span><span class="p">\</span><span class="n">Markin</span><span class="p">\</span><span class="n">Workspace</span><span class="p">\</span><span class="n">ISAABOX</span><span class="p">\</span><span class="n">Toolboxv2-isaa05</span> <span class="n">origin</span><span class="p">/</span><span class="n">master</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nb">cd </span><span class="n">C</span><span class="p">:\</span><span class="n">Users</span><span class="p">\</span><span class="n">Markin</span><span class="p">\</span><span class="n">Workspace</span><span class="p">\</span><span class="n">ISAABOX</span><span class="p">\</span><span class="n">Toolboxv2-isaa05</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">uv</span> <span class="n">venv</span> <span class="n">-p</span> <span class="n">3</span><span class="p">.</span><span class="n">12</span> <span class="p">.</span><span class="n">venv</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">.\.</span><span class="n">venv</span><span class="p">\</span><span class="n">Scripts</span><span class="p">\</span><span class="n">Activate</span><span class="p">.</span><span class="n">ps1</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">uv</span> <span class="n">pip</span> <span class="n">install</span> <span class="n">pytest</span> <span class="n">pytest-asyncio</span> <span class="n">pytest-timeout</span> <span class="n">build</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">uv</span> <span class="n">pip</span> <span class="n">install</span> <span class="n">-e</span> <span class="n">toolboxv2</span><span class="p">/</span><span class="n">mods</span><span class="p">/</span><span class="n">isaa</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="n">uv</span> <span class="n">pip</span> <span class="n">install</span> <span class="n">-e</span> <span class="s2">".[web]"</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="nv">$env:MOCK_EXTERNAL_SERVICES</span> <span class="p">=</span> <span class="s2">"true"</span><span class="p">;</span> <span class="nv">$env:IS_OFFLINE_DB</span> <span class="p">=</span> <span class="s2">"true"</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="n">python</span> <span class="n">-c</span> <span class="s2">"import toolboxv2; print(toolboxv2.__file__)"</span>   <span class="c"># muss in ...Toolboxv2-isaa05 liegen</span>
+</code></pre></div>
+<p>Nichts von Hand in die venv installieren, was nicht in <code>pyproject.toml</code> steht. Sonst misst die Gegenprobe deine Umgebung statt des Codes (Testleitfaden, Fall 12).</p>
+<h3 id="02-gate">0.2 Gate<a class="headerlink" href="#02-gate" title="Permanent link">&para;</a></h3>
+<p>Skript <code>C:\Users\Markin\Workspace\ISAABOX\tb_gate.py</code> (liegt aus WP2 bereits dort; Inhalt sonst: <code>git show origin/claude/keen-goldberg-o59mt9:docs/devdocs/ci_analysis/prompts/ISAA_06_session_per_user.md</code>, Abschnitt 0.4). Gate-Bereich: siehe Abschnitt 1 unten.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">python</span> <span class="n">C</span><span class="p">:\</span><span class="n">Users</span><span class="p">\</span><span class="n">Markin</span><span class="p">\</span><span class="n">Workspace</span><span class="p">\</span><span class="n">ISAABOX</span><span class="p">\</span><span class="n">tb_gate</span><span class="p">.</span><span class="n">py</span> <span class="n">baseline</span> <span class="n">C</span><span class="p">:\</span><span class="n">Users</span><span class="p">\</span><span class="n">Markin</span><span class="p">\</span><span class="n">Workspace</span><span class="p">\</span><span class="n">ISAABOX</span><span class="p">\</span><span class="n">isaa05_baseline</span><span class="p">.</span><span class="n">json</span> <span class="nv">@GATE</span>   <span class="c"># vor dem ersten Edit</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">python</span> <span class="n">C</span><span class="p">:\</span><span class="n">Users</span><span class="p">\</span><span class="n">Markin</span><span class="p">\</span><span class="n">Workspace</span><span class="p">\</span><span class="n">ISAABOX</span><span class="p">\</span><span class="n">tb_gate</span><span class="p">.</span><span class="n">py</span> <span class="n">check</span>    <span class="n">C</span><span class="p">:\</span><span class="n">Users</span><span class="p">\</span><span class="n">Markin</span><span class="p">\</span><span class="n">Workspace</span><span class="p">\</span><span class="n">ISAABOX</span><span class="p">\</span><span class="n">isaa05_baseline</span><span class="p">.</span><span class="n">json</span> <span class="nv">@GATE</span>   <span class="c"># nach jedem Edit, muss "NEU rot: 0"</span>
+</code></pre></div>
+<h3 id="03-commit-und-push-owner-entscheidung-direkt-auf-master">0.3 Commit und Push (Owner-Entscheidung: direkt auf <code>master</code>)<a class="headerlink" href="#03-commit-und-push-owner-entscheidung-direkt-auf-master" title="Permanent link">&para;</a></h3>
+<p>Erst wenn alle Pflichtfelder des Protokolls belegt sind und der Bericht geschrieben ist. Ein Commit je Teilaufgabe; Dateien einzeln hinzufügen (<code>git add &lt;pfad&gt;</code>), nie <code>git add -A</code>/<code>.</code>/<code>-a</code>. Nachricht: erste Zeile <code>WP3 A05.&lt;n&gt;: &lt;kurz&gt;</code>, darunter Hypothese (ein Satz) und die Schlusszeile des Abnahmelaufs.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">git</span> <span class="n">fetch</span> <span class="n">origin</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">git</span> <span class="n">rebase</span> <span class="n">origin</span><span class="p">/</span><span class="n">master</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="c"># nach dem Rebase: Gate-Check erneut</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">git</span> <span class="n">push</span> <span class="n">origin</span> <span class="n">HEAD</span><span class="p">:</span><span class="n">master</span>
+</code></pre></div>
+<p>Abgelehnt (<code>non-fast-forward</code>): höchstens dreimal wiederholen, dann melden. Kein <code>--force</code>, kein Merge-Commit.</p>
+<h3 id="04-bericht">0.4 Bericht<a class="headerlink" href="#04-bericht" title="Permanent link">&para;</a></h3>
+<p><code>C:\Users\Markin\Workspace\ISAABOX\wp3_A05_bericht.md</code> (außerhalb des Repos), Format nach Protokoll Abschnitt 4: je Teilaufgabe die Tabelle mit den 11 Pflichtfeldern, Zustand, „Gefunden, nicht geändert“, Patch-Inventar der Tests. Denselben Text als Antwort ausgeben.</p>
+<h2 id="1-deine-dateien">1. Deine Dateien<a class="headerlink" href="#1-deine-dateien" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>toolboxv2/utils/workers/fast/live_proxy.py</code> (nur <code>_is_loopback</code>, <code>_peer_is_local</code>, <code>_ensure_local</code>)</li>
+<li><code>toolboxv2/utils/workers/fast/local_ui.py</code></li>
+<li><code>toolboxv2/utils/workers/fast/wizard_api.py</code> (nur <code>_loopback_guard</code> und die Guard-Aufrufe)</li>
+<li><code>toolboxv2/utils/workers/fast/account_page.py</code> (nur das Wort „Optional.“ im Hinweistext)</li>
+<li><strong>eine</strong> Dispatch-Stelle für die Kontopflicht (Teilaufgabe 2; welche, belegst du)</li>
+<li><code>toolboxv2/utils/workers/ws_worker.py</code> (nur Handshake: <code>_process_request_new_api</code> :265, <code>_process_request_legacy</code> :283)</li>
+<li><code>toolboxv2/utils/workers/server_worker.py</code> (nur der Block „Device trust“ ab ca. Zeile 1676 bis <code>Device trust off</code>)</li>
+<li><code>toolboxv2/tests/test_core/test_a3_betriebsbefunde.py</code></li>
+</ul>
+<p>Gate-Bereich:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nv">$GATE</span> <span class="p">=</span> <span class="p">@(</span><span class="s1">'toolboxv2/tests/test_core/test_a3_betriebsbefunde.py'</span><span class="p">,</span><span class="s1">'toolboxv2/tests/test_core/test_wizard_e2e_http.py'</span><span class="p">,</span><span class="s1">'toolboxv2/tests/test_core/test_device_account.py'</span><span class="p">,</span><span class="s1">'toolboxv2/tests/test_core/test_account_link_flow.py'</span><span class="p">,</span><span class="s1">'toolboxv2/tests/test_core/test_first_run_onboarding.py'</span><span class="p">,</span><span class="s1">'toolboxv2/tests/test_core/test_state_dir.py'</span><span class="p">)</span>
+</code></pre></div></p>
+<p><strong>Nicht anfassen:</strong> <code>mods/CloudM/LiveSync/*</code> (WP3-09), <code>mods/CloudM/auth/*</code>, <code>pyproject.toml</code>, <code>docs/</code>.</p>
+<h2 id="2-teilaufgaben-in-dieser-reihenfolge">2. Teilaufgaben in dieser Reihenfolge<a class="headerlink" href="#2-teilaufgaben-in-dieser-reihenfolge" title="Permanent link">&para;</a></h2>
+<h3 id="21-zuerst-die-tests-ehrlich-machen-rot-auf-dca1ffa">2.1 Zuerst die Tests ehrlich machen (rot auf <code>dca1ffa</code>)<a class="headerlink" href="#21-zuerst-die-tests-ehrlich-machen-rot-auf-dca1ffa" title="Permanent link">&para;</a></h3>
+<p>Die vorhandenen Fassungen von Nr. 3, 5 und 6 lesen Quelltext (<code>inspect.getsource</code>). Das ist verboten (Testleitfaden, Fälle 8–10). Nr. 4 ruft mit Fake-App statt wie der Betrieb ohne <code>app</code>. Nr. 1 prüft nur zwei Routen. <strong>Ersetze</strong> diese fünf Tests (freigegeben) durch Tests, die ausführen:</p>
+<table>
+<thead>
+<tr>
+<th>Nr.</th>
+<th>neuer Test (Muster: Klasse <code>_Server</code> in derselben Datei bzw. <code>test_wizard_e2e_http.py</code>)</th>
+<th>muss auf <code>dca1ffa</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Profil <code>local</code>, <strong>kein</strong> <code>device_owner.json</code>. Per HTTP gegen den echten Worker auf freiem Port: <code>GET /</code> → Kontoseite (nicht Dashboard); <code>GET /api/wizard/state</code> → <code>needs_account: true</code>; <code>POST /api/wizard/profile</code> mit <code>server</code> und <code>POST /api/wizard/save</code> → abgelehnt (Teilaufgabe 2.2); jede weitere lokal registrierte Route, die nicht in der Ausnahmeliste (2.2) steht, → 403 bzw. Kontoseite. Die Routenliste <strong>aus der App lesen</strong> (<code>app</code> der FastTB-Instanz, alle registrierten Routen), nicht abschreiben.</td>
+<td>rot</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Echter WS-Worker auf freiem Port (wie <code>ws_worker</code> startet), Handshake mit <code>Origin: http://evil.example</code> → abgelehnt (HTTP 403 im Upgrade); mit <code>Origin: http://127.0.0.1:&lt;port&gt;</code> → angenommen. Echte Client-Bibliothek <code>websockets</code>.</td>
+<td>rot</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Echte App (<code>get_app</code>) mit <code>TB_DATA_DIR</code> in <code>$T</code>, <code>device_owner.json</code> im <code>app.data_dir</code>, Profil <code>local</code>, Arbeitsordner = ein <strong>anderer</strong> Temp-Ordner; Aufruf <strong>ohne</strong> <code>app</code> über <code>local_ui.get_installation_state()</code> → <code>needs_account is False</code>. Singleton nach dem Test zurücksetzen (Leitfaden Regel 6.4).</td>
+<td>grün (Fix ist da) – Gegenprobe mit <code>git stash</code> auf A6 nicht möglich, also: einmal gegen <code>c36c3dc</code> laufen lassen und die rote Ausgabe in den Bericht</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Worker starten <strong>ohne</strong> <code>device_owner.json</code> (Profil <code>local</code>). Danach Datei schreiben. Ohne Neustart innerhalb von 10 s: eine Anfrage von 127.0.0.1 ist vertraut (gleiche Prüfung wie WP1-K2: <code>GET /api_user_data</code> bzw. das, was <code>enable_local_trust</code> steuert – belegen). Danach Datei löschen → innerhalb von 10 s nicht mehr vertraut.</td>
+<td>rot (An-Richtung)</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Worker ohne Konto starten → in <code>threading.enumerate()</code> kein Thread <code>account-sync</code>. Konto anlegen → Thread da (≤ 10 s). Konto entfernen → Thread beendet (≤ 10 s nach seinem nächsten Takt; Takt für den Test über eine vorhandene Konstante oder einen Parameter, kein <code>time.sleep</code>-Patch).</td>
+<td>rot (Beenden fehlt)</td>
+</tr>
+</tbody>
+</table>
+<p>Für 5 und 6: Worker im Testprozess wie in <code>test_a3</code>/<code>test_wizard_e2e_http</code> starten; wenn <code>HTTPWorker</code> dort nicht startbar ist, im Unterprozess mit isoliertem <code>TB_DATA_DIR</code> und Logdatei. Doubles nur für <code>simplecore.app</code> (Regel 2).</p>
+<p>Beleg im Bericht: alle fünf rot auf <code>dca1ffa</code> (wörtliche Fehlermeldung), Commit <code>WP3 A05.1: Betriebstests Nr. 1,3,4,5,6 ausfuehrend statt Quelltext</code>. <strong>Dieser Commit enthält keinen Produktcode</strong> und darf rot gepusht werden (Ausnahme vom Gate nur für diese Test-IDs; im Bericht nennen).</p>
+<h3 id="22-eine-lokal-prufung">2.2 Eine Lokal-Prüfung<a class="headerlink" href="#22-eine-lokal-prufung" title="Permanent link">&para;</a></h3>
+<p>Heute drei Prüfungen: <code>local_ui._ensure_local</code> (nur Host-Header, <code>local_ui.py:35-43</code>), <code>wizard_api._loopback_guard</code> (ruft die erste), <code>live_proxy._ensure_local</code>/<code>_peer_is_local</code> (Gegenstelle). Freigegeben: <strong><code>live_proxy._peer_is_local</code> wird die einzige</strong>, die beiden anderen werden entfernt, alle Aufrufer rufen die eine.</p>
+<p>Zusätzlich behebst du die Lücke in <code>_peer_is_local</code> (<code>live_proxy.py:116-125</code>): Fehlt <code>REMOTE_ADDR</code>, fällt sie auf <code>client_ip</code> zurück, das laut eigenem Kommentar aus <code>X-Forwarded-For</code> stammen kann. Hypothese zuerst belegen: Setzt der echte Worker <code>environ["REMOTE_ADDR"]</code> für jede Anfrage? (Schritt 4 mit echtem Worker.) Wenn ja: Rückfall entfernen, fehlendes <code>REMOTE_ADDR</code> = nicht lokal. Wenn nein: stoppen und melden.</p>
+<p>Test Nr. 2 (vorhanden, prüft die Funktion direkt) bleibt; ergänze einen HTTP-Fall: Worker auf <code>0.0.0.0</code> und freiem Port, Anfrage über die eigene Nicht-Loopback-Adresse des Rechners (aus <code>socket.gethostbyname(socket.gethostname())</code>, falls das 127.x liefert: erste Adresse aus <code>socket.getaddrinfo</code>) mit <code>Host: 127.0.0.1</code> und <code>X-Forwarded-For: 127.0.0.1</code> → 403. Gibt es keine Nicht-Loopback-Adresse, steht das im Bericht; der Test meldet das dann als Fehler mit klarer Meldung, nicht als <code>skip</code>.</p>
+<h3 id="23-kontopflicht-an-einer-stelle">2.3 Kontopflicht an einer Stelle<a class="headerlink" href="#23-kontopflicht-an-einer-stelle" title="Permanent link">&para;</a></h3>
+<p>Soll: Profil <code>local</code>/<code>developer</code> und kein Gerätekonto → <strong>jede</strong> lokale Route außer der Ausnahmeliste liefert für HTML eine Weiterleitung auf <code>/account</code>, sonst 403 <code>{"error": "account required"}</code>.</p>
+<p>Ausnahmeliste (vollständig, nicht erweitern ohne Rückfrage):
+- statische Assets für Kontoseite und Login (<code>/web/</code>, <code>/dist</code>-Mount, <code>/favicon.ico</code>), <code>/health</code>;
+- <code>/</code>, <code>/account</code>, <code>/setup</code> (zeigen selbst die richtige Seite);
+- <code>GET /api/wizard/state</code>, <code>GET /api/account/status</code>, <code>POST /api/account/start</code>;
+- <strong>während <code>first_run</code></strong> (noch kein Profil): zusätzlich <code>POST /api/wizard/profile</code> und <code>POST /api/wizard/save</code>. Ist ein Profil gesetzt und fehlt das Konto, sind sie gesperrt; damit lässt sich die Kontopflicht nicht mehr über ein Profil <code>server</code> umgehen. Profilwechsel geht dann über <code>tb -init</code> in der Konsole.</p>
+<p>Stelle: Lies <code>fast_tb_handler.FastTBHandler.handle_request</code> (:241, dort steht schon das Auth-Gate „variant iii: global“) und finde heraus, ob <strong>alle</strong> Routen des lokalen Workers (<code>local_ui.app</code>, gemountete Apps <code>/isaa</code>, <code>/obs</code>, <code>tray_api</code>, <code>wizard_api</code>) durch genau diese Methode laufen. Belege das mit dem echten Worker: z. B. Logzeile oder Breakpoint-Ausgabe für jede Route aus Test Nr. 1. Ist es diese Methode: dort, neben dem vorhandenen Gate, <strong>eine</strong> Prüfung, die nur für die lokale App gilt (Erkennung über ein Attribut der FastTB-Instanz, das <code>local_ui</code> setzt – vorhanden ist z. B. <code>serve_login_assets</code>; ein neues Attribut wie <code>require_device_account = True</code> ist freigegeben). Zustand über <code>first_run.onboarding_state()</code>, keine zweite Quelle. Läuft eine Route <strong>nicht</strong> dort durch: stoppen und mit Beleg melden.</p>
+<p>Danach: Die Kontopflicht-Zweige in den einzelnen Routen (<code>local_ui.root</code> :114 ff.) bleiben nur, soweit sie die richtige Seite <strong>zeigen</strong>; sie prüfen nichts Zusätzliches.</p>
+<p><code>account_page.py</code>: das Wort „Optional.“ im Hinweistext entfernen (Owner-Entscheidung 8, WP3 Abschnitt 2). Sonst nichts an der Seite.</p>
+<h3 id="24-ws-origin">2.4 WS-Origin<a class="headerlink" href="#24-ws-origin" title="Permanent link">&para;</a></h3>
+<p>Im Handshake beider API-Varianten (<code>_process_request_new_api</code>, <code>_process_request_legacy</code>): Origin vorhanden und nicht <code>http://127.0.0.1:&lt;port&gt;</code>, <code>http://localhost:&lt;port&gt;</code> oder ein Tauri-Origin → 403. Welche Origins die Tauri-App schickt, belegst du aus <code>toolboxv2/simple-core/src-tauri/tauri.conf.json</code> und dem Frontend-Code (Datei:Zeile im Bericht); nicht raten. Fehlender Origin (Nicht-Browser-Client, z. B. CLI) bleibt erlaubt – prüfe vorher mit <code>git grep</code>, welche Clients 8468 benutzen, und nenne sie.</p>
+<h3 id="25-vertrauen-und-sync-thread-ohne-neustart">2.5 Vertrauen und Sync-Thread ohne Neustart<a class="headerlink" href="#25-vertrauen-und-sync-thread-ohne-neustart" title="Permanent link">&para;</a></h3>
+<p>Heute (<code>server_worker.py:1684-1736</code>): Der Prüf-Thread <code>trust-revalidate</code> und <code>account-sync</code> starten nur, wenn <strong>beim Start</strong> ein Konto da war. Soll:
+- <code>trust-revalidate</code> läuft bei Profil <code>local</code>/<code>developer</code> <strong>immer</strong> (einmal je Prozess, Namensprüfung wie bei <code>account-sync</code>), unabhängig davon, ob beim Start ein Konto da war.
+- Er ist die <strong>einzige</strong> Stelle, die Vertrauen und <code>account-sync</code> an- und abschaltet. Beim Wechsel auf „Konto da“ startet er <code>account-sync</code> (falls nicht laufend), beim Wechsel auf „kein Konto“ signalisiert er ihm das Ende (<code>threading.Event</code>), <code>account-sync</code> prüft das Event statt <code>time.sleep(600)</code> (<code>event.wait(600)</code>).
+- Kein zweiter Code-Pfad für den Start: Die Startlogik beim Boot ruft dieselbe Funktion wie der Prüf-Thread beim Wechsel.</p>
+<p>Abnahme: Nr. 5 und Nr. 6 grün; Gegenprobe; isolierter Lauf nach Protokoll 3.3 mit <code>tb workers start</code> <strong>nur</strong>, wenn 8467/8468 frei sind.</p>
+<h2 id="3-fertig-wenn">3. Fertig, wenn<a class="headerlink" href="#3-fertig-wenn" title="Permanent link">&para;</a></h2>
+<p><code>test_a3_betriebsbefunde.py</code> 8/8 grün (mit den neuen Fassungen), Gate „NEU rot: 0“, Gegenprobe je Teilaufgabe im Bericht, Commits gepusht.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Zurück zum Seitenanfang
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      © 2022–2026 Markin Hausmanns
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.instant", "navigation.tracking", "navigation.tabs", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "In Zwischenablage kopiert", "clipboard.copy": "In Zwischenablage kopieren", "search.result.more.one": "1 weiteres Suchergebnis auf dieser Seite", "search.result.more.other": "# weitere Suchergebnisse auf dieser Seite", "search.result.none": "Keine Suchergebnisse", "search.result.one": "1 Suchergebnis", "search.result.other": "# Suchergebnisse", "search.result.placeholder": "Suchbegriff eingeben", "search.result.term.missing": "Es fehlt", "select.version": "Version ausw\u00e4hlen"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

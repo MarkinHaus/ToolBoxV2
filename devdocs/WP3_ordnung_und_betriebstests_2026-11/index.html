@@ -2921,6 +2921,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#9-prufung-von-master-a2cae2bdca1ffa-2026-11-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Prüfung von master @ a2cae2b/dca1ffa (2026-11-18)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2974,7 +2985,14 @@ Arbeitsbranch: legt der Owner fest (keine neuen Branches ohne seine Anweisung). 
 <li><strong>Kein Kontoschlüssel im Klartext auf dem Server und keine Schlüsselausgabe über eine neue <code>api=True</code>-Funktion.</strong> <code>get_sync_key</code> wird zurückgebaut. Das Krypto-Verfahren für den Sync legt Abschnitt 6 fest, nach Entscheidung des Owners.</li>
 <li>Weiter gelten alle Entscheidungen aus WP1, insbesondere: Sync nur über <code>CloudM.UserDataAPI</code>, keine MinIO-Daten auf dem Gerät, Kontopflicht ohne Schalter.</li>
 </ol>
-<p>Offen: Gehört der Blob-Sync weiter zu Ziel 7 (Auftrag 10)?</p>
+<p>Nachtrag 2026-11-18:</p>
+<ol>
+<li><strong>Krypto: Weg 2 (Geräte-Kopplung)</strong> aus Abschnitt 6. Nur Funktionen aus <code>utils/security/cryp.py</code> und dem vorhandenen <code>mods/CloudM/LiveSync/crypto.py</code>.</li>
+<li><strong>Blob-Sync gehört weiter zu Ziel 7</strong> (Auftrag 10), über die Data-API. Entscheidung 1 (Löschungen) gilt auch für Blobs.</li>
+<li><strong>Agenten pushen direkt auf <code>master</code></strong>; geprüft wird danach (Protokoll Abschnitt 1, Punkt 4).</li>
+<li><strong>Kontoseite:</strong> Das WP1-Dokument wird an die Seite angepasst (drei Anmeldeknöpfe, Routen <code>/api/account/*</code>). Ausnahme: Das Wort „Optional“ auf der Seite widerspricht der Kontopflicht und fällt weg (Auftrag 5).</li>
+<li>Nacharbeit aus der Prüfung von <code>a2cae2b</code> geht in Auftrag 5 (siehe Abschnitt 9).</li>
+</ol>
 <h2 id="3-reihenfolge">3. Reihenfolge<a class="headerlink" href="#3-reihenfolge" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -3217,7 +3235,7 @@ Arbeitsbranch: legt der Owner fest (keine neuen Branches ohne seine Anweisung). 
 <li>Eine Multipart-Abhängigkeit, die zum Code passt: Der Code benutzt die API des PyPI-Pakets <code>multipart</code>. <code>python-multipart</code> bleibt nur, wenn es noch woanders gebraucht wird; das belegt der Agent mit <code>git grep</code>.</li>
 <li>Den doppelten Import entfernen.</li>
 <li>Abnahme nur mit dem Wheel (Regel 8).</li>
-<li><strong>Auftrag 8 – Krypto zurück auf die Owner-Linie.</strong> <code>get_sync_key</code> und <code>user_pass_sync</code> entfernen (freigegeben). Das Verfahren nach der Entscheidung aus Abschnitt 6 mit den <strong>vorhandenen</strong> Funktionen aus <code>toolboxv2/utils/security/cryp.py</code>; keine neue Krypto-Bibliothek, keine neue <code>api=True</code>-Funktion.</li>
+<li><strong>Auftrag 8 – Krypto zurück auf die Owner-Linie.</strong> <code>get_sync_key</code> entfernen und den Sync nicht mehr über <code>user_pass_sync</code> laufen lassen (freigegeben). <strong>Korrektur 2026-11-18:</strong> Das <strong>Feld</strong> <code>user_pass_sync</code> bleibt: Es ist älter als WP1 und der alte Magic-Link-Weg leitet daraus seinen Schlüssel ab (<code>AuthHelpers.py:108</code>, <code>extras.py:343</code>). Folge: Jeder vom Server ausgegebene Sync-Schlüssel war zugleich das Ausgangsmaterial dieses Links; der Auftrag prüft, ob der Weg noch erreichbar ist, und der Owner erneuert danach die betroffenen Werte auf dem Server. Das Verfahren nach der Entscheidung aus Abschnitt 6 mit den <strong>vorhandenen</strong> Funktionen aus <code>toolboxv2/utils/security/cryp.py</code>; keine neue Krypto-Bibliothek, keine neue <code>api=True</code>-Funktion.</li>
 <li><strong>Auftrag 9 – Sync-Korrekturen</strong> nach den Betriebstests aus Auftrag 4 (Nr. 3–6), dazu Dateinamen mit <code>:</code> sichtbar behandeln statt still überspringen.</li>
 </ul>
 <h2 id="6-entscheidung-wie-wird-der-sync-verschlusselt">6. Entscheidung: Wie wird der Sync verschlüsselt?<a class="headerlink" href="#6-entscheidung-wie-wird-der-sync-verschlusselt" title="Permanent link">&para;</a></h2>
@@ -3324,6 +3342,15 @@ Arbeitsbranch: legt der Owner fest (keine neuen Branches ohne seine Anweisung). 
 <li>Die Kontoseite weicht vom WP1-Dokument ab (Text „Optional“, drei Knöpfe, Routennamen). Entweder Seite oder Dokument anpassen; der Owner entscheidet.</li>
 <li><code>OSError: Bad file descriptor</code> (waitress) beim Stop.</li>
 </ol>
+<h2 id="9-prufung-von-master-a2cae2bdca1ffa-2026-11-18">9. Prüfung von <code>master</code> @ <code>a2cae2b</code>/<code>dca1ffa</code> (2026-11-18)<a class="headerlink" href="#9-prufung-von-master-a2cae2bdca1ffa-2026-11-18" title="Permanent link">&para;</a></h2>
+<p>Erledigt und im echten Ablauf bestätigt: Auftrag 2 (Zeitlimits), 3 und 4 (Betriebstests angelegt), 6 (Konto im Betrieb), 7 (Paket). Testlauf: 8 rot (= Aufträge 5 und 9), 52 grün. Wheel frisch installiert, <code>python -I</code> aus fremdem Ordner: LiveSync importierbar, <code>MULTIPART_AVAILABLE True</code>. Echte App, fremder Arbeitsordner, <code>onboarding_state()</code> ohne <code>app</code>: <code>needs_account false</code>.</p>
+<p>Nacharbeit (geht in Auftrag 5):
+1. Vertrauen nach dem Verknüpfen ohne Neustart: Der Prüf-Thread startet nur, wenn beim Start schon ein Konto da war (<code>server_worker.py:1684</code>, 1707, 1732). Beim Erststart über den Wizard bleibt das Vertrauen bis zum Neustart aus. Nach dem Entfernen des Kontos läuft <code>account-sync</code> weiter.
+2. A3 Nr. 3, 5, 6 lesen Quelltext statt auszuführen (Testleitfaden, Fälle 8–10). Neu als Tests am laufenden Worker.
+3. A3 Nr. 1 prüft nur <code>/</code> und <code>/api/wizard/state</code>, nicht alle Routen aus Abschnitt 4.
+4. A3 Nr. 4 ruft mit Fake-App statt ohne <code>app</code> wie der Betrieb.
+5. <code>live_proxy._peer_is_local</code> fällt ohne <code>REMOTE_ADDR</code> auf <code>client_ip</code> zurück, das aus <code>X-Forwarded-For</code> stammen kann (Kommentar dort, <code>server_worker</code> L308).</p>
+<p>Startprompts: <code>docs/devdocs/wp3_prompts/</code> (Aufträge 5, 8, 9, 10). Wellen: 5 und 9 parallel; danach 8; danach 10.</p>
 
 
 

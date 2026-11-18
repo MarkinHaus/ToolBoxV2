@@ -2956,7 +2956,7 @@ Testregeln: <code>docs/devdocs/testing_guide.md</code>.</p>
 <li>neue Abhängigkeiten in <code>pyproject.toml</code>;</li>
 <li>Änderungen an Schlüsseln, Secrets, Verschlüsselung, Authentifizierung.</li>
 <li><strong>Keine Dopplung.</strong> Vor jeder neuen Funktion, Klasse oder Konstante: <code>git grep -n</code> nach dem <strong>Zweck</strong> (nicht nur dem Namen) und den Fund in den Bericht. Gibt es etwas Passendes, wird es benutzt. Gibt es zwei passende Stellen, wird <strong>nicht</strong> eine dritte gebaut: melden.</li>
-<li><strong>Kein Merge nach <code>master</code>, kein Push nach <code>master</code>.</strong> Arbeitsbranch laut Auftrag. Gemergt wird nur auf ausdrückliche Anweisung des Owners, nach Prüfung.</li>
+<li><strong>Push nach <code>master</code> nur mit vollständigem Bericht</strong> (Owner-Entscheidung 2026-11-18: Agenten pushen direkt auf <code>master</code>, geprüft wird danach). Vor dem Push müssen alle Pflichtfelder aus Abschnitt 2 belegt sein, das Gate „NEU rot: 0“ zeigen und der Bericht geschrieben sein. Kein Merge-Commit, kein <code>--force</code>. Ist ein Schritt nicht belegt: nicht pushen, Zustand <code>gestoppt</code>.</li>
 <li><strong>Owner-Entscheidungen</strong> (WP-Dokumente, Abschnitt „Entscheidungen“) werden nicht neu ausgelegt. Passt eine Entscheidung nicht zum Code: stoppen und fragen.</li>
 <li><strong>Stoppen und melden</strong> statt weitermachen, wenn:</li>
 <li>die Hypothese nicht bestätigt werden kann;</li>
