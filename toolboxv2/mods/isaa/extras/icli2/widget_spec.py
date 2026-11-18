@@ -8,7 +8,7 @@ und Grenzen, nicht die Web-Templates.
 """
 from __future__ import annotations
 
-_VALID_TEMPLATES = ("form", "choice", "info", "note", "progress")
+_VALID_TEMPLATES = ("form", "choice", "info", "note", "progress", "chart")
 _VALID_FIELD_TYPES = ("text", "number", "textarea", "select", "checkbox")
 _VALID_MODES = ("modal", "pinned", "inline")
 
@@ -59,10 +59,10 @@ def validate_spec(spec: dict, *, creator: tuple[str, str]) -> dict:
         warnings.append(f"mode {mode!r} unbekannt -> fallback modal")
         mode = "modal"
 
-    if template in ("note", "progress") and mode != "inline":
+    if template in ("note", "progress", "chart") and mode != "inline":
         errors.append(f"template {template!r} nur mit mode=inline")
-    if mode == "inline" and template not in ("note", "progress"):
-        errors.append("mode=inline nur mit passiven Templates note/progress (keine Interaktion im Chat)")
+    if mode == "inline" and template not in ("note", "progress", "chart"):
+        errors.append("mode=inline nur mit passiven Templates note/progress/chart (keine Interaktion im Chat)")
 
     norm: dict = {"title": title, "template": template, "mode": mode}
 
@@ -138,6 +138,18 @@ def validate_spec(spec: dict, *, creator: tuple[str, str]) -> dict:
                 errors.append("progress braucht Zahl 0-100")
             else:
                 norm["progress"] = pct
+
+    elif template == "chart":
+        ctype = spec.get("chart_type", "line")
+        if ctype not in ("line", "bar"):
+            errors.append("chart_type: line | bar")   # ponytail: flow (box-drawing) erst bei Bedarf
+        vals = spec.get("values")
+        if (not isinstance(vals, list) or len(vals) < 2 or len(vals) > 50
+                or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in vals)):
+            errors.append("values: 2-50 Zahlen")
+        else:
+            norm["chart_type"] = ctype
+            norm["values"] = vals
 
     elif template == "info":
         text = spec.get("text")

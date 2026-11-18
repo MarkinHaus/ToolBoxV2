@@ -126,9 +126,9 @@ _SHOW_DOC = (
     "Zeigt dem Nutzer in der icli2 ein interaktives Widget und liefert {ok, id}. Die Antwort des Nutzers "
     "kommt spaeter als neue Nachricht '[Widget-Antwort] ...' mit id und values zu dir zurueck.\n"
     "template: form (fields: [{name, label, type: text|number|textarea|select|checkbox, options?, default?, "
-    "required?}]) | choice (options: [{label, value}] 2-12) | info (text) | note (text, nur inline) | progress (text + progress 0-100, nur inline).\n"
+    "required?}]) | choice (options: [{label, value}] 2-12) | info (text) | note (text, nur inline) | progress (text + progress 0-100, nur inline) | chart (values: 2-50 Zahlen, chart_type line|bar, nur inline).\n"
     "mode: modal (Overlay, Standard) | pinned (Seitenleiste F2) | inline (passive Karte im Chat-Verlauf: "
-    "nur template note|progress; form/choice/info nur modal|pinned).")
+    "nur template note|progress|chart; form/choice/info nur modal|pinned).")
 
 
 def _session_of(agent: Any, name: str) -> str:

@@ -79,6 +79,23 @@ async def main():
     r = await b.widget_show({"title": "F", "template": "choice", "mode": "inline",
                              "options": [{"label": "a", "value": "1"}, {"label": "b", "value": "2"}]})
     assert not r.get("ok") and any("passiv" in e.lower() for e in r["errors"]), r
+    # Chart: passiv, line/bar, 2-50 Werte
+    r = await b.widget_show({"title": "Chart", "template": "chart", "mode": "inline",
+                             "chart_type": "line", "values": [1, 3, 2, 7, 5]})
+    assert r.get("ok") and r["mode"] == "inline", r
+    wid_c = r["id"]
+    r = await b.widget_update(wid_c, {"title": "Chart", "template": "chart", "mode": "inline",
+                                     "chart_type": "bar", "values": [0, 10, 5]})
+    assert r.get("ok"), r
+    bad = await b.widget_show({"title": "X", "template": "chart", "mode": "modal", "values": [1, 2]})
+    assert not bad.get("ok"), bad
+    from toolboxv2.mods.isaa.extras.icli2.widgets import build_widget_lines as bwl
+    ln = bwl({"template": "chart", "chart_type": "line", "values": [1, 5, 2, 8]})[0]
+    assert "█" in ln and "1..8" in ln, ln
+    bars = bwl({"template": "chart", "chart_type": "bar", "values": [1, 5, 2]})
+    assert len(bars) == 3 and all(b.startswith("█") for b in bars), bars
+    print("chart ok:", ln.strip())
+
     # progress-Wertebereich
     r = await b.widget_show({"title": "F", "template": "progress", "mode": "inline", "text": "x", "progress": 150})
     assert not r.get("ok") and any("0-100" in e for e in r["errors"]), r

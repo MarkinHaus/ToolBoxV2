@@ -34,11 +34,29 @@ def _clip(s: str, width: int = MAX_LINE) -> str:
     return s if len(s) <= width else s[: width - 1] + "\u2026"
 
 
+def _chart_lines(spec: dict) -> list[str]:
+    """ASCII-Grafik fuer chart (passiv): line = Sparkline, bar = Balken je Wert.
+    ponytail: Max 50 Werte (Spec); pipe/flow-Faelle deckt das progress-Template ab."""
+    vals = [float(v) for v in spec.get("values", [])]
+    if not vals:
+        return [""]
+    lo, hi = min(vals), max(vals)
+    span = (hi - lo) or 1.0
+    steps = "▁▂▃▄▅▆▇█"
+    if spec.get("chart_type") == "bar":
+        width = 40
+        return [_clip("█" * max(1, round((v - lo) / span * width)) + f" {v:g}") for v in vals]
+    spark = "".join(steps[max(0, min(7, round((v - lo) / span * 7)))] for v in vals)
+    return [_clip(f"{spark}  {lo:g}..{hi:g}")]
+
+
 def build_widget_lines(spec: dict) -> list[str]:
     """Spec -> Anzeige-Zeilen (reine Funktion, Grundlage fuer Modal + Card)."""
     template = spec.get("template")
     lines: list[str] = []
-    if template == "info":
+    if template == "chart":
+        lines = _chart_lines(spec)
+    elif template == "info":
         text = str(spec.get("text", ""))
         lines = [_clip(text[i:i + MAX_LINE]) for i in range(0, len(text), MAX_LINE)] or [""]
     elif template in ("note", "progress"):
@@ -180,6 +198,8 @@ if TEXTUAL:
                 pct = spec.get("progress") or 0
                 bar = "█" * round(pct / 10) + "░" * (10 - round(pct / 10))
                 self.update(f"{spec.get('title', '')}\n{bar} {pct}%\n{text}")
+            elif tmpl == "chart":
+                self.update(f"{spec.get('title', '')}\n" + "\n".join(_chart_lines(self.spec)))
             else:
                 self.update(f"{spec.get('title', '')}\n{text}")
 
