@@ -5,9 +5,11 @@ Belegt die 7 Betrieberbefunde aus WP3_ordnung_und_betriebstests_2026-11.md
 auf Basis c36c3dc. Erwartung: alle 7 ROT auf der Basis, GRUEN nach Fix.
 KEIN Produktcode wird hier geaendert (Betriebstests-Regel).
 """
+import asyncio
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -128,197 +130,590 @@ class TestA4Row2_MultipartUploadWorks(unittest.TestCase):
             self.assertEqual(data, b"INHALT-42", "Datei-Inhalt kommt veraendert an")
 
 
-class TestA4Row3_ConflictCopySurvivesReExport(unittest.TestCase):
-    """Nr. 3: Konfliktkopie im Konto-Spiegel muss einen erneuten
-    Export ueberleben (lokaler Wert bleibt erhalten).
-    Ist: export_account loescht 'vanished keys' inkl. Konfliktkopien
-    (account_bridge.py, delete-vanished-keys-Block)."""
+class TestA4Row2_WheelHasMultipart(unittest.TestCase):
+    """Nr. 2 gegen das gebaute Paket (Testleitfaden Regel 8, Fall 12): Wheel
+    bauen, in eine FRISCHE venv installieren (`pip install <wheel>[web]`, nur
+    was pyproject.toml deklariert), mit `python -I` aus fremdem Ordner
+    importieren. Der Checkout-Test oben ist gruen, sobald `multipart` von Hand
+    in der eigenen venv liegt; dieser Test misst die Deklaration.
+    Braucht Netz zum Paketindex. Zeitlimits je Schritt."""
 
-    def test_conflict_copy_not_deleted_by_export(self):
-        from toolboxv2.mods.CloudM.LiveSync.account_bridge import export_account
-        from toolboxv2.mods.CloudM.LiveSync.conflict import save_conflict_copy
+    def test_fresh_venv_install_enables_uploads(self):
+        work = Path(tempfile.mkdtemp(prefix="tb_a09_whl_", dir=str(_T)))
+        self.addCleanup(shutil.rmtree, str(work), True)
+        whl_dir = work / "whl"
+        env = dict(os.environ, HOME=str(work / "home"),
+                   USERPROFILE=str(work / "home"), TB_DATA_DIR=str(work / "data"),
+                   MOCK_EXTERNAL_SERVICES="true", IS_OFFLINE_DB="true")
+        # Der Checkout darf nicht ueber PYTHONPATH in die frische venv lecken
+        # (pip wuerde "toolboxv2" dort schon als installiert sehen).
+        env.pop("PYTHONPATH", None)
+        (work / "home").mkdir()
+        (work / "data").mkdir()
+        (work / "fremd").mkdir()
 
-        mirror = _T / "mirror3"
-        settings = mirror / "settings"
-        settings.mkdir(parents=True, exist_ok=True)
-        (settings / "key.json").write_text('{"v": 1}', encoding="utf-8")
-        conflict_file = save_conflict_copy(
-            settings, "key.json", b'{"v": "lokal"}')
-        self.assertTrue(Path(conflict_file).is_file(),
-                        "Vorbedingung: Konfliktkopie liegt im Spiegel")
+        def run(cmd, cwd, timeout):
+            return subprocess.run(cmd, cwd=str(cwd), env=env, capture_output=True,
+                                  text=True, timeout=timeout, encoding="utf-8",
+                                  errors="replace")
 
-        user = type("U", (), {"settings": {"key": {"v": 2}},
-                              "mod_data": {}})()
-        export_account(user, mirror)
+        r = run([sys.executable, "-m", "pip", "wheel", ".", "--no-deps",
+                 "--no-build-isolation", "-w", str(whl_dir)], REPO, 600)
+        self.assertEqual(r.returncode, 0, f"pip wheel failed:\n{r.stderr[-800:]}")
+        wheel = next(whl_dir.glob("*.whl"))
 
-        self.assertTrue(
-            Path(conflict_file).is_file(),
-            "Konfliktkopie wurde vom Re-Export geloescht - lokale Aenderung "
-            "geht verloren (delete-vanished-keys fasst Konfliktkopien)")
+        r = run([sys.executable, "-m", "venv", str(work / "venv")], work, 300)
+        self.assertEqual(r.returncode, 0, f"venv failed:\n{r.stderr[-500:]}")
+        vpy = work / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+        r = run([str(vpy), "-m", "pip", "install", "--quiet", f"{wheel}[web]"],
+                work, 900)
+        self.assertEqual(r.returncode, 0, f"pip install failed:\n{r.stderr[-800:]}")
+
+        r = run([str(vpy), "-I", "-c",
+                 "import toolboxv2.utils.workers.server_worker as w;"
+                 "print('MULTIPART_AVAILABLE', w.MULTIPART_AVAILABLE)"],
+                work / "fremd", 300)
+        self.assertIn("MULTIPART_AVAILABLE True", r.stdout,
+                      f"Uploads im installierten Paket abgeschaltet:\n"
+                      f"{r.stdout[-300:]}\n{r.stderr[-500:]}")
 
 
-class _FakeTransport:
-    """Data-API-Fake: dict als Server-Speicher, zeichnet alle Writes auf."""
+# ---------------------------------------------------------------------------
+# Gemeinsame Bausteine fuer Nr. 3-6 (WP3-09)
+# Einziges Double: App.run_http (Netz zu simplecore.app), siehe FakeUserDataApi.
+# DataApiTransport, sync_folder, LocalIndex, export_account, import_account sind
+# die echten Klassen/Funktionen.
+# ---------------------------------------------------------------------------
+
+def _wire(result) -> dict:
+    """Result -> Antwortform wie sie ueber HTTP ankommt (JSON-Rundlauf)."""
+    return json.loads(json.dumps(result.as_dict(), default=str))
+
+
+class FakeUserDataApi:
+    """Fake der Data-API hinter `app.run_http` (Prozessgrenze: Netz).
+
+    Antwortformen sind die von CloudM.UserDataAPI (get_data/set_data/
+    delete_data/list_data) und von App.run_http bei Netzfehler:
+      ok            Result.ok(...).as_dict()
+      404           Result.default_user_error(info=..., exec_code=404)
+      kein Login    Result.default_user_error("Nicht authentifiziert", 401)
+      kein Netz     Result.default_internal_error("Session fetch failed")
+    Vertragstest gegen die echte UserDataAPI: TestA4_FakeContract.
+    """
 
     def __init__(self):
-        self.entries = {}          # path -> bytes (Ciphertext)
-        self.puts = []
-        self.gets = []
-        self.deleted = []
+        self.store = {}          # path -> (bytes, updated_at)
+        self._clock = 1000.0
+        self.mode = "ok"         # "ok" | "offline" | "expired"
+        self.failing = set()     # Funktionsnamen, die "kein Netz" liefern
+        self.calls = []          # (funktion, pfad/prefix)
 
-    async def list(self, prefix):
-        return {p: (len(v), 1.0) for p, v in self.entries.items()
-                if p.startswith(prefix)}
+    def _tick(self) -> float:
+        self._clock += 1.0
+        return self._clock
 
-    async def put(self, path, ciphertext):
-        self.puts.append(path)
-        self.entries[path] = ciphertext
+    def seed(self, path: str, data: dict) -> None:
+        self.store[path] = (json.dumps(data).encode(), self._tick())
 
-    async def get(self, path):
-        self.gets.append(path)
-        return self.entries.get(path)
+    async def run_http(self, mod_function_name, function_name=None, args_=None,
+                       kwargs_=None, method="GET", *args, **kwargs):
+        from toolboxv2 import Result
+        assert mod_function_name == "CloudM.UserDataAPI", mod_function_name
+        assert kwargs.get("scope") == "private", kwargs
+        self.calls.append((function_name, kwargs.get("path") or kwargs.get("prefix")))
+        if self.mode == "offline" or function_name in self.failing:
+            return _wire(Result.default_internal_error(info="Session fetch failed"))
+        if self.mode == "expired":
+            return _wire(Result.default_user_error(
+                info="Nicht authentifiziert", exec_code=401))
+        return _wire(getattr(self, "_" + function_name)(**kwargs))
 
-    async def delete(self, path):
-        self.deleted.append(path)
-        self.entries.pop(path, None)
+    def _list_data(self, prefix="", scope="private"):
+        from toolboxv2 import Result
+        return Result.ok(data=[
+            {"path": p, "size": len(b), "updated_at": ts}
+            for p, (b, ts) in sorted(self.store.items()) if p.startswith(prefix)])
+
+    def _get_data(self, path, scope="private"):
+        from toolboxv2 import Result
+        if path not in self.store:
+            return Result.default_user_error(info="Daten nicht gefunden", exec_code=404)
+        return Result.ok(data=json.loads(self.store[path][0].decode()))
+
+    def _set_data(self, path, data, scope="private"):
+        from toolboxv2 import Result
+        raw = json.dumps(data).encode()
+        self.store[path] = (raw, self._tick())
+        return Result.ok(data={"path": path, "size": len(raw),
+                               "checksum": "x", "encrypted": False})
+
+    def _delete_data(self, path, scope="private"):
+        from toolboxv2 import Result
+        if path not in self.store:
+            return Result.default_user_error(info="Nicht gefunden", exec_code=404)
+        del self.store[path]
+        return Result.ok(data_info=f"Gelöscht: {path}")
+
+
+def _tmpdir(case: unittest.TestCase) -> Path:
+    d = Path(tempfile.mkdtemp(prefix="tb_a09_", dir=str(_T)))
+    case.addCleanup(shutil.rmtree, str(d), True)
+    return d
+
+
+def _real_app():
+    from toolboxv2 import get_app
+    return get_app("a09-sync-test")
+
+
+def _transport(case: unittest.TestCase, fake: FakeUserDataApi):
+    """Echte App + echter DataApiTransport; nur run_http ist ersetzt."""
+    from toolboxv2.mods.CloudM.LiveSync.data_api_sync import DataApiTransport
+    app = _real_app()
+    p1 = patch.object(app, "run_http", fake.run_http)   # Netzgrenze simplecore.app
+    p2 = patch.object(app.session, "base", "https://simplecore.app")
+    for p in (p1, p2):
+        p.start()
+        case.addCleanup(p.stop)
+    return DataApiTransport(app)
+
+
+class _Device:
+    """Ein Geraet: eigener Ordner, eigener echter LocalIndex, gemeinsamer Key."""
+
+    def __init__(self, case, name, key, fake):
+        self.name = name
+        self.root = _tmpdir(case)
+        self.dir = self.root / "global"
+        self.dir.mkdir()
+        self.db = str(self.root / "index.db")
+        self.key = key
+        self.transport = _transport(case, fake)
+
+    def sync(self, directory=None, prefix=None):
+        from toolboxv2.mods.CloudM.LiveSync.data_api_sync import (
+            PREFIX_GLOBAL, LocalIndex, sync_folder)
+
+        async def _go():
+            idx = LocalIndex(self.db)
+            await idx.init()
+            try:
+                return await sync_folder(
+                    self.transport, directory or self.dir,
+                    prefix or PREFIX_GLOBAL, idx, self.key, self.name)
+            finally:
+                await idx.close()
+        return asyncio.run(_go())
+
+    def write(self, rel, text):
+        p = self.dir / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+        return p
+
+
+def _link_dir(link: Path, target: Path) -> None:
+    """Verzeichnis-Verweis nach aussen: NTFS-Junction unter Windows, sonst
+    Symlink. Beide Faelle pruefen dasselbe Soll."""
+    if os.name == "nt":
+        r = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                           capture_output=True, text=True)
+        assert r.returncode == 0, f"Junction nicht erstellbar: {r.stderr} {r.stdout}"
+    else:
+        os.symlink(str(target), str(link), target_is_directory=True)
+
+
+def _key():
+    from toolboxv2.utils.security.cryp import Code
+    return Code.generate_symmetric_key()
+
+
+class TestA4Row3_ConflictCopySurvivesReExport(unittest.TestCase):
+    """Nr. 3: Zwei Geraete aendern denselben Konto-Wert. Auf B entsteht beim
+    Abgleich eine Konfliktkopie (lokaler Wert). Der naechste Lauf
+    (export_account -> sync_folder -> import_account, wie sync_all) darf sie
+    nicht loeschen: der lokale Wert bleibt erhalten.
+    Ist: export_account loescht 'vanished keys' inkl. Konfliktkopien."""
+
+    def test_conflict_copy_survives_next_cycle(self):
+        from toolboxv2.mods.CloudM.LiveSync.account_bridge import (
+            export_account, import_account)
+        from toolboxv2.mods.CloudM.LiveSync.conflict import is_conflict_copy
+        from toolboxv2.mods.CloudM.LiveSync.data_api_sync import PREFIX_ACCOUNT
+        from toolboxv2.mods.CloudM.auth.models import UserData
+
+        fake = FakeUserDataApi()
+        key = _key()
+        a = _Device(self, "dev-a", key, fake)
+        b = _Device(self, "dev-b", key, fake)
+        ua = UserData(user_id="usr_a09", username="u", email="u@example.test",
+                      settings={"theme": "dark"})
+        ub = UserData(user_id="usr_a09", username="u", email="u@example.test",
+                      settings={"theme": "dark"})
+
+        def cycle(dev, user):
+            mirror = dev.root / "mirror"
+            export_account(user, mirror)
+            out = dev.sync(mirror, PREFIX_ACCOUNT)
+            import_account(user, mirror)
+            return mirror, out
+
+        cycle(a, ua)                       # A legt theme=dark an
+        cycle(b, ub)                       # B holt es (gleicher Inhalt)
+        ua.settings["theme"] = "light"     # A aendert und synchronisiert
+        cycle(a, ua)
+        ub.settings["theme"] = "blue"      # B aendert dasselbe Feld parallel
+        mirror_b, out = cycle(b, ub)       # Konflikt: remote (light) gewinnt
+        self.assertEqual(out["conflicts"], ["settings/theme.json"], out)
+        self.assertEqual(ub.settings["theme"], "light")
+
+        copies = [p for p in (mirror_b / "settings").iterdir()
+                  if is_conflict_copy(p.name)]
+        self.assertEqual(len(copies), 1, "Vorbedingung: eine Konfliktkopie")
+        self.assertEqual(json.loads(copies[0].read_text("utf-8")), "blue")
+
+        cycle(b, ub)                       # naechster regulaerer Lauf auf B
+
+        survivors = [p for p in (mirror_b / "settings").iterdir()
+                     if is_conflict_copy(p.name)]
+        self.assertEqual(
+            [p.name for p in survivors], [copies[0].name],
+            "Konfliktkopie wurde vom naechsten Export geloescht - der lokale "
+            "Wert ('blue') ist verloren")
+        self.assertEqual(json.loads(survivors[0].read_text("utf-8")), "blue")
+
+
+    def test_mod_data_conflict_copy_survives_but_vanished_key_goes(self):
+        """mod_data/: Konfliktkopie bleibt, ein wirklich entfallener Schluessel
+        wird weiterhin entfernt (der Loesch-Block bleibt wirksam)."""
+        from toolboxv2.mods.CloudM.LiveSync.account_bridge import export_account
+        from toolboxv2.mods.CloudM.LiveSync.conflict import save_conflict_copy
+        from toolboxv2.mods.CloudM.auth.models import UserData
+
+        mirror = _tmpdir(self) / "mirror"
+        user = UserData(user_id="u", username="u", email="u@example.test",
+                        mod_data={"m": {"a": 1, "weg": 2}})
+        export_account(user, mirror)
+        conflict = save_conflict_copy(str(mirror / "mod_data"), "m/a.json", "dev-x")
+        (mirror / "mod_data" / "m" / "a.json").write_text("1", encoding="utf-8")
+        del user.mod_data["m"]["weg"]
+        export_account(user, mirror)
+        self.assertTrue(Path(conflict).is_file(), "Konfliktkopie in mod_data geloescht")
+        self.assertFalse((mirror / "mod_data" / "m" / "weg.json").exists())
 
 
 class TestA4Row4_SymlinkStaysInside(unittest.TestCase):
-    """Nr. 4: Ordner-Symlink (hier: Junction) im globalen ISAA-Ordner, der
-    nach aussen zeigt: nichts ausserhalb darf gelesen/hochgeladen werden.
-    Ist: Walker folgt dem Link und laedt externe Dateien hoch."""
+    """Nr. 4: Verweis (Junction/Symlink) im globalen ISAA-Ordner, der nach
+    aussen zeigt: nichts ausserhalb wird gelesen/hochgeladen oder
+    geschrieben. Unter Windows Junction (`mklink /J`), sonst Symlink
+    (zusaetzlich ein Datei-Symlink; unter Windows braucht der Rechte, dort
+    entfaellt nur dieser Teil).
+    Ist: Walker folgt dem Verweis."""
 
-    def test_junction_outside_is_not_uploaded(self):
-        import asyncio
+    def setUp(self):
+        self.fake = FakeUserDataApi()
+        self.dev = _Device(self, "dev-a4", _key(), self.fake)
+        self.outside = _tmpdir(self) / "aussen"
+        self.outside.mkdir()
+        (self.outside / "secret.txt").write_text("GEHEIM", encoding="utf-8")
+        _link_dir(self.dev.dir / "verweis", self.outside)
+        if os.name != "nt":
+            os.symlink(str(self.outside / "secret.txt"),
+                       str(self.dev.dir / "datei.txt"))
+        self.dev.write("normal.txt", "ok")
 
-        from toolboxv2.mods.CloudM.LiveSync.data_api_sync import (
-            PREFIX_GLOBAL, LocalIndex, sync_folder)
+    def test_link_outside_is_not_uploaded(self):
+        out = self.dev.sync()
+        leaked = [p for p in self.fake.store
+                  if "secret" in p or "verweis" in p or "datei" in p]
+        self.assertEqual(leaked, [], f"Datei ausserhalb hochgeladen: {leaked}")
+        self.assertEqual(out["pushed"], ["normal.txt"])
+        if os.name != "nt":
+            self.assertIn("datei.txt", out["skipped"], "Verweis nicht gemeldet")
 
-        outside = _T / "a4_outside"
-        outside.mkdir(exist_ok=True)
-        (outside / "secret.txt").write_text("GEHEIM", encoding="utf-8")
-
-        root = _T / "a4_global" / "Agents" / "VFS" / "global"
-        root.mkdir(parents=True, exist_ok=True)
-        junction = root / "verweis"
-        if not junction.exists():
-            r = subprocess.run(
-                ["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
-                capture_output=True, text=True)
-            self.assertEqual(
-                r.returncode, 0,
-                f"Junction nicht erstellbar: {r.stderr} {r.stdout}")
-        self.assertTrue(junction.exists(), "Junction fehlt")
-
-        from toolboxv2.utils.security.cryp import Code
-        key = Code.generate_symmetric_key()
-
-        async def _run():
-            tr = _FakeTransport()
-            idx = LocalIndex(str(_T / "a4_idx4.db"))
-            await idx.init()
-            try:
-                await sync_folder(tr, root, PREFIX_GLOBAL, idx, key, "dev-a4")
-            finally:
-                await idx.close()
-            return tr
-
-        tr = asyncio.new_event_loop().run_until_complete(_run())
-        leaked = [p for p in tr.puts if "secret" in p.lower()
-                  or "verweis" in p.lower()]
-        self.assertEqual(
-            leaked, [],
-            f"Datei ausserhalb des Sync-Ordners wurde hochgeladen: {leaked}"
-            " - Walker folgt Junction/Symlink ohne Beschraenkung")
+    def test_remote_entry_under_link_is_not_written_outside(self):
+        from toolboxv2.mods.CloudM.LiveSync.crypto import encrypt_bytes
+        from toolboxv2.mods.CloudM.LiveSync.data_api_sync import _payload
+        self.fake.seed("livesync/global/verweis/neu.txt",
+                       _payload(encrypt_bytes(b"VON-AUSSEN", self.dev.key)))
+        out = self.dev.sync()
+        self.assertEqual(sorted(p.name for p in self.outside.iterdir()),
+                         ["secret.txt"],
+                         "Remote-Eintrag wurde ueber den Verweis nach aussen geschrieben")
+        self.assertIn("verweis/neu.txt", out["skipped"], "Verweis nicht gemeldet")
 
 
 class TestA4Row5_DeletePropagates(unittest.TestCase):
-    """Nr. 5: Datei auf A loeschen, sync (A), sync (B): Eintrag muss auf
-    der Gegenseite verschwinden. Ist: Delete wird nie propagiert - der
-    Transport hat nicht mal ein delete-Interface, der Eintrag bleibt."""
+    """Nr. 5: Datei auf A loeschen, sync (A), sync (B): sie verschwindet auf
+    dem Server und auf B. Zwei Geraete, ein gemeinsamer Fake der Data-API.
+    Ist: Delete wird nie propagiert (der Transport hat kein delete)."""
 
-    def test_local_delete_removes_remote_entry(self):
-        import asyncio
+    def test_delete_on_a_reaches_b(self):
+        fake = FakeUserDataApi()
+        key = _key()
+        a = _Device(self, "dev-a", key, fake)
+        b = _Device(self, "dev-b", key, fake)
+        for n in ("gone.txt", "k1.txt", "k2.txt", "k3.txt"):
+            a.write(n, "inhalt " + n)
+        a.sync()
+        b.sync()
+        self.assertTrue((b.dir / "gone.txt").is_file(), "Vorbedingung: B hat die Datei")
 
-        from toolboxv2.mods.CloudM.LiveSync.data_api_sync import (
-            PREFIX_GLOBAL, LocalIndex, sync_folder)
-
-        root = _T / "a5_global" / "Agents" / "VFS" / "global"
-        f = root / "gone.txt"
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text("alt", encoding="utf-8")
-
-        from toolboxv2.utils.security.cryp import Code
-        key = Code.generate_symmetric_key()
-        db = str(_T / "a5_idx.db")
-
-        async def _run():
-            tr = _FakeTransport()
-            idx = LocalIndex(db)
-            await idx.init()
-            try:
-                await sync_folder(tr, root, PREFIX_GLOBAL, idx, key, "dev-a5")
-            finally:
-                await idx.close()
-            return tr
-
-        tr = asyncio.new_event_loop().run_until_complete(_run())
-        self.assertTrue(tr.entries, "Vorbedingung: erster Sync hat hochgeladen")
-        f.unlink()  # auf A geloescht
-
-        async def _resync():
-            idx = LocalIndex(db)
-            await idx.init()
-            try:
-                await sync_folder(tr, root, PREFIX_GLOBAL, idx, key, "dev-a5")
-            finally:
-                await idx.close()
-
-        asyncio.new_event_loop().run_until_complete(_resync())
-        remaining = [p for p in tr.entries if "gone" in p]
-        self.assertEqual(
-            remaining, [],
-            f"Geloeschte Datei bleibt auf der Gegenseite: {remaining} - "
-            "Delete-Propagation fehlt")
+        (a.dir / "gone.txt").unlink()
+        a.sync()
+        self.assertNotIn("livesync/global/gone.txt", fake.store,
+                         "Geloeschte Datei bleibt auf dem Server")
+        b.sync()
+        self.assertFalse((b.dir / "gone.txt").exists(),
+                         "Geloeschte Datei bleibt auf B")
+        self.assertEqual(sorted(p.name for p in b.dir.iterdir()
+                                if p.is_file()), ["k1.txt", "k2.txt", "k3.txt"])
 
 
-class _FakeAppForTransport:
-    """Liefert run_http-Ergebnisse steuerbar (Data-API-Antworten)."""
+class TestA09_DeletionsTwoDevices(unittest.TestCase):
+    """WP3-09 2.4: Loeschungen zwischen zwei Geraeten (zwei Datenordner, zwei
+    LocalIndex, ein gemeinsamer FakeUserDataApi hinter run_http)."""
 
-    def __init__(self, response):
-        self._response = response
+    def setUp(self):
+        self.fake = FakeUserDataApi()
+        key = _key()
+        self.a = _Device(self, "dev-a", key, self.fake)
+        self.b = _Device(self, "dev-b", key, self.fake)
 
-    async def run_http(self, *a, **k):
-        return self._response
+    def _seed_both(self, names):
+        for n in names:
+            self.a.write(n, "inhalt " + n)
+        self.a.sync()
+        self.b.sync()
+        for n in names:
+            self.assertTrue((self.b.dir / n).is_file(), f"Vorbedingung: {n} auf B")
+
+    @staticmethod
+    def _files(dev):
+        return sorted(p.name for p in dev.dir.iterdir() if p.is_file())
+
+    def test_deleting_the_only_file_propagates(self):
+        self._seed_both(["einzig.txt"])
+        (self.a.dir / "einzig.txt").unlink()
+        out = self.a.sync()
+        self.assertEqual(out["deleted_remote"], ["einzig.txt"])
+        self.assertEqual(self.fake.store, {})
+        self.b.sync()
+        self.assertEqual(self._files(self.b), [])
+
+    def test_remote_deletion_moves_local_file_to_sync_trash(self):
+        self._seed_both(["gone.txt", "k1.txt", "k2.txt"])
+        (self.a.dir / "gone.txt").unlink()
+        self.a.sync()
+        out = self.b.sync()
+        self.assertEqual(out["deleted_local"], ["gone.txt"])
+        self.assertEqual(self._files(self.b), ["k1.txt", "k2.txt"])
+        trash = list((self.b.dir / ".sync-trash").iterdir())
+        self.assertEqual(len(trash), 1)
+        self.assertEqual(trash[0].read_text("utf-8"), "inhalt gone.txt")
+
+    def test_local_change_beats_remote_deletion(self):
+        self._seed_both(["x.txt", "k1.txt", "k2.txt"])
+        (self.a.dir / "x.txt").unlink()
+        self.a.sync()                                    # Server: x.txt weg
+        (self.b.dir / "x.txt").write_text("B hat geaendert", encoding="utf-8")
+        out = self.b.sync()
+        self.assertEqual(out["pushed"], ["x.txt"])
+        self.assertEqual(out["deleted_local"], [])
+        self.assertEqual((self.b.dir / "x.txt").read_text("utf-8"), "B hat geaendert")
+        self.assertIn("livesync/global/x.txt", self.fake.store)
+        self.a.sync()
+        self.assertEqual((self.a.dir / "x.txt").read_text("utf-8"), "B hat geaendert")
+
+    def test_remote_change_beats_local_deletion(self):
+        self._seed_both(["x.txt", "k1.txt", "k2.txt"])
+        (self.a.dir / "x.txt").unlink()                  # A loescht, noch kein Sync
+        (self.b.dir / "x.txt").write_text("B hat geaendert", encoding="utf-8")
+        self.b.sync()
+        out = self.a.sync()
+        self.assertEqual(out["pulled"], ["x.txt"])
+        self.assertEqual(out["deleted_remote"], [])
+        self.assertEqual((self.a.dir / "x.txt").read_text("utf-8"), "B hat geaendert")
+
+    def test_failing_list_deletes_nothing(self):
+        from toolboxv2.mods.CloudM.LiveSync.minio_helper import TransferError
+        self._seed_both(["a.txt", "b.txt", "c.txt", "d.txt"])
+        (self.a.dir / "a.txt").unlink()
+        self.fake.failing = {"list_data"}
+        with self.assertRaises(TransferError):
+            self.a.sync()
+        with self.assertRaises(TransferError):
+            self.b.sync()
+        self.assertEqual(len(self.fake.store), 4, "Server-Eintrag trotz Listenfehler geloescht")
+        self.assertEqual(self._files(self.b), ["a.txt", "b.txt", "c.txt", "d.txt"])
+        self.fake.failing = set()
+        self.a.sync()                                    # danach wirkt die Loeschung
+        self.assertNotIn("livesync/global/a.txt", self.fake.store)
+
+    def test_mass_delete_is_blocked_locally(self):
+        names = [f"f{i}.txt" for i in range(6)]
+        self._seed_both(names)
+        for n in names[:4]:
+            (self.a.dir / n).unlink()
+        out = self.a.sync()
+        self.assertEqual(out["error"], "mass_delete_blocked")
+        self.assertEqual(out["blocked"], names[:4])
+        self.assertEqual(out["deleted_remote"], [])
+        self.assertEqual(len(self.fake.store), 6)
+
+    def test_empty_server_listing_does_not_wipe_the_device(self):
+        names = [f"f{i}.txt" for i in range(6)]
+        self._seed_both(names)
+        self.fake.store.clear()                          # Server liefert leer
+        out = self.b.sync()
+        self.assertEqual(out["error"], "mass_delete_blocked")
+        self.assertEqual(self._files(self.b), names)
+        self.assertEqual(out["deleted_local"], [])
+
+    def test_folder_replaced_by_outside_link_is_not_read_as_deleted(self):
+        self._seed_both(["sub/a.txt", "k1.txt"])
+        shutil.rmtree(str(self.a.dir / "sub"))
+        outside = _tmpdir(self) / "aussen"
+        outside.mkdir()
+        (outside / "a.txt").write_text("von aussen", encoding="utf-8")
+        _link_dir(self.a.dir / "sub", outside)
+        out = self.a.sync()
+        self.assertEqual(out["deleted_remote"], [])
+        self.assertIn("livesync/global/sub/a.txt", self.fake.store)
+        self.assertEqual((outside / "a.txt").read_text("utf-8"), "von aussen")
+
+
+class TestA09_SkippedNamesAreVisible(unittest.TestCase):
+    """WP3-09 2.5: Dateinamen, die nicht synchronisiert werden koennen (":"),
+    stehen in out["skipped"] und im Log - nicht mehr still uebersprungen.
+    Ein lokales ":"-File gibt es nur auf Dateisystemen, die den Namen
+    erlauben (nicht unter Windows); der Remote-Fall laeuft ueberall."""
+
+    LOGGER = "toolboxv2.mods.CloudM.LiveSync.data_api_sync"
+
+    def setUp(self):
+        self.fake = FakeUserDataApi()
+        self.dev = _Device(self, "dev-a5", _key(), self.fake)
+
+    def test_local_name_with_colon_is_reported(self):
+        if os.name == "nt":
+            self.dev.write("ok.txt", "ok")   # Windows erlaubt ':' im Namen nicht
+            self.assertEqual(self.dev.sync()["skipped"], [])
+            return
+        self.dev.write("ok.txt", "ok")
+        self.dev.write("a:b.txt", "kolon")
+        with self.assertLogs(self.LOGGER, level="WARNING") as logs:
+            out = self.dev.sync()
+        self.assertEqual(out["skipped"], ["a:b.txt"])
+        self.assertEqual(out["pushed"], ["ok.txt"])
+        self.assertTrue(any("a:b.txt" in m for m in logs.output), logs.output)
+
+    def test_remote_name_with_colon_is_reported(self):
+        from toolboxv2.mods.CloudM.LiveSync.crypto import encrypt_bytes
+        from toolboxv2.mods.CloudM.LiveSync.data_api_sync import _payload
+        self.fake.seed("livesync/global/x:y.txt",
+                       _payload(encrypt_bytes(b"x", self.dev.key)))
+        with self.assertLogs(self.LOGGER, level="WARNING") as logs:
+            out = self.dev.sync()
+        self.assertEqual(out["skipped"], ["livesync/global/x:y.txt"])
+        self.assertEqual(sorted(p.name for p in self.dev.dir.iterdir()), [])
+        self.assertTrue(any("x:y.txt" in m for m in logs.output), logs.output)
 
 
 class TestA4Row6_401MeansReauthRequired(unittest.TestCase):
-    """Nr. 6: Data-API antwortet 401 (gecachter Schluessel ungueltig) -
-    Zustand muss 'reauth_required' sein, nicht 'offline'.
-    Ist: DataApiTransport wirft TransferError('offline')."""
+    """Nr. 6: Data-API antwortet 401 (Sitzung abgelaufen) -> 'reauth_required';
+    kein Netz ('Session fetch failed') -> 'offline'. Antwortformen wie sie
+    App.run_http / CloudM.UserDataAPI wirklich liefern.
+    Ist: beides wird zu TransferError('offline')."""
+
+    def _list_error(self, mode):
+        from toolboxv2.mods.CloudM.LiveSync.minio_helper import TransferError
+        fake = FakeUserDataApi()
+        fake.mode = mode
+        dev = _Device(self, "dev-a6", _key(), fake)
+        with self.assertRaises(TransferError) as cm:
+            dev.sync()
+        return str(cm.exception)
 
     def test_401_raises_reauth_required(self):
-        import asyncio
+        self.assertEqual(self._list_error("expired"), "reauth_required")
 
-        from toolboxv2.mods.CloudM.LiveSync.data_api_sync import DataApiTransport
-        from toolboxv2.mods.CloudM.LiveSync.minio_helper import TransferError
+    def test_no_network_raises_offline(self):
+        self.assertEqual(self._list_error("offline"), "offline")
 
-        app = _FakeAppForTransport({
-            "error": 7,  # irgendein Fehlercode
-            "result": {},
-            "info": {"exec_code": 401, "help_text": "Session fetch failed"},
-        })
-        tr = DataApiTransport(app)
 
-        async def _call():
-            await tr.list("livesync/global/")
+class TestA4_FakeContract(unittest.TestCase):
+    """Regel 10: dieselben Faelle gegen FakeUserDataApi und gegen die echte
+    CloudM.UserDataAPI (echte App, Temp-Datenbank, echter JWT). Verglichen
+    wird die Antwortform (Result.as_dict()).
 
-        with self.assertRaises(TransferError) as cm:
-            asyncio.new_event_loop().run_until_complete(_call())
-        self.assertEqual(
-            str(cm.exception), "reauth_required",
-            f"401 muss reauth_required melden, nicht {cm.exception!r} - "
-            "Geraet muss Konto neu verknuepfen statt nur offline zu melden")
+    Grenze (belegt, Bericht A09): Gegen die echte Funktion laufen nur Faelle
+    OHNE gespeicherte Daten. Offline gibt es keinen Speicher, in dem Daten
+    liegen koennten: `from mobile_db import MobileDB` (scoped_storage.py:38)
+    ist nicht importierbar, MinIO fehlt, und `set_data` bricht in dieser
+    Basis immer ab (ScopedBlobStorage.write() kennt kein `owner_id`,
+    UserDataAPI.py set_data). Die Erfolgsformen von list/get/set/delete im
+    Fake sind dem Quelltext der UserDataAPI entnommen, nicht gemessen."""
+
+    @staticmethod
+    def _shape(res: dict):
+        r = res["result"]
+        return (res["error"], res["info"]["exec_code"], res["info"]["help_text"],
+                r["data_type"], r["data"], r["data_info"])
+
+    def _fake_backend(self):
+        fake = FakeUserDataApi()
+
+        async def call(fn, **kw):
+            return await fake.run_http("CloudM.UserDataAPI", fn, method="POST",
+                                       scope="private", **kw)
+
+        async def anon(fn, **kw):
+            fake.mode = "expired"
+            return await call(fn, **kw)
+        return call, anon
+
+    def _real_backend(self):
+        import uuid
+        from types import SimpleNamespace
+        from toolboxv2.mods.CloudM import UserDataAPI as U
+        from toolboxv2.mods.CloudM.auth.jwt_tokens import _generate_tokens
+        from toolboxv2.mods.CloudM.auth.models import UserData
+        app = _real_app()
+        user = UserData(user_id="usr_a09_" + uuid.uuid4().hex[:8], username="a09",
+                        email="a09@example.test")
+        token = _generate_tokens(user)["access_token"]
+        req = SimpleNamespace(
+            request={"headers": {"authorization": "Bearer " + token}}, session={})
+        anon_req = SimpleNamespace(request={"headers": {}}, session={})
+        self.addCleanup(U._storage_providers.pop, user.user_id, None)
+
+        async def call(fn, **kw):
+            return _wire(await getattr(U, fn)(app, req, scope="private", **kw))
+
+        async def anon(fn, **kw):
+            return _wire(await getattr(U, fn)(app, anon_req, scope="private", **kw))
+        return call, anon
+
+    async def _cases(self, call, anon):
+        return {
+            "kein_login_list": await anon("list_data", prefix="livesync/"),
+            "list_leer": await call("list_data", prefix="livesync/global/"),
+            "get_fehlt": await call("get_data", path="livesync/global/nope.txt"),
+            "delete_fehlt": await call("delete_data", path="livesync/global/nope.txt"),
+        }
+
+    def test_fake_has_the_shapes_of_the_real_api(self):
+        fake_out = asyncio.run(self._cases(*self._fake_backend()))
+        real_out = asyncio.run(self._cases(*self._real_backend()))
+        self.assertEqual(fake_out.keys(), real_out.keys())
+        for name in fake_out:
+            with self.subTest(fall=name):
+                self.assertEqual(
+                    self._shape(fake_out[name]), self._shape(real_out[name]),
+                    f"Fake weicht ab: fake={fake_out[name]} real={real_out[name]}")
 
 
 class TestA4Row7_SyncKeyNotPlaintextInUserRecord(unittest.TestCase):

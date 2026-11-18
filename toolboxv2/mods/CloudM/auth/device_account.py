@@ -45,9 +45,9 @@ def local_trust_provider(app, is_production: bool) -> Optional[dict]:
     device account. No local-admin fallback (account is mandatory)."""
     if is_production:
         return None
-    profile = getattr(getattr(getattr(app, "manifest", None), "app", None), "profile", None)
-    value = getattr(profile, "value", profile)
-    if value not in ("local", "developer"):
+    from toolboxv2.utils.clis.first_run import onboarding_state
+    # Profile from the same fresh source as the UI (not the manifest loaded at boot).
+    if onboarding_state(app).get("profile") not in ("local", "developer"):
         return None
     owner = read_device_owner(app)
     if not owner or not owner.get("user_id"):

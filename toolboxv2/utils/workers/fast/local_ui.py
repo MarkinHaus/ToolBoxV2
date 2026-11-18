@@ -19,11 +19,13 @@ from typing import Any, Dict, List, Optional
 
 from toolboxv2 import Result, get_app, tb_root_dir
 from toolboxv2.utils.workers.fast.endpoint import dist_dir
+from toolboxv2.utils.workers.fast.live_proxy import _ensure_local
 from toolboxv2.utils.workers.fast_tb import FastTB
 from toolboxv2.utils.workers.server_worker import ParsedRequest
 
 app = FastTB(title="ToolBox Local")
 app.serve_login_assets = True
+app.require_device_account = True  # FastTBHandler: no account -> only the link flow
 app.inject_style = False
 # Mount dist/ as /dist
 app.mount_dist()
@@ -31,16 +33,6 @@ app.mount_dist()
 # =============================================================================
 # Helpers
 # =============================================================================
-
-def _ensure_local(request: ParsedRequest) -> Optional[Result]:
-    """Refuse anything that isn't loopback."""
-    host = ((getattr(request, "headers", None) or {}).get("host") or "").split(":")[0].lower()
-    if host not in ("127.0.0.1", "localhost", "[::1]", "::1"):
-        return Result.default_user_error(
-            info="This UI is local-only. Use the public site for remote access.",
-            exec_code=403,
-        )
-    return None
 
 def _auto_mount_features(fast_app: FastTB):
     """Scan all features and mount their UIs based on feature.yaml."""

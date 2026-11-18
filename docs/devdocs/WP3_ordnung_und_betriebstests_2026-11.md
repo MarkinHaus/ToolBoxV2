@@ -35,6 +35,7 @@ Nachtrag 2026-11-18:
 7. **Agenten pushen direkt auf `master`**; geprüft wird danach (Protokoll Abschnitt 1, Punkt 4).
 8. **Kontoseite:** Das WP1-Dokument wird an die Seite angepasst (drei Anmeldeknöpfe, Routen `/api/account/*`). Ausnahme: Das Wort „Optional“ auf der Seite widerspricht der Kontopflicht und fällt weg (Auftrag 5).
 9. Nacharbeit aus der Prüfung von `a2cae2b` geht in Auftrag 5 (siehe Abschnitt 9).
+10. **Kontopflicht nur in der lokalen FastTB-App** (`FastTBHandler.handle_request`, `require_device_account`). Was am lokalen Worker an FastTB vorbeigeht, bekommt keine zweite Prüfstelle: `/api/<Modul>/<Funktion>` hat den eigenen Anmeldeschutz bzw. ist bewusst als öffentlich markiert (Login-Level); `/metrics` (nur Zähler, gemessen 2026-11-18), `/health` und `/api/ping` bleiben öffentlich.
 
 ## 3. Reihenfolge
 
@@ -202,3 +203,17 @@ Nacharbeit (geht in Auftrag 5):
 5. `live_proxy._peer_is_local` fällt ohne `REMOTE_ADDR` auf `client_ip` zurück, das aus `X-Forwarded-For` stammen kann (Kommentar dort, `server_worker` L308).
 
 Startprompts: `docs/devdocs/wp3_prompts/` (Aufträge 5, 8, 9, 10). Wellen: 5 und 9 parallel; danach 8; danach 10.
+
+## 10. Welle 1 abgeschlossen (2026-11-18)
+
+Aufträge 5 und 9 umgesetzt, Abnahme auf `dca1ffa` + Doku + beide Patches: `test_core` und `test_mini/test_cloudm/test_LiveSync` – **NEU rot: 0**, 7 Befund-Tests grün geworden (A3 Nr. 1–3, A4 Nr. 3–6), A3 15/15 grün, A4 nur Nr. 7 rot (Auftrag 8). Übrige Rote waren vorher schon rot (Umgebung: `tb` nicht im `PATH`, `numpy`, Docker).
+
+Nicht verifiziert (Linux-Container): Windows-Junction, `tb workers start` auf 8467/8468, Legacy-WS-API mit echtem Client.
+
+**Neu vor Auftrag 8 (Welle 2, Auftrag 7b – Data-API-Strecke):** Der Sync kann gegen den echten Server nicht laufen:
+1. `App.run_http` (`utils/toolbox.py:2247`) gibt bei aiohttp `r.json()` ohne `await` zurück – eine Coroutine statt Daten; jeder `DataApiTransport._call` endet als Fehler.
+2. `UserDataAPI.set_data` (~:650) übergibt `owner_id=` an `ScopedBlobStorage.write` (`utils/extras/db/scoped_storage.py:528`), das den Parameter nicht kennt → `TypeError`, kein Upload möglich.
+3. Zu prüfen: `list_data` liefert Pfade evtl. mit `<user_id>/`-Präfix, `sync_folder` erwartet Pfade ab `prefix` (`data_api_sync.py:127`).
+4. `scoped_storage.py:38` `from mobile_db import MobileDB` nicht importierbar; offline kein Datenspeicher für den Vertragstest.
+
+Weitere Funde aus Welle 1 (Auftrag 14 bzw. Owner): `FastTB._path_to_regex` kennt `{name:path}` nicht (SPA-Catch-all wirkungslos); ISAA als Owner auf 8467 setzt `require_device_account` nicht; `/tray/status`, `/tray/notify` vor dem Verknüpfen 403; Browser-Extension (`chrome-extension://`) auf 8468 abgelehnt (Ausweg `TB_CORS_ORIGINS`); `web_agent.py:38`, `tu_isis_adapter.py:31` führen beim Import `pip install playwright` aus; `toolboxv2/tb-manifest.yaml` im Quellbaum mit `profile: developer`; Konfliktkopien bleiben ohne UI im Spiegel; `mass_delete_blocked` erreicht `account_state()["last_sync_error"]` nicht.

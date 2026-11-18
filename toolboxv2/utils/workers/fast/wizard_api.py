@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from toolboxv2 import tb_root_dir
 from toolboxv2.utils.extras.blobs import BlobFile
+from toolboxv2.utils.workers.fast.live_proxy import _ensure_local
 
 _SESSION_FILE = "system/wizard_session.json"
 
@@ -96,6 +97,9 @@ def register_wizard_routes(app) -> None:
 
     @app.get("/api/wizard/state", auth=False)
     def wizard_state(request: ParsedRequest):
+        err = _ensure_local(request)
+        if err is not None:
+            return err
         sess = _load_session()
         draft = sess.get("draft") or _manifest_data()
         profile = _current_profile(draft, sess)
@@ -108,6 +112,9 @@ def register_wizard_routes(app) -> None:
 
     @app.post("/api/wizard/profile", auth=False)
     def wizard_set_profile(request: ParsedRequest):
+        err = _ensure_local(request)
+        if err is not None:
+            return err
         from toolboxv2.utils.clis.first_run import PROFILE_DEFAULTS, normalize_profile
         data = _json(request)
         try:  # accepts legacy names (consumer/homelab/business) like the manifest
@@ -129,6 +136,9 @@ def register_wizard_routes(app) -> None:
     # --- Save ------------------------------------------------------------------
     @app.post("/api/wizard/save", auth=False)
     def wizard_save(request: ParsedRequest):
+        err = _ensure_local(request)
+        if err is not None:
+            return err
         from toolboxv2.utils.manifest.loader import ManifestLoader
         from toolboxv2.utils.manifest.schema import TBManifest
         from toolboxv2.utils.clis.config_wizard import save_env_file
@@ -165,13 +175,9 @@ def register_wizard_routes(app) -> None:
                 "profile": profile, "first_run": False}
     # --- Account link (WP1 K3) ------------------------------------------------
     # --- Account link (WP1 K3) ------------------------------------------------
-    def _loopback_guard(request: ParsedRequest):
-        from toolboxv2.utils.workers.fast.local_ui import _ensure_local
-        return _ensure_local(request)
-
     @app.get("/api/account/status", auth=False)
     def account_status(request: ParsedRequest):
-        err = _loopback_guard(request)
+        err = _ensure_local(request)
         if err is not None:
             return err
         from toolboxv2.utils.clis.first_run import account_state
@@ -180,7 +186,7 @@ def register_wizard_routes(app) -> None:
     @app.post("/api/account/sync", auth=False)
     def account_sync(request: ParsedRequest):
         """Trigger one account sync run (WP1 Teil 10). Loopback only."""
-        err = _loopback_guard(request)
+        err = _ensure_local(request)
         if err is not None:
             return err
         from toolboxv2.mods.CloudM.auth.device_account import read_device_owner
@@ -194,7 +200,7 @@ def register_wizard_routes(app) -> None:
 
     @app.post("/api/account/start", auth=False)
     def account_start(request: ParsedRequest):
-        err = _loopback_guard(request)
+        err = _ensure_local(request)
         if err is not None:
             return err
         from toolboxv2.utils.clis.first_run import start_account_link_bg, account_state

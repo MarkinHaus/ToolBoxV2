@@ -283,7 +283,7 @@ class ICli2(App):
     #head { height: 1; padding: 0 1; color: $text-muted; }
     #main { height: 1fr; }
     #chat { padding: 0 1; scrollbar-size-vertical: 1; }
-    #side { width: 38; display: none; border-left: solid $secondary; padding: 0 1;
+    #side { width: 42; display: none; border-left: solid $secondary; padding: 0 1;
             scrollbar-size-vertical: 1; }
     #side.-open { display: block; }
     #banner { margin: 1 0; }
@@ -733,25 +733,25 @@ class ICli2(App):
 
         from rich.markup import escape
         lines = [title("Läufe")]
-        for rid, view in reversed(list(self.runs.items())[-10:]):
+        for rid, view in reversed(list(self.runs.items())[-8:]):
             mark = "▸" if rid == self.focus_run else " "
             color = {"running": G.L3_MID, "failed": "red", "paused": "yellow"}.get(view.status, DIM)
             lines.append(f"{mark}[{color}]{RUN_SYM.get(view.status, '?')}[/] {escape(view.agent)} "
                          f"[{DIM}]{fmt_secs(view.seconds)}[/]")
-            lines.append(f"   [{DIM}]{escape(' '.join(view.query.split())[:30])}[/]")
+            lines.append(f"   [{DIM}]{escape(' '.join(view.query.split())[:34])}[/]")
             for sub in view.subs.values():
-                lines.append(f"   [{DIM}]{SYM['sub']} {escape(sub.label[:30])}[/]")
+                lines.append(f"   [{DIM}]{SYM['sub']} {escape(sub.label[:34])}[/]")
         if len(lines) == 1:
             lines.append(f" [{DIM}]keine[/]")
         board = self.side_rows["board"]
         if board:                                        # gepinnte Widgets: /widget oeffnet sie
             lines += ["", title("Widgets")]
-            lines += [f" {SYM['progress']} {escape(r['label'])}\n   [{DIM}]{escape(r['hint'][:32])}[/]"
+            lines += [f" {SYM['progress']} {escape(r['label'])}\n   [{DIM}]{escape(r['hint'][:36])}[/]"
                       for r in board]
         for what, head in (("jobs", "Jobs"), ("mounts", "Mounts")):
             lines += ["", title(head)]
             rows = [r for r in self.side_rows[what] if r["value"] not in ("*", "+")]
-            lines += [f" {escape(r['label'])}\n   [{DIM}]{escape(r['hint'][:32])}[/]" for r in rows] \
+            lines += [f" {escape(r['label'])}\n   [{DIM}]{escape(r['hint'][:36])}[/]" for r in rows] \
                 or [f" [{DIM}]keine[/]"]
         lines += ["", title("Kontext")]
         context = self.side_rows["context"]

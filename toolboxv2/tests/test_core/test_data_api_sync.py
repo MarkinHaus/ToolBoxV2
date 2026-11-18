@@ -45,6 +45,9 @@ class FakeTransport:
             raise TransferError("missing")
         return meta["enc"]
 
+    async def delete(self, path):
+        del self.files[path]
+
 
 class OfflineTransport(FakeTransport):
     async def list(self, prefix):
@@ -190,8 +193,8 @@ class DataApiSyncTest(unittest.TestCase):
         from toolboxv2.mods.CloudM.LiveSync.crypto import compute_checksum
         self.assertEqual(row["checksum"], compute_checksum(b"hello"))
 
-    # --- 12: local deletion is not propagated ---
-    def test_local_delete_not_propagated(self):
+    # --- 12: local deletion is propagated (Owner-Entscheidung 2026-11-17) ---
+    def test_local_delete_propagated(self):
         self._write("a.txt", b"hello")
         self._sync()
         (self.local / "a.txt").unlink()
@@ -199,7 +202,8 @@ class DataApiSyncTest(unittest.TestCase):
         self.assertEqual(r["pushed"], [])
         self.assertEqual(r["pulled"], [])
         self.assertEqual(r["conflicts"], [])
-        self.assertIn(das.PREFIX_GLOBAL + "a.txt", self.transport.files)
+        self.assertEqual(r["deleted_remote"], ["a.txt"])
+        self.assertNotIn(das.PREFIX_GLOBAL + "a.txt", self.transport.files)
 
 
 if __name__ == "__main__":

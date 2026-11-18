@@ -113,16 +113,28 @@ def _is_loopback(client_ip: str) -> bool:
     return client_ip in ("127.0.0.1", "::1", "localhost")
 
 
-def _peer_is_local(request: "ParsedRequest") -> bool:
-    """True nur wenn die TCP-Peer-IP loopback ist.
+def _host_is_loopback(host: str) -> bool:
+    """Host-Header (mit/ohne Port, auch '[::1]:port') ist ein Loopback-Name."""
+    host = (host or "").strip().lower()
+    host = host[1:].split("]")[0] if host.startswith("[") else host.split(":")[0]
+    return _is_loopback(host)
 
-    client_ip kann via X-Forwarded-For gespoofed werden (server_worker L308
-    vertraut XFF vor REMOTE_ADDR) - darum nur das environ trusten, das die
-    echte Peer-Adresse haelt.
+
+def _peer_is_local(request: "ParsedRequest") -> bool:
+    """True nur wenn TCP-Peer UND Host-Header loopback sind (die einzige Lokal-Pruefung).
+
+    Peer: nur environ["REMOTE_ADDR"] zaehlt (client_ip kann via X-Forwarded-For
+    gespoofed werden, server_worker L308); fehlt er, gilt die Anfrage als nicht lokal.
+    Host: schuetzt gegen DNS-Rebinding (evil.example loest auf 127.0.0.1 auf, der
+    Peer ist loopback, der Host-Header nicht). Ein fehlender Host-Header (kein
+    Browser) wird nicht beanstandet.
     """
     environ = getattr(request, "environ", None) or {}
-    peer = str(environ.get("REMOTE_ADDR", "") or getattr(request, "client_ip", "") or "")
-    return _is_loopback(peer)
+    if not _is_loopback(str(environ.get("REMOTE_ADDR", "") or "")):
+        return False
+    headers = {str(k).lower(): v for k, v in (getattr(request, "headers", None) or {}).items()}
+    host = headers.get("host") or ""
+    return not host or _host_is_loopback(host)
 
 
 def _ensure_local(request: "ParsedRequest"):

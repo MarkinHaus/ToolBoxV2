@@ -21,7 +21,12 @@ def _dump(value) -> bytes:
 
 
 def export_account(user, mirror: Path) -> int:
-    """Write changed keys, delete vanished keys. Returns files written."""
+    """Write changed keys, delete vanished keys. Returns files written.
+
+    Conflict copies are never deleted here: they hold the local value that
+    lost a conflict and stay until the user decides (import_account and
+    sync_folder ignore them).
+    """
     mirror = Path(mirror)
     written = 0
 
@@ -68,13 +73,13 @@ def export_account(user, mirror: Path) -> int:
     sub = mirror / "settings"
     if sub.is_dir():
         for f in sub.iterdir():
-            if f.name not in seen_settings:
+            if f.name not in seen_settings and not is_conflict_copy(f.name):
                 f.unlink()
     sub = mirror / "mod_data"
     if sub.is_dir():
         for f in sub.rglob("*.json"):
             rel = f.relative_to(sub).as_posix()
-            if rel not in seen_mods:
+            if rel not in seen_mods and not is_conflict_copy(f.name):
                 f.unlink()
     return written
 
