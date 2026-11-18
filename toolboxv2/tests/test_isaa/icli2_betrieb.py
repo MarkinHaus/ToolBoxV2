@@ -18,34 +18,23 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import tempfile
 import time
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-import sys
-
 from icli2_fake_llm import FakeLLM
+from toolboxv2.tests.schreibschutz import Schreibschutz  # noqa: F401  (auch fuer die Tests)
 
 TIMEOUT = 120
 MODEL = "gateway/fake"
 
-_REPO_PKG = Path(__file__).resolve().parents[2]          # <repo>/toolboxv2 (Zustand im Source-Checkout)
 
-
-def echte_zustandsordner() -> list[Path]:
-    """Ordner, in die ein Test NIE schreiben darf (beim Import bestimmt, vor jedem Umbiegen)."""
-    home = Path.home()
-    dirs = [home / ".config" / "ToolBoxV2", home / ".local" / "share" / "toolboxv2",
-            _REPO_PKG / ".data", _REPO_PKG / ".info", _REPO_PKG / ".config", _REPO_PKG.parent / ".data"]
-    for var in ("APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME"):
-        if os.environ.get(var):
-            dirs.append(Path(os.environ[var]) / "ToolBoxV2")
-    return dirs
-
-
-_ECHT = echte_zustandsordner()
+async def _zero_embed(texts, dimensions=None):
+    import numpy as np
+    return np.zeros((len(texts), dimensions or 768), dtype="float32")
 
 
 @contextmanager
@@ -62,38 +51,6 @@ def _ohne_litellm():
             sys.modules.pop("litellm", None)
         else:
             sys.modules["litellm"] = old
-
-
-class Schreibschutz:
-    """Stand (Pfad -> mtime, Groesse) der geschuetzten Ordner vorher/nachher; Unterschied = Fehler."""
-
-    def __init__(self, dirs: list[Path] | None = None):
-        self.dirs = list(_ECHT if dirs is None else dirs)
-        self.vorher = self._stand()
-
-    def _stand(self) -> dict[str, tuple[int, int]]:
-        out = {}
-        for d in self.dirs:
-            if d.is_dir():
-                for f in d.rglob("*"):
-                    if f.is_file():
-                        st = f.stat()
-                        out[str(f)] = (st.st_mtime_ns, st.st_size)
-        return out
-
-    def pruefen(self) -> None:
-        nachher = self._stand()
-        neu = sorted(set(nachher) - set(self.vorher))
-        weg = sorted(set(self.vorher) - set(nachher))
-        geaendert = sorted(k for k in set(nachher) & set(self.vorher) if nachher[k] != self.vorher[k])
-        if neu or weg or geaendert:
-            raise AssertionError(f"Test hat echte Zustandsordner veraendert: neu={neu[:10]} "
-                                 f"geaendert={geaendert[:10]} geloescht={weg[:10]}")
-
-
-async def _zero_embed(texts, dimensions=None):
-    import numpy as np
-    return np.zeros((len(texts), dimensions or 768), dtype="float32")
 
 
 class Betrieb:

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from icli2_betrieb import Schreibschutz
+from toolboxv2.tests.schreibschutz import Schreibschutz
 
 pytestmark = [pytest.mark.icli2_betrieb, pytest.mark.timeout(120)]
 
@@ -81,4 +81,9 @@ def test_schreibschutz_erkennt_aenderungen(tmp_path):
     schutz = Schreibschutz([geschuetzt])
     (geschuetzt / "settings.json").unlink()
     with pytest.raises(AssertionError, match="geloescht"):
+        schutz.pruefen()
+    fehlt = tmp_path / "noch_nicht_da"                     # Profilordner, den es noch nicht gibt
+    schutz = Schreibschutz([fehlt])
+    fehlt.mkdir()                                          # z. B. App-Start mit makedirs(appdata)
+    with pytest.raises(AssertionError, match="noch_nicht_da"):
         schutz.pruefen()

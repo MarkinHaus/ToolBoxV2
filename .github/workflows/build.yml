@@ -162,7 +162,7 @@ jobs:
           MOCK_EXTERNAL_SERVICES: "true"
           IS_OFFLINE_DB: "true"
         run: |
-          python -m uv pip install -e ".[isaa]" litellm pytest-timeout --system
+          python -m uv pip install -e ".[isaa]" pytest-timeout --system   # bewusst ohne litellm
           python -m pytest toolboxv2/tests/test_isaa/test_icli2_widget_betrieb.py -v --tb=short -rfE -m icli2_betrieb --timeout=120
 
   # ============================================================================
