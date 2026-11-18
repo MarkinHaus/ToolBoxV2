@@ -235,6 +235,7 @@ class Engine:
         return await self._start(agent, session, query, kind=kind, stream=stream).result
 
     async def _admin(self, cmd: P.Command, boot: asyncio.Task) -> None:
+        qid = cmd.data.pop("qid", "")                    # Warteschlange der UI: Ende immer melden
         try:
             await asyncio.shield(boot)
             if cmd.kind == P.LIST:
@@ -253,6 +254,9 @@ class Engine:
                 self._emit(P.NOTICE, level=out.get("level", "info"), text=out["text"])
         except Exception as e:
             self._emit(P.NOTICE, level="error", text=f"{cmd.data.get('action') or cmd.data.get('what')}: {e}")
+        finally:
+            if qid:
+                self._emit(P.ACK, qid=qid)
 
     # ── Ein Lauf ─────────────────────────────────────────────────────────────
     def _flush(self, run: _Run) -> None:

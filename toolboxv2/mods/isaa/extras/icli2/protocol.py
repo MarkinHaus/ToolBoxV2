@@ -31,6 +31,7 @@ SUB = "sub"                # data: sub (id), task (voll), status, iter, max_iter
 ROWS = "rows"              # data: what, title, rows=[{value, label, hint}]
 DRAFT = "draft"            # data: text  -> in die Eingabe setzen (Spracheingabe)
 NOTICE = "notice"          # data: level (info|warn|error), text
+ACK = "ack"                # data: qid  -> Befehl aus der Warteschlange der UI ist erledigt
 BYE = "bye"                # Engine ist sauber beendet
 
 

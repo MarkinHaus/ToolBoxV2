@@ -127,6 +127,7 @@ class IsaaBackend(WatchMixin, SelfToolMixin, SelfOrchestratorMixin, FeatureMixin
         await asyncio.to_thread(self._load_settings)
         self.watch_boot()                                # Meldungen von Hintergrund-Befehlen der Shell
         ready = await self._ready()
+        ready["debug"] = bool(getattr(self.app, "debug", False) or os.getenv("ICLI2_DEBUG"))
         ready["history"] = await asyncio.to_thread(self._read_history)
         # darf den Start nie verhindern; Discord/Telegram werden erst bei Gebrauch geladen
         for step in (self._restore_paused, self._start_jobs, self._plugins_boot):

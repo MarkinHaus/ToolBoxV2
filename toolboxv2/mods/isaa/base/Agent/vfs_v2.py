@@ -629,6 +629,101 @@ def unescape_string(text: str) -> str:
     return _decode_content(_strip_quotes(text))
 
 
+class PathIndexDict(dict):
+    """dict pfad -> Eintrag, dazu ein Kinder-Index: Elternordner -> direkte Kinder.
+
+    Jede Aenderung (Zuweisung, del, pop, clear, update, |=, setdefault, popitem) fuehrt den Index
+    sofort mit - auch wenn sie von aussen kommt (Mounts, Patches). Damit kostet das Auflisten eines
+    Ordners nur noch so viel wie er Eintraege hat, statt jedes Mal alle Pfade des VFS zu pruefen.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self._children: dict[str, set[str]] = {}
+        self.update(*args, **kwargs)
+
+    @staticmethod
+    def parent(path: str) -> str | None:
+        """'/a/b' -> '/a', '/a' -> '/', '/' -> '/'; relative Schluessel haben keinen Elternordner."""
+        i = path.rfind("/")
+        if i < 0:
+            return None
+        return path[:i] or "/"
+
+    @staticmethod
+    def basename(path: str) -> str:
+        return path[path.rfind("/") + 1:]
+
+    def _kids(self) -> dict[str, set[str]]:
+        kids = self.__dict__.get("_children")
+        if kids is None:                                 # z. B. beim Entpickeln vor dem Zustand
+            kids = self.__dict__["_children"] = {}
+            for key in dict.keys(self):
+                self._link(kids, key)
+        return kids
+
+    def _link(self, kids: dict[str, set[str]], key: str) -> None:
+        parent = self.parent(key) if isinstance(key, str) else None
+        if parent is not None:
+            kids.setdefault(parent, set()).add(key)
+
+    def _unlink(self, key: str) -> None:
+        parent = self.parent(key) if isinstance(key, str) else None
+        if parent is None:
+            return
+        kids = self._kids()
+        group = kids.get(parent)
+        if group is not None:
+            group.discard(key)
+            if not group:
+                del kids[parent]
+
+    def children(self, path: str) -> list[str]:
+        """Direkte Kinder von path (Kopie: darf waehrend des Durchlaufs veraendert werden)."""
+        return list(self._kids().get(path, ()))
+
+    def __setitem__(self, key, value) -> None:
+        if key not in self:
+            self._link(self._kids(), key)
+        super().__setitem__(key, value)
+
+    def __delitem__(self, key) -> None:
+        super().__delitem__(key)
+        self._unlink(key)
+
+    def pop(self, key, *default):
+        if key in self:
+            value = super().pop(key)
+            self._unlink(key)
+            return value
+        return super().pop(key, *default)
+
+    def popitem(self):
+        key, value = super().popitem()
+        self._unlink(key)
+        return key, value
+
+    def setdefault(self, key, default=None):
+        if key not in self:
+            self[key] = default
+        return self[key]
+
+    def clear(self) -> None:
+        super().clear()
+        self._kids().clear()
+
+    def update(self, *args, **kwargs) -> None:
+        for key, value in dict(*args, **kwargs).items():
+            self[key] = value
+
+    def __ior__(self, other):
+        self.update(other)
+        return self
+
+    def copy(self) -> "PathIndexDict":
+        return PathIndexDict(self)
+
+
 class VirtualFileSystemV2:
     """
     Virtual File System V2 with hierarchical directories and LSP integration.
@@ -658,8 +753,8 @@ class VirtualFileSystemV2:
         self._lsp_manager = lsp_manager
 
         # Storage: path -> VFSFile or VFSDirectory
-        self.files: dict[str, VFSFile] = {}
-        self.directories: dict[str, VFSDirectory] = {}
+        self.files: dict[str, VFSFile] = PathIndexDict()        # mit Kinder-Index, siehe PathIndexDict
+        self.directories: dict[str, VFSDirectory] = PathIndexDict()
 
         self.mounts: dict[str, ShadowMount] = {}
         self._shadow_index: dict[str, str] = {}
@@ -1527,45 +1622,41 @@ Nutzen für: ToolBox-Verwaltung, System-Config, Git-Operationen auf dem Host.
         self._emit_delta(path, "rmdir")
         return {"success": True, "message": f"Removed directory: {path}"}
 
+    def _path_index(self) -> tuple["PathIndexDict", "PathIndexDict"]:
+        """files/directories als PathIndexDict (aeltere Zustaende kamen als dict: einmal umstellen)."""
+        if not isinstance(self.files, PathIndexDict):
+            self.files = PathIndexDict(self.files)
+        if not isinstance(self.directories, PathIndexDict):
+            self.directories = PathIndexDict(self.directories)
+        return self.files, self.directories
+
     def _list_directory_contents(self, path: str) -> list[dict]:
-        """List contents of a directory"""
+        """List contents of a directory.
+
+        Liest nur die direkten Kinder aus dem Kinder-Index (PathIndexDict) statt alle Pfade des
+        VFS zu durchlaufen. Der Index wird bei jeder Aenderung von files/directories mitgefuehrt,
+        das Ergebnis ist deshalb immer aktuell - und gleich dem frueheren Durchlauf."""
         path = self._normalize_path(path)
+        files, directories = self._path_index()
         contents = []
-
-        # Find all direct children
-        prefix = path if path == "/" else path + "/"
-
-        # Check directories
-        for dir_path in self.directories:
-            if dir_path == path:
-                continue
-            if dir_path.startswith(prefix):
-                # Check if it's a direct child
-                relative = dir_path[len(prefix) :]
-                if "/" not in relative:
-                    contents.append(
-                        {"name": relative, "type": "directory", "path": dir_path}
-                    )
-
-        # Check files
-        for file_path in self.files:
-            if file_path.startswith(prefix):
-                relative = file_path[len(prefix) :]
-                if "/" not in relative:
-                    f = self.files[file_path]
-                    contents.append(
-                        {
-                            "name": relative,
-                            "type": "file",
-                            "path": file_path,
-                            "size": f.size,
-                            "state": f.state,
-                            "file_type": f.file_type.description
-                            if f.file_type
-                            else "Unknown",
-                        }
-                    )
-
+        for dir_path in directories.children(path):
+            if dir_path != path:
+                contents.append({"name": PathIndexDict.basename(dir_path), "type": "directory",
+                                 "path": dir_path})
+        for file_path in files.children(path):
+            f = files[file_path]
+            contents.append(
+                {
+                    "name": PathIndexDict.basename(file_path),
+                    "type": "file",
+                    "path": file_path,
+                    "size": f.size,
+                    "state": f.state,
+                    "file_type": f.file_type.description
+                    if f.file_type
+                    else "Unknown",
+                }
+            )
         return sorted(contents, key=lambda x: (x["type"] != "directory", x["name"]))
 
     def ls(

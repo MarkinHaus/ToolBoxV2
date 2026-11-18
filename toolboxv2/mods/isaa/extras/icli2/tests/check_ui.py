@@ -258,6 +258,13 @@ async def main():
         await pilot.press("enter"); await pilot.pause(0.2); assert isinstance(app.screen,P_); await pilot.press("enter"); await pilot.pause(1.2)
         jr=list(app.runs.values())[-1]; assert jr.query=="nightly: aufräumen" and jr.status=="done", (jr.query, jr.status)
         heads=[str(x.render()) for x in jr.box.query(".note")]; assert "job · self" in heads[0], heads
+        # Loeschen nur nach Rueckfrage: Enter (Standard "nein") loescht nichts, erst "ja"
+        for confirm, sent in ((["enter"], False), (["down", "enter"], True)):
+            await pilot.press(*"/job"); await pilot.press("enter"); await pilot.pause(0.3)
+            await pilot.press("enter"); await pilot.pause(0.2); await pilot.press("down", "down", "enter"); await pilot.pause(0.2)
+            assert isinstance(app.screen,P_) and "wirklich löschen" in app.screen._title, "keine Rückfrage"
+            await pilot.press(*confirm); await pilot.pause(0.3); assert not isinstance(app.screen,P_)
+            assert (("job",{"job":"j1","op":"remove"}) in fake.log) is sent, fake.log[-3:]
         await pilot.press(*"/dream"); await pilot.press("enter"); await pilot.pause(0.2); assert ("dream",{}) in fake.log
         await pilot.press(*"/job"); await pilot.press("space"); await pilot.press(*"alle 5m x: y"); await pilot.press("enter"); await pilot.pause(0.2); assert ("job_add",{"spec":"alle 5m x: y"}) in fake.log
         await pilot.press(*"/network"); await pilot.press("enter"); await pilot.pause(0.2); assert ("network_save",{}) in fake.log
