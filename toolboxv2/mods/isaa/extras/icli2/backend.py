@@ -369,6 +369,64 @@ class IsaaBackend(WatchMixin, SelfToolMixin, SelfOrchestratorMixin, FeatureMixin
         cfg = getattr(self, "_settings", None) or {}
         return cfg.get("tts_provider", "groq_tts"), cfg.get("tts_voice", "autumn")
 
+    # -- Widgets (interaktive Panels; Persistenz widgets.json, atomar wie save_setting)
+
+    def _widgets_file(self):
+        return self._state_dir() / "widgets.json"
+
+    def widget_registry_load(self) -> dict:
+        try:
+            return json.loads(self._widgets_file().read_text(encoding="utf-8"))
+        except Exception:
+            return {}                                   # keine Datei / kaputt: leer
+
+    def _widgets_save(self, registry: dict) -> None:
+        import os as _os
+        path = self._widgets_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(registry, ensure_ascii=False, indent=1), encoding="utf-8")
+        _os.replace(tmp, path)
+
+    async def widget_registry_add(self, widget_id: str, spec: dict, *, creator: tuple) -> dict:
+        reg = self.widget_registry_load()
+        reg[widget_id] = {"spec": spec, "mode": spec.get("mode", "modal"),
+                          "values": {}, "closed": False, "creator": list(creator)}
+        self._widgets_save(reg)
+        return {"ok": True, "id": widget_id}
+
+    async def widget_registry_close(self, widget_id: str) -> dict:
+        reg = self.widget_registry_load()
+        if widget_id in reg:
+            reg[widget_id]["closed"] = True            # bleibt sichtbar-falsch? nein: dauerhaft zu
+            self._widgets_save(reg)
+            return {"ok": True, "id": widget_id}
+        return {"ok": False, "error": f"unbekannt: {widget_id}"}
+
+    async def _do_widget_answer(self, payload: dict) -> dict:
+        wid = (payload or {}).get("id")
+        values = (payload or {}).get("values") or {}
+        reg = self.widget_registry_load()
+        entry = reg.get(wid)
+        if entry is None:
+            return {"ok": False, "error": f"unbekanntes Widget: {wid}"}
+        entry["values"] = values
+        self._widgets_save(reg)
+        from .widgets import format_answer
+        line = format_answer(entry["spec"], values)
+        await self._widget_start_turn(f"[Widget-Antwort] {line}\nvalues: {json.dumps(values, ensure_ascii=False)}")
+        return {"ok": True, "text": line}
+
+    async def _widget_start_turn(self, prompt: str) -> None:
+        """Antwort an den creator-Agenten: laufende Pipeline speisen oder Start
+        (Muster: icli_web client.py _handle_query -> _run_agent)."""
+        engine = getattr(self, "engine", None)
+        stream = getattr(engine, "stream", None) if engine is not None else None
+        if stream is not None:
+            await stream(prompt)
+        else:
+            self.app.logger.warning(f"widget answer ohne engine: {prompt[:80]}")
+
     async def _rows_settings(self):
         user = await self._cloud_user()
         return "Einstellungen", [

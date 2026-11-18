@@ -48,7 +48,7 @@ def test_info_lines_wrapped():
 
 
 def test_modal_card_classes_lazy():
-    if W.TEXTUAL is None:
+    if not W.TEXTUAL:
         pytest.skip("textual nicht im venv - Klassen nur im echten Terminal-Import")
     assert W.WidgetModal is not None and W.WidgetCard is not None
     scr = W.WidgetModal("id1", FORM, creator=("self", "default"))

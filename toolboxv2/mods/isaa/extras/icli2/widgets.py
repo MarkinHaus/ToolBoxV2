@@ -100,3 +100,26 @@ if TEXTUAL:
 else:  # pragma: no cover
     WidgetModal = None
     WidgetCard = None
+
+
+def format_answer(spec: dict, values: dict) -> str:
+    """Schoene Verlaufs-Zeile ohne ID/JSON - icli2-Stil (Picker-Label-Vorlage)."""
+    title = spec.get("title", "Widget")
+    template = spec.get("template")
+    parts: list[str] = []
+    if template == "form":
+        for f in spec.get("fields", []):
+            name = f.get("name")
+            if name in values:
+                parts.append(f"{f.get('label') or name}: {values[name]}")
+        for k, v in values.items():                     # Werte ohne Felddef nicht verlieren
+            if not any(f.get("name") == k for f in spec.get("fields", [])):
+                parts.append(f"{k}: {v}")
+    elif template == "choice":
+        v = values.get("value", values.get("choice"))
+        if v is not None:
+            parts.append(str(v))
+    else:
+        parts = [f"{k}: {v}" for k, v in values.items()]
+    sep = " \u2013 " if parts else ""
+    return f"{title}{sep}" + ", ".join(str(p) for p in parts)
