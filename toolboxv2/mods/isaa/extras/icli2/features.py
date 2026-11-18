@@ -164,7 +164,348 @@ def load_execute(fm):
     fm.add_feature("execute", activation_f=enable, deactivation_f=disable)
 
 
-LOADERS = (load_desktop_auto_feature, load_web_auto_feature, load_full_web_auto_feature,
+def load_docs_feature(fm):
+    """
+    Documentation Feature - Integrates mkdocs-based docs system.
+
+    When active in toolboxv2 directory: Uses tb_root_dir.parent/docs as doc dir.
+    When active in another directory: Prompts user to select docs directory.
+    """
+    docs_system = [None]  # Mutable container for the docs system instance
+    docs_tools = [None]   # Mutable container for the tool list
+    _TOOL_HEALTH_EXTENSIONS = {
+        "docs_reader": {
+            "live_test_inputs": [
+                {
+                    "query": "_probe_health_check_query",
+                    "max_results": 1
+                }
+            ],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": (
+                    "Das Tool muss ein Dictionary mit 'count' und 'time_ms' (oder 'sections') zurückgeben."
+                )
+            },
+            "cleanup_func": None
+        },
+        "docs_writer": {
+            "live_test_inputs": [
+                {
+                    # Negative Testing: Wir prüfen das Routing und Error-Handling,
+                    # ohne echte Dateien zu schreiben.
+                    "action": "_probe_invalid_action"
+                }
+            ],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": (
+                    "Da die Action ungültig ist, muss ein Dict mit dem Key 'error' "
+                    "und einer entsprechenden Fehlermeldung zurückgegeben werden."
+                )
+            },
+            "cleanup_func": None
+        },
+        "docs_lookup": {
+            "live_test_inputs": [
+                {
+                    "name": "_probe_SystemTest",
+                    "max_results": 1
+                }
+            ],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": "Muss ein Dict mit 'results' (Liste) und 'count' zurückgeben."
+            },
+            "cleanup_func": None
+        },
+        "docs_sync": {
+            "live_test_inputs": [{}],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": "Muss ein Dict mit 'changes_detected' und 'files_updated' zurückgeben."
+            },
+            "cleanup_func": None
+        },
+        "docs_init": {
+            "live_test_inputs": [
+                {
+                    # Wichtig: force_rebuild=False für einen schnellen, sicheren Test!
+                    "force_rebuild": False,
+                    "show_tqdm": False
+                }
+            ],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": "Muss ein Dict mit 'status' (z.B. 'loaded') und 'time_ms' zurückgeben."
+            },
+            "cleanup_func": None
+        },
+        "get_task_context": {
+            "live_test_inputs": [
+                {
+                    "files": [],
+                    "intent": "_probe_health_check_intent"
+                }
+            ],
+            "result_contract": {
+                "expected_type": dict,
+                "semantic_check_hint": "Muss ein Dict mit 'result' und 'meta' zurückgeben."
+            },
+            "cleanup_func": None
+        },
+        "docs_inventory": {
+            "live_test_inputs": [
+                {
+                    "focus_dirs": "",
+                    "max_classes_per_file": 3,
+                    "max_methods_per_class": 2,
+                    "include_functions": True,
+                }
+            ],
+            "result_contract": {
+                "expected_type": str,
+                "semantic_check_hint": "Muss Markdown-String mit '# Project Inventory' zurueckgeben.",
+            },
+            "cleanup_func": None,
+        },
+        "docs_relationship_map": {
+            "live_test_inputs": [
+                {
+                    "focus_dirs": "",
+                    "focus_classes": "",
+                    "max_nodes": 20,
+                    "format_type": "markdown",
+                }
+            ],
+            "result_contract": {
+                "expected_type": str,
+                "semantic_check_hint": "Muss Markdown-String mit mermaid code block zurueckgeben.",
+            },
+            "cleanup_func": None,
+        },
+        "docs_export_docmap": {
+            "live_test_inputs": [
+                {
+                    "output_path": "",
+                    "format_type": "md",
+                    "focus_dirs": "",
+                    "title": "_probe_health_check",
+                }
+            ],
+            "result_contract": {
+                "expected_type": str,
+                "semantic_check_hint": "Muss DocMap Markdown content zurueckgeben.",
+            },
+            "cleanup_func": None,
+        },
+    }
+    async def enable(agent):
+        """Enable documentation system and add tools to agent."""
+        try:
+            # Determine docs directory based on current working directory
+            current_dir = init_cwd
+            project_root = tb_root_dir
+
+            # Check if we're in toolboxv2 or its parent
+            if current_dir == project_root or current_dir == project_root.parent or project_root in current_dir.parents:
+                docs_dir = project_root.parent / "docs"
+                c_print(HTML(f"<style fg='ansicyan'>📚 Auto-detected docs dir:</style> <style fg='ansigreen'>{docs_dir}</style>"))
+            else:
+                # Prompt user for docs directory
+                docs_input = tb_root_dir
+                docs_dir = Path(docs_input).expanduser().resolve()
+
+            if not docs_dir.exists():
+                c_print(HTML(f"<style fg='ansired'>⚠️ Docs directory not found: {docs_dir}</style>"))
+                c_print(HTML("<style fg='ansiyellow'>Creating minimal docs structure...</style>"))
+                docs_dir.mkdir(parents=True, exist_ok=True)
+
+            # Create docs system instance
+            system = DocsSystem(
+                project_root=project_root,
+                docs_root=docs_dir,
+                include_dirs=["toolboxv2", "flows", "mods", "utils", "docs", "src"]
+            )
+
+            _get_docs = lambda :system
+
+            async def docs_inventory(
+                focus_dirs: str = "",
+                max_classes_per_file: int = 5,
+                max_methods_per_class: int = 3,
+                include_functions: bool = True,
+            ) -> str:
+                """Generate project inventory: what files, classes, and functions exist."""
+                try:
+                    ds = _get_docs()
+                    await ds.initialize()
+                    result = await ds.generate_inventory(
+                        focus_dirs=focus_dirs.split(",") if focus_dirs else None,
+                        max_classes_per_file=max_classes_per_file,
+                        max_methods_per_class=max_methods_per_class,
+                        include_functions=include_functions,
+                        format_type="markdown",
+                    )
+                    return result.get("content", json.dumps(result, ensure_ascii=False, default=str))
+                except Exception as e:
+                    return f"Inventory error: {e}"
+
+            async def docs_relationship_map(
+                focus_dirs: str = "",
+                focus_classes: str = "",
+                max_nodes: int = 40,
+                format_type: str = "markdown",
+            ) -> str:
+                """Generate relationship map showing how components connect (Mermaid diagram)."""
+                try:
+                    ds = _get_docs()
+                    await ds.initialize()
+                    result = await ds.generate_relationship_map(
+                        focus_dirs=focus_dirs.split(",") if focus_dirs else None,
+                        focus_classes=focus_classes.split(",") if focus_classes else None,
+                        max_nodes=max_nodes,
+                        format_type=format_type,
+                    )
+                    return result.get("content", json.dumps(result, ensure_ascii=False, default=str))
+                except Exception as e:
+                    return f"Relationship map error: {e}"
+
+            async def docs_export_docmap(
+                output_path: str = "",
+                format_type: str = "html",
+                focus_dirs: str = "",
+                title: str = "",
+            ) -> str:
+                """Export complete DocMap (inventory + relationships) as HTML or Markdown file."""
+                try:
+                    ds = _get_docs()
+                    await ds.initialize()
+                    result = await ds.export_docmap(
+                        output_path=output_path or None,
+                        format_type=format_type,
+                        focus_dirs=focus_dirs.split(",") if focus_dirs else None,
+                        title=title or None,
+                    )
+                    if output_path:
+                        return f"DocMap exported to {result.get('output_path', output_path)}"
+                    return result.get("content", "Export failed — no content generated")
+                except Exception as e:
+                    return f"DocMap export error: {e}"
+
+            # Initialize (load existing index or build new one)
+            result = await system.initialize()
+            c_print(HTML(f"<style fg='ansigreen'>✓ Docs initialized:</style> {result['sections']} sections, {result['elements']} elements"))
+
+            docs_system[0] = system
+
+            # Prepare tool list with proper descriptions
+            tools = [
+                {
+                    "tool_func": system.read,
+                    "name": "docs_reader",
+                    "description": "Durchsucht die Dokumentation nach relevanten Abschnitten basierend auf einer Suchanfrage. Nützlich um schnell Informationen aus der Dokumentation zu finden ohne manuell zu suchen. Gibt strukturierte Ergebnisse mit Relevanz-Scores zurück.",
+                    "category": ["docs", "read", "search"],
+                    "flags": {}
+                },
+                {
+                    "tool_func": system.write,
+                    "name": "docs_writer",
+                    "description": "Schreibt neue Dokumentations-Dateien oder aktualisiert existierende. Unterstützt Markdown-Formatierung und speichert im docs-Verzeichnis. Erstellt automatisch die nötige Verzeichnisstruktur wenn nötig. Ideal um Ergebnisse und Erkenntnisse zu dokumentieren.",
+                    "category": ["docs", "write"],
+                    "flags": {}
+                },
+                {
+                    "tool_func": system.lookup_code,
+                    "name": "docs_lookup",
+                    "description": "Sucht nach Code-Elementen (Klassen, Funktionen, Module, etc.) im gesamten Codebase. Gibt Definitionen, Signaturen und Docstrings zurück. Nützlich um Implementierungsdetails schnell zu verstehen ohne durch Dateien navigieren zu müssen.",
+                    "category": ["docs", "code", "search"],
+                    "flags": {}
+                },
+                {
+                    "tool_func": system.sync,
+                    "name": "docs_sync",
+                    "description": "Synchronisiert Änderungen aus der VFS zurück zum Dateisystem. Stellt sicher dass Änderungen persistent gespeichert werden. Sollte regelmäßig aufgerufen werden nachdem Änderungen vorgenommen wurden.",
+                    "category": ["docs", "sync"],
+                    "flags": {}
+                },
+                {
+                    "tool_func": system.initialize,
+                    "name": "docs_init",
+                    "description": "Baut den Dokumentations-Index neu auf. Nützlich wenn neue Dateien hinzugefügt wurden oder der Index veraltet ist. Indiziert Markdown-, Python- und JavaScript/TypeScript-Dateien aus den konfigurierten include_dirs.",
+                    "category": ["docs", "index"],
+                    "flags": {}
+                },
+                {
+                    "tool_func": system.get_task_context,
+                    "name": "get_task_context",
+                    "description": "Generiert Kontext-Informationen für Aufgaben wie relevante Dateien, Klassen und Dokumentation basierend auf einer Aufgabenbeschreibung. Hilft dem Agent die Aufgabe besser zu verstehen und die richtigen Ressourcen zu finden.",
+                    "category": ["docs", "context"],
+                    "flags": {}
+                },
+                {
+                    "tool_func": docs_inventory,
+                    "name": "docs_inventory",
+                    "description": (
+                        "Generiert ein kompaktes Projekt-Inventar: welche Dateien, Klassen und "
+                        "Funktionen existieren im Projekt. Gruppiert nach Dateien mit den wichtigsten "
+                        "Klassen und deren meistgenutzten Methoden. Beantwortet: 'Was ist alles da?'"
+                    ),
+                    "category": ["docs", "read"],
+                    "flags": {},
+                },
+                {
+                    "tool_func": docs_relationship_map,
+                    "name": "docs_relationship_map",
+                    "description": (
+                        "Generiert eine Beziehungskarte als Mermaid-Diagramm. Zeigt Vererbung, "
+                        "Komposition und Cross-File-Referenzen zwischen Klassen. "
+                        "Beantwortet: 'Wie spielt Komponente A mit B zusammen?'"
+                    ),
+                    "category": ["docs", "read"],
+                    "flags": {},
+                },
+                {
+                    "tool_func": docs_export_docmap,
+                    "name": "docs_export_docmap",
+                    "description": (
+                        "Exportiert eine vollstaendige DocMap (Inventar + Beziehungen) als "
+                        "standalone HTML (mit Neo-Brutalism Paper Style, Mermaid-Rendering, Dark Mode) "
+                        "oder als LLM-optimiertes Markdown. Kombiniert Inventar und Relationship Map."
+                    ),
+                    "category": ["docs", "write"],
+                    "flags": {},
+                },
+            ]
+
+            for tool in tools:
+                if tool["name"] in _TOOL_HEALTH_EXTENSIONS:
+                    tool.update(_TOOL_HEALTH_EXTENSIONS[tool["name"]])
+
+            docs_tools[0] = tools
+            agent.add_tools(tools)
+
+            print_status("Documentation feature enabled.", "success")
+
+        except Exception as e:
+            c_print(HTML(f"<style fg='ansired'>✗ Failed to enable docs: {e}</style>"))
+            import traceback
+            c_print(traceback.format_exc())
+
+    def disable(agent):
+        """Disable documentation system."""
+        try:
+            if docs_tools[0]:
+                agent.remove_tools(docs_tools[0])
+            docs_system[0] = None
+            docs_tools[0] = None
+            print_status("Documentation feature disabled.", "success")
+        except Exception as e:
+            c_print(HTML(f"<style fg='ansired'>✗ Failed to disable docs: {e}</style>"))
+
+    fm.add_feature("docs", activation_f=enable, deactivation_f=disable)
+
+LOADERS = (load_docs_feature, load_desktop_auto_feature, load_web_auto_feature, load_full_web_auto_feature,
            load_coder_toolkit, load_chain_toolkit, load_execute, load_isis_feature)
 
 

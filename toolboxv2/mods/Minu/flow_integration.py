@@ -148,7 +148,7 @@ class FlowWrapperView(MinuView):
         schema = {}
         try:
             sig = inspect.signature(self.run_func)
-            type_hints = get_type_hints(self.run_func) if hasattr(self.run_func, '__annotations__') else {}
+            type_hints = get_type_hints(self.run_func) if hasattr(self.run_func, '__annotations__') or hasattr(self.run_func, '__dataclass_fields__') else {}
 
             for name, param in sig.parameters.items():
                 if name in ('app', 'args_sto', 'kwargs', 'self'):

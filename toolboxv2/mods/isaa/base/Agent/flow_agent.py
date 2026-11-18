@@ -47,6 +47,7 @@ from toolboxv2.mods.isaa.base.llm_router.compat import (
     completion_result_to_message,
     completion_result_to_model_response,
     stream_chunk_to_shim,
+    _Usage,
 )
 from toolboxv2.mods.isaa.base.llm_router.stream_accumulator import StreamAccumulator
 from toolboxv2.mods.isaa.base.llm_router.model_info import ctx_limit, supports_tools
@@ -275,6 +276,25 @@ MEDIA_ERROR_PATTERNS = [
     r"messages\.content\.type.*(?:text|非法)",
     r"不支持.*(?:图片|音频|视频)",
 ]
+
+
+def _merge_stream_usage(acc: Any, chunk_usage: Any) -> Any:
+    """usage ueber alle Stream-Chunks zusammenfuehren (je Feld das Maximum).
+
+    Anbieter verteilen usage verschieden: OpenAI schickt sie im letzten Chunk,
+    Anthropic prompt/cache in message_start und completion in message_delta.
+    Nur den letzten Chunk zu lesen verliert bei Anthropic die Prompt-Tokens."""
+    if chunk_usage is None:
+        return acc
+    fields = ("prompt_tokens", "completion_tokens", "total_tokens",
+              "cache_read_tokens", "cache_creation_tokens")
+    if acc is None:
+        return _Usage(**{f: int(getattr(chunk_usage, f, 0) or 0) for f in fields})
+    for f in fields:
+        val = int(getattr(chunk_usage, f, 0) or 0)
+        if val > getattr(acc, f):
+            setattr(acc, f, val)
+    return acc
 
 
 def _is_media_error(error: Exception) -> bool:
@@ -1008,6 +1028,9 @@ class FlowAgent:
                 final_text_content = ""
                 final_tool_calls_raw = []
                 accumulated_usage = None
+                # Kontextgroesse laut Provider fuer GENAU die gesendeten Nachrichten
+                # (erste Runde; Continuations senden zusaetzlich Teil-Output).
+                first_context_tokens = None
                 len_final_text_content = 0
 
                 active_cut_off_tool = None
@@ -1105,6 +1128,10 @@ class FlowAgent:
                         print(f"[DEBUG] finish_reason={finish_reason}, chunk_len={len(chunk_text)}, "
                               f"accumulated_len={len(final_text_content)}")
                     # --- 1. USAGE MERGEN ---
+                    if current_usage and first_context_tokens is None:
+                        first_context_tokens = self._usage_context_tokens(
+                            llm_kwargs["model"], current_usage
+                        )
                     if current_usage:
                         if accumulated_usage is None:
                             accumulated_usage = current_usage
@@ -1251,6 +1278,10 @@ class FlowAgent:
                 final_message = _AssistantMessage(
                     content=final_text_content or None,
                     tool_calls=reconstructed_tool_calls or None,
+                    usage={
+                        "context_tokens": first_context_tokens or 0,
+                        "completion_tokens": getattr(accumulated_usage, "completion_tokens", 0) or 0,
+                    },
                 )
 
                 # Statistik Update
@@ -1480,6 +1511,23 @@ class FlowAgent:
                     await pos_coro
         return last
 
+    def _usage_context_tokens(self, model: str, usage: Any) -> int:
+        """Kontextgroesse des Aufrufs laut Provider.
+
+        prompt_tokens; bei Adaptern, deren prompt_tokens den Cache nicht enthaelt
+        (PROMPT_TOKENS_INCLUDE_CACHE=False, z. B. Anthropic), plus cache_read und
+        cache_creation."""
+        prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+        cached = int(getattr(usage, "cache_read_tokens", 0) or 0) + int(
+            getattr(usage, "cache_creation_tokens", 0) or 0
+        )
+        resolve = getattr(self.router, "resolve", None)
+        if cached and resolve is not None:
+            adapter = resolve(model)[0]
+            if not getattr(adapter, "PROMPT_TOKENS_INCLUDE_CACHE", True):
+                return prompt + cached
+        return prompt
+
     @staticmethod
     def calculate_llm_cost(
         model: str,
@@ -1498,6 +1546,7 @@ class FlowAgent:
         tool_calls_acc: dict[int, _ToolCall] = {}
         final_chunk = None
         finish_reason = None
+        usage = None
 
         async for chunk in response:
             if row:
@@ -1535,8 +1584,7 @@ class FlowAgent:
                 finish_reason = chunk.choices[0].finish_reason
 
             final_chunk = chunk
-
-        usage = final_chunk.usage if hasattr(final_chunk, "usage") else None
+            usage = _merge_stream_usage(usage, getattr(chunk, "usage", None))
 
         if get_response_message:
             result = _AssistantMessage(

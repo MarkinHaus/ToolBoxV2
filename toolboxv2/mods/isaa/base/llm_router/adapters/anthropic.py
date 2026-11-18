@@ -29,6 +29,9 @@ _STOP_MAP = {
 class AnthropicAdapter(ProviderAdapter):
     """Direct Anthropic API via raw aiohttp. /v1/messages format."""
 
+    # Anthropic: usage.input_tokens enthaelt cache_read/cache_creation NICHT.
+    PROMPT_TOKENS_INCLUDE_CACHE: bool = False
+
     ALLOWED_PARAMS: frozenset = frozenset({
         'temperature', 'top_p', 'max_tokens', 'stop_sequences',
         'tools', 'tool_choice', 'metadata', 'response_format',

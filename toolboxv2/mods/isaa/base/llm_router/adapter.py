@@ -15,6 +15,11 @@ if TYPE_CHECKING:
 
 
 class ProviderAdapter(ABC):
+    # True: UsageData.prompt_tokens enthaelt gecachte Tokens schon (OpenAI-Format,
+    # cached_tokens ist eine Teilmenge). False: prompt_tokens zaehlt nur den
+    # ungecachten Rest, die Kontextlast ist prompt + cache_read + cache_creation.
+    PROMPT_TOKENS_INCLUDE_CACHE: bool = True
+
     ALLOWED_PARAMS: frozenset = frozenset({
         'temperature', 'top_p', 'max_tokens', 'stop', 'n',
         'presence_penalty', 'frequency_penalty', 'seed',

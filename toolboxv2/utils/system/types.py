@@ -173,7 +173,7 @@ class Headers:
             self.from_header = self.__dict__.pop('from')
 
         # Store any attributes that weren't explicitly defined in extra_headers
-        all_attrs = self.__annotations__.keys()
+        all_attrs = self.__annotations__.keys() if hasattr(self, "__annotations__") else self.__dataclass_fields__.keys()
         for key in list(self.__dict__.keys()):
             if key not in all_attrs and key != "extra_headers":
                 self.extra_headers[key.replace("_", "-")] = getattr(self, key)
@@ -193,7 +193,7 @@ class Headers:
                 continue
 
             python_key = key.replace("-", "_").lower()
-            if python_key in cls.__annotations__ and python_key != "extra_headers":
+            if python_key in (cls.__annotations__ if hasattr(cls, "__annotations__") else cls.__dataclass_fields__ )and python_key != "extra_headers":
                 processed_headers[python_key] = value
             else:
                 extra_headers[key] = value
