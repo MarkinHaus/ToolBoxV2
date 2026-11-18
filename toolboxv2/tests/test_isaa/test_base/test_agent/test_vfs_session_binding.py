@@ -73,20 +73,15 @@ def _call(agent, name, **kw):
 
 
 def _setup_context(agent, session_id):
-    """ExecutionEngine._setup_context wie beim Hot-/Cold-Resume (ctx gegeben)."""
+    """Echte ExecutionEngine._setup_context wie beim Hot-/Cold-Resume (ctx gegeben) - auf einer
+    echten ExecutionEngine (kein Nachbau: der driftet vom Code weg, sobald die Engine neue Felder
+    braucht). Nur der Agent ist ein Mock mit echtem ToolManager (siehe _agent)."""
     from toolboxv2.mods.isaa.base.Agent.execution_engine import ExecutionEngine
 
-    async def _noop(*a, **k):
-        return None
-
     agent.obs = None
-    engine = types.SimpleNamespace(
-        agent=agent, is_sub_agent=False, sub_agent_output_dir=None,
-        _active_executions={}, _session_last_run={},
-        _wait_for_pending_finalize=_noop, live=MagicMock(),
-    )
+    engine = ExecutionEngine(agent, do_narrator=False)
     ctx = types.SimpleNamespace(run_id="r1", session_id=session_id, query="")
-    return asyncio.run(ExecutionEngine._setup_context(engine, "q", session_id, 10, ctx))
+    return asyncio.run(engine._setup_context("q", session_id, 10, ctx))
 
 
 class TestSecondSessionDoesNotOverrideFirst(unittest.TestCase):

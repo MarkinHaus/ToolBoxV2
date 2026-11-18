@@ -345,42 +345,41 @@ class TestMountWatcherScanDiff(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    # Watcher v3 arbeitet inkrementell: einmal _build_initial_snapshot(), danach liefert jeder
+    # _incremental_scan() nur die Aenderungen gegen den eigenen Snapshot (None = nichts geaendert).
     def test_scan_disk_finds_all_files(self):
-        snap = self.watcher._scan_disk()
-        keys = list(snap.keys())
+        self.watcher._build_initial_snapshot()
+        keys = list(self.watcher._snapshot)
         self.assertTrue(any("a.py" in k for k in keys))
         self.assertTrue(any("b.py" in k for k in keys))
 
     def test_scan_disk_excludes_pycache(self):
         _populate(self.tmp.name, {"__pycache__/c.pyc": "\x00"})
-        snap = self.watcher._scan_disk()
-        self.assertFalse(any("__pycache__" in k for k in snap.keys()))
+        self.watcher._build_initial_snapshot()
+        self.assertFalse(any("__pycache__" in k for k in self.watcher._snapshot))
 
     def test_diff_detects_created(self):
-        old = self.watcher._scan_disk()
+        self.watcher._build_initial_snapshot()
         _populate(self.tmp.name, {"new.py": "new"})
-        new = self.watcher._scan_disk()
-        changes = self.watcher._diff_snapshots(old, new)
+        changes = self.watcher._incremental_scan()
         self.assertTrue(any("new.py" in p and t == "created" for p, t in changes.items()))
 
     def test_diff_detects_deleted(self):
-        old = self.watcher._scan_disk()
+        self.watcher._build_initial_snapshot()
         _delete_disk(os.path.join(self.tmp.name, "a.py"))
-        new = self.watcher._scan_disk()
-        changes = self.watcher._diff_snapshots(old, new)
+        changes = self.watcher._incremental_scan()
         self.assertTrue(any("a.py" in p and t == "deleted" for p, t in changes.items()))
 
     def test_diff_detects_modified(self):
-        old = self.watcher._scan_disk()
+        self.watcher._build_initial_snapshot()
         time.sleep(0.05)
         _write_disk(os.path.join(self.tmp.name, "a.py"), "x = 999")
-        new = self.watcher._scan_disk()
-        changes = self.watcher._diff_snapshots(old, new)
+        changes = self.watcher._incremental_scan()
         self.assertTrue(any("a.py" in p and t == "modified" for p, t in changes.items()))
 
     def test_diff_empty_when_nothing_changed(self):
-        snap = self.watcher._scan_disk()
-        self.assertEqual(len(self.watcher._diff_snapshots(snap, snap)), 0)
+        self.watcher._build_initial_snapshot()
+        self.assertIsNone(self.watcher._incremental_scan())
 
 
 # ===========================================================================
@@ -738,20 +737,20 @@ class TestBurstMode(unittest.TestCase):
         _fresh_registry()
         self.tmp.cleanup()
 
-    def test_burst_triggers_refresh_mount(self):
+    def test_burst_applies_changes_without_refresh_mount(self):
+        # v3: ein Burst invalidiert Datei fuer Datei - nie refresh_mount (das wuerde den ganzen
+        # Ordner noch einmal per os.walk scannen, den der Watcher gerade gescannt hat)
         _populate(self.tmp.name, {"base.py": "x = 1"})
         self.vfs.mount(self.tmp.name, vfs_path="/proj")
         watcher = MountWatcher(local_path=self.tmp.name)
 
         refresh_called = []
-        original = self.vfs.refresh_mount
-        def mock_refresh(p):
-            refresh_called.append(p)
-            return original(p)
-        self.vfs.refresh_mount = mock_refresh
+        self.vfs.refresh_mount = lambda p: refresh_called.append(p)
 
-        watcher._dispatch_burst(self.vfs)
-        self.assertIn("/proj", refresh_called)
+        _populate(self.tmp.name, {"neu.py": "y = 2"})
+        watcher._dispatch_burst_invalidate(self.vfs, {os.path.join(self.tmp.name, "neu.py"): "created"})
+        self.assertEqual(refresh_called, [])
+        self.assertIn("/proj/neu.py", self.vfs.files)
 
     def test_large_changeset_calls_burst_not_individual(self):
         _populate(self.tmp.name, {"base.py": "x = 1"})
@@ -762,11 +761,11 @@ class TestBurstMode(unittest.TestCase):
 
         burst_calls = []
         individual_calls = []
-        watcher._dispatch_burst = lambda vfs: burst_calls.append(vfs)
-        watcher._dispatch_individual = lambda vfs, ch: individual_calls.append(vfs)
-
         fake = {f"/fake/file_{i}.py": "created" for i in range(BURST_THRESHOLD + 10)}
-        watcher._dispatch_changes(fake)
+        from unittest.mock import patch as _patch      # MountWatcher hat __slots__: an der Klasse ersetzen
+        with _patch.object(MountWatcher, "_dispatch_burst_invalidate", lambda self, vfs, ch: burst_calls.append(vfs)), \
+                _patch.object(MountWatcher, "_dispatch_individual", lambda self, vfs, ch: individual_calls.append(vfs)):
+            watcher._dispatch_changes(fake)
 
         self.assertTrue(len(burst_calls) > 0)
         self.assertEqual(len(individual_calls), 0)
@@ -780,11 +779,11 @@ class TestBurstMode(unittest.TestCase):
 
         burst_calls = []
         individual_calls = []
-        watcher._dispatch_burst = lambda vfs: burst_calls.append(vfs)
-        watcher._dispatch_individual = lambda vfs, ch: individual_calls.append((vfs, ch))
-
         small = {os.path.join(self.tmp.name, "base.py"): "modified"}
-        watcher._dispatch_changes(small)
+        from unittest.mock import patch as _patch
+        with _patch.object(MountWatcher, "_dispatch_burst_invalidate", lambda self, vfs, ch: burst_calls.append(vfs)), \
+                _patch.object(MountWatcher, "_dispatch_individual", lambda self, vfs, ch: individual_calls.append((vfs, ch))):
+            watcher._dispatch_changes(small)
 
         self.assertEqual(len(burst_calls), 0)
         self.assertTrue(len(individual_calls) > 0)

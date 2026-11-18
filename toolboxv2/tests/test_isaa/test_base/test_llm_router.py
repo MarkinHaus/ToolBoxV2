@@ -313,11 +313,12 @@ class TestModelInfo(unittest.TestCase):
         self.assertEqual(ctx_limit("groq/llama-3.3-70b-versatile"), 128_000)
 
     def test_ctx_limit_wildcard(self):
-        self.assertEqual(ctx_limit("ollama/mistral"), 128_000)
-        self.assertEqual(ctx_limit("openrouter/some-model"), 128_000)
+        # Tabelle model_info.py: 'ollama/' und 'openrouter/' 262_144 (bewusst angehoben, alte Erwartung 128k)
+        self.assertEqual(ctx_limit("ollama/mistral"), 262_144)
+        self.assertEqual(ctx_limit("openrouter/some-model"), 262_144)
 
     def test_ctx_limit_unknown_default(self):
-        self.assertEqual(ctx_limit("totally/unknown-model"), 128_000)
+        self.assertEqual(ctx_limit("totally/unknown-model"), 262_144)   # _DEFAULT in model_info.py
 
     def test_supports_tools(self):
         self.assertTrue(supports_tools("anthropic/claude-sonnet-4-6"))
