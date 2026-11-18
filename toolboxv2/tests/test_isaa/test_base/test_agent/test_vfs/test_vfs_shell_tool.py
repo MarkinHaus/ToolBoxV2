@@ -425,7 +425,7 @@ class TestShellCloseAndSync(unittest.TestCase):
         self.assertFalse(r["success"])
 
     def test_close_system_file_fails(self):
-        r = self.sh("","close /system_context.md")
+        r = self.sh("","close /vfs_guide.md")
         self.assertFalse(r["success"])
 
     def test_sync_command_recognised(self):
@@ -986,7 +986,7 @@ class TestVfsView(unittest.TestCase):
     def test_close_others_preserves_system_files(self):
         r = self.view("/models.py", close_others=True)
         self.assertTrue(r["success"])
-        self.assertEqual(self.vfs.files["/system_context.md"].state, "open")
+        self.assertEqual(self.vfs.files["/vfs_guide.md"].state, "open")
 
     def test_missing_file_fails(self):
         r = self.view("/ghost.py")

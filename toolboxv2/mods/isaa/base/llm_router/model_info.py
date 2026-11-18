@@ -14,7 +14,7 @@ MODEL_INFO: dict[str, dict] = {
     # -------------------------------------------------
     "gemini/gemini-3.1-pro": {"ctx": 10_000_000, "tools": True},
     "gemini/gemini-3-pro": {"ctx": 10_000_000, "tools": True},
-    "gemini/gemini-2.5-pro": {"ctx": 2_000_000, "tools": True},
+    "gemini/gemini-2.5-pro": {"ctx": 1_000_000, "tools": True},
     "gemini/gemini-2.5-flash": {"ctx": 1_000_000, "tools": True},
     "gemini/gemini-2.5-flash-lite": {"ctx": 1_000_000, "tools": True},
 

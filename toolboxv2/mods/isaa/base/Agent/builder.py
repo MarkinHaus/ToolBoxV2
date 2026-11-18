@@ -754,7 +754,7 @@ class FlowAgentBuilder:
         """
         Add a persona profile.
 
-        Persona information is written to VFS system_context.md and
+        Persona information is written to VFS /vfs_guide.md (set_persona_section) and
         creates learned patterns in RuleSet.
 
         Args:
@@ -1426,19 +1426,14 @@ class FlowAgentBuilder:
                     confidence=0.95,
                 )
 
-        # Update VFS system_context.md with persona info
+        # Persona in die Systemdatei /vfs_guide.md (frueher system_context.md, die es nicht mehr gibt;
+        # der alte Schluessel ohne fuehrenden "/" traf ohnehin nie - die Persona kam nirgends an)
         if self.config.active_persona:
             persona_data = self.config.persona_profiles.get(
                 self.config.active_persona, {}
             )
-            persona_context = self._build_persona_context(persona_data)
-
-            # Append to system_context.md
-            if "system_context.md" in session.vfs.files:
-                current = session.vfs.files["system_context.md"].content
-                session.vfs.files["system_context.md"].content = (
-                    current + "\n" + persona_context
-                )
+            agent._persona_section = self._build_persona_context(persona_data)   # weitere Sessions: init_session_tools
+            session.vfs.set_persona_section(agent._persona_section)
 
         iprint("Persona patterns applied to RuleSet")
 

@@ -1127,8 +1127,11 @@ Nutzen für: ToolBox-Verwaltung, System-Config, Git-Operationen auf dem Host.
 * ToolBox-CLI: `tb status`, `tb workers list`.
 """
 
+        # Persona vorne: der System-Prompt kuerzt den Guide am Ende (vfs_guide_max_chars)
+        persona = getattr(self, "_persona_section", "")
+        head = f"{persona}\n\n" if persona else ""
         if not (has_sandbox or has_shell):
-            return guide
+            return head + guide
 
         # ── Combined cross-system mapping (whichever systems are present) ────
         mapping = "\n\n---\n\n## 🗺️ Pfad-Mapping & System-Wahl\n\n"
@@ -1149,7 +1152,22 @@ Nutzen für: ToolBox-Verwaltung, System-Config, Git-Operationen auf dem Host.
         if has_sandbox:
             mapping += "\nINFO\n!! vfs /global == sandbox /work/global !!\nINFO_END\n"
 
-        return guide + guide_tail_sandbox + guide_tail_shell + mapping
+        return head + guide + guide_tail_sandbox + guide_tail_shell + mapping
+
+    def set_persona_section(self, text: str) -> dict:
+        """Persona des Agenten in /vfs_guide.md (die Systemdatei, die immer offen ist). Bleibt bei
+        refresh_guide() erhalten, weil _build_vfs_guide() sie jedes Mal anhaengt."""
+        self._persona_section = (text or "").strip()
+        path = "/vfs_guide.md"
+        if path not in self.files:
+            return {"success": False, "error": "Guide file not found"}
+        f = self.files[path]
+        f.content = self._build_vfs_guide(has_sandbox=getattr(self, "_guide_sandbox", False),
+                                          has_shell=getattr(self, "_guide_shell", False))
+        f.updated_at = datetime.now().isoformat()
+        f.show_full = True
+        self._dirty = True
+        return {"success": True}
 
 
     def _init_system_files(self):
@@ -1173,6 +1191,7 @@ Nutzen für: ToolBox-Verwaltung, System-Config, Git-Operationen auf dem Host.
         path = "/vfs_guide.md"
         if path not in self.files:
             return {"success": False, "error": "Guide file not found"}
+        self._guide_sandbox, self._guide_shell = has_sandbox, has_shell   # fuer set_persona_section
         self.files[path].content = self._build_vfs_guide(
             has_sandbox=has_sandbox, has_shell=has_shell
         )
@@ -1329,7 +1348,7 @@ Nutzen für: ToolBox-Verwaltung, System-Config, Git-Operationen auf dem Host.
         f = self.files[vfs_path]
 
         # Allow removal of readonly system files (but protect core system files)
-        protected_files = ["/system_context.md", "/active_rules.md"]
+        protected_files = ["/vfs_guide.md", "/active_rules.md"]
         if vfs_path in protected_files:
             return {
                 "success": False,
@@ -3012,7 +3031,7 @@ Nutzen für: ToolBox-Verwaltung, System-Config, Git-Operationen auf dem Host.
             ordered.append(("/active_rules.md", self.files["/active_rules.md"]))
 
         for path, f in self.files.items():
-            if path not in ("/system_context.md", "/active_rules.md"):
+            if path != "/active_rules.md":                # steht schon oben
                 ordered.append((path, f))
 
         for path, f in ordered:

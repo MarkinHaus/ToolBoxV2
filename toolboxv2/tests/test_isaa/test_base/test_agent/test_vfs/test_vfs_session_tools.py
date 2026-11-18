@@ -416,8 +416,8 @@ class TestVFSEdit(unittest.TestCase):
         self.assertIn("error", result)
 
     def test_edit_readonly_file_fails(self):
-        """edit() auf system_context.md (readonly) schlägt fehl."""
-        result = self.vfs.edit("/system_context.md", 1, 1, "hacked")
+        """edit() auf vfs_guide.md (readonly) schlägt fehl."""
+        result = self.vfs.edit("/vfs_guide.md", 1, 1, "hacked")
         self.assertFalse(result["success"])
 
 
@@ -772,14 +772,14 @@ class TestSystemFiles(unittest.TestCase):
         self.vfs = make_vfs()
 
     def test_system_context_always_open(self):
-        """system_context.md ist immer im State 'open'."""
-        f = self.vfs.files["/system_context.md"]
+        """vfs_guide.md (Systemdatei) ist immer im State 'open'."""
+        f = self.vfs.files["/vfs_guide.md"]
         self.assertEqual(f.state, "open",
-            "system_context.md muss state='open' haben - immer im Kontext")
+            "vfs_guide.md muss state='open' haben - immer im Kontext")
 
     def test_system_context_readonly(self):
-        """system_context.md ist readonly - kann nicht überschrieben werden."""
-        result = self.vfs.write("/system_context.md", "Gehackt")
+        """vfs_guide.md ist readonly - kann nicht überschrieben werden."""
+        result = self.vfs.write("/vfs_guide.md", "Gehackt")
         self.assertFalse(result["success"])
 
     def test_active_rules_appears_after_set(self):
@@ -789,17 +789,21 @@ class TestSystemFiles(unittest.TestCase):
         ctx = self.vfs.build_context_string()
         self.assertIn("Regel 1", ctx)
 
-    def test_system_context_contains_agent_info(self):
-        """system_context.md enthält Agenten-Name und Session-ID."""
-        ctx = self.vfs.build_context_string()
-        self.assertIn("TestAgent", ctx)
-        self.assertIn("test-session", ctx)
+    def test_persona_in_guide_survives_refresh(self):
+        """Persona steht vorne in vfs_guide.md (frueher system_context.md, das es nicht mehr gibt -
+        die Persona kam dadurch nirgends an) und bleibt bei refresh_guide() erhalten."""
+        self.assertTrue(self.vfs.set_persona_section("# Active Persona\nName: Kim")["success"])
+        self.assertTrue(self.vfs.files["/vfs_guide.md"].content.startswith("# Active Persona"))
+        self.vfs.refresh_guide(has_shell=True)
+        content = self.vfs.files["/vfs_guide.md"].content
+        self.assertTrue(content.startswith("# Active Persona\nName: Kim"))
+        self.assertIn("Name: Kim", self.vfs.build_context_string())
 
     def test_cannot_delete_protected_system_files(self):
         """Geschützte System-Dateien können nicht gelöscht werden."""
-        result = self.vfs.delete("/system_context.md")
+        result = self.vfs.delete("/vfs_guide.md")
         self.assertFalse(result["success"],
-            "system_context.md ist geschützt und darf nicht gelöscht werden")
+            "vfs_guide.md ist geschützt und darf nicht gelöscht werden")
 
     def test_add_system_file(self):
         """add_system_file fügt lokale Datei als read-only System-Datei hinzu."""
@@ -952,18 +956,20 @@ class TestContextBuilding(unittest.TestCase):
         self.vfs = make_vfs(max_window=50)
 
     def test_empty_vfs_contains_system_context(self):
-        """Auch leeres VFS enthält system_context.md."""
+        """Auch leeres VFS enthält die Systemdatei vfs_guide.md (mit Inhalt)."""
         ctx = self.vfs.build_context_string()
-        self.assertIn("System Context", ctx)
+        self.assertIn("vfs_guide.md", ctx)
+        self.assertIn(self.vfs.files["/vfs_guide.md"].content.splitlines()[0], ctx)
         self.assertIn("VFS (Virtual File System)", ctx)
 
     def test_closed_file_shown_in_closed_count(self):
         """Geschlossene Dateien erscheinen als Zähler, nicht als Inhalt."""
-        self.vfs.create("/closed1.py", "content")
-        self.vfs.create("/closed2.py", "content")
+        # eindeutiger Inhalt: der (offene) vfs_guide.md enthaelt selbst das Wort "content"
+        self.vfs.create("/closed1.py", "GESCHLOSSENER_INHALT")
+        self.vfs.create("/closed2.py", "GESCHLOSSENER_INHALT")
         ctx = self.vfs.build_context_string()
         # Inhalt soll nicht da sein
-        self.assertNotIn("content", ctx)
+        self.assertNotIn("GESCHLOSSENER_INHALT", ctx)
         # Zähler soll da sein
         self.assertIn("closed", ctx.lower())
 
@@ -1115,8 +1121,8 @@ class TestVFSCheckpoint(unittest.TestCase):
         """Readonly-System-Dateien werden nicht in Checkpoint aufgenommen."""
         self.vfs.create("/meine.py", "Mein Code")
         cp = self.vfs.to_checkpoint()
-        self.assertNotIn("/system_context.md", cp["files"],
-            "system_context.md wird dynamisch regeneriert, nicht serialisiert")
+        self.assertNotIn("/vfs_guide.md", cp["files"],
+            "vfs_guide.md wird dynamisch regeneriert, nicht serialisiert")
 
     def test_checkpoint_includes_user_files(self):
         """User-erstellte Dateien erscheinen im Checkpoint."""
@@ -1213,3 +1219,39 @@ if __name__ == "__main__":
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
     sys.exit(0 if result.wasSuccessful() else 1)
+
+
+class TestPersonaEverySession(unittest.TestCase):
+    """Die Persona des Agenten steht in JEDER Session (init_session_tools), nicht nur in 'default'."""
+
+    def test_init_session_tools_sets_persona(self):
+        from unittest.mock import MagicMock
+        from toolboxv2.mods.isaa.base.Agent.flow_agent import FlowAgent
+        agent = MagicMock()
+        agent._persona_section = "# Active Persona\nName: Kim"
+        session = MagicMock()
+        session.vfs = make_vfs()
+        session.tools_initialized = True            # Tools stehen schon: Persona trotzdem setzen
+        FlowAgent.init_session_tools(agent, session)
+        self.assertTrue(session.vfs.files["/vfs_guide.md"].content.startswith("# Active Persona"))
+
+    def test_builder_writes_persona_into_guide(self):
+        """Builder: aktive Persona landet in vfs_guide.md der Session und am Agenten (vorher wurde
+        sie in eine nicht mehr vorhandene system_context.md geschrieben und kam nirgends an)."""
+        import asyncio
+        from unittest.mock import MagicMock, AsyncMock
+        from toolboxv2.mods.isaa.base.Agent.builder import FlowAgentBuilder
+        builder = FlowAgentBuilder()
+        builder.add_persona_profile("kim", name="Kim", style="knapp", tone="direkt",
+                                    custom_instructions="Antworte kurz.")
+        builder.set_active_persona("kim")
+        session = MagicMock()
+        session.vfs = make_vfs()
+        agent = MagicMock()
+        agent.session_manager.get_or_create = AsyncMock(return_value=session)
+        asyncio.run(builder._apply_persona_to_ruleset(agent))
+        guide = session.vfs.files["/vfs_guide.md"].content
+        self.assertTrue(guide.startswith("\n# Active Persona") or guide.startswith("# Active Persona"), guide[:80])
+        self.assertIn("Name: Kim", guide)
+        self.assertIn("Antworte kurz.", guide)
+        self.assertIn("Name: Kim", agent._persona_section)
