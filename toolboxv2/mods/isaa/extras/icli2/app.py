@@ -23,6 +23,8 @@ from .picker import BACK, Picker, fuzzy
 from .errors import explain, render
 from .richmd import FrozenMarkdown
 from .subtile import SubView
+from .engine import logger as engine_logger
+from .termguard import log_path
 from .widgets import Fade, FoldLine
 from .theme import DIM, ISAA_THEME, SYM, G, ZEN, banner
 
@@ -42,6 +44,7 @@ END_MARK = {"done": "", "failed": f"{SYM['fail']} fehlgeschlagen", "stopped": "�
 # Befehl -> (Argument-Hinweis, Beschreibung). Reihenfolge = Reihenfolge in der Palette.
 # Spiegel von autocomplete.SUBCOMMANDS (AST-pruefbar; Quelle: autocomplete.py)
 from toolboxv2.mods.isaa.extras.icli2.autocomplete import SUBCOMMANDS as _AC_SUBS
+from toolboxv2.mods.isaa.extras.icli2.autocomplete import dynamic_kind, is_exact, suggest
 
 SUBCOMMANDS = _AC_SUBS
 
@@ -51,7 +54,8 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "/session": ("[name|+]", "Session wechseln oder neu anlegen"),
     "/mount": ("[ordner]", "Ordner einhängen, ohne Argument: Mounts verwalten"),
     "/task": ("", "Läufe ansehen, Fokus wechseln"),
-    "/job": ("[name: auftrag]", "Jobs verwalten, mit Argument: Job anlegen"),
+    "/runs": ("", "Läufe aller Agenten prüfen, hängende beenden oder zurücksetzen"),
+    "/job": ("[fire|pause|remove <job> | name: auftrag]", "Jobs verwalten, ausführen, anlegen"),
     "/dream": ("", "Nächtlichen Dream-Job für den Agenten anlegen"),
     "/network": ("[datei]", "Agent-Network laden, ohne Argument: aktuelles speichern"),
     "/feature": ("[name]", "Features des Agenten an/aus"),
@@ -80,6 +84,13 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "/q": ("", "Beenden"),
 }
 ALIASES = {"/quit": "/q", "/exit": "/q"}
+STALL_SECONDS = 5.0       # ab hier meldet der Wachhund (nur im Debug-Modus), wo die Engine haengt
+QUEUE_MAX = 5             # so viele /-Befehle duerfen gleichzeitig auf die Engine warten
+QUEUE_SHOW = 0.25         # erst ab dieser Wartezeit erscheint ein Befehl in der Warteschlange
+LOCAL_COMMANDS = {"/", "/q", "/clear", "/side", "/task", "/open", "/fold"}   # ohne Engine
+RUN_ACTIONS = [("reset", "zurücksetzen", "nicht mehr als laufend führen, später fortsetzbar"),
+               ("stop", "beenden", "Lauf abbrechen und verwerfen")]
+CONFIRM_REMOVE = [("no", "nein, behalten", ""), ("yes", "ja, löschen", "kann nicht rückgängig gemacht werden")]
 JOB_ACTIONS = [("fire", "jetzt ausführen", ""), ("pause", "pausieren / fortsetzen", ""),
                ("remove", "löschen", "")]
 MODEL_TARGETS = [("both", "beide", "schnell und komplex"), ("fast", "schnell", "Standard-Antworten"),
@@ -208,6 +219,7 @@ class RunView:
             line = FoldLine(f"◷ {info['title']}", body, classes="problem -limit", body_style=ZEN["white"])
         else:
             info = explain(d.get("error") or "", model=model, traceback=d.get("traceback") or "")
+            info["hint"] = info["hint"].replace("{log}", log_path() or "der Log-Datei der ToolBox")
             short = f" – {info['message'][:90]}" if info["message"] else ""
             line = FoldLine(f"{SYM['fail']} {info['title']}{short}", render(info), classes="problem -fail",
                             body_style=ZEN["white"])
@@ -294,6 +306,8 @@ class ICli2(App):
     #foot { height: 1; padding: 0 1; color: $text-muted; }
     #complete { height: auto; display: none; padding: 0 2; color: $text-muted; }
     #complete.-open { display: block; }
+    #queue { height: auto; display: none; padding: 0 2; color: $text-muted; }
+    #queue.-open { display: block; }
     .run { height: auto; margin: 1 0 0 0; }
     .run.-focus { border-left: thick $primary; }
     .sub { height: auto; margin: 0 0 0 2; padding: 0 1; border: round $secondary; }
@@ -350,12 +364,14 @@ class ICli2(App):
         self.side_rows: dict[str, list[dict]] = {"jobs": [], "mounts": [], "context": []}
         self._side_jump = False                      # nach dem naechsten Kontext-Update ans Ende scrollen
         self._via_palette = False                    # Picker kam aus der Palette: ← fuehrt dorthin zurueck
+        self._arg_rows: dict[str, tuple[float, list[dict]]] = {}   # Werte fuer die Vervollstaendigung
+        self._arg_asked: dict[str, float] = {}
         self.tool_cards: list[ToolCard] = []
         self.think_boxes: list[FoldLine] = []
         self._dirty: set[RunView] = set()                # Laeufe mit noch nicht geschriebenem Text
         self._last_scroll, self._last_scroll_y = 0.0, 0.0
         self._trim_note = False
-        self._head_text = self._foot_text = self._side_cache = ""
+        self._head_text = self._foot_text = self._side_cache = self._queue_text = ""
         self.show_thinking = False
         self.focus_run = ""
         # Vorschlaege zur aktuellen Eingabe: (einzusetzender Text, Anzeige, Hinweis)
@@ -363,6 +379,11 @@ class ICli2(App):
         self._complete_pos = 0
         self.tokens: tuple[int, int] | None = None
         self._tick = 0
+        self._stall = False                          # Wachhund hat die aktuelle Blockade schon gesehen
+        self._stall_seen: set[str] = set()           # gemeldete Stellen: jede nur einmal
+        self.debug_mode = False                      # aus der App (READY.debug): Wachhund-Hinweise zeigen
+        self.queue: dict[str, tuple[str, float]] = {}   # qid -> (Anzeige, Start)
+        self._qseq = 0
         self._tag = 0
         self._esc_run = ""
 
@@ -380,6 +401,7 @@ class ICli2(App):
                 yield Static(id="side-text")
         with Vertical(id="bottom"):
             yield Fade(id="gap")                         # Abstand zwischen Chat und Eingabe
+            yield Static(id="queue")                     # Befehle, die auf die Engine warten
             yield Static(id="complete")
             with Horizontal(id="row"):
                 yield Static(SYM["progress"], id="mark")
@@ -399,6 +421,7 @@ class ICli2(App):
         self.w_head, self.w_foot = base.query_one("#head", Static), base.query_one("#foot", Static)
         self.w_side, self.w_side_text = base.query_one("#side"), base.query_one("#side-text", Static)
         self.w_row, self.w_complete = base.query_one("#row"), base.query_one("#complete", Static)
+        self.w_queue = base.query_one("#queue", Static)
         self.prompt.focus()
         self.set_interval(FRAME, self._pump)
         self.set_interval(0.1, self._chrome)
@@ -506,6 +529,7 @@ class ICli2(App):
             if self.ready and changed:
                 await self._note(f"{SYM['agent']} {d['agent']} · {d['model']} · {d['session']}")
             self.ready = True
+            self.debug_mode = bool(d.get("debug", self.debug_mode))
             self.agent, self.session, self.model = d["agent"], d["session"], d["model"]
             self.complex_model, self.mounts = d["complex_model"], d["mounts"]
             self.user = d.get("user", "")
@@ -515,7 +539,11 @@ class ICli2(App):
             for role, text in d.get("recap", []):       # letzte Nachrichten der Session
                 await self._note(f"{SYM['progress'] if role == 'user' else ' '} {text}")
         elif ev.kind == P.ROWS:
-            if d.get("to") == "complete":
+            if d.get("to") == "complete" and d["what"] != "vfs":
+                self._arg_rows[d["what"]] = (time.monotonic(), d["rows"])
+                if dynamic_kind(self.prompt.text) == d["what"]:
+                    self._complete_update()
+            elif d.get("to") == "complete":
                 self._complete_paths(d.get("arg", ""), d["rows"])
             elif d.get("to") == "side":
                 self.side_rows[d["what"]] = d["rows"]
@@ -529,6 +557,8 @@ class ICli2(App):
         elif ev.kind == P.DRAFT:
             self.prompt.set_text((self.prompt.text + " " + d["text"]).strip())
             self.prompt.focus()
+        elif ev.kind == P.ACK:
+            self.queue.pop(d.get("qid", ""), None)
         elif ev.kind == P.NOTICE:
             if view:                                     # gehoert zu einem Lauf
                 await view.note(d["text"], d.get("level", "info"))
@@ -575,12 +605,60 @@ class ICli2(App):
         for name in ("run", "done", "ask", "fail"):
             row.set_class(name == state, f"-{name}")
 
+    def _watchdog(self) -> None:
+        """Steht die Engine laenger als STALL_SECONDS, einmal melden, WO sie steht (Stack ins Log)."""
+        lag = self.engine.lag() if self.ready else 0.0
+        if lag < 1.0:
+            self._stall = False
+        elif lag > STALL_SECONDS and not self._stall:
+            self._stall = True
+            where = self.engine.culprit()
+            if where in self._stall_seen:                # dieselbe Stelle nur einmal
+                return
+            self._stall_seen.add(where)
+            engine_logger().warning(
+                "Engine blockiert seit %.0fs in %s:\n%s", lag, where, "".join(self.engine.stack()))
+            if self.debug_mode:
+                self.run_worker(self._note(
+                    f"Engine blockiert seit {lag:.0f}s in {where} (voller Stack im Log)", "warn"))
+
+    # ── Warteschlange fuer /-Befehle ─────────────────────────────────────────
+    def _enqueue(self, label: str) -> str:
+        self._qseq += 1
+        qid = f"q{self._qseq}"
+        self.queue[qid] = (label, time.monotonic())
+        return qid
+
+    def _send_q(self, label: str, kind: str, **data) -> None:
+        """Befehl an die Engine; bis zur Antwort steht er (mit Spinner) in der Warteschlange."""
+        self.engine.send(kind, qid=self._enqueue(label), **data)
+
+    def _queue_draw(self) -> None:
+        from rich.markup import escape
+        now = time.monotonic()
+        shown = [(label, now - t0) for label, t0 in self.queue.values() if now - t0 >= QUEUE_SHOW]
+        box = self.w_queue
+        box.set_class(bool(shown), "-open")
+        if shown:
+            spin = SPIN[self._tick % len(SPIN)]
+            text = "\n".join(f"[{G.L3_MID}]{spin}[/] {escape(label)}  [{DIM}]wartet {secs:.0f}s[/]"
+                             for label, secs in shown)
+            if text != self._queue_text:                 # Layout nur, wenn sich die Zeilenzahl aendert
+                same = text.count("\n") == self._queue_text.count("\n") and self._queue_text
+                self._queue_text = text
+                box.update(text, layout=not same)
+        else:
+            self._queue_text = ""
+
     async def _note(self, text: str, level: str = "info") -> None:
         await self.chat.mount(Static(text, classes=f"note note-{level}", markup=False))
 
     def _chrome(self) -> None:
         """Kopf-, Fusszeile, Seitenleiste. Rein lokal, auch bei blockierter Engine fluessig."""
         self._tick += 1
+        self._watchdog()
+        if self.queue or self.w_queue.has_class("-open"):
+            self._queue_draw()
         mounts = f" · {self.mounts} mount{'s' if self.mounts != 1 else ''}" if self.mounts else ""
         self._set_line("_head_text", self.w_head,
             f"[{G.L4_BRIGHT}]{SYM['agent']} {self.agent}[/] "
@@ -591,7 +669,7 @@ class ICli2(App):
         active, focus = self.active, self.runs.get(self.focus_run)
         if not self.ready:
             left = f"{spin} Engine startet …"
-        elif self.engine.lag() > 1.5:
+        elif self.engine.lag() > 1.5 and self.debug_mode:
             left = f"{spin} Engine beschäftigt ({self.engine.lag():.0f}s) – Eingabe bleibt frei"
         elif active:
             view = focus if focus and focus.status == "running" else next(iter(active.values()))
@@ -687,8 +765,13 @@ class ICli2(App):
     async def _command(self, text: str) -> None:
         name, _, arg = text.partition(" ")
         name, arg = ALIASES.get(name.lower(), name.lower()), arg.strip()
-        do = lambda action, **kw: self.engine.send(P.DO, action=action, **kw)   # noqa: E731
-        ask = lambda what: self.engine.send(P.LIST, what=what)                  # noqa: E731
+        if name not in LOCAL_COMMANDS and len(self.queue) >= QUEUE_MAX:
+            await self._note(f"{text}: {QUEUE_MAX} Befehle warten schon auf die Engine – "
+                             f"bitte kurz warten", "warn")
+            return
+        label = text if len(text) <= 60 else text[:59] + "…"
+        do = lambda action, **kw: self._send_q(label, P.DO, action=action, **kw)   # noqa: E731
+        ask = lambda what: self._send_q(label, P.LIST, what=what)                  # noqa: E731
         if name == "/":
             self.action_palette()
         elif name == "/q":
@@ -702,6 +785,8 @@ class ICli2(App):
             self.action_side()
         elif name == "/task":
             self._pick_run()
+        elif name == "/runs":
+            ask("runs")
         elif name == "/agent":
             do("agent", name=arg) if arg else ask("agents")
         elif name == "/model":
@@ -719,7 +804,11 @@ class ICli2(App):
         elif name == "/mount":
             do("mount", path=arg) if arg else ask("mounts")
         elif name == "/job":
-            do("job_add", spec=arg) if arg else ask("jobs")
+            op, _, job = arg.partition(" ")
+            if op in ("fire", "pause", "remove") and job.strip():
+                do("job", job=job.strip(), op=op)
+            else:
+                do("job_add", spec=arg) if arg else ask("jobs")
         elif name == "/dream":
             do("dream")
         elif name == "/network":
@@ -783,7 +872,8 @@ class ICli2(App):
         if not rows:
             self.run_worker(self._note(title, "warn"))
             return
-        send = self.engine.send
+        def send(kind: str, **data) -> None:             # Auswahl geht wie ein Befehl in die Warteschlange
+            self._send_q(f"{title} · {data.get('action', '')}", kind, **data)
 
         via_palette, self._via_palette = self._via_palette, False
 
@@ -823,10 +913,18 @@ class ICli2(App):
                 send(P.DO, action="share", share=value)
             elif what == "voice":
                 send(P.DO, action="voice", op=value)
-            elif what == "jobs":
+            elif what == "runs":
                 self.push_screen(
-                    Picker(f"Job {value}", JOB_ACTIONS),
-                    lambda act: act not in (None, BACK) and send(P.DO, action="job", job=value, op=act))
+                    Picker(f"Lauf {value.partition('|')[2]}", RUN_ACTIONS),
+                    lambda act: act not in (None, BACK) and send(P.DO, action="run", run=value, op=act))
+            elif what == "jobs":
+                def job_act(act: str | None) -> None:
+                    if act == "remove":                  # Loeschen nur nach Rueckfrage (Standard: nein)
+                        self.push_screen(Picker(f"Job {value} wirklich löschen?", CONFIRM_REMOVE),
+                                         lambda ok: ok == "yes" and send(P.DO, action="job", job=value, op="remove"))
+                    elif act not in (None, BACK):
+                        send(P.DO, action="job", job=value, op=act)
+                self.push_screen(Picker(f"Job {value}", JOB_ACTIONS), job_act)
             elif what == "models":
                 self.push_screen(
                     Picker(f"{value} für", MODEL_TARGETS),
@@ -869,12 +967,30 @@ class ICli2(App):
             if " " not in arg:                           # Vorschlaege kommen aus der Engine
                 self.engine.send(P.LIST, what="vfs", arg=arg, to="complete")
                 return
+        if text.startswith("/") and " " in text and "\n" not in text:
+            self._complete_args(text)
+            return
         if not word.startswith("/") or " " in word or "\n" in text or word in COMMANDS:
             return self.complete_hide()
         starts = [c for c in COMMANDS if c.startswith(word)]
         names = (starts + [c for c in COMMANDS if c not in starts and fuzzy(word[1:], c)])[:6]
         self.completions = [(n + (" " if COMMANDS[n][0] else ""), n, " ".join(COMMANDS[n]).strip())
                             for n in names]
+        self._complete_pos = 0
+        self._complete_draw()
+
+    def _complete_args(self, text: str) -> None:
+        """Argumente eines Befehls: feste Unterbefehle sofort, Werte (Agenten, Sessions, Jobs …)
+        aus einem kurzen Zwischenspeicher; ist er alt, holt die Engine ihn neu (Antwort zeichnet nach)."""
+        kind, rows = dynamic_kind(text), None
+        if kind:
+            now = time.monotonic()
+            cached = self._arg_rows.get(kind)
+            rows = cached[1] if cached else None
+            if (cached is None or now - cached[0] > 5) and now - self._arg_asked.get(kind, 0) > 2:
+                self._arg_asked[kind] = now
+                self.engine.send(P.LIST, what=kind, to="complete")
+        self.completions = suggest(text, rows)
         self._complete_pos = 0
         self._complete_draw()
 
@@ -918,6 +1034,9 @@ class ICli2(App):
         insert = self.completions[self._complete_pos][0].strip()
         if text.startswith("/vfs"):                      # Ordner (endet auf /) wird wie getippt gezeigt
             return not text.endswith("/") and text != "/vfs" and insert.startswith(text) and insert != text
+        if " " in text:                                  # Argument: fertiger Wert -> ausfuehren
+            cached = self._arg_rows.get(dynamic_kind(text) or "")
+            return not is_exact(text, cached[1] if cached else None)
         return text not in COMMANDS and text not in ALIASES
 
     def complete_hide(self) -> None:

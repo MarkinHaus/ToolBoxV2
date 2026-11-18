@@ -39,6 +39,7 @@ from .vfsview import VfsViewMixin    # /vfs: Dateien ansehen, Pfad-Vervollstaend
 from .cloudm import CloudMMixin      # Schritt 8: Login, ToolBox-Funktionen, LiveSync-Shares
 from .voice import VoiceMixin        # Schritt 9: Sprache (Audio-Importe erst bei Gebrauch)
 from .self_tool import SelfToolMixin  # T7: self-Agent steuert icli2-Settings + Agent-Config
+from .watch import WatchMixin
 from .self_orchestrator import SelfOrchestratorMixin  # T9: self steuert andere Agenten + liest OBS
 
 AGENT_STATE = {"live": "geladen", "registered": "registriert", "disk": "gespeichert"}
@@ -57,7 +58,7 @@ def _row(value: str, label: str = "", hint: str = "") -> dict[str, str]:
 
 _AGENT_MODEL_KEYS = ("fast_llm_model", "complex_llm_model")
 
-class IsaaBackend(SelfToolMixin, SelfOrchestratorMixin, FeatureMixin, PluginInstallMixin, ConnectMixin, BridgeMixin, CloudMMixin, VoiceMixin, VfsViewMixin):
+class IsaaBackend(WatchMixin, SelfToolMixin, SelfOrchestratorMixin, FeatureMixin, PluginInstallMixin, ConnectMixin, BridgeMixin, CloudMMixin, VoiceMixin, VfsViewMixin):
     def __init__(self, app: Any, agent: str = "self", session: str = "default"):
         self.app = app
         self.agent = agent
@@ -124,7 +125,9 @@ class IsaaBackend(SelfToolMixin, SelfOrchestratorMixin, FeatureMixin, PluginInst
                 name="self", add_base_tools=True, with_dangerous_shell=True)
             await self.isaa.register_agent(builder)
         await asyncio.to_thread(self._load_settings)
+        self.watch_boot()                                # Meldungen von Hintergrund-Befehlen der Shell
         ready = await self._ready()
+        ready["debug"] = bool(getattr(self.app, "debug", False) or os.getenv("ICLI2_DEBUG"))
         ready["history"] = await asyncio.to_thread(self._read_history)
         # darf den Start nie verhindern; Discord/Telegram werden erst bei Gebrauch geladen
         for step in (self._restore_paused, self._start_jobs, self._plugins_boot):
@@ -163,7 +166,7 @@ class IsaaBackend(SelfToolMixin, SelfOrchestratorMixin, FeatureMixin, PluginInst
 
     async def _fire_job(self, job: Any) -> str:
         stream = self._dream_stream(job) if job.query == "__dream__" else None
-        return await self._spawn(job.agent_name, job.session_id, f"{job.name}: {job.query}",
+        return await self._spawn(job.agent_name, self.job_session(job), f"{job.name}: {job.query}",
                                  kind="job", stream=stream)
 
     async def _dream_stream(self, job: Any) -> AsyncIterator[dict]:
@@ -184,9 +187,11 @@ class IsaaBackend(SelfToolMixin, SelfOrchestratorMixin, FeatureMixin, PluginInst
         return ("Jobs" if rows else "Keine Jobs – /job alle 30m name: auftrag  oder  /dream"), rows
 
     async def _do_job(self, job: str, op: str) -> dict[str, Any]:
-        entry = self._jobs.get_job(job)
+        entry = self._jobs.get_job(job) or next(        # /job fire <name> geht auch mit dem Namen
+            (j for j in self._jobs.list_jobs() if j.name == job), None)
         if entry is None:
             raise LookupError(f"Job {job} nicht gefunden")
+        job = entry.job_id
         if op == "fire":
             task = asyncio.ensure_future(self._jobs._fire_job(entry))   # wie module.py
             self._tasks.add(task)
@@ -582,6 +587,7 @@ class IsaaBackend(SelfToolMixin, SelfOrchestratorMixin, FeatureMixin, PluginInst
     # ── Laeufe ───────────────────────────────────────────────────────────────
     async def stream(self, agent: str, session: str, query: str) -> AsyncIterator[dict]:
         instance = await self.isaa.get_agent(agent)
+        self.shell_enter(agent, session)                 # Shell weiss, zu welchem Lauf sie gehoert
         # "#audio" am Ende: nur diese Antwort wird gesprochen (kein Dauer-Schalter)
         speak = query.rstrip().endswith(AUDIO_TAG)
         if speak:
@@ -630,6 +636,7 @@ class IsaaBackend(SelfToolMixin, SelfOrchestratorMixin, FeatureMixin, PluginInst
         app.a_exit() ruft der Flow-Starter nach dem UI-Ende auf."""
         if self.isaa is None:
             return
+        self.watch_close()
         await self._voice_close()
         await self._bridges_close()
         try:

@@ -6,6 +6,7 @@ Tool-Call haelt hoechstens diesen Loop an, nie die UI.
 from __future__ import annotations
 
 import asyncio
+import sys
 import threading
 import time
 import traceback
@@ -14,6 +15,16 @@ from typing import Any, AsyncIterator, Protocol
 
 from . import fmt
 from . import protocol as P
+
+def logger():
+    """Der ToolBox-Logger (eine Log-Datei fuer alles); ohne ToolBox der Standard-Logger."""
+    try:
+        from toolboxv2 import get_logger
+        return get_logger()
+    except Exception:
+        import logging
+        return logging.getLogger("icli2")
+
 
 FLUSH_SECONDS = 0.04      # Content-Deltas werden auf ~25 Events/s gebuendelt
 INLINE_TOOLS = ("final_answer", "think")
@@ -99,6 +110,11 @@ class Engine:
         except RuntimeError:
             pass                                         # Loop wurde gerade beendet
 
+    def _live_runs(self) -> list[tuple[str, str, str, str]]:
+        """(agent, session, run, origin) jedes Laufs, dessen Task noch lebt. Nur im Engine-Loop."""
+        return [(r.agent, r.session, r.id, r.origin) for r in self._runs.values()
+                if r.task is not None and not r.task.done()]
+
     def poll(self, limit: int = 200) -> list[P.Event]:
         """Bis zu `limit` Events abholen. Blockiert nie."""
         out: list[P.Event] = []
@@ -106,6 +122,19 @@ class Engine:
         while events and len(out) < limit:
             out.append(events.popleft())
         return out
+
+    def stack(self) -> list[str]:
+        """Wo der Engine-Thread gerade steht (fuer den Wachhund der UI). Innerste Zeile zuletzt."""
+        frame = sys._current_frames().get(self._thread.ident or -1)
+        return traceback.format_stack(frame) if frame is not None else []
+
+    def culprit(self) -> str:
+        """Innerste Stelle ausserhalb von asyncio/threading - meist der blockierende Aufruf."""
+        for entry in reversed(self.stack()):
+            head = entry.strip().splitlines()[0]          # File "...", line N, in fn
+            if not any(part in head for part in ("asyncio", "threading.py", "selectors.py")):
+                return head.replace('File "', "").replace('", line ', ":").replace(", in ", "  ")
+        return "unbekannt"
 
     def lag(self) -> float:
         """Sekunden seit dem letzten Herzschlag (>1 = Engine-Loop blockiert)."""
@@ -123,6 +152,9 @@ class Engine:
         asyncio.set_event_loop(self._loop)
         self._inbox = asyncio.Queue()
         self._backend.attach(self.spawn)
+        hook = getattr(self._backend, "attach_engine", None)
+        if hook is not None:                             # optional: lebende Laeufe + Hinweise fuer das Backend
+            hook(self._live_runs, lambda text, level="info": self._emit(P.NOTICE, level=level, text=text))
         self._started.set()
         try:
             self._loop.run_until_complete(self._serve())
@@ -213,6 +245,7 @@ class Engine:
         return await self._start(agent, session, query, kind=kind, stream=stream).result
 
     async def _admin(self, cmd: P.Command, boot: asyncio.Task) -> None:
+        qid = cmd.data.pop("qid", "")                    # Warteschlange der UI: Ende immer melden
         try:
             await asyncio.shield(boot)
             if cmd.kind == P.LIST:
@@ -231,6 +264,9 @@ class Engine:
                 self._emit(P.NOTICE, level=out.get("level", "info"), text=out["text"])
         except Exception as e:
             self._emit(P.NOTICE, level="error", text=f"{cmd.data.get('action') or cmd.data.get('what')}: {e}")
+        finally:
+            if qid:
+                self._emit(P.ACK, qid=qid)
 
     # ── Ein Lauf ─────────────────────────────────────────────────────────────
     def _flush(self, run: _Run) -> None:
@@ -399,6 +435,10 @@ class Engine:
             self._flush(run)
             self._runs.pop(run.id, None)
             error = errors[-1] if errors else ""
+            if status == "failed":                       # ins ToolBox-Log, mit allem, was bekannt ist
+                logger().error("icli2: Lauf %s (%s · %s · %s) fehlgeschlagen: %s%s", run.id, run.agent,
+                               run.session, run.origin, " | ".join(errors[-3:]) or "ohne Meldung",
+                               f"\n{trace}" if trace else "")
             self._emit(P.RUN_END, run.id, status=status, answer=answer, error=error,
                        errors=errors[-3:], traceback=trace, iter=iters[0], max_iter=iters[1])
             if run.result is not None and not run.result.done():

@@ -124,12 +124,14 @@ class TestWriteReadRoundtrip(unittest.TestCase):
         self.assertEqual(lines[4], "    pass")
 
     def test_write_with_tabs(self):
+        # \t im Text wird ein echter Tab (TSV schreiben); nur einmal escaped (\\t) bleibt es woertlich
         self.sh("", 'write /tsv.txt "col1\\tcol2\\tcol3\nval1\\tval2\\tval3"')
         r = self.sh("", "cat /tsv.txt")
         self.assertTrue(r["success"])
-        self.assertIn("\\t", r["stdout"])
         lines = r["stdout"].splitlines()
-        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines, ["col1\tcol2\tcol3", "val1\tval2\tval3"])
+        self.sh("", 'write /lit.txt "a\\\\tb"')
+        self.assertEqual(self.sh("", "cat /lit.txt")["stdout"].strip(), "a\\tb")
 
     def test_write_empty_content(self):
         self.sh("", 'write /empty.txt ""')

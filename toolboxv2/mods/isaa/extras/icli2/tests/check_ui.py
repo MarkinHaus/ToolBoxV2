@@ -85,6 +85,7 @@ class Fake:
                 "tb":{"title":"ToolBox-Funktionen","rows":[R("CloudM.get_user","name"),R("isaa.version")]},
                 "shares":{"title":"LiveSync","rows":[R("sh1","getrennt")]},
                 "voice":{"title":"Sprache","rows":[R("omni","aus")]},
+                "runs":{"title":"Läufe der Agenten","rows":[R("self|r1","Schritt 4 · tests") | {"label":"self · default · ⚠ hängt"}]},
                 "jobs":{"title":"Jobs","rows":[{"value":"j1","label":"nightly","hint":"on_cron · active · completed · 3x · self"}]},
                 "mounts":{"title":"Mounts","rows":[R("/project","/tmp/x")] if s.st["mounts"] else []} }[what] | ({"title":"Keine Mounts – /mount <ordner>"} if what=="mounts" and not s.st["mounts"] else {})
     async def do(s,action,**a):
@@ -97,7 +98,7 @@ class Fake:
             s.st.update(session="s-new" if a["name"]=="+" else a["name"]); return {"ready":dict(s.st,recap=[("user","alte frage"),("assistant","alte antwort")])}
         elif action=="job":
             asyncio.ensure_future(s.spawn("self","default","nightly: aufräumen",kind="job")); return {"text":"Job nightly gestartet"}
-        elif action in ("job_add","dream","network_save","network_load"): return {"text":action+" ok"}
+        elif action in ("job_add","dream","network_save","network_load","run"): return {"text":action+" ok"}
         elif action=="feature": s.st["features"]=["coder"]; return {"ready":dict(s.st),"text":"Feature coder an"}
         elif action in ("skill","mcp","plugin","mcp_add","discord","telegram","plugin_install","plugin_confirm","plugin_discard","plugin_remove","market_add","market_remove"): return {"text":action+" ok"}
         elif action=="vfs": return {"text":"INHALT "+a["path"]}
@@ -257,6 +258,13 @@ async def main():
         await pilot.press("enter"); await pilot.pause(0.2); assert isinstance(app.screen,P_); await pilot.press("enter"); await pilot.pause(1.2)
         jr=list(app.runs.values())[-1]; assert jr.query=="nightly: aufräumen" and jr.status=="done", (jr.query, jr.status)
         heads=[str(x.render()) for x in jr.box.query(".note")]; assert "job · self" in heads[0], heads
+        # Loeschen nur nach Rueckfrage: Enter (Standard "nein") loescht nichts, erst "ja"
+        for confirm, sent in ((["enter"], False), (["down", "enter"], True)):
+            await pilot.press(*"/job"); await pilot.press("enter"); await pilot.pause(0.3)
+            await pilot.press("enter"); await pilot.pause(0.2); await pilot.press("down", "down", "enter"); await pilot.pause(0.2)
+            assert isinstance(app.screen,P_) and "wirklich löschen" in app.screen._title, "keine Rückfrage"
+            await pilot.press(*confirm); await pilot.pause(0.3); assert not isinstance(app.screen,P_)
+            assert (("job",{"job":"j1","op":"remove"}) in fake.log) is sent, fake.log[-3:]
         await pilot.press(*"/dream"); await pilot.press("enter"); await pilot.pause(0.2); assert ("dream",{}) in fake.log
         await pilot.press(*"/job"); await pilot.press("space"); await pilot.press(*"alle 5m x: y"); await pilot.press("enter"); await pilot.pause(0.2); assert ("job_add",{"spec":"alle 5m x: y"}) in fake.log
         await pilot.press(*"/network"); await pilot.press("enter"); await pilot.pause(0.2); assert ("network_save",{}) in fake.log
@@ -362,11 +370,30 @@ async def main():
         await cmd("/plugin market",""); assert ("plugin_install",{"source":"owner/tool"}) in fake.log
         await cmd("/plugin markets",""); assert ("market_remove",{"source":"owner/market"}) in fake.log
         n=len(fake.log); await cmd("/plugin install"); assert not [x for x in fake.log[n:] if x[0]!="remember"]
+        await pilot.press(*"/runs"); await pilot.press("enter"); await pilot.pause(0.3)
+        assert isinstance(app.screen,P_); await pilot.press("enter"); await pilot.pause(0.3)
+        assert isinstance(app.screen,P_); await pilot.press("enter"); await pilot.pause(0.3)
+        assert ("run",{"run":"self|r1","op":"reset"}) in fake.log, fake.log[-3:]
         print("step6/7 ui ok")
         # ── Vervollstaendigung beim Tippen ──
         await pilot.press("/", "s", "e"); await pilot.pause(0.1)
         assert app.completions[0][1]=="/session" and app.query_one("#complete").has_class("-open"), app.completions
-        await pilot.press("tab"); await pilot.pause(0.1); assert app.prompt.text=="/session " and not app.completions
+        await pilot.press("tab"); await pilot.pause(0.3); assert app.prompt.text=="/session "
+        assert [c[1] for c in app.completions]==["default","work"], app.completions   # Sessions aus der Engine
+        app.prompt.set_text(""); await pilot.pause(0.1)
+        # Unterbefehle: /agent s -> self, Tab uebernimmt, exakter Wert -> Enter fuehrt aus
+        await pilot.press(*"/agent", "space", "s"); await pilot.pause(0.3)
+        assert [c[1] for c in app.completions]==["self"], app.completions
+        app.prompt.set_text("/agent c"); await pilot.pause(0.2); assert app.completions[0][1]=="coder", app.completions
+        await pilot.press("tab"); await pilot.pause(0.1); assert app.prompt.text=="/agent coder" and not app.completions
+        n=len(fake.log); await pilot.press("enter"); await pilot.pause(0.3); assert ("agent",{"name":"coder"}) in fake.log[n:]
+        await pilot.press(*"/job", "space"); await pilot.pause(0.2)
+        assert [c[1] for c in app.completions]==["fire","pause","remove"], app.completions
+        await pilot.press("tab"); await pilot.pause(0.3); assert app.prompt.text=="/job fire "
+        assert [(c[0],c[1]) for c in app.completions]==[("/job fire j1","nightly")], app.completions
+        await pilot.press("tab"); await pilot.pause(0.1); n=len(fake.log)
+        await pilot.press("enter"); await pilot.pause(0.3); assert ("job",{"job":"j1","op":"fire"}) in fake.log[n:], fake.log[n:]
+        app.prompt.set_text("/model gate"); await pilot.pause(0.3); assert app.completions[0][0]=="/model gateway/big-model ", app.completions
         app.prompt.set_text(""); await pilot.pause(0.1)
         await pilot.press("/", "m", "o"); await pilot.pause(0.1); assert [c[1] for c in app.completions[:2]]==["/model","/mount"], app.completions
         await pilot.press("down"); await pilot.press("tab"); await pilot.pause(0.1); assert app.prompt.text=="/mount "

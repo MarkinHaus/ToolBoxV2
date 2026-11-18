@@ -1224,7 +1224,7 @@ class TestVfsShellClose(unittest.TestCase):
 
     def test_close_system_file(self):
         # System files must not be closable
-        r = self.shell("","close /system_context.md")
+        r = self.shell("","close /vfs_guide.md")
         self.assertFalse(r["success"])
 
 
@@ -1481,7 +1481,7 @@ class TestVfsViewCloseOthers(unittest.TestCase):
         r = self.view("/a.py", close_others=True)
         self.assertTrue(r["success"])
         # System context should still be open
-        self.assertEqual(self.vfs.files["/system_context.md"].state, "open")
+        self.assertEqual(self.vfs.files["/vfs_guide.md"].state, "open")
 
     def test_close_others_false_leaves_files_open(self):
         self.vfs.open("/a.py")

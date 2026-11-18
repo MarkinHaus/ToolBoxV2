@@ -3160,6 +3160,14 @@ class FlowAgent:
           fs_copy (real filesystem)   |  vfs_diagnostics (async LSP)
           history  |  situation/rules  |  local code execution
         """
+        # Persona des Agenten in JEDE Session (vfs_guide.md), nicht nur in 'default' - auch in
+        # Sessions, deren Tools schon stehen
+        persona = getattr(self, "_persona_section", "")
+        vfs = getattr(session, "vfs", None)
+        if isinstance(persona, str) and persona and vfs is not None \
+                and getattr(vfs, "_persona_section", "") != persona and hasattr(vfs, "set_persona_section"):
+            vfs.set_persona_section(persona)
+
         if session.tools_initialized:
             return
 
@@ -3628,7 +3636,7 @@ class FlowAgent:
             },
 
             "vfs_view": {
-                "live_test_inputs": [{"path": "/system_context.md", "line_start": 1, "line_end": 5}],
+                "live_test_inputs": [{"path": "/vfs_guide.md", "line_start": 1, "line_end": 5}],
                 "result_contract": {
                     "allow_none": False,
                     "expected_type": "dict",
@@ -3702,7 +3710,7 @@ class FlowAgent:
 
             "fs_copy_from_vfs": {
                 "live_test_inputs": [
-                    {"vfs_path": "/system_context.md", "local_path": "/tmp/_vfs_probe_out.md",
+                    {"vfs_path": "/vfs_guide.md", "local_path": "/tmp/_vfs_probe_out.md",
                      "allowed_dirs": ["/tmp"], "overwrite": True}],
                 "result_contract": {
                     "allow_none": False,

@@ -654,6 +654,63 @@ class ModelFallbackManager:
 
 # ===== INTELLIGENT RATE LIMITER (CORE) =====
 
+# ── Welche Fehler sich durch Warten/Wiederholen beheben lassen ───────────────────────────────────
+TRANSIENT_STATUS = {408, 425, 500, 502, 503, 504, 520, 521, 522, 523, 524, 529}
+_RATE_LIMIT_TEXT = ("rate_limit", "ratelimit", "rate limit", "429", "quota", "resource_exhausted",
+                    "too many requests")
+_TRANSIENT_TEXT = (
+    "server disconnected", "serverdisconnected", "connection reset", "connection aborted",
+    "connection closed", "remote end closed", "remotedisconnected", "remoteprotocolerror",
+    "peer closed", "incomplete chunked", "incompleteread", "payload is not completed",
+    "transferencodingerror", "eof occurred", "unexpected eof", "broken pipe",
+    "cannot connect to host", "clientconnectorerror", "temporarily unavailable", "timed out",
+    "readtimeout", "connecttimeout", "bad gateway", "service unavailable", "gateway timeout",
+    "apiconnectionerror", "internalservererror", "overloaded",
+)
+
+
+def _transient_types() -> tuple:
+    types: list = [asyncio.TimeoutError, TimeoutError, ConnectionError]
+    try:
+        import aiohttp
+        types += [aiohttp.ClientConnectionError, aiohttp.ClientPayloadError]
+    except Exception:
+        pass
+    try:
+        import httpx
+        types.append(httpx.TransportError)
+    except Exception:
+        pass
+    return tuple(types)
+
+
+_TRANSIENT_TYPES = _transient_types()
+
+
+def classify_error(error: BaseException) -> Optional[str]:
+    """'rate_limit' | 'transient' | None (Wiederholen hilft nicht, z. B. 400/401/Schemafehler).
+
+    Prueft auch eingepackte Ursachen (__cause__/__context__), z. B. "Agent crashed" ueber einem
+    aiohttp ServerDisconnectedError. Ein HTTP-Status entscheidet vor dem Text."""
+    current, depth = error, 0
+    while current is not None and depth < 6:
+        status = getattr(current, "status_code", None)
+        if isinstance(status, int) and status:
+            if status == 429:
+                return "rate_limit"
+            return "transient" if status in TRANSIENT_STATUS else None
+        if isinstance(current, _TRANSIENT_TYPES):
+            return "transient"
+        text = f"{type(current).__name__}: {current}".lower()
+        if any(part in text for part in _RATE_LIMIT_TEXT):
+            return "rate_limit"
+        if any(part in text for part in _TRANSIENT_TEXT):
+            return "transient"
+        current = current.__cause__ or current.__context__
+        depth += 1
+    return None
+
+
 class IntelligentRateLimiter:
     """
     Intelligenter Rate Limiter der sich automatisch an Provider-Limits anpasst.
@@ -1597,7 +1654,7 @@ class LiteLLMRateLimitHandler:
                     ]
                 )
 
-                is_transient = any(
+                is_transient = classify_error(e) == "transient" or any(   # u. a. ServerDisconnected
                     x in error_str for x in [
                         "500", "502", "503", "504", "internalservererror",
                         "network error", "apiconnectionerror", "timeout",
@@ -1835,7 +1892,10 @@ class LiteLLMRateLimitHandler:
                     ]
                 )
 
-                should_fallback = is_rate_limit or (self.fallback_on_any_error and attempt < self.max_retries)
+                # Verbindungsabbruch / 5xx: derselbe Weg wie ein Rate-Limit (Backoff, ggf. Fallback)
+                is_transient = classify_error(e) == "transient"
+                should_fallback = (is_rate_limit or is_transient
+                                   or (self.fallback_on_any_error and attempt < self.max_retries))
 
                 if should_fallback and attempt < self.max_retries:
                     # Handle rate limit error

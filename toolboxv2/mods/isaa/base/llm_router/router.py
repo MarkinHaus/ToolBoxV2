@@ -109,6 +109,42 @@ class CompletionRouter:
             pass
         return None
 
+    @staticmethod
+    def _max_retries() -> int:
+        try:
+            return max(0, int(os.getenv("ISAA_LLM_RETRIES", "3")))
+        except ValueError:
+            return 3
+
+    async def _pick(self, model: str, messages: list, api_key: str, adapter, actual_model: str):
+        """Modell und Key fuer den naechsten Versuch vom Rate-Limiter: acquire() wartet einen
+        gesetzten Backoff ab und liefert ggf. das aktive Fallback-Modell und einen anderen Key."""
+        if not self._rate_limiter:
+            return model, api_key, adapter, actual_model
+        used_model, limiter_key = await self._rate_limiter.acquire(
+            model=model, estimated_input_tokens=sum(len(str(m)) for m in messages) // 4)
+        adapter, actual_model, _prefix = self.resolve(used_model)
+        return used_model, limiter_key or api_key, adapter, actual_model
+
+    async def _retry(self, used_model: str, error: Exception, attempt: int) -> bool:
+        """Wiederholen ueber den Rate-Limiter (IRL): Rate-Limit (429) und voruebergehende Fehler
+        (Verbindungsabbruch, 5xx) meldet der Router an handle_rate_limit_error(); der IRL zaehlt sie,
+        setzt den Backoff (Retry-After aus der Meldung bzw. exponentiell), sperrt ggf. den Key und
+        loest den Fallback aus. Das naechste _pick() wartet dann und waehlt neu. Andere Fehler
+        (400, 401, Schema) werden nicht wiederholt."""
+        if not self._rate_limiter or attempt >= self._max_retries():
+            return False
+        from toolboxv2.mods.isaa.base.IntelligentRateLimiter.intelligent_rate_limiter import classify_error
+        kind = classify_error(error)
+        if kind is None:
+            return False
+        await self._rate_limiter.handle_rate_limit_error(
+            model=used_model, error=error, is_rate_limit=kind == "rate_limit")
+        self._get_logger().warning(
+            f"[llm_router] {used_model}: {kind} ({type(error).__name__}: {str(error)[:200]}) "
+            f"- Versuch {attempt + 1}/{self._max_retries()} ueber den Rate-Limiter")
+        return True
+
     async def complete(self, model: str, messages: list,
                        tools: list | None = None, **kw) -> CompletionResult:
         adapter, actual_model, prefix = self.resolve(model)
@@ -123,33 +159,32 @@ class CompletionRouter:
         # Budget pre-check (estimate input tokens as chars//4)
         est = sum(len(str(m)) for m in messages) // 4
         self._budget.check(model, est)
-        # Rate limiter
-        api_key = self.quick_key(prefix, kw.pop("api_key", ""))
-        used_model = model
-        if self._rate_limiter:
-            used_model, limiter_key = await self._rate_limiter.acquire(
-                model=model,
-                estimated_input_tokens=sum(len(str(m)) for m in messages) // 4,
-            )
-            if limiter_key:
-                api_key = limiter_key
-            if used_model != model:
-                adapter, actual_model, prefix = self.resolve(used_model)
-        try:
-            result = await adapter.complete(self.session, api_key, actual_model,
-                                            messages, tools, **kw)
-        except Exception as e:
-            fallback_model = await self._resolve_fallback(used_model, e)
-            # Fallback-Retry: wenn der Limiter ein anderes aktives Modell liefert,
-            # direkt 1x damit wiederholen statt den Task craschen zu lassen.
-            if fallback_model and fallback_model.lower() != used_model.lower() and not kw.get("_fallback_retry"):
-                try:
-                    return await self.complete(fallback_model, messages, tools=tools,
-                                               _fallback_retry=True,
-                                               **{k: v for k, v in kw.items() if k != "_fallback_retry"})
-                except Exception:
-                    pass
-            raise
+        base_key = self.quick_key(prefix, kw.pop("api_key", ""))
+        attempt = 0
+        while True:
+            used_model, api_key, adapter, actual_model = await self._pick(
+                model, messages, base_key, adapter, actual_model)
+            try:
+                result = await adapter.complete(self.session, api_key, actual_model,
+                                                messages, tools, **kw)
+                break
+            except Exception as e:
+                if await self._retry(used_model, e, attempt):
+                    attempt += 1
+                    continue
+                if attempt:
+                    raise                                # der Rate-Limiter hatte seine Versuche
+                fallback_model = await self._resolve_fallback(used_model, e)
+                # Fallback-Retry: wenn der Limiter ein anderes aktives Modell liefert,
+                # direkt 1x damit wiederholen statt den Task craschen zu lassen.
+                if fallback_model and fallback_model.lower() != used_model.lower() and not kw.get("_fallback_retry"):
+                    try:
+                        return await self.complete(fallback_model, messages, tools=tools,
+                                                   _fallback_retry=True,
+                                                   **{k: v for k, v in kw.items() if k != "_fallback_retry"})
+                    except Exception:
+                        pass
+                raise
         self._budget.track(model, result.usage)
         if self._rate_limiter:
             self._rate_limiter.report_success(model=used_model, tokens_used=result.usage.total_tokens)
@@ -169,38 +204,41 @@ class CompletionRouter:
 
         est = sum(len(str(m)) for m in messages) // 4
         self._budget.check(model, est)
-        api_key = self.quick_key(prefix, kw.pop("api_key", ""))
-        used_model = model
-        if self._rate_limiter:
-            used_model, limiter_key = await self._rate_limiter.acquire(
-                model=model,
-                estimated_input_tokens=sum(len(str(m)) for m in messages) // 4,
-            )
-            if limiter_key:
-                api_key = limiter_key
-            if used_model != model:
-                adapter, actual_model, prefix = self.resolve(used_model)
-
-        try:
-            async for chunk in adapter.stream(self.session, api_key, actual_model,
-                                              messages, tools, metrics=metrics, **kw):
-                yield chunk
-                if chunk.usage:
-                    self._budget.track(model, chunk.usage)
-        except Exception as e:
-            fallback_model = await self._resolve_fallback(used_model, e)
-            if fallback_model and fallback_model.lower() != used_model.lower() and not kw.get("_fallback_retry"):
-                # 1x mit Fallback-Modell neu streamen statt craschen
-                try:
-                    async for chunk in self.stream(fallback_model, messages,
-                                                   tools=tools, metrics=metrics,
-                                                   _fallback_retry=True,
-                                                   **{k: v for k, v in kw.items() if k != "_fallback_retry"}):
-                        yield chunk
-                    return
-                except Exception:
-                    pass
-            raise
+        base_key = self.quick_key(prefix, kw.pop("api_key", ""))
+        attempt = 0
+        while True:
+            used_model, api_key, adapter, actual_model = await self._pick(
+                model, messages, base_key, adapter, actual_model)
+            started = False
+            try:
+                async for chunk in adapter.stream(self.session, api_key, actual_model,
+                                                  messages, tools, metrics=metrics, **kw):
+                    started = True
+                    yield chunk
+                    if chunk.usage:
+                        self._budget.track(model, chunk.usage)
+                break
+            except Exception as e:
+                # Nur VOR dem ersten Chunk wiederholen (typisch: tote Keep-Alive-Verbindung, 429);
+                # danach hat der Aufrufer schon Teile der Antwort - doppelte Ausgabe waere schlimmer.
+                if not started and await self._retry(used_model, e, attempt):
+                    attempt += 1
+                    continue
+                if attempt:
+                    raise
+                fallback_model = await self._resolve_fallback(used_model, e)
+                if fallback_model and fallback_model.lower() != used_model.lower() and not kw.get("_fallback_retry"):
+                    # 1x mit Fallback-Modell neu streamen statt craschen
+                    try:
+                        async for chunk in self.stream(fallback_model, messages,
+                                                       tools=tools, metrics=metrics,
+                                                       _fallback_retry=True,
+                                                       **{k: v for k, v in kw.items() if k != "_fallback_retry"}):
+                            yield chunk
+                        return
+                    except Exception:
+                        pass
+                raise
         token_used = None
         if metrics:
             import time

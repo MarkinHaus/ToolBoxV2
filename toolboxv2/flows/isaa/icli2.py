@@ -18,12 +18,11 @@ async def run(app=None, *args):
     from toolboxv2.mods.isaa.extras.icli2.backend import IsaaBackend
     from toolboxv2.mods.isaa.extras.icli2.engine import Engine
 
-    from pathlib import Path
-    from toolboxv2.mods.isaa.extras.icli2.termguard import log_to_file
+    from toolboxv2.mods.isaa.extras.icli2.termguard import quiet_terminal
 
     app = app or get_app("isaa-host")
-    # Logging, das direkt ins Terminal schreiben wuerde, landet waehrend der TUI in einer Datei
-    with log_to_file(Path(app.appdata) / "icli2" / "icli2.log"):
+    # Log-Handler aufs Terminal schweigen waehrend der TUI; alles landet im ToolBox-Log (get_logger)
+    with quiet_terminal():
         engine = Engine(IsaaBackend(app))
         engine.start()                 # Agent laedt im Engine-Thread, UI ist sofort da
         try:
