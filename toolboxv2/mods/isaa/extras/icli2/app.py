@@ -6,7 +6,6 @@ kein Dateizugriff, kein Netzwerk.
 """
 from __future__ import annotations
 
-import logging
 import time
 
 from textual import events, on
@@ -24,6 +23,8 @@ from .picker import BACK, Picker, fuzzy
 from .errors import explain, render
 from .richmd import FrozenMarkdown
 from .subtile import SubView
+from .engine import logger as engine_logger
+from .termguard import log_path
 from .widgets import Fade, FoldLine
 from .theme import DIM, ISAA_THEME, SYM, G, ZEN, banner
 
@@ -218,6 +219,7 @@ class RunView:
             line = FoldLine(f"◷ {info['title']}", body, classes="problem -limit", body_style=ZEN["white"])
         else:
             info = explain(d.get("error") or "", model=model, traceback=d.get("traceback") or "")
+            info["hint"] = info["hint"].replace("{log}", log_path() or "der Log-Datei der ToolBox")
             short = f" – {info['message'][:90]}" if info["message"] else ""
             line = FoldLine(f"{SYM['fail']} {info['title']}{short}", render(info), classes="problem -fail",
                             body_style=ZEN["white"])
@@ -614,7 +616,7 @@ class ICli2(App):
             if where in self._stall_seen:                # dieselbe Stelle nur einmal
                 return
             self._stall_seen.add(where)
-            logging.getLogger("icli2").warning(
+            engine_logger().warning(
                 "Engine blockiert seit %.0fs in %s:\n%s", lag, where, "".join(self.engine.stack()))
             if self.debug_mode:
                 self.run_worker(self._note(

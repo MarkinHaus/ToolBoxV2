@@ -181,7 +181,7 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
   - Antworttext wird pro Lauf gesammelt und gebündelt geschrieben: alle 80 ms beim Mitlesen, alle 600 ms wenn hochgescrollt, gar nicht während gescrollt wird. Andere Ereignisse schreiben vorher den gesammelten Text, damit die Reihenfolge stimmt.
   - Ein Neuzeichnen pro Frame (`batch_update`); Kopf- und Fußzeile nur bei Änderung und ohne Layout-Durchlauf.
   - Höchstens 60 Blöcke im Bild, ältere werden ausgeblendet (der Verlauf bleibt in der Session).
-  - Logging, das an Textual vorbei ins Terminal schreiben würde, geht während der TUI nach `<appdata>/icli2/icli2.log` (`termguard.py`).
+  - Logging, das an Textual vorbei ins Terminal schreiben würde, schweigt während der TUI (`termguard.py`); alles steht im Log der ToolBox (`get_logger()`), ein eigenes icli2-Log gibt es nicht (Schritt 19).
 - **Ergebnis im Benchmark:**
 
   | | vorher | nachher |
@@ -224,10 +224,16 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 
 ### Schritt 18 – Warteschlange, Debug-Hinweise, schnelles VFS (`icli2-18-warteschlange-vfs.patch`)
 - **Warteschlange:** `/`-Befehle und Picker-Auswahlen tragen eine `qid`; die Engine meldet ihr Ende (`ACK`). Bis dahin stehen sie mit Spinner und Wartezeit über der Eingabe (erst ab 0,25 s, damit nichts flackert), höchstens 5; ein sechster wird mit Hinweis abgelehnt. Chat-Nachrichten und Nachsteuerung laufen an der Warteschlange vorbei.
-- **Wachhund nur im Debug-Modus** (`app.debug` oder `ICLI2_DEBUG=1`): Hinweis im Chat und „Engine beschäftigt“ in der Fußzeile nur dann, jede Stelle nur einmal. Ins Log (`icli2.log`) geht jede neue Stelle immer.
+- **Wachhund nur im Debug-Modus** (`app.debug` oder `ICLI2_DEBUG=1`): Hinweis im Chat und „Engine beschäftigt“ in der Fußzeile nur dann, jede Stelle nur einmal. Ins Log der ToolBox (`get_logger()`) geht jede neue Stelle immer.
 - **Job löschen nur nach Rückfrage** (Standard „nein“). Kam ein Picker verspätet (blockierte Engine), konnten weitergetippte Tasten (W/S navigieren, Enter wählt) eine Aktion auslösen. `/job remove <job>` getippt löscht weiterhin direkt.
 - **VFS (`vfs_v2.py`, Ursache der Blockaden):** `_list_directory_contents` durchlief bei jedem Aufruf alle Pfade des VFS; `ls -R` damit einmal je Ordner (bei 2000 Ordnern / 200k Dateien rechnerisch über 9 s). `files` und `directories` sind jetzt `PathIndexDict`: ein dict mit Kinder-Index, der bei jeder Änderung (auch von außen: Mounts, Patches; `del`, `pop`, `clear`, `update`, `|=`, …) mitgeführt wird – das Auflisten liest nur die direkten Kinder, die Daten sind immer aktuell. Ältere Zustände (plain dict) werden beim ersten Auflisten umgestellt; Pickle/Deepcopy behalten den Index. `ls -R` über 200k Dateien: 0,4 s.
 - **Geprüft:** `test_vfs_path_index.py` (3000 zufällige Änderungen aller Arten gegen die alte Logik, Pickle/Kopie, echtes VFS mit mkdir/write/mv und Änderung von außen, Laufzeit), bestehende VFS-Tests vorher wie nachher dasselbe Ergebnis (728 grün, dieselben 22 netzbedingten Fehler), `tests/check_watchdog.py` (Warteschlange mit Spinner, Limit 5, Abbau nach Antwort, Hinweis nur im Debug-Modus und nur einmal), `tests/check_ui.py` (Rückfrage beim Löschen).
+
+### Schritt 19 – Verbindungsabbrüche wiederholen, ein Log (`icli2-19-retry-logging.patch`)
+- **Befund:** „Agent crashed: ServerDisconnectedError: Server disconnected“. Der Agent ruft das LLM über `CompletionRouter` (`llm_router/router.py`) auf; der hatte keine Wiederholung, nur einen einmaligen Wechsel auf ein Fallback-Modell, wenn der Rate-Limiter eines nennt. Die Wiederholung im `LiteLLMRateLimitHandler` (IRL) liegt auf einem anderen Weg und kannte `ServerDisconnected` ebenfalls nicht (nur Text-Schlüsselwörter wie „timeout“, „503“). aiohttp wirft `ServerDisconnectedError` typisch, wenn eine Keep-Alive-Verbindung vom Server schon geschlossen war – ein zweiter Versuch geht praktisch immer durch.
+- **Kern (`llm_router/retry.py`, additiv):** `is_transient()` erkennt Verbindungsabbrüche (aiohttp/httpx/`ConnectionError`/Timeout, auch eingepackt über `__cause__`), HTTP 408/425/5xx/529 und bekannte Texte; 429 und andere 4xx nie. Der Router wiederholt solche Fehler bis zu 3× (`ISAA_LLM_RETRIES`) mit 1 s, 2 s, 4 s (+ Zufall), danach wie bisher Fallback-Modell bzw. Fehler. Im Stream nur vor dem ersten Chunk (danach hätte der Aufrufer doppelte Teile). Jeder Versuch steht als Warnung im ToolBox-Log. Der IRL-Handler nutzt dieselbe Erkennung, auch im Pfad ohne Stream (dort gab es bisher nur Rate-Limit-Wiederholung).
+- **Ein Log:** Die icli2 hat kein eigenes Log mehr. `termguard.quiet_terminal()` schaltet Terminal-Handler während der TUI nur stumm; Datei, MobileDB usw. des ToolBox-Loggers bekommen alles. Fehlgeschlagene Läufe schreibt die Engine mit Fehlertext und Traceback über `get_logger()`; der Fehlerhinweis nennt die echte Log-Datei der ToolBox.
+- **Geprüft:** `test_llm_router_retry.py` (ServerDisconnected wird wiederholt, 503 bis zur Grenze, 400/401/429 nie, Stream vor/nach dem ersten Chunk, Erkennung auch eingepackt), bestehende Router-/Adapter-/Limiter-Tests vorher wie nachher, `tests/check_termguard.py`, `check_errors.py`, `check_ui.py`.
 
 ## Arbeitsanleitung für weitere Schritte
 

@@ -1597,7 +1597,8 @@ class LiteLLMRateLimitHandler:
                     ]
                 )
 
-                is_transient = any(
+                from toolboxv2.mods.isaa.base.llm_router.retry import is_transient as _transient
+                is_transient = _transient(e) or any(               # u. a. ServerDisconnected, Reset
                     x in error_str for x in [
                         "500", "502", "503", "504", "internalservererror",
                         "network error", "apiconnectionerror", "timeout",
@@ -1834,6 +1835,15 @@ class LiteLLMRateLimitHandler:
                         "resource_exhausted", "too many requests", "rate", "limit", "exhausted", "too many"
                     ]
                 )
+
+                from toolboxv2.mods.isaa.base.llm_router.retry import backoff, is_transient
+                if not is_rate_limit and is_transient(e) and attempt < self.max_retries:
+                    # Verbindungsabbruch / 5xx: dasselbe Modell nach kurzer Pause erneut
+                    wait = backoff(attempt + 1)                    # Schleife zaehlt attempt selbst weiter
+                    logger.warning(f"[Handler] Transient error (attempt {attempt + 1}/{self.max_retries}), "
+                                   f"retrying in {wait:.1f}s: {type(e).__name__}: {e}")
+                    await asyncio.sleep(wait)
+                    continue
 
                 should_fallback = is_rate_limit or (self.fallback_on_any_error and attempt < self.max_retries)
 

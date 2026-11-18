@@ -1,6 +1,7 @@
 """CompletionRouter — central entry point for LLM completions."""
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import AsyncIterator
 
@@ -8,6 +9,7 @@ from .types import CompletionResult, StreamChunk, EmbedResult, ProviderError, Us
 from .adapter import ProviderAdapter
 from .budget import BudgetTracker
 from .stream_metrics import StreamMetrics
+from .retry import backoff, is_transient, max_retries
 
 
 class CompletionRouter:
@@ -109,6 +111,13 @@ class CompletionRouter:
             pass
         return None
 
+    async def _retry_wait(self, model: str, error: Exception, attempt: int) -> None:
+        wait = backoff(attempt)
+        self._get_logger().warning(
+            f"[llm_router] {model}: voruebergehender Fehler ({type(error).__name__}: {str(error)[:200]}) "
+            f"- Versuch {attempt}/{max_retries()} in {wait:.1f}s")
+        await asyncio.sleep(wait)
+
     async def complete(self, model: str, messages: list,
                        tools: list | None = None, **kw) -> CompletionResult:
         adapter, actual_model, prefix = self.resolve(model)
@@ -135,9 +144,19 @@ class CompletionRouter:
                 api_key = limiter_key
             if used_model != model:
                 adapter, actual_model, prefix = self.resolve(used_model)
+        attempt = 0
         try:
-            result = await adapter.complete(self.session, api_key, actual_model,
-                                            messages, tools, **kw)
+            while True:
+                try:
+                    result = await adapter.complete(self.session, api_key, actual_model,
+                                                    messages, tools, **kw)
+                    break
+                except Exception as e:
+                    # Verbindungsabbruch / 5xx: gleiche Anfrage nach kurzer Pause noch einmal
+                    if not is_transient(e) or attempt >= max_retries():
+                        raise
+                    attempt += 1
+                    await self._retry_wait(used_model, e, attempt)
         except Exception as e:
             fallback_model = await self._resolve_fallback(used_model, e)
             # Fallback-Retry: wenn der Limiter ein anderes aktives Modell liefert,
@@ -181,12 +200,25 @@ class CompletionRouter:
             if used_model != model:
                 adapter, actual_model, prefix = self.resolve(used_model)
 
+        attempt = 0
         try:
-            async for chunk in adapter.stream(self.session, api_key, actual_model,
-                                              messages, tools, metrics=metrics, **kw):
-                yield chunk
-                if chunk.usage:
-                    self._budget.track(model, chunk.usage)
+            while True:
+                started = False
+                try:
+                    async for chunk in adapter.stream(self.session, api_key, actual_model,
+                                                      messages, tools, metrics=metrics, **kw):
+                        started = True
+                        yield chunk
+                        if chunk.usage:
+                            self._budget.track(model, chunk.usage)
+                    break
+                except Exception as e:
+                    # Abbruch VOR dem ersten Chunk (typisch: tote Keep-Alive-Verbindung) ist sicher zu
+                    # wiederholen; danach nicht - der Aufrufer hat schon Teile der Antwort bekommen.
+                    if started or not is_transient(e) or attempt >= max_retries():
+                        raise
+                    attempt += 1
+                    await self._retry_wait(used_model, e, attempt)
         except Exception as e:
             fallback_model = await self._resolve_fallback(used_model, e)
             if fallback_model and fallback_model.lower() != used_model.lower() and not kw.get("_fallback_retry"):

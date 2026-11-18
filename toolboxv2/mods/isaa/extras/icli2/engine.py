@@ -16,6 +16,16 @@ from typing import Any, AsyncIterator, Protocol
 from . import fmt
 from . import protocol as P
 
+def logger():
+    """Der ToolBox-Logger (eine Log-Datei fuer alles); ohne ToolBox der Standard-Logger."""
+    try:
+        from toolboxv2 import get_logger
+        return get_logger()
+    except Exception:
+        import logging
+        return logging.getLogger("icli2")
+
+
 FLUSH_SECONDS = 0.04      # Content-Deltas werden auf ~25 Events/s gebuendelt
 INLINE_TOOLS = ("final_answer", "think")
 RESULT_LIMIT = 4000       # Zeichen pro Tool-Ergebnis, die zur UI gehen
@@ -425,6 +435,10 @@ class Engine:
             self._flush(run)
             self._runs.pop(run.id, None)
             error = errors[-1] if errors else ""
+            if status == "failed":                       # ins ToolBox-Log, mit allem, was bekannt ist
+                logger().error("icli2: Lauf %s (%s · %s · %s) fehlgeschlagen: %s%s", run.id, run.agent,
+                               run.session, run.origin, " | ".join(errors[-3:]) or "ohne Meldung",
+                               f"\n{trace}" if trace else "")
             self._emit(P.RUN_END, run.id, status=status, answer=answer, error=error,
                        errors=errors[-3:], traceback=trace, iter=iters[0], max_iter=iters[1])
             if run.result is not None and not run.result.done():

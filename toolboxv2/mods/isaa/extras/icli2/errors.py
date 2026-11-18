@@ -176,8 +176,8 @@ def _hint(kind: str, provider: str, model: str, retry: str, iters: tuple[int, in
         "bad_request": f"{mdl} hat die Anfrage abgelehnt. Häufige Ursache: das Modell kann keine Tools "
                        f"oder Bilder – über /model ein anderes wählen. Genauer Grund in den Details.",
         "empty": f"{mdl} hat mehrfach nichts zurückgegeben. Über /model ein anderes Modell versuchen.",
-        "crash": "Ein Fehler im Agenten selbst, nicht beim Anbieter. Der Traceback steht in den Details; "
-                 "das Log liegt unter <appdata>/icli2/icli2.log.",
+        "crash": "Ein Fehler im Agenten selbst, nicht beim Anbieter. Der Traceback steht in den Details "
+                 "und im Log der ToolBox ({log}).",
         "limit": ("Der Agent hat sein Limit" + (f" von {iters[1]} Schritten" if iters and iters[1] else "")
                   + " erreicht, ohne fertig zu werden. Eine neue Nachricht setzt fort; das Limit änderst "
                     "du mit /set max_iterations 60."),
