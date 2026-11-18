@@ -7,14 +7,17 @@ picker.py:24-116 (ModalScreen, dismiss, OptionList).
 """
 from __future__ import annotations
 
+from typing import Any
+
 MAX_LINE = 100  # Info-Text Zeilenbreite (TUI)
 
 try:  # textual ist optional im Test-venv; Klassen entstehen nur wenn verfuegbar
     from textual.app import ComposeResult
-    from textual.containers import Vertical
+    from textual.containers import Vertical, VerticalScroll
     from textual.screen import ModalScreen
     from textual.widget import Widget
-    from textual.widgets import Static
+    from textual.widgets import Button, Checkbox, Input, Label, OptionList, Static, TextArea
+    from textual.widgets.option_list import Option
     from rich.text import Text
     from textual import events
     from .theme import BG,G
@@ -137,30 +140,160 @@ if TEXTUAL:
 
 
     class WidgetModal(ModalScreen[dict | None]):
-        """Overlay-Widget (modus modal). Enter/Click bestaetigt, Esc bricht ab.
-        dismiss({id, values}) bzw. dismiss(None) - Picker-Muster picker.py:33."""
+        """Overlay-Widget (modus modal, oder ein gepinntes aus /widget). Picker-Muster picker.py:33.
 
-        BINDINGS = []
+        form:   Eingabefelder (Input/TextArea/Checkbox/OptionList); Enter in einem Feld oder 'Senden'
+                prueft und schliesst mit {id, values}
+        choice: OptionList; Enter/Klick auf eine Option schliesst mit {id, values: {value}}
+        info:   nur Text; Enter/Esc schliesst ohne Antwort (None)
+        Esc bricht immer ohne Antwort ab (None)."""
 
-        def __init__(self, widget_id: str, spec: dict, *, creator: tuple):
+        DEFAULT_CSS = """
+        WidgetModal { align: center middle; }
+        WidgetModal > #w-box { width: 76; max-width: 95%; height: auto; max-height: 90%;
+                               border: round $accent; background: $surface; padding: 0 1; }
+        WidgetModal .w-label { color: $text-muted; margin-top: 1; }
+        WidgetModal Input, WidgetModal TextArea { width: 100%; }
+        WidgetModal TextArea { height: 4; }
+        WidgetModal OptionList { height: auto; max-height: 8; }
+        WidgetModal #w-error { color: $error; height: auto; }
+        WidgetModal #w-send { margin-top: 1; }
+        """
+        BINDINGS = [("escape", "cancel", "Abbrechen"), ("ctrl+s", "submit", "Senden")]
+
+        def __init__(self, widget_id: str, spec: dict, *, creator: tuple, values: dict | None = None):
             super().__init__()
             self.widget_id = widget_id
             self.spec = spec
             self.creator = creator
+            self._prev = dict(values or {})              # schon beantwortet: Werte vorbelegen
+            self._fields: list[tuple[dict, Any]] = []    # (Felddefinition, Eingabe-Widget)
+            self._chosen: dict[int, int] = {}            # OptionList-Index im Formular -> gewaehlte Option
 
         def compose(self) -> ComposeResult:
-            with Vertical() as box:
+            template = self.spec.get("template")
+            with VerticalScroll(id="w-box") as box:
                 box.border_title = self.spec.get("title", "Widget")
-                yield Static("\n".join(build_widget_lines(self.spec)))
+                box.border_subtitle = "Esc abbrechen"
+                if template == "info":
+                    yield Static(str(self.spec.get("text", "")), markup=False)
+                    yield Button("OK", id="w-ok", variant="primary")
+                elif template == "choice":
+                    yield OptionList(*[Option(str(o["label"])) for o in self.spec.get("options", [])],
+                                     id="w-choice")
+                else:
+                    for f in self.spec.get("fields", []):
+                        yield from self._field(f)
+                    yield Static("", id="w-error")
+                    yield Button("Senden", id="w-send", variant="primary")
+
+        def _field(self, f: dict):
+            ftype, label = f.get("type"), f.get("label") or f.get("name", "")
+            default = self._prev.get(f["name"], f.get("default"))
+            if ftype == "checkbox":
+                widget = Checkbox(label, value=bool(default))
+            else:
+                yield Label(label + (" *" if f.get("required") else ""), classes="w-label")
+                if ftype == "textarea":
+                    widget = TextArea("" if default is None else str(default))
+                elif ftype == "select":
+                    opts = f.get("options", [])
+                    widget = OptionList(*[Option(str(o["label"])) for o in opts])
+                    pick = next((i for i, o in enumerate(opts) if o["value"] == default), None)
+                    if pick is not None:
+                        self._chosen[len(self._fields)] = pick
+                else:
+                    widget = Input("" if default is None else str(default), placeholder=label,
+                                   type="number" if ftype == "number" else "text")
+            self._fields.append((f, widget))
+            yield widget
 
         def on_mount(self) -> None:
-            self._values: dict = {}
+            for index, (f, widget) in enumerate(self._fields):
+                if isinstance(widget, OptionList):
+                    widget.highlighted = self._chosen.get(index, 0)
+            if self.spec.get("template") == "choice":
+                self.query_one("#w-choice", OptionList).highlighted = 0
+            focusable = [w for _, w in self._fields] or list(self.query(OptionList)) or list(self.query(Button))
+            if focusable:
+                focusable[0].focus()
 
-        def _on_key(self, event) -> None:  # pragma: no cover - Terminal-Pfad
-            if event.key == "escape":
+        # -- Eingaben ----------------------------------------------------------
+        def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+            event.stop()
+            if self.spec.get("template") == "choice":
+                opt = self.spec.get("options", [])[event.option_index]
+                self.dismiss({"id": self.widget_id, "values": {"value": opt["value"]}})
+                return
+            for index, (_, widget) in enumerate(self._fields):
+                if widget is event.option_list:
+                    self._chosen[index] = event.option_index
+
+        def on_input_submitted(self, event: Input.Submitted) -> None:
+            event.stop()
+            self.action_submit()
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            event.stop()
+            if event.button.id == "w-ok":
                 self.dismiss(None)
-            elif event.key in ("enter", "return"):
-                self.dismiss({"id": self.widget_id, "values": dict(self._values)})
+            else:
+                self.action_submit()
+
+        def action_cancel(self) -> None:
+            self.dismiss(None)
+
+        def values(self) -> tuple[dict, list[str]]:
+            """Aktuelle Formularwerte + Fehler (Pflichtfeld, Zahl, Grenzen)."""
+            out, errors = {}, []
+            for index, (f, widget) in enumerate(self._fields):
+                name, ftype, label = f["name"], f.get("type"), f.get("label") or f["name"]
+                if ftype == "checkbox":
+                    out[name] = bool(widget.value)
+                    continue
+                if ftype == "select":
+                    pick = self._chosen.get(index, widget.highlighted)
+                    opts = f.get("options", [])
+                    value = opts[pick]["value"] if pick is not None and 0 <= pick < len(opts) else None
+                elif ftype == "textarea":
+                    value = widget.text
+                else:
+                    value = widget.value
+                if value in (None, ""):
+                    if f.get("required"):
+                        errors.append(f"{label}: Pflichtfeld")
+                    out[name] = value if ftype != "number" else None
+                    continue
+                if ftype == "number":
+                    try:
+                        num = float(value)
+                    except ValueError:
+                        errors.append(f"{label}: keine Zahl")
+                        continue
+                    value = int(num) if num.is_integer() else num
+                    if f.get("min") is not None and value < f["min"]:
+                        errors.append(f"{label}: mindestens {f['min']}")
+                    if f.get("max") is not None and value > f["max"]:
+                        errors.append(f"{label}: hoechstens {f['max']}")
+                out[name] = value
+            return out, errors
+
+        def action_submit(self) -> None:
+            template = self.spec.get("template")
+            if template == "info":
+                self.dismiss(None)
+                return
+            if template == "choice":
+                opts = self.query_one("#w-choice", OptionList)
+                if opts.highlighted is not None:
+                    opt = self.spec.get("options", [])[opts.highlighted]
+                    self.dismiss({"id": self.widget_id, "values": {"value": opt["value"]}})
+                return
+            values, errors = self.values()
+            if errors:
+                self.query_one("#w-error", Static).update("  ".join(errors))
+                return
+            self.dismiss({"id": self.widget_id, "values": values})
 
     class WidgetCard(Widget):
         """Karte im Board (modus pinned): Titelzeile + Zeilen + Schliessen."""

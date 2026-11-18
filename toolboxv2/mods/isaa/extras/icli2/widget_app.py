@@ -19,6 +19,8 @@ def map_widget_event(kind: str, data: dict) -> tuple[str, str] | None:
     if not wid:
         return None
     if kind == "widget_create":
+        if data.get("open"):                             # ausdruecklich geoeffnet (/widget): immer Modal
+            return ("push_modal", wid)
         return ("refresh_board", wid) if data.get("mode") == "pinned" else ("push_modal", wid)
     if kind == "widget_update":
         return ("refresh", wid)
@@ -28,11 +30,18 @@ def map_widget_event(kind: str, data: dict) -> tuple[str, str] | None:
 
 
 def side_rows_widgets(registry: dict) -> list[dict]:
-    """F2-Seitenleisten-Zeilen (Picker-Row-Format) fuer offene gepinnte Widgets."""
+    """F2-Seitenleisten-Zeilen (Picker-Row-Format) fuer offene gepinnte Widgets.
+    hint: beantwortete Werte (Format wie im Verlauf), sonst die erste Inhaltszeile."""
+    from .widgets import build_widget_lines, format_answer
     rows = []
     for wid, e in (registry or {}).items():
         if e.get("closed") or e.get("mode") != "pinned":
             continue
-        rows.append({"value": wid, "label": e.get("spec", {}).get("title", wid),
-                     "hint": "pinned"})
+        spec = e.get("spec", {})
+        title = spec.get("title", wid)
+        if e.get("values"):
+            hint = format_answer(spec, e["values"])[len(title):].lstrip(" \u2013")
+        else:
+            hint = next(iter(build_widget_lines(spec)), "")
+        rows.append({"value": wid, "label": title, "hint": hint or "pinned"})
     return rows

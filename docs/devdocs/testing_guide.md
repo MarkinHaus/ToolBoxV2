@@ -22,6 +22,16 @@
 | 6 | `test_stubs.py` schreibt beim Import `sys.modules["toolboxv2.utils.system.types"] = <Stub>` | Andere Testdateien (`test_account_bridge`) bekommen den Stub und schlagen im Gesamtlauf fehl, einzeln sind sie grün | Globaler Zustand zwischen Testdateien |
 | 7 | `server_worker.py:47-57`: zweimal derselbe Import im `try/except`, danach nur eine Warnung | Falsches Paket deklariert (`python-multipart` statt `multipart`), Datei-Uploads sind in **jeder** Installation abgeschaltet | Kein Test lädt eine Datei hoch; der Fehler wird zur Log-Zeile |
 
+### Belegte Fälle aus `a2cae2b` (WP3, nach dem Leitfaden geschrieben)
+
+| Nr. | Was der Test gemacht hat | Was im Betrieb kaputt war | Warum der Test es nicht finden konnte |
+|---|---|---|---|
+| 8 | `test_a3_betriebsbefunde`, Nr. 5: liest den Quelltext von `server_worker` und sucht die Wörter `refresh`/`revalidate` | Vertrauen wird nach dem Verknüpfen ohne Neustart **nicht** eingeschaltet: Der Prüf-Thread startet nur, wenn beim Start schon ein Konto da war (`server_worker.py:1684`, 1707, 1732) | Der Test ist grün, sobald das Wort im Code steht |
+| 9 | Nr. 3: sucht das Wort `origin` im Quelltext von `ws_worker` | – (Fix steht noch aus) | Ein Kommentar mit dem Wort macht ihn grün |
+| 10 | Nr. 6: misst die Einrückung einer Zeile | – | Prüft die Form, nicht ob der Thread ohne Konto läuft |
+| 11 | Nr. 4: übergibt `onboarding_state(app)` eine Fake-App | Der Betrieb ruft ohne `app` auf (`local_ui.py:89`, `wizard_api.py:103`, `__main__.py:1788`) | Anderer Eingang als im Betrieb (Regel 3) |
+| 12 | `test_a4`, Nr. 2 (Multipart) im Checkout | Fehler war die **fehlende Abhängigkeit**; sobald `multipart` von Hand in die venv installiert ist, ist der Test auch auf dem alten Code grün | Gegenprobe nur im Checkout statt gegen das Wheel (Regel 8) |
+
 ### Woran man das Anti-Muster erkennt
 
 1. Das Patch-Ziel liegt in `toolboxv2.…`, also im eigenen Code, und zwar im Modul unter Test oder einem direkten Mitspieler.
@@ -29,6 +39,8 @@
 3. Der Test bleibt grün, wenn man die Produktänderung, die er absichern soll, wieder zurücknimmt.
 4. Der Test läuft nur aus dem Repo-Ordner, nie gegen das gebaute Paket.
 5. Ein `except Exception: pass` oder eine reine Log-Warnung macht aus einem Fehler einen „Erfolg“.
+6. Der Test liest Quelltext (`inspect.getsource`, Textsuche, Einrückung) statt das Programm auszuführen. **Verboten** – ein solcher Test prüft Wörter, nicht Verhalten.
+7. Die Gegenprobe ist nur grün/rot, weil die eigene venv anders ist (Paket von Hand installiert).
 
 ---
 
@@ -58,6 +70,8 @@ Eine Route über HTTP gegen den echten Worker, eine CLI über den echten Befehl,
 ### Regel 4 – Zustand prüfen, nicht Aufrufe
 
 Geprüft wird das Ergebnis, das der Nutzer sieht oder das auf der Platte liegt: Antwort, Datei, Datensatz. Nicht, welche interne Funktion wie oft aufgerufen wurde. Aufrufprüfungen nur an der Grenze („genau 1 `set_data` für 1 geändertes Feld“ ist richtig, weil es das Übertragungsverhalten prüft). Tests, die bei jedem Refactoring brechen, ohne dass sich Verhalten ändert, sind *Change-Detector-Tests* (Google TotT) und werden umgeschrieben.
+
+**Kein Quelltext als Testobjekt.** `inspect.getsource`, Suche nach Wörtern oder Einrückung im Produktcode sind keine Tests. Was ein Thread, eine Prüfung oder ein Handshake tun soll, wird durch Ausführen gezeigt: Worker starten, Zustand ändern, Anfrage schicken, Ergebnis prüfen (z. B. `threading.enumerate()` nach dem Start, HTTP-Antwort nach dem Verknüpfen).
 
 ### Regel 5 – Wenn doch ein Mock, dann streng
 
@@ -118,6 +132,7 @@ Jeder Test hat ein Zeitlimit (in der CI `timeout-minutes` am Job, für Tests mit
 | 6 | Allein **und** im Gesamtlauf grün? | ja |
 | 7 | Betrifft die Änderung Paket/Imports → Paket-Test (Regel 8) gelaufen? | ja |
 | 8 | `unittest`, kein `skip`/`xfail`/`importorskip` als Ausweg? | ja |
+| 9 | Liest der Test Quelltext (`inspect.getsource`, Textsuche) statt auszuführen? | nein |
 
 ---
 

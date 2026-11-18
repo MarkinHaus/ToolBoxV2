@@ -22,7 +22,7 @@
    4. neue Abhängigkeiten in `pyproject.toml`;
    5. Änderungen an Schlüsseln, Secrets, Verschlüsselung, Authentifizierung.
 3. **Keine Dopplung.** Vor jeder neuen Funktion, Klasse oder Konstante: `git grep -n` nach dem **Zweck** (nicht nur dem Namen) und den Fund in den Bericht. Gibt es etwas Passendes, wird es benutzt. Gibt es zwei passende Stellen, wird **nicht** eine dritte gebaut: melden.
-4. **Kein Merge nach `master`, kein Push nach `master`.** Arbeitsbranch laut Auftrag. Gemergt wird nur auf ausdrückliche Anweisung des Owners, nach Prüfung.
+4. **Push nach `master` nur mit vollständigem Bericht** (Owner-Entscheidung 2026-11-18: Agenten pushen direkt auf `master`, geprüft wird danach). Vor dem Push müssen alle Pflichtfelder aus Abschnitt 2 belegt sein, das Gate „NEU rot: 0“ zeigen und der Bericht geschrieben sein. Kein Merge-Commit, kein `--force`. Ist ein Schritt nicht belegt: nicht pushen, Zustand `gestoppt`.
 5. **Owner-Entscheidungen** (WP-Dokumente, Abschnitt „Entscheidungen“) werden nicht neu ausgelegt. Passt eine Entscheidung nicht zum Code: stoppen und fragen.
 6. **Stoppen und melden** statt weitermachen, wenn:
    1. die Hypothese nicht bestätigt werden kann;

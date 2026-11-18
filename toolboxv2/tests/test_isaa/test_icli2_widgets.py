@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
 """Welle 2: Widget-Baukasten - reine Zeilen-Fabrik + Modal/Card (lazy textual)."""
-import pytest
-
 from toolboxv2.mods.isaa.extras.icli2 import widgets as W
 
 
@@ -45,13 +43,3 @@ def test_info_lines_wrapped():
     lines = W.build_widget_lines({"title": "Info", "template": "info", "mode": "pinned",
                                   "text": "x" * 250})
     assert lines and all(len(l) <= 100 for l in lines)        # Zeilen gekappt
-
-
-def test_modal_card_classes_lazy():
-    if not W.TEXTUAL:
-        pytest.skip("textual nicht im venv - Klassen nur im echten Terminal-Import")
-    assert W.WidgetModal is not None and W.WidgetCard is not None
-    scr = W.WidgetModal("id1", FORM, creator=("self", "default"))
-    assert scr.widget_id == "id1" and scr.spec["title"] == "Aufgaben-Auswahl"
-    card = W.WidgetCard("id1", FORM, creator=("self", "default"))
-    assert card.widget_id == "id1"

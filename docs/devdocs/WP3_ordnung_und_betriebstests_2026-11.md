@@ -28,7 +28,13 @@ Gegenmaßnahmen in diesem Paket:
 3. **Kein Kontoschlüssel im Klartext auf dem Server und keine Schlüsselausgabe über eine neue `api=True`-Funktion.** `get_sync_key` wird zurückgebaut. Das Krypto-Verfahren für den Sync legt Abschnitt 6 fest, nach Entscheidung des Owners.
 4. Weiter gelten alle Entscheidungen aus WP1, insbesondere: Sync nur über `CloudM.UserDataAPI`, keine MinIO-Daten auf dem Gerät, Kontopflicht ohne Schalter.
 
-Offen: Gehört der Blob-Sync weiter zu Ziel 7 (Auftrag 10)?
+Nachtrag 2026-11-18:
+
+5. **Krypto: Weg 2 (Geräte-Kopplung)** aus Abschnitt 6. Nur Funktionen aus `utils/security/cryp.py` und dem vorhandenen `mods/CloudM/LiveSync/crypto.py`.
+6. **Blob-Sync gehört weiter zu Ziel 7** (Auftrag 10), über die Data-API. Entscheidung 1 (Löschungen) gilt auch für Blobs.
+7. **Agenten pushen direkt auf `master`**; geprüft wird danach (Protokoll Abschnitt 1, Punkt 4).
+8. **Kontoseite:** Das WP1-Dokument wird an die Seite angepasst (drei Anmeldeknöpfe, Routen `/api/account/*`). Ausnahme: Das Wort „Optional“ auf der Seite widerspricht der Kontopflicht und fällt weg (Auftrag 5).
+9. Nacharbeit aus der Prüfung von `a2cae2b` geht in Auftrag 5 (siehe Abschnitt 9).
 
 ## 3. Reihenfolge
 
@@ -109,7 +115,7 @@ Jeder Fix-Auftrag:
   - Eine Multipart-Abhängigkeit, die zum Code passt: Der Code benutzt die API des PyPI-Pakets `multipart`. `python-multipart` bleibt nur, wenn es noch woanders gebraucht wird; das belegt der Agent mit `git grep`.
   - Den doppelten Import entfernen.
   - Abnahme nur mit dem Wheel (Regel 8).
-- **Auftrag 8 – Krypto zurück auf die Owner-Linie.** `get_sync_key` und `user_pass_sync` entfernen (freigegeben). Das Verfahren nach der Entscheidung aus Abschnitt 6 mit den **vorhandenen** Funktionen aus `toolboxv2/utils/security/cryp.py`; keine neue Krypto-Bibliothek, keine neue `api=True`-Funktion.
+- **Auftrag 8 – Krypto zurück auf die Owner-Linie.** `get_sync_key` entfernen und den Sync nicht mehr über `user_pass_sync` laufen lassen (freigegeben). **Korrektur 2026-11-18:** Das **Feld** `user_pass_sync` bleibt: Es ist älter als WP1 und der alte Magic-Link-Weg leitet daraus seinen Schlüssel ab (`AuthHelpers.py:108`, `extras.py:343`). Folge: Jeder vom Server ausgegebene Sync-Schlüssel war zugleich das Ausgangsmaterial dieses Links; der Auftrag prüft, ob der Weg noch erreichbar ist, und der Owner erneuert danach die betroffenen Werte auf dem Server. Das Verfahren nach der Entscheidung aus Abschnitt 6 mit den **vorhandenen** Funktionen aus `toolboxv2/utils/security/cryp.py`; keine neue Krypto-Bibliothek, keine neue `api=True`-Funktion.
 - **Auftrag 9 – Sync-Korrekturen** nach den Betriebstests aus Auftrag 4 (Nr. 3–6), dazu Dateinamen mit `:` sichtbar behandeln statt still überspringen.
 
 ## 6. Entscheidung: Wie wird der Sync verschlüsselt?
@@ -183,3 +189,16 @@ Quellen: [Tauri v2 Updater](https://v2.tauri.app/plugin/updater/), [CrabNebula: 
 4. `tb-manifest.yaml` meldet `app.version 0.1.27` bei Paket 0.1.29; der Installer wählt Python 3.10.
 5. Die Kontoseite weicht vom WP1-Dokument ab (Text „Optional“, drei Knöpfe, Routennamen). Entweder Seite oder Dokument anpassen; der Owner entscheidet.
 6. `OSError: Bad file descriptor` (waitress) beim Stop.
+
+## 9. Prüfung von `master` @ `a2cae2b`/`dca1ffa` (2026-11-18)
+
+Erledigt und im echten Ablauf bestätigt: Auftrag 2 (Zeitlimits), 3 und 4 (Betriebstests angelegt), 6 (Konto im Betrieb), 7 (Paket). Testlauf: 8 rot (= Aufträge 5 und 9), 52 grün. Wheel frisch installiert, `python -I` aus fremdem Ordner: LiveSync importierbar, `MULTIPART_AVAILABLE True`. Echte App, fremder Arbeitsordner, `onboarding_state()` ohne `app`: `needs_account false`.
+
+Nacharbeit (geht in Auftrag 5):
+1. Vertrauen nach dem Verknüpfen ohne Neustart: Der Prüf-Thread startet nur, wenn beim Start schon ein Konto da war (`server_worker.py:1684`, 1707, 1732). Beim Erststart über den Wizard bleibt das Vertrauen bis zum Neustart aus. Nach dem Entfernen des Kontos läuft `account-sync` weiter.
+2. A3 Nr. 3, 5, 6 lesen Quelltext statt auszuführen (Testleitfaden, Fälle 8–10). Neu als Tests am laufenden Worker.
+3. A3 Nr. 1 prüft nur `/` und `/api/wizard/state`, nicht alle Routen aus Abschnitt 4.
+4. A3 Nr. 4 ruft mit Fake-App statt ohne `app` wie der Betrieb.
+5. `live_proxy._peer_is_local` fällt ohne `REMOTE_ADDR` auf `client_ip` zurück, das aus `X-Forwarded-For` stammen kann (Kommentar dort, `server_worker` L308).
+
+Startprompts: `docs/devdocs/wp3_prompts/` (Aufträge 5, 8, 9, 10). Wellen: 5 und 9 parallel; danach 8; danach 10.

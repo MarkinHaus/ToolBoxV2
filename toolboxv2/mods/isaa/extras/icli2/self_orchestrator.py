@@ -22,10 +22,12 @@ class SelfOrchestratorMixin:
     """Bringt self_agent_stop/pause/resume/status/obs auf den IsaaBackend (nur self, Test 7)."""
 
     def _self_ok(self) -> bool:
-        return getattr(self, "agent", None) == "self"
+        """Gleiche Pruefung wie SelfToolMixin._self_ok (Aufrufer aus TOOL_CALLER)."""
+        from .widget_tools import caller_of
+        return caller_of(self)[0] == "self"
 
     async def _agent_instance(self, name: str):
-        return await self.isaa.get_agent(_ok_name(name))
+        return await self._icli2_agent(_ok_name(name))
 
     # -- steuern (async: engine-API ist async) -----------------------------
     async def self_agent_stop(self, name: str, run_id: str = "") -> dict[str, Any] | None:

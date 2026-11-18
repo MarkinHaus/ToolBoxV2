@@ -26,6 +26,10 @@ def _backend(tmp: Path, agent: str = "self"):
 
     class FakeAgent:
         name = "tb_admin"
+        tools: list = []
+
+        def add_tools(self, tools):                 # icli2 bindet beim Holen seine Tools (widget_tools)
+            self.tools = [t["name"] for t in tools]
 
         def _get_execution_engine(self):
             return FakeEngine()
@@ -129,6 +133,9 @@ def test_14_start_runs_background_task(tmp_path):
 
     class StartAgent:
         name = "tb_admin"
+
+        def add_tools(self, tools):                 # icli2 bindet beim Holen seine Tools (widget_tools)
+            self.tools = [t["name"] for t in tools]
 
         async def a_stream(self, query, session_id=None, **kw):
             for i in range(3):

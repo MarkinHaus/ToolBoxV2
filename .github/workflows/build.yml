@@ -153,7 +153,17 @@ jobs:
         env:
           MOCK_EXTERNAL_SERVICES: "true"
           IS_OFFLINE_DB: "true"
-        run: python -m pytest toolboxv2/tests/ -v --tb=short -rfE
+        run: python -m pytest toolboxv2/tests/ -v --tb=short -rfE -m "not icli2_betrieb"
+
+      # icli2-Widgets im Betrieb: echte App, Engine, Textual-UI und Kindprozess wie der Starter.
+      # Langsam (~2 min), daher eigener Schritt mit Zeitlimit je Test (testing_guide Regel 9/12).
+      - name: icli2 Betriebstests
+        env:
+          MOCK_EXTERNAL_SERVICES: "true"
+          IS_OFFLINE_DB: "true"
+        run: |
+          python -m uv pip install -e ".[isaa]" litellm pytest-timeout --system
+          python -m pytest toolboxv2/tests/test_isaa/test_icli2_widget_betrieb.py -v --tb=short -rfE -m icli2_betrieb --timeout=120
 
   # ============================================================================
   # NODE.JS / FRONTEND BUILDS

@@ -88,8 +88,16 @@ class IsaaBackend(WidgetToolsMixin, WatchMixin, SelfToolMixin, SelfOrchestratorM
     def _networks_dir(self) -> Path:
         return self._agents_dir() / "_networks"
 
+    async def _icli2_agent(self, name: str):
+        """Einziger Weg der icli2 zu einem Agenten: holt/baut ihn ueber isaa und bindet die icli2-Tools
+        (Widgets fuer jeden Agenten, self_* nur fuer 'self'; widget_tools.register_icli2_tools)."""
+        from .widget_tools import register_icli2_tools
+        instance = await self.isaa.get_agent(name)
+        register_icli2_tools(instance, self, name)
+        return instance
+
     async def _agent(self, name: str | None = None):
-        return await self.isaa.get_agent(name or self.agent)
+        return await self._icli2_agent(name or self.agent)
 
     async def _session(self):
         return await (await self._agent()).session_manager.get_or_create(self.session)
@@ -130,6 +138,7 @@ class IsaaBackend(WidgetToolsMixin, WatchMixin, SelfToolMixin, SelfOrchestratorM
         ready = await self._ready()
         ready["debug"] = bool(getattr(self.app, "debug", False) or os.getenv("ICLI2_DEBUG"))
         ready["history"] = await asyncio.to_thread(self._read_history)
+        ready["board"] = (await self._rows_board())[1]   # gepinnte Widgets ueberleben den Neustart
         # darf den Start nie verhindern; Discord/Telegram werden erst bei Gebrauch geladen
         for step in (self._restore_paused, self._start_jobs, self._plugins_boot):
             try:
@@ -404,29 +413,57 @@ class IsaaBackend(WidgetToolsMixin, WatchMixin, SelfToolMixin, SelfOrchestratorM
             return {"ok": True, "id": widget_id}
         return {"ok": False, "error": f"unbekannt: {widget_id}"}
 
-    async def _do_widget_answer(self, payload: dict) -> dict:
-        wid = (payload or {}).get("id")
-        values = (payload or {}).get("values") or {}
+    async def _do_widget_answer(self, payload: dict | None = None, *, id: str = "",
+                                values: dict | None = None) -> dict:
+        """Antwort des Nutzers (UI -> Engine WIDGET_ANSWER): Werte speichern, Zeile fuer den Verlauf,
+        Erzeuger-Agent bekommt die Werte als neuen Lauf in seiner Session."""
+        payload = payload or {}
+        wid = id or payload.get("id")
+        values = values if values is not None else (payload.get("values") or {})
         reg = self.widget_registry_load()
         entry = reg.get(wid)
         if entry is None:
-            return {"ok": False, "error": f"unbekanntes Widget: {wid}"}
+            raise LookupError(f"unbekanntes Widget: {wid}")
         entry["values"] = values
         self._widgets_save(reg)
+        from .widget_tools import widget_event
         from .widgets import format_answer
+        self._emit_widget("widget_update", widget_event(wid, entry))
         line = format_answer(entry["spec"], values)
-        await self._widget_start_turn(f"[Widget-Antwort] {line}\nvalues: {json.dumps(values, ensure_ascii=False)}")
-        return {"ok": True, "text": line}
+        agent, session = (list(entry.get("creator") or []) + ["", ""])[:2]
+        await self._widget_start_turn(agent or self.agent, session or self.session,
+                                      f"[Widget-Antwort] {line}\nid: {wid}\n"
+                                      f"values: {json.dumps(values, ensure_ascii=False)}")
+        return {"text": f"↩ {line}"}
 
-    async def _widget_start_turn(self, prompt: str) -> None:
-        """Antwort an den creator-Agenten: laufende Pipeline speisen oder Start
-        (Muster: icli_web client.py _handle_query -> _run_agent)."""
-        engine = getattr(self, "engine", None)
-        stream = getattr(engine, "stream", None) if engine is not None else None
-        if stream is not None:
-            await stream(prompt)
-        else:
-            self.app.logger.warning(f"widget answer ohne engine: {prompt[:80]}")
+    async def _widget_start_turn(self, agent: str, session: str, prompt: str) -> None:
+        """Antwort an den Erzeuger: neuer Lauf ueber die Engine (erscheint in der UI wie ein Job).
+        Laeuft dort schon ein Lauf, nimmt a_stream die Nachricht als Nachsteuerung auf."""
+        if self._spawn is None:
+            raise RuntimeError("Widget-Antwort: keine Engine verbunden (attach fehlt)")
+        task = asyncio.ensure_future(self._spawn(agent, session, prompt, kind="widget"))
+        self._tasks.add(task)
+        task.add_done_callback(self._job_done)
+
+    async def _rows_board(self):
+        """Seitenleiste: offene gepinnte Widgets (widget_app.side_rows_widgets)."""
+        from .widget_app import side_rows_widgets
+        return "Widgets", side_rows_widgets(self.widget_registry_load())
+
+    async def _rows_widgets(self):
+        """Picker /widget: alle offenen Widgets, Enter oeffnet das Modal."""
+        rows = [_row(wid, e.get("spec", {}).get("title", wid),
+                     f"{e.get('mode', 'modal')} · {(e.get('creator') or ['?'])[0]}"
+                     + (" · beantwortet" if e.get("values") else ""))
+                for wid, e in self.widget_registry_load().items() if not e.get("closed")]
+        return ("Widgets" if rows else "Keine offenen Widgets"), rows
+
+    async def _do_widget_open(self, id: str) -> dict:
+        from .widget_tools import widget_event
+        entry = self.widget_registry_load().get(id)
+        if entry is None or entry.get("closed"):
+            raise LookupError(f"Widget {id} ist nicht offen")
+        return {"widget": widget_event(id, entry, open_modal=True)}
 
     async def _rows_settings(self):
         user = await self._cloud_user()
@@ -645,7 +682,7 @@ class IsaaBackend(WidgetToolsMixin, WatchMixin, SelfToolMixin, SelfOrchestratorM
 
     # ── Laeufe ───────────────────────────────────────────────────────────────
     async def stream(self, agent: str, session: str, query: str) -> AsyncIterator[dict]:
-        instance = await self.isaa.get_agent(agent)
+        instance = await self._icli2_agent(agent)
         self.shell_enter(agent, session)                 # Shell weiss, zu welchem Lauf sie gehoert
         # "#audio" am Ende: nur diese Antwort wird gesprochen (kein Dauer-Schalter)
         speak = query.rstrip().endswith(AUDIO_TAG)
@@ -667,7 +704,7 @@ class IsaaBackend(WidgetToolsMixin, WatchMixin, SelfToolMixin, SelfOrchestratorM
                 self._voice_flush()
 
     async def _run_id(self, agent: str, session: str):
-        instance = await self.isaa.get_agent(agent)
+        instance = await self._icli2_agent(agent)
         engine = instance._get_execution_engine()
         return instance, engine, engine._session_last_run.get(session)
 

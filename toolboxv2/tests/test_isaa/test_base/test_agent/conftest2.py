@@ -1,15 +1,10 @@
 import unittest
 import asyncio
 import sys
-from unittest.mock import MagicMock, AsyncMock
 
-# --- MOCKING EXTERNAL IMPORTS ---
-# Da toolboxv2 evtl. nicht installiert ist, mocken wir die Importe vorab
-sys.modules['toolboxv2.mods.isaa.base.Agent.types'] = MagicMock(__path__=[])
-sys.modules['toolboxv2.mods.isaa.base.Agent.rule_set'] = MagicMock(__path__=[])
-sys.modules['litellm'] = MagicMock(__path__=[])
-sys.modules['python_a2a'] = MagicMock(__path__=[])
-sys.modules['mcp.server.fastmcp'] = MagicMock(__path__=[])
+# Frueher: sys.modules['litellm'] usw. auf Modulebene durch MagicMock ersetzt. Das vergiftete jeden
+# spaeteren Test im selben Prozess (testing_guide Regel 6.1), z. B. echte Agentenlaeufe in
+# test_icli2_widget_betrieb.py. toolboxv2 ist installiert; die Tests hier brauchen die Ersetzung nicht.
 
 # --- ASYNC TEST BASE ---
 class AsyncTestCase(unittest.TestCase):
