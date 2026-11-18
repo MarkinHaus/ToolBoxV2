@@ -870,10 +870,12 @@ class _ToolCall:
 
 class _AssistantMessage:
     """Drop-in for litellm Message. Attribute-access compatible."""
-    __slots__ = ("role", "content", "tool_calls")
-    def __init__(self, content=None, tool_calls=None):
+    __slots__ = ("role", "content", "tool_calls", "usage")
+    def __init__(self, content=None, tool_calls=None, usage=None):
         self.role = "assistant"
         self.content = content
+        # Provider-usage des Aufrufs (dict, siehe FlowAgent._usage_for_engine) oder None.
+        self.usage = usage
         # Convert dicts to attribute-access objects
         if tool_calls:
             self.tool_calls = [

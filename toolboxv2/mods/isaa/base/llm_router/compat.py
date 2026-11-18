@@ -59,6 +59,10 @@ class _Usage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    # Cache-Felder aus UsageData; die Engine braucht sie fuer die echte Kontextlast
+    # (bei Anthropic ist der Cache nicht in prompt_tokens enthalten).
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
 
     def _asdict(self):
         return {
@@ -113,6 +117,8 @@ def completion_result_to_model_response(result: CompletionResult) -> _ModelRespo
             prompt_tokens=result.usage.prompt_tokens,
             completion_tokens=result.usage.completion_tokens,
             total_tokens=result.usage.total_tokens,
+            cache_read_tokens=result.usage.cache_read_tokens,
+            cache_creation_tokens=result.usage.cache_creation_tokens,
         ),
         model=result.model,
     )
@@ -123,6 +129,8 @@ def usage_to_shim(u: UsageData) -> _Usage:
         prompt_tokens=u.prompt_tokens,
         completion_tokens=u.completion_tokens,
         total_tokens=u.total_tokens,
+        cache_read_tokens=u.cache_read_tokens,
+        cache_creation_tokens=u.cache_creation_tokens,
     )
 
 
