@@ -85,6 +85,7 @@ class Fake:
                 "tb":{"title":"ToolBox-Funktionen","rows":[R("CloudM.get_user","name"),R("isaa.version")]},
                 "shares":{"title":"LiveSync","rows":[R("sh1","getrennt")]},
                 "voice":{"title":"Sprache","rows":[R("omni","aus")]},
+                "runs":{"title":"Läufe der Agenten","rows":[R("self|r1","Schritt 4 · tests") | {"label":"self · default · ⚠ hängt"}]},
                 "jobs":{"title":"Jobs","rows":[{"value":"j1","label":"nightly","hint":"on_cron · active · completed · 3x · self"}]},
                 "mounts":{"title":"Mounts","rows":[R("/project","/tmp/x")] if s.st["mounts"] else []} }[what] | ({"title":"Keine Mounts – /mount <ordner>"} if what=="mounts" and not s.st["mounts"] else {})
     async def do(s,action,**a):
@@ -97,7 +98,7 @@ class Fake:
             s.st.update(session="s-new" if a["name"]=="+" else a["name"]); return {"ready":dict(s.st,recap=[("user","alte frage"),("assistant","alte antwort")])}
         elif action=="job":
             asyncio.ensure_future(s.spawn("self","default","nightly: aufräumen",kind="job")); return {"text":"Job nightly gestartet"}
-        elif action in ("job_add","dream","network_save","network_load"): return {"text":action+" ok"}
+        elif action in ("job_add","dream","network_save","network_load","run"): return {"text":action+" ok"}
         elif action=="feature": s.st["features"]=["coder"]; return {"ready":dict(s.st),"text":"Feature coder an"}
         elif action in ("skill","mcp","plugin","mcp_add","discord","telegram","plugin_install","plugin_confirm","plugin_discard","plugin_remove","market_add","market_remove"): return {"text":action+" ok"}
         elif action=="vfs": return {"text":"INHALT "+a["path"]}
@@ -362,6 +363,10 @@ async def main():
         await cmd("/plugin market",""); assert ("plugin_install",{"source":"owner/tool"}) in fake.log
         await cmd("/plugin markets",""); assert ("market_remove",{"source":"owner/market"}) in fake.log
         n=len(fake.log); await cmd("/plugin install"); assert not [x for x in fake.log[n:] if x[0]!="remember"]
+        await pilot.press(*"/runs"); await pilot.press("enter"); await pilot.pause(0.3)
+        assert isinstance(app.screen,P_); await pilot.press("enter"); await pilot.pause(0.3)
+        assert isinstance(app.screen,P_); await pilot.press("enter"); await pilot.pause(0.3)
+        assert ("run",{"run":"self|r1","op":"reset"}) in fake.log, fake.log[-3:]
         print("step6/7 ui ok")
         # ── Vervollstaendigung beim Tippen ──
         await pilot.press("/", "s", "e"); await pilot.pause(0.1)

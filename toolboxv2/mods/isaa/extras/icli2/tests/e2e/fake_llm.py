@@ -17,6 +17,7 @@ class H(BaseHTTPRequestHandler):
         n_tool = sum(1 for m in msgs if m.get("role") == "tool")
         first_user = next((m.get("content") for m in msgs if m.get("role") == "user"), "") or ""
         first_user = first_user if isinstance(first_user, str) else json.dumps(first_user)
+        bg_started = any(m.get("role") == "tool" and '"background": true' in str(m.get("content")) for m in msgs)
         if "fehler429" in (user or ""):                  # echter 429 im OpenRouter-Format
             body = json.dumps({"error": {"message": "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day", "code": 429}}).encode()
             self.send_response(429); self.send_header("Content-Type", "application/json"); self.send_header("retry-after", "1")
@@ -38,6 +39,18 @@ class H(BaseHTTPRequestHandler):
                 call = (step, {"path": f"/sub{n_tool}", "command": f"ls /sub{n_tool}", "reason": "Ordner ansehen"})
             elif "final_answer" in tools:
                 call = ("final_answer", {"answer": "## Sub-Ergebnis\n\nZwei Ordner gelesen, alles in Ordnung.", "success": True})
+        elif "BACKGROUND COMMAND FINISHED" in (user or "") and "final_answer" in tools:
+            ok = "bg-ende" in user and "exit_code=0" in user          # Folgelauf: Meldung auswerten
+            call = ("final_answer", {"answer": "Hintergrund fertig: " + ("bg-ende, exit 0" if ok else "unerwartet"),
+                                     "success": True})
+        elif "bgshell" in (user or "") and tools:      # Hintergrund-Befehl starten, dann Zug beenden
+            if not bg_started and "shell" in tools:
+                call = ("shell", {"command": "sleep 4; echo bg-ende", "session_id": "B", "background": True,
+                                  "reason": "Tests im Hintergrund"})
+            elif not bg_started and "load_tools" in tools and n_tool < 3:
+                call = ("load_tools", {"tools": ["shell"]})
+            elif "final_answer" in tools:
+                call = ("final_answer", {"answer": "Läuft im Hintergrund, ich melde mich.", "success": True})
         elif "subagent-test" in (user or "") and "spawn_sub_agent" in tools and n_tool == 0:
             call = ("spawn_sub_agent", {"task": "SUBTASK: Lies die Ordner /sub0 und /sub1.\nFasse danach kurz zusammen.", "wait": True, "budget": 20000, "max_iterations": 6})
         if call is not None:

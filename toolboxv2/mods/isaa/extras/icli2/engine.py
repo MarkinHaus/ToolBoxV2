@@ -100,6 +100,11 @@ class Engine:
         except RuntimeError:
             pass                                         # Loop wurde gerade beendet
 
+    def _live_runs(self) -> list[tuple[str, str, str, str]]:
+        """(agent, session, run, origin) jedes Laufs, dessen Task noch lebt. Nur im Engine-Loop."""
+        return [(r.agent, r.session, r.id, r.origin) for r in self._runs.values()
+                if r.task is not None and not r.task.done()]
+
     def poll(self, limit: int = 200) -> list[P.Event]:
         """Bis zu `limit` Events abholen. Blockiert nie."""
         out: list[P.Event] = []
@@ -137,6 +142,9 @@ class Engine:
         asyncio.set_event_loop(self._loop)
         self._inbox = asyncio.Queue()
         self._backend.attach(self.spawn)
+        hook = getattr(self._backend, "attach_engine", None)
+        if hook is not None:                             # optional: lebende Laeufe + Hinweise fuer das Backend
+            hook(self._live_runs, lambda text, level="info": self._emit(P.NOTICE, level=level, text=text))
         self._started.set()
         try:
             self._loop.run_until_complete(self._serve())

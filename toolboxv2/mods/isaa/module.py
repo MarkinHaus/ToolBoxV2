@@ -1952,7 +1952,9 @@ class Tools(MainTool):
                      f"command/user_input are sent to its stdin (multi-turn CLI "
                      f"tools); use another session label for parallel commands. "
                      f"new_session=True resets a session. Raising timeout is "
-                     f"unnecessary."),
+                     f"unnecessary. Long runners (test suites, builds): pass "
+                     f"background=True - returns at once, you are notified with "
+                     f"exit_code + last lines when it ends; do not poll in a loop."),
                     category=["local", "shell", "commands"],
                     flags={"shell": True, "detect_shell": True, "dangerous":True}
                 )
@@ -2455,6 +2457,35 @@ from typing import Any, Dict, Optional
 # =============================================================================
 _session_store: Dict[str, "ShellSession"] = {}
 
+import contextvars
+
+# Wer die Shell gerade benutzt. "scope" trennt die Sessions A/B/C (z. B. je Job: eigene Shells,
+# keine Kollision mit dem Chat), "agent"/"session" sagen den Listenern, wohin die Meldung eines
+# Hintergrund-Befehls gehoert. Gesetzt vom Aufrufer (z. B. icli2) rund um einen Agenten-Lauf;
+# asyncio-Tasks und asyncio.to_thread uebernehmen den Wert automatisch.
+SHELL_CONTEXT: "contextvars.ContextVar[dict]" = contextvars.ContextVar("tb_shell_context", default={})
+_BG_LISTENERS: list = []      # fn(event: dict) - aus dem Beobachter-Thread aufgerufen
+BG_KEEP = 20000               # Zeichen Ausgabe, die ein Hintergrund-Befehl hoechstens puffert
+BG_TAIL_LINES = 40
+
+
+def add_background_listener(fn) -> None:
+    """fn(event) wird aufgerufen, sobald ein Hintergrund-Befehl (shell background=True) endet.
+    event: agent, session, scope, session_id, command, exit_code, success, seconds, tail.
+    Achtung: Aufruf aus einem Thread - asyncio-Code mit loop.call_soon_threadsafe weiterreichen."""
+    if fn not in _BG_LISTENERS:
+        _BG_LISTENERS.append(fn)
+
+
+def remove_background_listener(fn) -> None:
+    if fn in _BG_LISTENERS:
+        _BG_LISTENERS.remove(fn)
+
+
+def _store_key(label: str) -> str:
+    scope = (SHELL_CONTEXT.get() or {}).get("scope") or ""
+    return f"{scope}/{label}" if scope else label
+
 
 def is_admin() -> bool:
     """Prüft, ob der aktuelle Prozess bereits Admin-Rechte hat."""
@@ -2595,6 +2626,10 @@ class ShellSession:
         # command that is still running (None = shell is idle).
         self._cmd_seq = 0
         self._pending: Optional[str] = None
+        # Hintergrund-Befehl (shell background=True): ein Beobachter-Thread liest die Ausgabe
+        # in diesen Puffer; Abfragen lesen nur den Puffer (nie parallel aus den Queues).
+        self.bg: Optional[dict] = None
+        self.bg_lock = threading.Lock()
         self._script_path: Optional[str] = None
         self.last_exit_code: Optional[int] = None
         self.marker_ok = False
@@ -3019,6 +3054,73 @@ def _kill_session_process(target_pid: int) -> dict:
                 "stderr": f"Not permitted to kill PID {target_pid}."}
 
 
+def _bg_start(session: "ShellSession", command: str) -> dict:
+    """Befehl starten und einen Beobachter-Thread anhaengen, der bis zum Ende mitliest."""
+    session.exec_script(command)
+    bg = {"command": command, "started": time.time(), "out": "", "err": "", "done": False,
+          "exit_code": None, "owner": dict(SHELL_CONTEXT.get() or {}), "label": session.label}
+    session.bg = bg
+    threading.Thread(target=_bg_watch, args=(session, bg), daemon=True,
+                     name=f"tb-shell-bg-{session.label}").start()
+    return bg
+
+
+def _bg_watch(session: "ShellSession", bg: dict) -> None:
+    while True:
+        try:
+            out = session.read_output(timeout=1.0, hard_timeout=2.0)
+        except Exception as e:                           # Session wurde beendet o. ae.
+            out = {"stdout": "", "stderr": f"\n[watcher: {type(e).__name__}: {e}]", "done": False,
+                   "exit_code": None, "is_alive": False}
+        with session.bg_lock:
+            bg["out"] = (bg["out"] + out["stdout"])[-BG_KEEP:]
+            bg["err"] = (bg["err"] + out["stderr"])[-BG_KEEP:]
+            if out["done"] or not out["is_alive"]:
+                bg["done"] = True
+                bg["exit_code"] = out["exit_code"] if out["done"] else session.process.returncode
+                bg["ended"] = time.time()
+                break
+    event = _bg_event(session, bg)
+    for fn in list(_BG_LISTENERS):
+        try:
+            fn(event)
+        except Exception:                                # ein Listener darf den Beobachter nie stoppen
+            pass
+
+
+def _bg_event(session: "ShellSession", bg: dict) -> dict:
+    out = session._strip_marker_noise(bg["out"]).strip()
+    err = session._strip_marker_noise(bg["err"]).strip()
+    lines = (out + ("\n[stderr]\n" + err if err else "")).splitlines()[-BG_TAIL_LINES:]
+    owner = bg["owner"]
+    return {"agent": owner.get("agent", ""), "session": owner.get("session", ""),
+            "scope": owner.get("scope", ""), "session_id": bg["label"],
+            "command": bg["command"].strip()[:300], "exit_code": bg["exit_code"],
+            "success": bg["exit_code"] == 0, "seconds": round(bg.get("ended", time.time()) - bg["started"], 1),
+            "tail": "\n".join(lines)[-3000:]}
+
+
+def _bg_poll(session: "ShellSession", info: str = "") -> str:
+    """Zwischenstand bzw. Ergebnis eines Hintergrund-Befehls aus dem Puffer."""
+    with session.bg_lock:
+        bg = session.bg
+        out = session._strip_marker_noise(bg["out"]).strip()
+        err = session._strip_marker_noise(bg["err"]).strip()
+        done = bg["done"]
+        result = {"success": bg["exit_code"] == 0 if done else True, "session_id": session.label,
+                  "stdout": out[-4000:], "stderr": err[-2000:], "status": "finished" if done else "running",
+                  "background": True, "elapsed_s": round(time.time() - bg["started"], 1),
+                  "info": info or "Background command", "system": session.system}
+        if done:
+            result["exit_code"] = bg["exit_code"]
+            session.bg = None                            # abgeholt: die Session ist wieder frei
+        else:
+            result["note"] = ("Still running in the background. You will be notified automatically "
+                              "when it ends (if the host supports it) - no need to poll. Continue with "
+                              "other work, or end your turn and say that you are waiting for it.")
+    return _shell_json(result)
+
+
 def _shell_json(payload: dict) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -3039,6 +3141,7 @@ def shell_tool_function(
     new_session: bool = False,
     timeout: float = 60.0,
     idle_timeout: float = 2.0,
+    background: bool = False,
 ) -> str:
     r"""
     Host shell — up to 3 persistent labelled sessions 'A' | 'B' | 'C'.
@@ -3062,6 +3165,10 @@ def shell_tool_function(
     - Kernel-level tree containment: each session runs in an isolated process
       group / job object ensuring child processes are cleanly manageable
     - Pipes, operators, backslash paths, $env vars, interactive input
+    - Long runners (test suites, builds, downloads): pass background=True. The
+      call returns at once; the command keeps running in that session and you
+      are NOTIFIED with exit_code and the last output lines when it ends — do
+      not poll in a loop. shell(session_id=...) still shows the progress.
 
     Result `status`:
     - 'finished'          command completed → see exit_code
@@ -3098,6 +3205,8 @@ def shell_tool_function(
         session_id: 'A' | 'B' | 'C' (max 3 sessions, default 'A')
         user_input: Send raw input to a running/interactive process
         new_session: Reset this label's session before executing
+        background: start `command` and return immediately; a notification with
+                    exit_code + last lines follows when it ends (long runners)
         timeout: absolute cap in seconds (default 60, max 600)
         idle_timeout: return after this many seconds without new output
 
@@ -3138,13 +3247,13 @@ def shell_tool_function(
         target_label = parts[1].upper() if len(parts) > 1 else label
         if target_label not in SHELL_SESSION_LABELS:
             return bad_label(target_label)
-        old_session = _session_store.pop(target_label, None)
+        old_session = _session_store.pop(_store_key(target_label), None)
         if old_session:
             old_session.terminate()
 
         # Instant-Respawn auf demselben Label
         new_sess = ShellSession(label=target_label)
-        _session_store[target_label] = new_sess
+        _session_store[_store_key(target_label)] = new_sess
         return _shell_json({
             "success": True,
             "session_id": target_label,
@@ -3225,18 +3334,29 @@ def shell_tool_function(
 
     # Session Management (persistent per label; new_session=True = reset)
     msg_info = "Resumed session"
-    session = _session_store.get(label)
+    key = _store_key(label)
+    session = _session_store.get(key)
     if session is not None and (new_session or not session.active
                                 or session.process.poll() is not None):
         session.terminate()
-        _session_store.pop(label, None)
+        _session_store.pop(key, None)
         session = None
         msg_info = "Session reset"
     if session is None:
         if msg_info != "Session reset":
             msg_info = "New session started"
         session = ShellSession(label=label)
-        _session_store[label] = session
+        _session_store[key] = session
+
+    if session.bg is not None:
+        if not session.bg["done"] and (has_command or user_input is not None):
+            # laufender Hintergrund-Befehl: Text geht an SEIN stdin (wie bei jedem laufenden Programm)
+            session.write(user_input if user_input is not None else command, raw=True)
+            time.sleep(0.3)
+            return _bg_poll(session, "Sent to stdin of the running background command.")
+        if not (session.bg["done"] and (has_command or user_input is not None)):
+            return _bg_poll(session)
+        session.bg = None                                # fertig + neuer Befehl: normal weiter
 
     hard_cap = min(max(timeout, 1.0), 600.0)
     idle = max(idle_timeout, 0.2)
@@ -3269,6 +3389,24 @@ def shell_tool_function(
                 late_output = {"stdout": pre["stdout"].strip(), "stderr": pre["stderr"].strip()}
                 if pre["done"]:
                     late_output["exit_code"] = pre["exit_code"]
+            if background:
+                if not session.marker_ok:
+                    return _shell_json({
+                        "success": False, "session_id": label, "error": "BACKGROUND_UNAVAILABLE",
+                        "stderr": "This shell has no completion tracking, so background=True cannot "
+                                  "report the end. Run it normally and poll with shell(session_id=...)."})
+                _bg_start(session, command)
+                started = {
+                    "success": True, "session_id": label, "status": "running", "background": True,
+                    "info": msg_info, "system": session.system,
+                    "note": ("Started in the background. You will be notified with exit_code and the "
+                             "last output lines when it ends - do not poll in a loop. Meanwhile use "
+                             "another session label for other commands, or end your turn and say "
+                             "that you are waiting for it."),
+                }
+                if late_output:
+                    started["late_output_of_previous_command"] = late_output
+                return _shell_json(started)
             session.exec_script(command)       # multiline-safe via script file
             output = session.read_output(timeout=idle, hard_timeout=hard_cap)
     elif session.busy:
@@ -3291,7 +3429,7 @@ def shell_tool_function(
         status = "finished"
         exit_code = session.process.returncode
         session.terminate()
-        _session_store.pop(label, None)
+        _session_store.pop(key, None)
     elif session.busy:
         status = "running"
         if stdout_str and not stdout_str.endswith(("\n", "\r")):

@@ -206,6 +206,22 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 - **Ursache 2 (UI, zeitabhängig):** Beim Einfrieren eines Abschnitts wurde der Text aus dem Markdown-Widget gelesen. Textuals `MarkdownStream.stop()` wartet ein laufendes `append` nicht ab – bei langsamem Zeichnen (z. B. Terminal im Hintergrund) fehlte der Rest oder der ganze Abschnitt. Jetzt führt jeder Lauf den Abschnittstext selbst.
 - **Geprüft:** `tests/check_final.py` (Zwischentext + Antwort, langsames Zeichnen, schon gestreamte Antwort genau einmal, Antwort nur in `done`; schlägt ohne Fix fehl) und echter Durchlauf gegen den isaa-Agenten mit Text und Tool-Aufruf in derselben Modellantwort (`tests/e2e/e2e_final.py`).
 
+### Schritt 15 – Abstand über der Eingabe (`icli2-15-abstand-eingabe.patch`)
+- Eine Zeile mit weichem Übergang (`Fade` in `widgets.py`) direkt über der Eingabe.
+
+### Schritt 16 – Unterbefehle vervollständigen, Wachhund (`icli2-16-unterbefehle-wachhund.patch`)
+- **Vervollständigung von Argumenten:** `autocomplete.suggest_args` war importiert, aber nie benutzt. Jetzt: `/agent s` → `self`, `/session`, `/model`, `/feature`, `/skill`, `/mcp`, `/pack` mit Werten aus der Engine (kurz zwischengespeichert, Antwort zeichnet nach); feste Unterbefehle (`/plugin install|…`, `/set <schlüssel>`, `/model <name> fast|complex|both`, `/job fire|pause|remove`) sofort. Tab übernimmt, Enter ergänzt nur ein unfertiges Wort; ein fertiger Wert führt aus.
+- **`/job fire|pause|remove <job>`** direkt, Job per Id oder Name.
+- **`/`-Befehle bei blockierter Engine:** sofortige Rückmeldung statt Stille. **Wachhund:** steht die Engine länger als 5 s, nennt ein Hinweis die Stelle (Datei:Zeile, Funktion), der volle Stack geht ins Log.
+- **Geprüft:** `test_icli2_autocomplete.py`, `tests/check_ui.py`, `tests/check_watchdog.py`.
+
+### Schritt 17 – Hintergrund-Befehle, Job-Sessions, `/runs` (`icli2-17-hintergrund-jobs-runs.patch`)
+- **Befund:** `shell` kehrt nach 2 s Stille zurück und wartet höchstens 600 s; der Agent fragt dann immer wieder mit gleichen Argumenten ab, bis die Loop-Erkennung greift. Jobs liefen in der Session `default` = Chat-Session, mit demselben Agent-Objekt und denselben Shell-Sessions: lief ein Job, wurde jede Chat-Eingabe zur Nachsteuerung des Jobs; blieb dessen Status auf `running` stehen (Ausweichpfad ohne Stream, Job-Zeitlimit bricht nur das Warten ab), dauerhaft.
+- **Kern (`mods/isaa/module.py`, additiv):** `shell(..., background=True)` startet den Befehl und kehrt sofort zurück; ein Beobachter-Thread liest die Ausgabe in einen Puffer und meldet das Ende an registrierte Listener (`add_background_listener`). Abfragen mit `session_id` zeigen den Zwischenstand aus dem Puffer. `SHELL_CONTEXT` (ContextVar) sagt, zu welchem Agenten/Lauf ein Aufruf gehört, und trennt Shell-Sessions je `scope`. Ohne Listener (alte icli, Discord außerhalb der icli2) bleibt Abfragen möglich; ohne `background` ändert sich nichts.
+- **icli2 (`watch.py`):** Meldung an den Lauf, der den Befehl gestartet hat: läuft er noch, kommt sie in seinen Kontext (wie die Nachsteuerung); ist er fertig oder liest er sie nicht mehr, startet ein Folgelauf („shell“) mit Exit-Code und letzten Zeilen. Hinweis in der UI. Jobs laufen in `job-<name>` (wenn keine eigene Session gesetzt ist) mit eigenen Shell-Sessions. **`/runs`** listet alle Ausführungen der gebauten Agenten, markiert `running` ohne lebenden Lauf als „⚠ hängt“ und kann zurücksetzen (bleibt fortsetzbar) oder beenden.
+- **Geprüft:** `test_shell_background.py` (sofortige Rückkehr, Meldung mit Exit-Code und Ausgabe, stdin, Trennung je scope; bestehende `test_shell_tool.py` unverändert grün), `test_icli2_watch.py` (Zustellung in laufenden Lauf, Folgelauf wenn ungelesen oder hängend, Job-Sessions, `/runs`), `tests/check_ui.py`, echter Durchlauf gegen den isaa-Agenten (`tests/e2e/e2e_bg.py`: Agent startet `sleep 4` im Hintergrund, beendet den Zug, 4 s später antwortet der Folgelauf mit dem Ergebnis – ohne Abfrage).
+- **Offen (nicht gewählt):** echtes Warten (`wait=True`), schlauere Loop-Erkennung, Abfragen in der UI zusammenfassen, Lebendcheck im Kern.
+
 ## Arbeitsanleitung für weitere Schritte
 
 Alle geplanten Schritte sind umgesetzt. Das Vorgehen gilt für jede Erweiterung; offene Ideen stehen unter „Danach“.

@@ -53,6 +53,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "/session": ("[name|+]", "Session wechseln oder neu anlegen"),
     "/mount": ("[ordner]", "Ordner einhängen, ohne Argument: Mounts verwalten"),
     "/task": ("", "Läufe ansehen, Fokus wechseln"),
+    "/runs": ("", "Läufe aller Agenten prüfen, hängende beenden oder zurücksetzen"),
     "/job": ("[fire|pause|remove <job> | name: auftrag]", "Jobs verwalten, ausführen, anlegen"),
     "/dream": ("", "Nächtlichen Dream-Job für den Agenten anlegen"),
     "/network": ("[datei]", "Agent-Network laden, ohne Argument: aktuelles speichern"),
@@ -84,6 +85,8 @@ COMMANDS: dict[str, tuple[str, str]] = {
 ALIASES = {"/quit": "/q", "/exit": "/q"}
 STALL_SECONDS = 5.0       # ab hier meldet der Wachhund, wo die Engine haengt
 LOCAL_COMMANDS = {"/", "/q", "/clear", "/side", "/task", "/open", "/fold"}   # ohne Engine
+RUN_ACTIONS = [("reset", "zurücksetzen", "nicht mehr als laufend führen, später fortsetzbar"),
+               ("stop", "beenden", "Lauf abbrechen und verwerfen")]
 JOB_ACTIONS = [("fire", "jetzt ausführen", ""), ("pause", "pausieren / fortsetzen", ""),
                ("remove", "löschen", "")]
 MODEL_TARGETS = [("both", "beide", "schnell und komplex"), ("fast", "schnell", "Standard-Antworten"),
@@ -731,6 +734,8 @@ class ICli2(App):
             self.action_side()
         elif name == "/task":
             self._pick_run()
+        elif name == "/runs":
+            ask("runs")
         elif name == "/agent":
             do("agent", name=arg) if arg else ask("agents")
         elif name == "/model":
@@ -856,6 +861,10 @@ class ICli2(App):
                 send(P.DO, action="share", share=value)
             elif what == "voice":
                 send(P.DO, action="voice", op=value)
+            elif what == "runs":
+                self.push_screen(
+                    Picker(f"Lauf {value.partition('|')[2]}", RUN_ACTIONS),
+                    lambda act: act not in (None, BACK) and send(P.DO, action="run", run=value, op=act))
             elif what == "jobs":
                 self.push_screen(
                     Picker(f"Job {value}", JOB_ACTIONS),
