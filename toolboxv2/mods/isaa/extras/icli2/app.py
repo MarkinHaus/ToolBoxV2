@@ -42,6 +42,9 @@ END_MARK = {"done": "", "failed": f"{SYM['fail']} fehlgeschlagen", "stopped": "â
 # Befehl -> (Argument-Hinweis, Beschreibung). Reihenfolge = Reihenfolge in der Palette.
 # Spiegel von autocomplete.SUBCOMMANDS (AST-pruefbar; Quelle: autocomplete.py)
 from toolboxv2.mods.isaa.extras.icli2.autocomplete import SUBCOMMANDS as _AC_SUBS
+from toolboxv2.mods.isaa.extras.icli2.widget_app import map_widget_event  # Widgets (W5)
+from toolboxv2.mods.isaa.extras.icli2.widgets import WidgetModal
+from toolboxv2.mods.isaa.extras.icli2 import widgets
 
 SUBCOMMANDS = _AC_SUBS
 
@@ -500,6 +503,13 @@ class ICli2(App):
             await self._trim()
             if self.w_side.has_class("-open"):
                 self.engine.send(P.LIST, what="context", to="side")
+        elif ev.kind in (P.WIDGET_CREATE, P.WIDGET_UPDATE, P.WIDGET_CLOSE):
+            act = map_widget_event(ev.kind, d)
+            if act and act[0] == "push_modal" and widgets.TEXTUAL:
+                self.push_screen(WidgetModal(act[1], d.get("spec") or {},
+                                             creator=tuple(d.get("creator") or ("", ""))))
+            elif act:
+                self.call_after_refresh(self._refresh_side)
         elif ev.kind == P.READY:
             changed = (d["agent"], d["session"], d["model"], d["complex_model"]) != \
                       (self.agent, self.session, self.model, self.complex_model)

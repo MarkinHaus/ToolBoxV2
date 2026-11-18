@@ -118,6 +118,13 @@ class Engine:
     def _emit(self, kind: str, run: str = "", **data: Any) -> None:
         self._events.append(P.Event(kind, run, data))
 
+    async def emit_widget(self, action: str, widget_id: str, spec: dict) -> None:
+        """Widget-Event an die App (create/update/close) - von widget_tools genutzt."""
+        kind = {"create": P.WIDGET_CREATE, "update": P.WIDGET_UPDATE,
+                "close": P.WIDGET_CLOSE}.get(action)
+        if kind:
+            self._emit(kind, data={"id": widget_id, **spec})
+
     def _main(self) -> None:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
