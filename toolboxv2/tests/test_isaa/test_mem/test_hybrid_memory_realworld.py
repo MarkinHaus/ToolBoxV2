@@ -11,6 +11,7 @@ Tests the system with Wikipedia-like content including:
 Phase 1 Exit Test
 """
 
+from pathlib import Path
 import hashlib
 import os
 import re
@@ -740,7 +741,8 @@ class TestHybridMemoryRealWorld(unittest.TestCase):
 
         visualizer = MemoryGraphVisualizer(self.store)
 
-        output_path = "wiki_test_graph3."
+        import tempfile
+        output_path = str(Path(tempfile.mkdtemp(prefix="tb_wiki_test_")) / "wiki_test_graph3.")  # nie ins Checkout
 
         visualizer.save_html(output_path+'html')
 

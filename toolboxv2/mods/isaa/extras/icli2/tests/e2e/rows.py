@@ -1,6 +1,6 @@
 import asyncio, os, traceback
-os.environ.update(TB_LLM_GATEWAY_URL="http://127.0.0.1:8765/v1", TB_DATA_DIR="/tmp/e2e/state", XDG_CONFIG_HOME="/tmp/e2e/state/cfg", APPDATA="/tmp/e2e/state/appdata", NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost",
-                  FASTMODEL="gateway/fake", COMPLEXMODEL="gateway/fake", BLITZMODEL="gateway/fake", SUMMARYMODEL="gateway/fake")
+os.environ.update(OPENAI_API_BASE="http://127.0.0.1:8765/v1", OPENAI_API_KEY="x", TB_DATA_DIR="/tmp/e2e/state", XDG_CONFIG_HOME="/tmp/e2e/state/cfg", APPDATA="/tmp/e2e/state/appdata", NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost",
+                  FASTMODEL="openai/fake", COMPLEXMODEL="openai/fake", BLITZMODEL="openai/fake", SUMMARYMODEL="openai/fake")
 async def main():
     from toolboxv2 import get_app
     from toolboxv2.mods.isaa.extras.icli2.backend import IsaaBackend
@@ -16,7 +16,7 @@ async def main():
             print(f"ROWS {what}: FEHLER {type(e).__name__}: {str(e)[:200]}")
     for action, kw in (("login", {}), ("feature", {"name": "execute"}), ("feature", {"name": "execute"}), ("session", {"name": "+"}), ("mount", {"path": "/tmp/e2e"}),
                        ("job_add", {"spec": "alle 30m test: sag hallo"}), ("dream", {}), ("tb", {"target": "isaa.version"}), ("pack", {}), ("network_save", {}), ("session_clear", {}),
-                       ("model", {"name": "gateway/fake", "target": "both"}), ("discord", {"args": "status"}), ("telegram", {"args": "status"})):
+                       ("model", {"name": "openai/fake", "target": "both"}), ("discord", {"args": "status"}), ("telegram", {"args": "status"})):
         try:
             out = await asyncio.wait_for(b.do(action, **kw), 60)
             print(f"DO {action}: text={str(out.get('text'))[:150]!r} ready={sorted(out.get('ready', {}))[:3]}")

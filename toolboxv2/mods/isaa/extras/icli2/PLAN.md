@@ -256,6 +256,11 @@ Tasten: `Esc` pausieren, `Esc Esc` abbrechen, `Strg+O` alle Tools auf/zu, `Strg+
 - **Befund 3 (litellm):** Die Betriebstests nutzten `openai/fake`; für `openai/` hat der `CompletionRouter` keinen nativen Adapter -> `LiteLLMFallbackAdapter`. **Lösung:** `gateway/fake` über den nativen `OpenAICompatAdapter` (aiohttp, `TB_LLM_GATEWAY_URL`). litellm ist in jedem Betriebstest gesperrt (`sys.modules["litellm"] = None`, nur dieser Schlüssel), im Kindprozess ebenso; der CI-Schritt installiert es nicht mehr, `mods/isaa/requirements.txt` führt es nicht mehr. Die manuellen e2e-Skripte (`tests/e2e/`) laufen ebenfalls über `gateway/fake` und legen ihren Zustand unter `/tmp/e2e/state` ab.
 - **Tests:** `test_icli2_ohne_nebenwirkung.py` (Import der UI in frischem Prozess: keine App, `isaa.module` nicht geladen, nichts geschrieben · Mod-Lader findet `Tools`/`tools`/`version` · Schreibschutz erkennt neue/geänderte/gelöschte Dateien und neu angelegte Ordner), `tests/test_testumgebung_isoliert.py` (App der Tests hat `appdata`/`data_dir` im Temp-Ordner; läuft auch im Haupt-CI), `test_0_lauf_ohne_litellm` in den Betriebstests. Gegenprobe: alte `__init__.py` -> Import-Test und Test 6 (allein) rot; conftest ohne Umbiegen -> Isolationstest rot; Modell `openai/fake` -> Lauf ohne litellm rot; jeweils zurück -> grün.
 
+### Schritt 22 – `openai/` nativ im Router, Schreibschutz für das ganze Checkout (`icli2-22-openai-nativ-checkout.patch`)
+- **Router (eigentliche Ursache von Befund 3 in Schritt 21):** `setup_default_adapters` hatte keinen Eintrag für `openai/` – jedes `openai/…`-Modell fiel im Betrieb auf `LiteLLMFallbackAdapter` zurück. Eine Zeile in `OPENAI_COMPAT`: `"openai": ("OPENAI_API_KEY", OPENAI_API_BASE oder https://api.openai.com/v1)`. Betriebstests und e2e-Skripte nutzen wieder `openai/fake` mit `OPENAI_API_BASE` – wie im Betrieb; litellm bleibt gesperrt. Gegenprobe: Zeile raus -> `test_0_lauf_ohne_litellm` rot („litellm is not installed“), rein -> grün.
+- **Schreibschutz:** prüft zusätzlich `git status --porcelain --untracked-files=all` des Checkouts; neue unversionierte oder geänderte Dateien lassen den Lauf scheitern (Selbsttest mit eigenem git-Repo).
+- **Zwei Tests schrieben ins Checkout:** `test_hybrid_memory_realworld.py::test_11_vis` (`wiki_test_graph3.html` im Arbeitsordner) und `TestDocsFeatureLive` (`docs/.docs_index.json`, 9,6 MB, über `load_docs_feature` der alten `icli.py`). Jetzt Temp-Ordner; für Docs setzt der Test `icli.init_cwd`/`icli.tb_root_dir` für seine Dauer auf ein Temp-Projekt (`icli.py` unverändert). Gegenprobe: ohne die Änderung meldet der Schreibschutz genau beide Dateien. `TestDocsFeatureLive::test_tool_health_checks` ist unabhängig davon rot (auch vorher).
+
 ## Arbeitsanleitung für weitere Schritte
 
 Alle geplanten Schritte sind umgesetzt. Das Vorgehen gilt für jede Erweiterung; offene Ideen stehen unter „Danach“.
@@ -357,6 +362,7 @@ git apply icli2-14-endantwort.patch
 # … 15-19 siehe Abschnitte oben
 git apply icli2-20-widgets-betrieb.patch      # auf master mit Welle 1-7 (77a2e71)
 git apply icli2-21-isolation-ohne-litellm.patch   # baut auf 20 auf
+git apply icli2-22-openai-nativ-checkout.patch    # baut auf 21 auf
 pip install "textual>=8"
 ```
 

@@ -1,6 +1,6 @@
 import asyncio, os, sys, time, traceback
-os.environ.update(TB_LLM_GATEWAY_URL="http://127.0.0.1:8765/v1", TB_DATA_DIR="/tmp/e2e/state", XDG_CONFIG_HOME="/tmp/e2e/state/cfg", APPDATA="/tmp/e2e/state/appdata", NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost",
-                  FASTMODEL="gateway/fake", COMPLEXMODEL="gateway/fake", BLITZMODEL="gateway/fake", SUMMARYMODEL="gateway/fake", DEFAULTMODELST="gateway/fake")
+os.environ.update(OPENAI_API_BASE="http://127.0.0.1:8765/v1", OPENAI_API_KEY="x", TB_DATA_DIR="/tmp/e2e/state", XDG_CONFIG_HOME="/tmp/e2e/state/cfg", APPDATA="/tmp/e2e/state/appdata", NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost",
+                  FASTMODEL="openai/fake", COMPLEXMODEL="openai/fake", BLITZMODEL="openai/fake", SUMMARYMODEL="openai/fake", DEFAULTMODELST="openai/fake")
 async def main():
     from toolboxv2 import get_app
     from toolboxv2.mods.isaa.extras.icli2 import protocol as P

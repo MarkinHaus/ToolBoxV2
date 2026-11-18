@@ -5,8 +5,8 @@ LLM ueber das Ersatz-LLM (HTTP, Prozessgrenze). Alle Daten in einem Temp-Ordner 
 Einziges weiteres Double: `local_embeddings.local_embed` liefert Nullen. Grund: das echte Embedding-Modell
 wird beim ersten Gebrauch aus dem Netz geladen (HuggingFace) - Netzgrenze, siehe icli2/tests/e2e/e2e_bg.py.
 
-Ohne litellm: Das Modell heisst `gateway/fake` und geht ueber den nativen OpenAICompatAdapter des
-CompletionRouter (aiohttp, `TB_LLM_GATEWAY_URL`). `litellm` ist im Testprozess gesperrt
+Ohne litellm: Das Modell heisst `openai/fake` (wie im Betrieb konfiguriert) und muss ueber den nativen
+OpenAICompatAdapter des CompletionRouter laufen (aiohttp, `OPENAI_API_BASE`). `litellm` ist im Testprozess gesperrt
 (sys.modules["litellm"] = None): jeder Versuch, es zu laden, scheitert - auch wenn es installiert ist.
 
 Schreibschutz: HOME, XDG_*, APPDATA, LOCALAPPDATA und TB_DATA_DIR zeigen in den Temp-Ordner. Zusaetzlich
@@ -29,7 +29,7 @@ from icli2_fake_llm import FakeLLM
 from toolboxv2.tests.schreibschutz import Schreibschutz  # noqa: F401  (auch fuer die Tests)
 
 TIMEOUT = 120
-MODEL = "gateway/fake"
+MODEL = "openai/fake"
 
 
 async def _zero_embed(texts, dimensions=None):
@@ -68,7 +68,7 @@ class Betrieb:
     # -- Aufbau ------------------------------------------------------------
     def env(self) -> dict[str, str]:
         root = Path(self.root)
-        return dict(TB_LLM_GATEWAY_URL=self.llm.base,
+        return dict(OPENAI_API_BASE=self.llm.base, OPENAI_API_KEY="x",
                     NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost",
                     FASTMODEL=MODEL, COMPLEXMODEL=MODEL, BLITZMODEL=MODEL, SUMMARYMODEL=MODEL,
                     TB_DATA_DIR=self.root, HOME=str(root / "home"),
