@@ -43,6 +43,55 @@
 6. **Geplant, nicht begonnen:** `PLAN.md`, Abschnitt „Danach“.
 7. **Rot wegen Umgebung (kein Netz):** `toolboxv2/tests/test_isaa/test_base/test_agent/test_vfs/test_vfs_view.py`, Klasse `TestVfsViewVisionSystem`.
 
+## Letzter Patch zum Analysieren: `icli2-19-irl-retry-persona.patch`
+- **Basis:** Commit `bcfcaee` (Patch 18). Der Patch ist `git diff bcfcaee 2da70a3`. Danach kam nur `f157d4d` (diese Datei).
+- **Ersetzt** die verworfenen alten Patches 19 und 20, die Markin nicht angewendet hat.
+- **Wiederholen über den IRL:**
+  - `toolboxv2/mods/isaa/base/IntelligentRateLimiter/intelligent_rate_limiter.py`
+    - `:658` `TRANSIENT_STATUS`
+    - `:690` `classify_error` (neu)
+    - `:1657` Stream-Pfad des `LiteLLMRateLimitHandler`
+    - `:1896-1897` Pfad ohne Stream
+  - `toolboxv2/mods/isaa/base/llm_router/router.py`
+    - `:113` `_max_retries` (`ISAA_LLM_RETRIES`, Standard 3)
+    - `:119` `_pick` (`acquire()`)
+    - `:129` `_retry` (`handle_rate_limit_error()`)
+    - `:148` `complete`
+    - `:193` `stream`, Wiederholung nur vor dem ersten Chunk (`:224`)
+  - Gelöscht: `llm_router/retry.py` (verworfene eigene Backoff-Logik).
+- **Mit behoben:**
+  - `llm_router/adapters/setup.py:20` (`env` wird jetzt benutzt)
+  - `llm_router/model_info.py:17` (Gemini 2.5 Pro 1M)
+- **Persona:**
+  - `toolboxv2/mods/isaa/base/Agent/vfs_v2.py`
+    - `:1131` Persona vorne im Guide, auch im frühen `return`
+    - `:1157` `set_persona_section` (neu)
+    - `:1194` merkt sich Sandbox/Shell für den Neuaufbau
+    - `:1351` `protected_files` jetzt mit `/vfs_guide.md`
+    - In `build_context_string` ist nur `/active_rules.md` ausgenommen (`grep -n 'if path != "/active_rules.md"'`).
+  - `toolboxv2/mods/isaa/base/Agent/builder.py:1435-1436` (`_apply_persona_to_ruleset`)
+  - `toolboxv2/mods/isaa/base/Agent/flow_agent.py`
+    - `:3165` Persona in jede Session (`init_session_tools`)
+    - `:3639` und `:3713` Selbsttest auf `/vfs_guide.md`
+- **Logging:**
+  - `icli2/termguard.py:44` `quiet_terminal`, `:63` `log_path`
+  - `icli2/engine.py:19` `logger()`, `:439` fehlgeschlagener Lauf ins ToolBox-Log
+  - `icli2/app.py:222` und `icli2/errors.py:180` (Hinweis mit Log-Pfad)
+  - `toolboxv2/flows/isaa/icli2.py:21-25`
+- **Tests:**
+  - `toolboxv2/tests/test_isaa/test_base/test_llm_router_retry.py` (neu, mit echtem IRL)
+  - `test_base/test_llm_router.py`
+  - `test_base/test_agent/test_vfs_session_binding.py` (jetzt echte `ExecutionEngine`)
+  - `test_base/test_agent/test_vfs/`:
+    - `test_vfs_pooling.py` (Watcher-API v3)
+    - `test_vfs_session.py`, `test_vfs_shell_tool.py`, `test_vfs_v2.py` (`/vfs_guide.md`)
+    - `test_vfs_session_tools.py` (Persona, Klasse `TestPersonaEverySession`)
+    - `test_vfs_shell_bullet_proof.py` (Tabs)
+  - `icli2/tests/check_termguard.py`
+- **Ergebnis bei Abgabe:**
+  - 951 Tests grün, rot nur die 3 Vision-Tests (siehe Punkt 7)
+  - `check_ui`, `check_watchdog`, `check_final`, `check_errors` und `check_termguard` grün
+
 ## Werkzeuge
 - **icli2-Prüfskripte:** `toolboxv2/mods/isaa/extras/icli2/tests/check_*.py`, darunter `check_ui.py` (~3 min), `check_watchdog.py`, `check_final.py`, `check_errors.py` und `check_termguard.py`.
 - **pytest:**
