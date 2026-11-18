@@ -13,7 +13,10 @@ Die grossen Lader (docs, autodoc, autotest, autofix) sind bewusst nicht enthalte
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import sys
+from pathlib import Path
 
 
 class SimpleFeatureManager:
@@ -27,10 +30,12 @@ class SimpleFeatureManager:
     async def enable(self, feature):
         if feature in self.features:
             self.features[feature]["is_enabled"] = True
+            res = None
             if self.features[feature]["activation_f"]:
                 res = self.features[feature]["activation_f"](self.agent_ref)
                 if asyncio.iscoroutine(res):
-                    await res
+                    res = await res
+            return res
 
     def is_enabled(self, feature):
         return self.features.get(feature, {"is_enabled": False})["is_enabled"]
@@ -38,8 +43,10 @@ class SimpleFeatureManager:
     def disable(self, feature):
         if feature in self.features:
             self.features[feature]["is_enabled"] = False
+            res = None
             if self.features[feature]["deactivation_f"]:
-                self.features[feature]["deactivation_f"](self.agent_ref)
+                res = self.features[feature]["deactivation_f"](self.agent_ref)
+            return res
 
     def add_feature(self, feature, activation_f=None, deactivation_f=None):
         self.features[feature] = {"is_enabled": False, "activation_f": activation_f,
@@ -164,7 +171,190 @@ def load_execute(fm):
     fm.add_feature("execute", activation_f=enable, deactivation_f=disable)
 
 
-LOADERS = (load_desktop_auto_feature, load_web_auto_feature, load_full_web_auto_feature,
+def load_docs_feature(fm):
+    """Docs-Feature fuer die icli2: mkdocs-DocsSystem + Tools, Ausgabe icli2-konform.
+
+    Statt c_print/HTML (Vorlage flows/isaa/icli.py) laeuft alles ueber den Rueckgabe-
+    String des Aktivierers -> SimpleFeatureManager.enable() -> _do_feature() -> UI-Text.
+    Details/Fehler landen im Logger, nie auf stdout (wuerde das TUI veraendern).
+    """
+    docs_system = [None]
+    docs_tools = [None]
+    _TOOL_HEALTH_EXTENSIONS = {
+        "docs_reader": {
+            "live_test_inputs": [{"query": "_probe_health_check_query", "max_results": 1}],
+            "result_contract": {"expected_type": dict,
+                                "semantic_check_hint": "Muss ein Dict mit 'count' und 'time_ms' (oder 'sections') zurueckgeben."},
+            "cleanup_func": None},
+        "docs_writer": {
+            "live_test_inputs": [{"action": "_probe_invalid_action"}],
+            "result_contract": {"expected_type": dict,
+                                "semantic_check_hint": "Ungueltige Action -> Dict mit 'error' und Fehlermeldung."},
+            "cleanup_func": None},
+        "docs_lookup": {
+            "live_test_inputs": [{"name": "_probe_SystemTest", "max_results": 1}],
+            "result_contract": {"expected_type": dict,
+                                "semantic_check_hint": "Muss ein Dict mit 'results' (Liste) und 'count' zurueckgeben."},
+            "cleanup_func": None},
+        "docs_sync": {
+            "live_test_inputs": [{}],
+            "result_contract": {"expected_type": dict,
+                                "semantic_check_hint": "Muss ein Dict mit 'changes_detected' und 'files_updated' zurueckgeben."},
+            "cleanup_func": None},
+        "docs_init": {
+            "live_test_inputs": [{"force_rebuild": False, "show_tqdm": False}],
+            "result_contract": {"expected_type": dict,
+                                "semantic_check_hint": "Muss ein Dict mit 'status' (z.B. 'loaded') und 'time_ms' zurueckgeben."},
+            "cleanup_func": None},
+        "get_task_context": {
+            "live_test_inputs": [{"files": [], "intent": "_probe_health_check_intent"}],
+            "result_contract": {"expected_type": dict,
+                                "semantic_check_hint": "Muss ein Dict mit 'result' und 'meta' zurueckgeben."},
+            "cleanup_func": None},
+        "docs_inventory": {
+            "live_test_inputs": [{"focus_dirs": "", "max_classes_per_file": 3, "max_methods_per_class": 2,
+                                  "include_functions": True}],
+            "result_contract": {"expected_type": str,
+                                "semantic_check_hint": "Muss Markdown-String mit '# Project Inventory' zurueckgeben."},
+            "cleanup_func": None},
+        "docs_relationship_map": {
+            "live_test_inputs": [{"focus_dirs": "", "focus_classes": "", "max_nodes": 20, "format_type": "markdown"}],
+            "result_contract": {"expected_type": str,
+                                "semantic_check_hint": "Muss Markdown-String mit mermaid code block zurueckgeben."},
+            "cleanup_func": None},
+        "docs_export_docmap": {
+            "live_test_inputs": [{"output_path": "", "format_type": "md", "focus_dirs": "", "title": "_probe"}],
+            "result_contract": {"expected_type": str,
+                                "semantic_check_hint": "Muss DocMap Markdown content zurueckgeben."},
+            "cleanup_func": None},
+    }
+
+    async def enable(agent):
+        from toolboxv2 import init_cwd, tb_root_dir
+        from toolboxv2.utils.extras.mkdocs import DocsSystem
+        log = logging.getLogger("icli2.features")
+        try:
+            # docs-Verzeichnis: im Toolbox-Kontext Repo/docs, sonst ./docs im CWD (kein Prompt in der TUI)
+            tb_docs = tb_root_dir.parent / "docs"
+            cwd_docs = Path(init_cwd).expanduser().resolve() / "docs"
+            if init_cwd == tb_root_dir or tb_root_dir in Path(init_cwd).parents or init_cwd == tb_root_dir.parent:
+                docs_dir = tb_docs
+            elif cwd_docs.is_dir():
+                docs_dir = cwd_docs
+            else:
+                docs_dir = tb_docs
+            if not docs_dir.exists():
+                docs_dir.mkdir(parents=True, exist_ok=True)
+
+            system = DocsSystem(project_root=tb_root_dir, docs_root=docs_dir,
+                                include_dirs=["toolboxv2", "flows", "mods", "utils", "docs", "src"])
+
+            _get_docs = lambda: system
+
+            async def docs_inventory(focus_dirs: str = "", max_classes_per_file: int = 5,
+                                     max_methods_per_class: int = 3, include_functions: bool = True) -> str:
+                """Projekt-Inventar: Dateien, Klassen, Funktionen."""
+                try:
+                    ds = _get_docs()
+                    await ds.initialize()
+                    result = await ds.generate_inventory(
+                        focus_dirs=focus_dirs.split(",") if focus_dirs else None,
+                        max_classes_per_file=max_classes_per_file,
+                        max_methods_per_class=max_methods_per_class,
+                        include_functions=include_functions, format_type="markdown")
+                    return result.get("content", json.dumps(result, ensure_ascii=False, default=str))
+                except Exception as e:
+                    return f"Inventory error: {e}"
+
+            async def docs_relationship_map(focus_dirs: str = "", focus_classes: str = "",
+                                            max_nodes: int = 40, format_type: str = "markdown") -> str:
+                """Beziehungskarte (Mermaid): Vererbung, Komposition, Referenzen."""
+                try:
+                    ds = _get_docs()
+                    await ds.initialize()
+                    result = await ds.generate_relationship_map(
+                        focus_dirs=focus_dirs.split(",") if focus_dirs else None,
+                        focus_classes=focus_classes.split(",") if focus_classes else None,
+                        max_nodes=max_nodes, format_type=format_type)
+                    return result.get("content", json.dumps(result, ensure_ascii=False, default=str))
+                except Exception as e:
+                    return f"Relationship map error: {e}"
+
+            async def docs_export_docmap(output_path: str = "", format_type: str = "html",
+                                         focus_dirs: str = "", title: str = "") -> str:
+                """DocMap (Inventar + Beziehungen) als HTML oder Markdown exportieren."""
+                try:
+                    ds = _get_docs()
+                    await ds.initialize()
+                    result = await ds.export_docmap(output_path=output_path or None,
+                                                    format_type=format_type,
+                                                    focus_dirs=focus_dirs.split(",") if focus_dirs else None,
+                                                    title=title or None)
+                    if output_path:
+                        return f"DocMap exported to {result.get('output_path', output_path)}"
+                    return result.get("content", "Export failed - no content generated")
+                except Exception as e:
+                    return f"DocMap export error: {e}"
+
+            result = await system.initialize()
+            docs_system[0] = system
+
+            tools = [
+                {"tool_func": system.read, "name": "docs_reader",
+                 "description": "Durchsucht die Dokumentation nach relevanten Abschnitten basierend auf einer Suchanfrage. Nuetzlich um schnell Informationen aus der Dokumentation zu finden ohne manuell zu suchen. Gibt strukturierte Ergebnisse mit Relevanz-Scores zurueck.",
+                 "category": ["docs", "read", "search"], "flags": {}},
+                {"tool_func": system.write, "name": "docs_writer",
+                 "description": "Schreibt neue Dokumentations-Dateien oder aktualisiert existierende. Unterstuetzt Markdown-Formatierung und speichert im docs-Verzeichnis. Erstellt automatisch die noetige Verzeichnisstruktur. Ideal um Ergebnisse und Erkenntnisse zu dokumentieren.",
+                 "category": ["docs", "write"], "flags": {}},
+                {"tool_func": system.lookup_code, "name": "docs_lookup",
+                 "description": "Sucht nach Code-Elementen (Klassen, Funktionen, Module, etc.) im gesamten Codebase. Gibt Definitionen, Signaturen und Docstrings zurueck. Nuetzlich um Implementierungsdetails schnell zu verstehen.",
+                 "category": ["docs", "code", "search"], "flags": {}},
+                {"tool_func": system.sync, "name": "docs_sync",
+                 "description": "Synchronisiert Aenderungen aus der VFS zurueck zum Dateisystem. Stellt sicher dass Aenderungen persistent gespeichert werden.",
+                 "category": ["docs", "sync"], "flags": {}},
+                {"tool_func": system.initialize, "name": "docs_init",
+                 "description": "Baut den Dokumentations-Index neu auf. Nuetzlich wenn neue Dateien hinzugefuegt wurden oder der Index veraltet ist.",
+                 "category": ["docs", "index"], "flags": {}},
+                {"tool_func": system.get_task_context, "name": "get_task_context",
+                 "description": "Generiert Kontext-Informationen fuer Aufgaben wie relevante Dateien, Klassen und Dokumentation basierend auf einer Aufgabenbeschreibung.",
+                 "category": ["docs", "context"], "flags": {}},
+                {"tool_func": docs_inventory, "name": "docs_inventory",
+                 "description": "Generiert ein kompaktes Projekt-Inventar: welche Dateien, Klassen und Funktionen existieren. Beantwortet: 'Was ist alles da?'",
+                 "category": ["docs", "read"], "flags": {}},
+                {"tool_func": docs_relationship_map, "name": "docs_relationship_map",
+                 "description": "Generiert eine Beziehungskarte als Mermaid-Diagramm. Zeigt Vererbung, Komposition und Cross-File-Referenzen. Beantwortet: 'Wie spielt Komponente A mit B zusammen?'",
+                 "category": ["docs", "read"], "flags": {}},
+                {"tool_func": docs_export_docmap, "name": "docs_export_docmap",
+                 "description": "Exportiert eine vollstaendige DocMap (Inventar + Beziehungen) als standalone HTML oder als LLM-optimiertes Markdown.",
+                 "category": ["docs", "write"], "flags": {}},
+            ]
+            for tool in tools:
+                if tool["name"] in _TOOL_HEALTH_EXTENSIONS:
+                    tool.update(_TOOL_HEALTH_EXTENSIONS[tool["name"]])
+            docs_tools[0] = tools
+            agent.add_tools(tools)
+
+            return (f"docs {docs_dir.name} | Index: {result.get('sections', 0)} Abschnitte, "
+                    f"{result.get('elements', 0)} Elemente | {len(tools)} Tools")
+        except Exception as e:
+            logging.getLogger("icli2.features").exception("docs enable fehlgeschlagen")
+            raise RuntimeError(f"Docs-Feature konnte nicht aktiviert werden: {e}") from e
+
+    def disable(agent):
+        try:
+            if docs_tools[0]:
+                agent.remove_tools(docs_tools[0])
+            docs_system[0] = None
+            docs_tools[0] = None
+            return "Docs-Tools entfernt"
+        except Exception as e:
+            logging.getLogger("icli2.features").exception("docs disable fehlgeschlagen")
+            raise RuntimeError(f"Docs-Feature konnte nicht deaktiviert werden: {e}") from e
+
+    fm.add_feature("docs", activation_f=enable, deactivation_f=disable)
+
+
+LOADERS = (load_docs_feature, load_desktop_auto_feature, load_web_auto_feature, load_full_web_auto_feature,
            load_coder_toolkit, load_chain_toolkit, load_execute, load_isis_feature)
 
 
@@ -209,19 +399,23 @@ class FeatureMixin:
             # fm.disable() wuerde async-Deaktivierer nicht abwarten -> hier selbst behandeln
             feat = self._fm.features[name]
             feat["is_enabled"] = False
+            res = None
             if feat["deactivation_f"]:
                 res = feat["deactivation_f"](self._fm.agent_ref)
                 if asyncio.iscoroutine(res):
-                    await res
+                    res = await res
             state = "aus"
         else:
             try:
-                await self._fm.enable(name)
+                res = await self._fm.enable(name)
             except Exception:
                 self._fm.features[name]["is_enabled"] = False
                 raise
             state = "an"
-        return {"ready": await self._ready(), "text": f"Feature {name} {state}"}
+        text = f"Feature {name} {state}"
+        if isinstance(res, str) and res.strip():          # z.B. docs: Index-Groesse + Tool-Anzahl
+            text += f" - {res.strip()}"
+        return {"ready": await self._ready(), "text": text}
 
     # ---------------------------------------------------------------- Skills
     async def _skills_manager(self):

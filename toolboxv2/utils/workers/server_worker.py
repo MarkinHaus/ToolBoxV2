@@ -1618,6 +1618,7 @@ class HTTPWorker:
         self._access_controller: AccessController | None = None
         self._ws_handler: WebSocketMessageHandler | None = None
         self._session_manager = None
+        self._account_sync_stop = None  # threading.Event of the account-sync thread
         self._event_manager: ZMQEventManager | None = None
         self._executor: ThreadPoolExecutor | None = None
         self._running = False
@@ -1674,6 +1675,37 @@ class HTTPWorker:
         )
 
         # Device trust (WP1 K2): profile local/developer + linked device account.
+        self._init_device_trust()
+
+    def _init_device_trust(self):
+        """Boot-time device trust; outside production also starts the trust-revalidate
+        watcher (once per process), so a profile chosen later (first-run wizard) and
+        linking or removing the account take effect without a restart."""
+        import threading
+        watch = self.config.environment != "production"
+        stamp = self._trust_stamp() if watch else None
+        self._apply_device_trust()
+        if watch and not any(t.name == "trust-revalidate" for t in threading.enumerate()):
+            threading.Thread(target=self._trust_revalidate_loop, args=(stamp,),
+                             daemon=True, name="trust-revalidate").start()
+
+    def _trust_stamp(self):
+        """Inputs of local_trust_provider: device_owner.json and the manifest (profile)."""
+        from toolboxv2._state_dir import manifest_base_dir
+        from toolboxv2.mods.CloudM.auth.device_account import device_owner_file
+        from toolboxv2.utils.manifest import ManifestLoader
+
+        def _mtime(path):
+            try:
+                return path.stat().st_mtime
+            except OSError:
+                return None  # file absent
+        return (_mtime(device_owner_file(self._app)),
+                _mtime(ManifestLoader(manifest_base_dir()).manifest_path))
+
+    def _apply_device_trust(self):
+        """THE one place that switches device trust and account-sync on or off
+        (called at boot and by trust-revalidate when the account file changes)."""
         try:
             from toolboxv2.mods.CloudM.auth.device_account import local_trust_provider
             provider = local_trust_provider(self._app, self.config.environment == "production")
@@ -1683,56 +1715,47 @@ class HTTPWorker:
         self._session_manager.enable_local_trust(provider)
         if provider:
             logger.info(f"Device trust on for {provider.get('username', '')}")
-            # Teil 10: periodic account sync (once per process, 30 s delay, 600 s cycle).
-            import threading as _th10
-            if not any(getattr(t, "name", "") == "account-sync" for t in _th10.enumerate()):
-                import asyncio as _a10
-
-                def _account_sync_loop():
-                    import time as _t10
-                    from toolboxv2.mods.CloudM.LiveSync.data_api_sync import sync_all
-                    _t10.sleep(30)
-                    while True:
-                        try:
-                            _a10.run(sync_all(self._app))
-                        except Exception as e:
-                            logger.warning(f"account-sync failed: {type(e).__name__}")
-                        _t10.sleep(600)
-
-                _th10.Thread(target=_account_sync_loop, daemon=True,
-                             name="account-sync").start()
-
-            # WP3 A6b: revalidate device trust when the account file changes
-            # (single source: local_trust_provider -> enable_local_trust).
-            def _trust_revalidate_loop():
-                import time as _t10b
-                from toolboxv2.mods.CloudM.auth.device_account import (
-                    device_owner_file, local_trust_provider)
-
-                def _mtime():
-                    try:
-                        return device_owner_file(self._app).stat().st_mtime
-                    except OSError:
-                        return None  # unlinked between is_file() and stat()
-
-                last = _mtime()
-                while True:
-                    _t10b.sleep(2)
-                    m = _mtime()
-                    if m == last:
-                        continue
-                    last = m
-                    try:
-                        self._session_manager.enable_local_trust(
-                            local_trust_provider(self._app,
-                                                 self.config.environment == "production"))
-                    except Exception as e:
-                        logger.warning(f"trust revalidate failed: {type(e).__name__}")
-
-            _th10.Thread(target=_trust_revalidate_loop, daemon=True,
-                         name="trust-revalidate").start()
+            self._start_account_sync()
         else:
             logger.info("Device trust off (no device account or not a local profile)")
+            if self._account_sync_stop is not None:
+                self._account_sync_stop.set()
+
+    def _start_account_sync(self):
+        """Teil 10: periodic account sync (once per process, 30 s delay, 600 s cycle);
+        ends when _account_sync_stop is set."""
+        import threading
+        if any(t.name == "account-sync" for t in threading.enumerate()):
+            return
+        stop = self._account_sync_stop = threading.Event()
+
+        def _account_sync_loop():
+            from toolboxv2.mods.CloudM.LiveSync.data_api_sync import sync_all
+            if stop.wait(30):
+                return
+            while True:
+                try:
+                    asyncio.run(sync_all(self._app))
+                except Exception as e:
+                    logger.warning(f"account-sync failed: {type(e).__name__}")
+                if stop.wait(600):
+                    return
+
+        threading.Thread(target=_account_sync_loop, daemon=True,
+                         name="account-sync").start()
+
+    def _trust_revalidate_loop(self, last):
+        """WP3 A6b/A5: re-apply device trust when account file or manifest change."""
+        while True:
+            time.sleep(2)
+            m = self._trust_stamp()
+            if m == last:
+                continue
+            last = m
+            try:
+                self._apply_device_trust()
+            except Exception as e:
+                logger.warning(f"trust revalidate failed: {type(e).__name__}")
 
     def _init_access_controller(self):
         """Initialize access controller."""

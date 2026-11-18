@@ -287,7 +287,7 @@ async def main():
         assert "Meldung von Openrouter" in body and "/model" in body and '"code": 429' in body
         assert app.w_row.has_class("-fail")
         r=await lauf("limit bitte"); assert r.status=="limit" and r.problem_line.title=="◷ Iterationslimit erreicht (5/5)"
-        assert "Zusammenfassung: drei Dateien" in r.problem_line.body and "/set max_iterations" in r.problem_line.body
+        assert "Zusammenfassung: drei Dateien" in r.answer and "/set max_iterations" in r.problem_line.body
         assert app.w_row.has_class("-ask")
         r=await lauf("absturz bitte"); assert r.problem_line.title.startswith("✗ Interner Fehler im Agenten")
         assert any("Tool rejected" in str(n.render()) for n in r.box.query(".note"))     # Warnung sichtbar
@@ -300,8 +300,8 @@ async def main():
         order=[("think" if w.has_class("think") else "tool" if w.has_class("tool") else "answer" if w.has_class("answer") else "")
                for w in first.box.children]
         assert [o for o in order if o][:4]==["think","tool","tool","answer"], order
-        from toolboxv2.mods.isaa.extras.icli2.richmd import FrozenMarkdown
-        assert all(isinstance(w, FrozenMarkdown) for w in first.box.children if w.has_class("answer")), "fertig = eingefroren"
+        from textual.widgets import Markdown as _MD
+        assert all(isinstance(w, _MD) for w in first.box.children if w.has_class("answer")), "fertig = Markdown bleibt"
         # ── Nachsteuerung: Frage + Antwort IN den laufenden Lauf, Weiteres darunter ──
         await pilot.press(*"long basis"); await pilot.press("enter"); await pilot.pause(0.6)
         main=[v for v in app.active.values() if v.query=="long basis"][0]
@@ -316,7 +316,7 @@ async def main():
         later=[w for w in list(main.box.children)[idx+1:] if w.has_class("answer")]
         assert later and "wort" in later[0].source, "Hauptlauf schreibt unter der Nachsteuerung weiter"
         before=[w for w in list(main.box.children)[:idx] if w.has_class("answer")]
-        assert before and all(isinstance(w, FrozenMarkdown) for w in before), "Abschnitt davor eingefroren"
+        assert before and all(isinstance(w, _MD) for w in before), "Abschnitt davor bleibt Markdown"
         await pilot.press("escape"); await pilot.press("escape"); await pilot.pause(0.6); assert not app.active
         # ── alte Bloecke werden aus dem Bild genommen, laufende bleiben ──
         import toolboxv2.mods.isaa.extras.icli2.app as appmod

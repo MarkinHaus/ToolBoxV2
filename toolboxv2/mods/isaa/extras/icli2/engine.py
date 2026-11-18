@@ -317,13 +317,21 @@ class Engine:
             return ""
 
     def _show_answer(self, run: _Run, answer: str) -> None:
-        """Endantwort anzeigen - ausser sie wurde schon wortgleich gestreamt. Haeufig schreibt das Modell
-        erst einen Satz ('ich schaue nach ...') und liefert die Antwort dann ueber das final_answer-Tool."""
-        norm = " ".join(answer.split())
-        if not norm or norm in " ".join(run.seg.split()):
+        """Endantwort anzeigen - aber nur den Teil, der noch nicht gestreamt wurde. Der Stream kann die
+        Antwort ganz (identisch), als Anfang (final_answer enthaelt den Rest) oder gar nicht enthalten."""
+        norm, seg = " ".join(answer.split()), " ".join(run.seg.split())
+        if not norm:
             return
-        self._push(run, P.TEXT, ("\n\n" if run.seg.strip() else "") + answer.strip())
-        self._flush(run)
+        if not seg or norm.startswith(seg):
+            rest = norm[len(seg):].strip()              # Antwort faegt nahtlos an den Stream an
+        elif norm in seg:
+            rest = ""                                   # schon vollstaendig gestreamt
+        else:
+            rest = norm                                 # anderer Text (z. B. nach Tool-Aufruf)
+        if rest:
+            self._push(run, P.TEXT, (" " if seg and norm.startswith(seg) else
+                                     "\n\n" if run.seg.strip() else "") + rest)
+            self._flush(run)
 
     def _sub_info(self, run: _Run, sub: str, chunk: dict, seen: dict) -> None:
         """Rahmendaten eines Sub-Agenten an die UI - nur wenn sich etwas Sichtbares aendert."""
@@ -385,7 +393,7 @@ class Engine:
                 if not sub and chunk.get("iter") is not None:
                     iters = (int(chunk.get("iter") or 0), int(chunk.get("max_iter") or 0))
                 if t == "tool_start":
-                    run.seg = ""                         # neuer Abschnitt nach dem Tool-Aufruf
+                    pass                                 # seg bleibt Dedup-Quelle ueber den ganzen Lauf
                     tid = str(chunk.get("id") or chunk.get("name", "?"))
                     started[tid] = time.monotonic()
                     args = fmt.parse(chunk.get("args", chunk.get("input", chunk.get("arguments", ""))))
@@ -415,6 +423,7 @@ class Engine:
                     status = "limit"
                     if not answer:
                         answer = str(chunk.get("answer") or "")
+                        self._show_answer(run, answer)   # Summary als Stream-Text, nicht nur im FoldLine
                 elif t == "cancelled":
                     status = run.ended or "stopped"
                 elif t == "warning" and chunk.get("message"):

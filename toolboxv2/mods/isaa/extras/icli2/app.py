@@ -21,12 +21,12 @@ from . import protocol as P
 from .engine import Engine
 from .picker import BACK, Picker, fuzzy
 from .errors import explain, render
-from .richmd import FrozenMarkdown
 from .subtile import SubView
 from .engine import logger as engine_logger
 from .termguard import log_path
 from .widgets import Fade, FoldLine
 from .theme import DIM, ISAA_THEME, SYM, G, ZEN, banner
+from ..zen.zen_renderer import _fmt_elapsed as fmt_secs
 
 FRAME = 1 / 30                 # Abholtakt fuer Engine-Events
 TEXT_EVERY = 0.08              # Antworttext hoechstens so oft schreiben, wenn man unten mitliest
@@ -175,7 +175,6 @@ class RunView:
         self.status_msg = ""
         self.iter: tuple[int, int] | None = None
         self.answer = ""
-        self.seg_text = ""                               # vollstaendiger Text des laufenden Abschnitts
         self.md: Markdown | None = None
         self.stream = None
         self.think: FoldLine | None = None
@@ -219,8 +218,7 @@ class RunView:
         """Fehler- bzw. Limitzeile am Laufende: Ueberschrift + Kurzmeldung, Klick zeigt Hinweis und Details."""
         if d["status"] == "limit":
             info = explain("", kind="limit", iters=(d.get("iter") or 0, d.get("max_iter") or 0))
-            body = info["hint"] + (f"\n\nZusammenfassung des Agenten:\n{d['answer'].strip()}" if d.get("answer") else "")
-            line = FoldLine(f"◷ {info['title']}", body, classes="problem -limit", body_style=ZEN["white"])
+            line = FoldLine(f"◷ {info['title']}", info["hint"], classes="problem -limit", body_style=ZEN["white"])
         else:
             info = explain(d.get("error") or "", model=model, traceback=d.get("traceback") or "")
             info["hint"] = info["hint"].replace("{log}", log_path() or "der Log-Datei der ToolBox")
@@ -234,13 +232,6 @@ class RunView:
     async def close_segment(self) -> None:
         if self.stream is not None:
             await self.stream.stop()
-        if self.md is not None and self.md.is_attached:
-            # fertiger Abschnitt: viele Markdown-Widgets -> ein Widget (siehe richmd.py). Der Text kommt aus
-            # seg_text, nicht aus md.source: MarkdownStream.stop() wartet ein laufendes append nicht ab, bei
-            # langsamem Zeichnen fehlte sonst der Rest (oder alles).
-            frozen = FrozenMarkdown(self.seg_text)
-            await self.md.parent.mount(frozen, after=self.md)
-            await self.md.remove()
         self.md = self.stream = self.think = None
         self.think_text = ""
 
@@ -256,8 +247,6 @@ class RunView:
             self.md = Markdown("", classes="answer")
             await self.box.mount(self.md)
             self.stream = Markdown.get_stream(self.md)
-            self.seg_text = ""
-        self.seg_text += delta
         self.answer += delta
         await self.stream.write(delta)
 
@@ -294,7 +283,7 @@ class ICli2(App):
     #head { height: 1; padding: 0 1; color: $text-muted; }
     #main { height: 1fr; }
     #chat { padding: 0 1; scrollbar-size-vertical: 1; }
-    #side { width: 38; display: none; border-left: solid $secondary; padding: 0 1;
+    #side { width: 42; display: none; border-left: solid $secondary; padding: 0 1;
             scrollbar-size-vertical: 1; }
     #side.-open { display: block; }
     #banner { margin: 1 0; }
@@ -744,25 +733,25 @@ class ICli2(App):
 
         from rich.markup import escape
         lines = [title("Läufe")]
-        for rid, view in reversed(list(self.runs.items())[-10:]):
+        for rid, view in reversed(list(self.runs.items())[-8:]):
             mark = "▸" if rid == self.focus_run else " "
             color = {"running": G.L3_MID, "failed": "red", "paused": "yellow"}.get(view.status, DIM)
             lines.append(f"{mark}[{color}]{RUN_SYM.get(view.status, '?')}[/] {escape(view.agent)} "
-                         f"[{DIM}]{view.seconds:.0f}s[/]")
-            lines.append(f"   [{DIM}]{escape(' '.join(view.query.split())[:30])}[/]")
+                         f"[{DIM}]{fmt_secs(view.seconds)}[/]")
+            lines.append(f"   [{DIM}]{escape(' '.join(view.query.split())[:34])}[/]")
             for sub in view.subs.values():
-                lines.append(f"   [{DIM}]{SYM['sub']} {escape(sub.label[:30])}[/]")
+                lines.append(f"   [{DIM}]{SYM['sub']} {escape(sub.label[:34])}[/]")
         if len(lines) == 1:
             lines.append(f" [{DIM}]keine[/]")
         board = self.side_rows["board"]
         if board:                                        # gepinnte Widgets: /widget oeffnet sie
             lines += ["", title("Widgets")]
-            lines += [f" {SYM['progress']} {escape(r['label'])}\n   [{DIM}]{escape(r['hint'][:32])}[/]"
+            lines += [f" {SYM['progress']} {escape(r['label'])}\n   [{DIM}]{escape(r['hint'][:36])}[/]"
                       for r in board]
         for what, head in (("jobs", "Jobs"), ("mounts", "Mounts")):
             lines += ["", title(head)]
             rows = [r for r in self.side_rows[what] if r["value"] not in ("*", "+")]
-            lines += [f" {escape(r['label'])}\n   [{DIM}]{escape(r['hint'][:32])}[/]" for r in rows] \
+            lines += [f" {escape(r['label'])}\n   [{DIM}]{escape(r['hint'][:36])}[/]" for r in rows] \
                 or [f" [{DIM}]keine[/]"]
         lines += ["", title("Kontext")]
         context = self.side_rows["context"]

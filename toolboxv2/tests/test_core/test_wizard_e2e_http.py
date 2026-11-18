@@ -59,6 +59,27 @@ class _Server:
             return r.status, json.loads(r.read().decode("utf-8"))
 
 
+class _LinkedDeviceAccount:
+    """Echtes Geraetekonto (device_owner.json im Datenordner der App) fuer die
+    Dauer des Tests: die lokale UI verlangt es (Kontopflicht, Profil local/developer)."""
+
+    def __enter__(self):
+        import time
+        from toolboxv2 import get_app
+        from toolboxv2.mods.CloudM.auth.device_account import device_owner_file
+        self.f = device_owner_file(get_app("e2e.account"))
+        self.f.parent.mkdir(parents=True, exist_ok=True)
+        self.f.write_text(json.dumps({
+            "user_id": "u-e2e", "username": "e2e",
+            "base_url": "https://simplecore.app", "linked_at": time.time()}),
+            encoding="utf-8")
+        return self
+
+    def __exit__(self, *exc):
+        self.f.unlink()
+        return False
+
+
 def test_e2e_wizard_state_over_http():
     with _Server() as srv:
         status, data = srv.get("/api/wizard/state")
@@ -68,7 +89,7 @@ def test_e2e_wizard_state_over_http():
 
 
 def test_e2e_wizard_profile_over_http():
-    with _Server() as srv:
+    with _LinkedDeviceAccount(), _Server() as srv:
         status, data = srv.post("/api/wizard/profile", {"profile": "developer"})
         assert status == 200 and data == {"ok": True, "profile": "developer"}
 
@@ -106,7 +127,7 @@ def test_removed_endpoints_are_gone():
 
 
 def test_e2e_live_health_over_http():
-    with _Server() as srv:
+    with _LinkedDeviceAccount(), _Server() as srv:
         status, data = srv.get("/live/health")
         assert status == 200
         assert data["enabled"] in (True, False)

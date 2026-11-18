@@ -262,6 +262,27 @@ class WSWorker:
             "direct_messages_received": 0,
         }
 
+    @staticmethod
+    def _origin_allowed(headers) -> bool:
+        """Origin policy of the HTTP side (server_worker.is_allowed_origin): local,
+        Tauri, simplecore.app, TB_CORS_ORIGINS or the request's own host. No Origin
+        header (CLI / non-browser client) is allowed. A direct connection (no nginx
+        headers) must also carry a loopback Host (DNS rebinding: same-origin via
+        evil.example resolving to 127.0.0.1); behind nginx the Host is the public name."""
+        origin = headers.get("Origin")
+        if not origin:
+            return True
+        from toolboxv2.utils.workers.fast.live_proxy import _host_is_loopback
+        from toolboxv2.utils.workers.server_worker import is_allowed_origin
+        host = headers.get("Host") or ""
+        proxied = any(headers.get(k) for k in ("X-Real-IP", "X-Forwarded-For", "Forwarded"))
+        if not proxied and not _host_is_loopback(host):
+            return False
+        return is_allowed_origin(origin, {
+            "HTTP_HOST": host,
+            "HTTP_X_FORWARDED_HOST": headers.get("X-Forwarded-Host") or "",
+        })
+
     def _process_request_new_api(self, connection, request):
         """Process HTTP request before WebSocket handshake (new API >= 14.0).
 
@@ -276,6 +297,10 @@ class WSWorker:
         # Handle health check requests (non-WebSocket)
         if path == "/health":
             return connection.respond(HTTPStatus.OK, "OK\n")
+
+        # Browser handshake from a foreign site (cross-site WebSocket hijacking)
+        if not self._origin_allowed(request.headers):
+            return connection.respond(HTTPStatus.FORBIDDEN, "Forbidden origin\n")
 
         # For all other paths, proceed with WebSocket handshake
         return None
@@ -296,6 +321,14 @@ class WSWorker:
                 HTTPStatus.OK,
                 [("Content-Type", "text/plain")],
                 b"OK",
+            )
+
+        # Browser handshake from a foreign site (cross-site WebSocket hijacking)
+        if not self._origin_allowed(request_headers):
+            return (
+                HTTPStatus.FORBIDDEN,
+                [("Content-Type", "text/plain")],
+                b"Forbidden origin",
             )
 
         # For all other paths, proceed with WebSocket handshake

@@ -1,7 +1,7 @@
 """account_page.py - minimal account-link page served by the local UI (WP1 K3).
 
 Self-contained HTML+JS: POSTs to /api/account/start with the chosen method
-and polls /api/account/status. Loopback-guarded via local_ui._ensure_local.
+and polls /api/account/status. Loopback-guarded via live_proxy._ensure_local.
 """
 
 _PAGE = """<!doctype html>
@@ -23,7 +23,7 @@ _PAGE = """<!doctype html>
 <body>
 <div class="card">
   <h1>Link a SimpleCore account</h1>
-  <p style="color:#9aa0a6;font-size:.9rem">Optional. Keeps your local admin data and migrates
+  <p style="color:#9aa0a6;font-size:.9rem">Keeps your local admin data and migrates
      settings to the account. Tokens stay in the local token store.</p>
   <button onclick="start('discord')">Discord</button>
   <button onclick="start('google')">Google</button>

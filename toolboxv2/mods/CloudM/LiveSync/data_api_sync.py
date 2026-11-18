@@ -19,6 +19,7 @@ from toolboxv2.mods.CloudM.LiveSync.crypto import (
 from toolboxv2.mods.CloudM.LiveSync.conflict import (
     save_conflict_copy,
     is_conflict_copy,
+    move_to_sync_trash,
 )
 from toolboxv2.mods.CloudM.LiveSync.protocol import should_ignore
 
@@ -27,6 +28,12 @@ logger = logging.getLogger(__name__)
 PREFIX_GLOBAL = "livesync/global/"
 PREFIX_ACCOUNT = "livesync/account/"
 MAX_BYTES = 50 * 1024 * 1024
+# Deleting more than this share of the known (synced) entries in one run is
+# refused - a vanished folder or an empty server listing must not wipe a device.
+# Fewer than MASS_DELETE_MIN deletions are never "mass" (else the last file of a
+# small folder could never be deleted).
+MASS_DELETE_RATIO = 0.5
+MASS_DELETE_MIN = 3
 PAYLOAD_V = 1
 
 
@@ -62,9 +69,12 @@ class DataApiTransport:
             origin=res.get("origin"),
         )
         if r.is_error():
-            msg = str(res.get("info", {}).get("help_text", "")) + \
-                str(res.get("info", {}).get("exec_code", ""))
-            if "Session fetch failed" in msg or res.get("info", {}).get("exec_code") == 401:
+            info = res.get("info", {})
+            if info.get("exec_code") == 401:
+                # UserDataAPI: "Nicht authentifiziert" - Anmeldung abgelaufen
+                raise TransferError("reauth_required")
+            if info.get("help_text") == "Session fetch failed":
+                # App.run_http: kein Netz zum Server
                 raise TransferError("offline")
             raise TransferError(f"{fn} failed")
         return r.get()
@@ -78,6 +88,9 @@ class DataApiTransport:
 
     async def put(self, path: str, ciphertext: bytes) -> None:
         await self._call("set_data", path=path, scope="private", data=_payload(ciphertext))
+
+    async def delete(self, path: str) -> None:
+        await self._call("delete_data", path=path, scope="private")
 
     async def get(self, path: str) -> bytes:
         d = await self._call("get_data", path=path, scope="private")
@@ -98,6 +111,15 @@ def _safe_rel(rel: str) -> Optional[str]:
     return "/".join(parts)
 
 
+def _inside(root: Path, path: Path) -> bool:
+    """True if path, with every symlink/junction resolved, lies below root.
+
+    root must already be resolved. Path.rglob follows junctions on Windows and
+    lists file symlinks everywhere, so the walker alone cannot guarantee this.
+    """
+    return path.resolve().is_relative_to(root)
+
+
 def _atomic_write(target: Path, data: bytes) -> None:
     tmp = target.with_name(target.name + ".livesync-tmp")
     tmp.parent.mkdir(parents=True, exist_ok=True)
@@ -116,10 +138,16 @@ async def sync_folder(transport, local_dir: Path, prefix: str, index, key: str,
       size      = remote size
       remote_key= remote path
       sync_state= "synced"
-    No deletions are ever propagated.
+    Deletions are propagated for files whose last common state is in the index:
+    deleted on one side and unchanged on the other -> deleted on the other side
+    (locally via .sync-trash). Changed on one side wins over deleted on the
+    other. More than MASS_DELETE_RATIO of the known entries -> nothing is
+    deleted and out["error"] = "mass_delete_blocked".
     """
-    out = {"pushed": [], "pulled": [], "conflicts": [], "skipped": [], "unchanged": 0}
+    out = {"pushed": [], "pulled": [], "conflicts": [], "skipped": [],
+           "deleted_local": [], "deleted_remote": [], "unchanged": 0}
     local_dir = Path(local_dir)
+    root = local_dir.resolve()
 
     remote_raw = await transport.list(prefix)
     remote: Dict[str, Tuple[str, int, float]] = {}
@@ -132,13 +160,25 @@ async def sync_folder(transport, local_dir: Path, prefix: str, index, key: str,
         remote[rel] = (path, size, updated_at)
 
     local: Dict[str, Path] = {}
+    held = set()  # exist locally but are not synced: never read as "deleted"
     for p in local_dir.rglob("*"):
         if not p.is_file():
             continue
         rel = p.relative_to(local_dir).as_posix()
-        if should_ignore(rel) or is_conflict_copy(rel) or _safe_rel(rel) is None:
+        if should_ignore(rel) or is_conflict_copy(rel):
+            continue
+        if _safe_rel(rel) is None:
+            held.add(rel)
+            out["skipped"].append(rel)
+            logger.warning("data_api_sync: %r has a name that cannot be synced, skipped", rel)
+            continue
+        if not _inside(root, p):
+            held.add(rel)
+            out["skipped"].append(rel)
+            logger.warning("data_api_sync: %r resolves outside the folder, skipped", rel)
             continue
         if p.stat().st_size > MAX_BYTES:
+            held.add(rel)
             out["skipped"].append(rel)
             logger.warning("data_api_sync: %r exceeds MAX_BYTES, skipped", rel)
             continue
@@ -146,7 +186,35 @@ async def sync_folder(transport, local_dir: Path, prefix: str, index, key: str,
 
     touched = []  # (rel, plaintext_checksum) pairs that need an index update
 
-    for rel in sorted(set(remote) | set(local)):
+    # Deletions: only from the last common state (index), only now that list()
+    # succeeded in this run, and only if the other side did not change.
+    known = {f["rel_path"]: f for f in await index.get_all_files()
+             if f["sync_state"] == "synced"}
+    del_remote, del_local = set(), set()
+    for rel, base in known.items():
+        if rel in held or not _inside(root, local_dir / rel):
+            continue
+        lpath, rmeta = local.get(rel), remote.get(rel)
+        if lpath is None and rmeta is not None and rmeta[2] == base["mtime"]:
+            del_remote.add(rel)
+        elif (lpath is not None and rmeta is None
+              and compute_checksum_file(str(lpath)) == base["checksum"]):
+            del_local.add(rel)
+    planned = len(del_remote) + len(del_local)
+    if planned >= MASS_DELETE_MIN and planned > len(known) * MASS_DELETE_RATIO:
+        out["error"] = "mass_delete_blocked"
+        out["blocked"] = sorted(del_remote | del_local)
+        logger.warning("data_api_sync: %d of %d known entries would be deleted, "
+                       "nothing deleted", planned, len(known))
+        del_remote, del_local = set(), set()
+
+    for rel in sorted(set(remote) | set(local) | set(known)):
+        if not _inside(root, local_dir / rel):
+            # a remote entry below a link that points out of the folder
+            if rel not in out["skipped"]:
+                out["skipped"].append(rel)
+                logger.warning("data_api_sync: %r resolves outside the folder, skipped", rel)
+            continue
         base = await index.get_file(rel)
         lpath = local.get(rel)
         rmeta = remote.get(rel)
@@ -159,8 +227,21 @@ async def sync_folder(transport, local_dir: Path, prefix: str, index, key: str,
             base is None or rmeta[2] != base["mtime"]
         )
 
+        if rel in del_remote:
+            await transport.delete(rmeta[0])
+            await index.delete_file(rel)
+            out["deleted_remote"].append(rel)
+            continue
+        if rel in del_local:
+            move_to_sync_trash(str(local_dir), rel)
+            await index.delete_file(rel)
+            out["deleted_local"].append(rel)
+            continue
+
         if rmeta is None and lpath is None:
-            # Case 6: locally deleted, remote unchanged or gone -> nothing.
+            # Gone on both sides (or locally deleted and remote already gone).
+            if base is not None:
+                await index.delete_file(rel)
             continue
 
         if l_changed and not r_changed:

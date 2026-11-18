@@ -234,6 +234,22 @@ class FastTBHandler:
         self._app: FastTB = fast_tb_app
         self._session_manager = session_manager
 
+    # Device-account duty exemptions: assets of the account/login page, the pages
+    # that show the right page themselves and the link flow. While first_run (no
+    # profile yet) needs_account is false, so wizard profile/save stay open then.
+    _ACCOUNT_EXEMPT_PREFIXES = ("/web/", "/dist/")
+    _ACCOUNT_EXEMPT_PATHS = frozenset({
+        ("GET", "/favicon.ico"), ("GET", "/health"),
+        ("GET", "/"), ("GET", "/account"), ("GET", "/setup"),
+        ("GET", "/api/wizard/state"), ("GET", "/api/account/status"),
+        ("POST", "/api/account/start"),
+    })
+
+    @classmethod
+    def _is_account_exempt(cls, request: ParsedRequest) -> bool:
+        return (request.path.startswith(cls._ACCOUNT_EXEMPT_PREFIXES)
+                or (request.method.upper(), request.path) in cls._ACCOUNT_EXEMPT_PATHS)
+
     def has_route(self, path: str, method: str) -> bool:
         """Check if FastTB can handle this path+method."""
         return self._app.has_route(path, method)
@@ -285,6 +301,18 @@ class FastTBHandler:
                         )
                     return error_response("Authentication required", 401, "Unauthorized")
 
+
+        # Device-account duty (apps with require_device_account, i.e. local_ui):
+        # profile local/developer without a linked device account -> every route
+        # except the link flow is closed. State: first_run.onboarding_state().
+        if (getattr(self._app, "require_device_account", False)
+                and not self._is_account_exempt(request)):
+            from toolboxv2.utils.clis.first_run import onboarding_state
+            if onboarding_state().get("needs_account"):
+                if (request.method.upper() == "GET"
+                        and "text/html" in request.headers.get("accept", "").lower()):
+                    return redirect_response("/account", 302)
+                return json_response({"error": "account required"}, status=403)
 
         result = self._app.resolve_route(request.path, request.method)
 

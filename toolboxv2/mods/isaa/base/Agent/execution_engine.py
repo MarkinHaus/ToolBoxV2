@@ -801,6 +801,215 @@ class PersonaRouter:
 
 
 # =============================================================================
+# CONTEXT LOAD (inkrementell, mit Provider-usage)
+# =============================================================================
+
+
+def _msg_leaves(obj: Any, out: list) -> list:
+    """Blattwerte einer Nachricht (Strings, Zahlen, Fremdobjekte) in fester Reihenfolge.
+
+    Dient als Signatur: Bleiben alle Blaetter dieselben Objekte, ist die Nachricht
+    unveraendert, auch wenn ``clean_messages`` die dicts/Listen neu angelegt hat
+    (es kopiert Container, gibt kurze Strings aber unveraendert zurueck)."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            out.append(k)
+            _msg_leaves(v, out)
+    elif isinstance(obj, (list, tuple)):
+        for v in obj:
+            _msg_leaves(v, out)
+    else:
+        out.append(obj)
+    return out
+
+
+class _LoadEntry:
+    """Eine History-Nachricht mit ihrer einmal berechneten Zeichenzahl."""
+
+    __slots__ = ("msg", "content", "tool_calls", "leaves", "chars", "anchored")
+
+    def __init__(self, msg: dict, leaves: tuple, chars: int):
+        self.leaves = leaves
+        self.chars = chars
+        # True: Nachricht war Teil eines Aufrufs, fuer den der Provider usage
+        # gemeldet hat; ihr Anteil kommt aus den echten Tokens.
+        self.anchored = False
+        self.bind(msg)
+
+    def bind(self, msg: dict) -> None:
+        """Referenzen fuer den Schnellpfad (reine Identitaetsvergleiche)."""
+        self.msg = msg
+        self.content = msg.get("content")
+        self.tool_calls = msg.get("tool_calls")
+
+    def same_object(self, msg: dict) -> bool:
+        return (
+            msg is self.msg
+            and msg.get("content") is self.content
+            and msg.get("tool_calls") is self.tool_calls
+        )
+
+    def matches(self, leaves: tuple) -> bool:
+        own = self.leaves
+        if len(own) != len(leaves):
+            return False
+        for a, b in zip(own, leaves):
+            if a is not b and (type(a) is not type(b) or a != b):
+                return False
+        return True
+
+
+class ContextLoadTracker:
+    """Kontextlast in Tokens, inkrementell und mit echten Provider-Werten.
+
+    Ersetzt die fruehere Vollberechnung ``len(str(messages)) + len(str(tools))`` bei
+    jeder Abfrage (je Stream-Chunk, je Tool-Ergebnis).
+
+    * Diff: Jede History-Nachricht wird einmal geschaetzt (``len(repr(msg))``) und
+      ueber die Identitaet ihrer Blattwerte wiedererkannt. Eine Abfrage kostet nur
+      einen Identitaetsvergleich je Nachricht; neu geschaetzt wird nur, was neu
+      oder geaendert ist.
+    * Echte Werte: Meldet der Provider fuer einen Aufruf die Kontextgroesse
+      (``context_tokens``), gilt fuer den unveraenderten Teil dieses Aufrufs die
+      echte Zahl. Geschaetzt wird nur, was danach dazukam oder geaendert wurde.
+      Faellt ein Teil weg (Offload, Compaction), wird sein Anteil an den echten
+      Tokens abgezogen (Verhaeltnis seiner Schaetzung zur Schaetzung des Aufrufs).
+    * Ohne usage: reine Schaetzung, identisch zur frueheren Formel
+      (Zeichen der gesendeten Nachrichten + Tools, geteilt durch 3.7).
+    """
+
+    CHARS_PER_TOKEN = 3.7
+
+    def __init__(self):
+        self._entries: list = []
+        self._hist_chars = 0
+        self._anchored_chars = 0
+        self._dynamic_chars: Optional[int] = None
+        self._tools_chars: Optional[int] = None
+        self._tools_key: Optional[tuple] = None
+        self._overhead_dirty = True
+        self._pending: Optional[tuple] = None
+        self._anchor_tokens = 0
+        self._anchor_chars = 0
+        self.estimated_messages = 0  # Anzahl Einzel-Schaetzungen (Diagnose)
+
+    # -- Eingaben der Engine ------------------------------------------------
+
+    @property
+    def needs_overhead(self) -> bool:
+        """Dynamischer Systemprompt oder Tools wurden noch nie gemessen."""
+        return self._dynamic_chars is None or self._tools_chars is None
+
+    def set_dynamic(self, dynamic_msg: Optional[dict]) -> None:
+        """Dynamische System-Message, die vor dem naechsten Aufruf angehaengt wird."""
+        chars = len(repr(dynamic_msg)) + 2 if dynamic_msg else 0
+        if chars != self._dynamic_chars:
+            self._dynamic_chars = chars
+            self._overhead_dirty = True
+
+    def set_tools(self, tools: Optional[list]) -> None:
+        """Tool-Definitionen des naechsten Aufrufs (gemessen nur bei geaenderter Liste)."""
+        key = tuple(
+            (t.get("function") or {}).get("name") if isinstance(t, dict) else id(t)
+            for t in (tools or ())
+        )
+        if key != self._tools_key or self._tools_chars is None:
+            self._tools_key = key
+            chars = len(str(tools)) if tools else 0
+            if chars != self._tools_chars:
+                self._tools_chars = chars
+                self._overhead_dirty = True
+
+    def begin_request(self, history: List[dict], tools: Optional[list]) -> None:
+        """Direkt vor dem LLM-Aufruf: merkt sich, was gesendet wird."""
+        self.set_tools(tools)
+        self._sync(history)
+        self._pending = (
+            list(self._entries),
+            self._hist_chars + self._overhead_chars(),
+        )
+
+    def end_request(self, usage: Any) -> None:
+        """Nach der Antwort: usage des Aufrufs als Anker uebernehmen (falls vorhanden)."""
+        pending, self._pending = self._pending, None
+        tokens = self._context_tokens(usage)
+        if pending is None or tokens <= 0:
+            return
+        sent_entries, sent_chars = pending
+        if sent_chars <= 0:
+            return
+        for e in self._entries:
+            e.anchored = False
+        for e in sent_entries:
+            e.anchored = True
+        self._anchor_tokens = tokens
+        self._anchor_chars = sent_chars
+        self._overhead_dirty = False
+
+    # -- Ergebnis -------------------------------------------------------------
+
+    def load(self, history: List[dict]) -> int:
+        self._sync(history)
+        overhead = self._overhead_chars()
+        covered = 0
+        real = 0.0
+        if self._anchor_tokens > 0 and self._anchor_chars > 0:
+            covered = self._anchored_chars + (0 if self._overhead_dirty else overhead)
+            real = self._anchor_tokens * covered / self._anchor_chars
+        estimated_chars = self._hist_chars + overhead - covered
+        return int(real + estimated_chars / self.CHARS_PER_TOKEN)
+
+    # -- intern -----------------------------------------------------------------
+
+    def _overhead_chars(self) -> int:
+        return (self._dynamic_chars or 0) + (self._tools_chars or 0)
+
+    @staticmethod
+    def _context_tokens(usage: Any) -> int:
+        if usage is None:
+            return 0
+        if isinstance(usage, dict):
+            val = usage.get("context_tokens") or usage.get("prompt_tokens")
+        else:
+            val = getattr(usage, "context_tokens", None) or getattr(usage, "prompt_tokens", None)
+        if isinstance(val, bool) or not isinstance(val, int):
+            return 0
+        return val
+
+    def _sync(self, history: List[dict]) -> None:
+        """History mit dem Bestand abgleichen; nur neue/geaenderte Nachrichten schaetzen."""
+        old = self._entries
+        n_old = len(old)
+        pool = None
+        entries = []
+        hist_chars = 0
+        anchored_chars = 0
+        for i, msg in enumerate(history):
+            e = old[i] if i < n_old else None
+            if e is None or not e.same_object(msg):
+                # Neues dict (clean_messages kopiert), verschoben oder geaendert:
+                # Blattwerte vergleichen, sonst per Objekt-Identitaet im Bestand suchen.
+                leaves = tuple(_msg_leaves(msg, []))
+                if e is None or not e.matches(leaves):
+                    if pool is None:
+                        pool = {tuple(map(id, x.leaves)): x for x in old}
+                    e = pool.get(tuple(map(id, leaves)))
+                if e is None:
+                    e = _LoadEntry(msg, leaves, len(repr(msg)) + 2)
+                    self.estimated_messages += 1
+                else:
+                    e.leaves = leaves
+                    e.bind(msg)
+            entries.append(e)
+            hist_chars += e.chars
+            if e.anchored:
+                anchored_chars += e.chars
+        self._entries = entries
+        self._hist_chars = hist_chars
+        self._anchored_chars = anchored_chars
+
+
+# =============================================================================
 # EXECUTION CONTEXT
 # =============================================================================
 
@@ -859,6 +1068,11 @@ class ExecutionContext:
     taskmap_injected_type: Optional[str] = None
     task_guid_agent_locked: bool = False  # Agent hat aktiv task_type/subtype via task_guid gesetzt
     notes_gate_fired: bool = False  # Notiz-Gate hat final_answer bereits einmal abgelehnt
+
+    # Kontextlast (inkrementell, nicht im Checkpoint): siehe ContextLoadTracker
+    context_load: ContextLoadTracker = field(
+        default_factory=ContextLoadTracker, repr=False, compare=False
+    )
 
     def get_dynamic_tool_names(self) -> List[str]:
         """Get names of currently loaded dynamic tools"""
@@ -1998,6 +2212,7 @@ BEISPIELE:
                     break
                 warning, messages, _ = self._loop_preamble(ctx)
                 current_tools = self._get_tool_definitions(ctx)
+                ctx.context_load.begin_request(ctx.working_history, current_tools)
                 log.info(f"messages AutoFocus {len(messages)} done")
 
                 # LLM Call
@@ -2023,6 +2238,7 @@ BEISPIELE:
                     final_response = f"Es ist ein Fehler aufgetreten: {str(e)}\n\nIch konnte die Aufgabe leider nicht abschließen."
                     success = False
                     break
+                ctx.context_load.end_request(getattr(response, "usage", None))
 
                 # Add assistant message to working history
                 if response:
@@ -2323,6 +2539,7 @@ BEISPIELE:
 
                     _last_progress = 0
                     current_tools = tool_definitions if tool_definitions else None
+                    ctx.context_load.begin_request(ctx.working_history, current_tools)
                     # ── LLM Call via a_run_llm_completion stream ──
                     collected_content = ""
                     result_message = None
@@ -2358,11 +2575,15 @@ BEISPIELE:
                     async def pump_stream():
                         try:
                             last_tc = None
+                            last_usage = None
                             async for item in stream_fn():
                                 await multiplex_queue.put({"_type": "chunk", "data": item})
                                 if hasattr(item, "tool_calls"):
                                     last_tc = item.tool_calls
-                            await multiplex_queue.put({"_type": "done", "tool_calls": last_tc})
+                                    last_usage = getattr(item, "usage", None)
+                            await multiplex_queue.put(
+                                {"_type": "done", "tool_calls": last_tc, "usage": last_usage}
+                            )
                         except ToolValidationError as err:
                             await multiplex_queue.put({"_type": "tool_error", "error": err})
                         except Exception as err:
@@ -2382,6 +2603,7 @@ BEISPIELE:
 
                             if item["_type"] == "done":
                                 tool_calls = item["tool_calls"]
+                                ctx.context_load.end_request(item.get("usage"))
                                 break
 
                             if item["_type"] == "tool_error":
@@ -2838,6 +3060,7 @@ BEISPIELE:
                     )
 
                     current_tools = self._get_tool_definitions(ctx)
+                    ctx.context_load.begin_request(ctx.working_history, current_tools)
 
                     # --- LLM Call (non-streaming) ---
                     try:
@@ -2860,6 +3083,7 @@ BEISPIELE:
                             tools=current_tools,
                             **llm_kwargs,
                         )
+                        ctx.context_load.end_request(getattr(response, "usage", None))
                     except Exception as e:
                         self.live.error = str(e)
                         self.live.enter(AgentPhase.ERROR, f"LLM Error: {e}")
@@ -3548,12 +3772,14 @@ BEISPIELE:
         # parallelen Tool-Calls zwischen assistant(tool_calls) und die
         # zugehoerigen tool-Messages geschoben; OpenAI-kompatible Endpunkte
         # lehnen das mit 400 ab.
+        dynamic_msg = None
         if messages:
             dynamic_msg = {"role": "system", "content": self._build_dynamic_system_prompt(ctx)}
             if messages[-1].get("role") == "user":
                 messages.insert(len(messages) - 1, dynamic_msg)
             else:
                 messages.append(dynamic_msg)
+        ctx.context_load.set_dynamic(dynamic_msg)
 
         return warning, messages, task_type
 
@@ -4278,43 +4504,32 @@ BEISPIELE:
         return 128000  # Fallback
 
     def _calculate_context_load(self, ctx: ExecutionContext) -> int:
-        """Berechne aktuelle Context-Größe in Tokens (vollständig & synchron mit /context)."""
+        """Aktuelle Kontextlast in Tokens (Live-Bar, Budget, /context).
+
+        Inkrementell ueber ``ctx.context_load`` (ContextLoadTracker): echte
+        Prompt-Tokens des letzten Aufrufs, falls der Provider sie gemeldet hat,
+        plus Schaetzung nur fuer neue oder geaenderte Nachrichten. Gezaehlt wird,
+        was gesendet wird: working_history + dynamische System-Message + Tools.
+        Der Systemprompt wird hier nicht neu gebaut; nur vor dem ersten LLM-Aufruf
+        eines Kontexts werden dynamischer Prompt und Tools einmal gemessen."""
+        tracker = ctx.context_load
+        if tracker.needs_overhead:
+            self._measure_context_overhead(ctx, tracker)
+        return tracker.load(ctx.working_history)
+
+    def _measure_context_overhead(self, ctx: ExecutionContext, tracker: ContextLoadTracker) -> None:
+        """Einmalige Messung von dynamischem Prompt und Tools vor dem ersten Aufruf.
+        Danach liefern _loop_preamble und begin_request die Werte je Iteration."""
         try:
-            # 1. System Prompt (statisch + dynamisch für diesen Iterationsschritt bauen)
-            session = self._current_session or self.agent.session_manager.get(ctx.session_id)
-            system_prompt = self._build_static_system_prompt(ctx, session)
-            system_prompt += self._build_dynamic_system_prompt(ctx)
-
-            # 2. Tool Definitionen
-            active_tools = self._get_tool_definitions(ctx)
-
-            # 3. Vollständigen Message-Stack simulieren
-            messages = [{"role": "system", "content": system_prompt}]
-
-            if ctx.working_history:
-                # Statischen Prompt an Index 0 überspringen um Doppelzählung zu vermeiden
-                work_slice = (
-                    ctx.working_history[1:]
-                    if ctx.working_history[0].get("role") == "system"
-                    else ctx.working_history
-                )
-                messages.extend(work_slice)
-
-            # Akkurate Token-Schätzung mit dem vereinheitlichten 3.7-Divisor
-            total_chars = len(str(messages)) + len(str(active_tools or ""))
-            return int(total_chars // 3.7)
-        except Exception:
-            # Fallback bei Initialisierungs-Verzögerungen
-            total = 0
-            for msg in ctx.working_history:
-                content = msg.get("content", "") or ""
-                total += self._estimate_tokens(content)
-                for tc in msg.get("tool_calls", []):
-                    if isinstance(tc, dict):
-                        total += self._estimate_tokens(tc.get("function", {}).get("arguments", ""))
-                    elif hasattr(tc, "function"):
-                        total += self._estimate_tokens(tc.function.arguments or "")
-            return total
+            tracker.set_dynamic({"role": "system", "content": self._build_dynamic_system_prompt(ctx)})
+        except Exception as e:
+            get_logger().warning(f"[ContextLoad] dynamischer Prompt nicht messbar, zaehle 0: {e!r}")
+            tracker.set_dynamic(None)
+        try:
+            tracker.set_tools(self._get_tool_definitions(ctx))
+        except Exception as e:
+            get_logger().warning(f"[ContextLoad] Tool-Definitionen nicht messbar, zaehle 0: {e!r}")
+            tracker.set_tools(None)
 
     def _content_hash(self, content: str) -> str:
         """Erzeuge Hash für Dedup."""

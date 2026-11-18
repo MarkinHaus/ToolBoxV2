@@ -152,7 +152,7 @@ class AccountFlowTest(unittest.TestCase):
                     return deco
             wizard_api.register_wizard_routes(_App())
             self._link(None)
-            res = routes["/api/wizard/state"](None)
+            res = routes["/api/wizard/state"](SimpleNamespace(headers={"host": "127.0.0.1:8467"}, environ={"REMOTE_ADDR": "127.0.0.1"}))
         self.assertFalse(res["needs_account"])
         self.assertEqual(res["account"], "markin")
 
@@ -172,7 +172,7 @@ class AccountFlowTest(unittest.TestCase):
                         return fn
                     return deco
             wizard_api.register_wizard_routes(_App())
-            res = routes["/api/account/start"](SimpleNamespace(json_data={"method": "nope"}, headers={"host": "127.0.0.1:8467"}))
+            res = routes["/api/account/start"](SimpleNamespace(json_data={"method": "nope"}, headers={"host": "127.0.0.1:8467"}, environ={"REMOTE_ADDR": "127.0.0.1"}))
         self.assertEqual(res[0], 400)
 
 

@@ -11,7 +11,7 @@ def extract_class_info(cls) -> dict[str, Any]:
     for name, member in cls.__members__.items():
         class_info[name] = {
             "value": member.value,
-            "annotations": cls.__annotations__.get(name, None)
+            "annotations": cls.__annotations__.get(name, None) if hasattr(cls, "__annotations__") else cls.__dataclass_fields__.get(name, None)
         }
     return class_info
 
