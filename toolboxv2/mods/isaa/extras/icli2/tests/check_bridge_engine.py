@@ -27,6 +27,8 @@ class Backend:
         self.got = []
 
     async def _get(self, name): return self.a
+    async def _icli2_agent(self, name):            # neuer Einstiegspunkt (backend.py:91)
+        return await self.isaa.get_agent(name)
     def attach(self, spawn): self._spawn = spawn
     async def boot(self): return {}
     async def is_running(self, a, s): return False
