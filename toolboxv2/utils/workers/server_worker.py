@@ -50,12 +50,7 @@ try:
 
     MULTIPART_AVAILABLE = True
 except ImportError:
-    try:
-        from multipart import parse_form_data, is_form_request, MultipartPart
-
-        MULTIPART_AVAILABLE = True
-    except ImportError:
-        MULTIPART_AVAILABLE = False
+    MULTIPART_AVAILABLE = False
     # Warning wird später geloggt
 
 # event_manager imports deferred to method level (saves ~30-50 MB per worker)
@@ -1713,11 +1708,17 @@ class HTTPWorker:
                 import time as _t10b
                 from toolboxv2.mods.CloudM.auth.device_account import (
                     device_owner_file, local_trust_provider)
-                f = device_owner_file(self._app)
-                last = f.stat().st_mtime if f.is_file() else None
+
+                def _mtime():
+                    try:
+                        return device_owner_file(self._app).stat().st_mtime
+                    except OSError:
+                        return None  # unlinked between is_file() and stat()
+
+                last = _mtime()
                 while True:
                     _t10b.sleep(2)
-                    m = f.stat().st_mtime if f.is_file() else None
+                    m = _mtime()
                     if m == last:
                         continue
                     last = m
