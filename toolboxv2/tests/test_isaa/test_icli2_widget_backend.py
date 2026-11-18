@@ -65,24 +65,21 @@ def test_closed_stays_closed(tmp_path):
     assert b2.widget_registry_load()["a1"]["closed"] is True
 
 
-def test_answer_updates_registry_and_emits(tmp_path):
+def test_answer_ohne_engine_ist_laut(tmp_path):
+    """Ohne verbundene Engine darf die Antwort nicht still verloren gehen (Regel 11).
+    Der echte Rundweg (Engine -> Erzeuger-Lauf) steht in test_icli2_widget_betrieb.py (Punkte 7, 8)."""
     b = _backend(tmp_path)
+    b._spawn, b._tasks = None, set()
     _run(b.widget_registry_add("a1", SPEC_FORM, creator=("self", "default")))
-    sent = []
-    async def fake_start(prompt):                # Netz-/LLM-Grenze: was rausgeht
-        sent.append(prompt)
-    b._widget_start_turn = fake_start
-    res = _run(b._do_widget_answer({"id": "a1", "values": {"ort": "Berlin"}}))
-    assert res["ok"]
-    reg = b.widget_registry_load()
-    assert reg["a1"]["values"] == {"ort": "Berlin"}
-    assert sent and "Berlin" in sent[0]          # Antwort erreicht creator-Turn
+    with pytest.raises(RuntimeError, match="keine Engine"):
+        _run(b._do_widget_answer(id="a1", values={"ort": "Berlin"}))
+    assert b.widget_registry_load()["a1"]["values"] == {"ort": "Berlin"}   # Werte sind gespeichert
 
 
 def test_answer_unknown_id(tmp_path):
     b = _backend(tmp_path)
-    res = _run(b._do_widget_answer({"id": "nope", "values": {}}))
-    assert not res["ok"]
+    with pytest.raises(LookupError):
+        _run(b._do_widget_answer(id="nope", values={}))
 
 
 def test_format_answer_pretty():

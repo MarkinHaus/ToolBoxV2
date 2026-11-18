@@ -47,7 +47,6 @@ from toolboxv2.mods.isaa.extras.icli2.autocomplete import SUBCOMMANDS as _AC_SUB
 from toolboxv2.mods.isaa.extras.icli2.autocomplete import dynamic_kind, is_exact, suggest
 from toolboxv2.mods.isaa.extras.icli2.widget_app import map_widget_event  # Widgets (W5)
 from toolboxv2.mods.isaa.extras.icli2.widgets import WidgetModal
-from toolboxv2.mods.isaa.extras.icli2 import widgets
 
 SUBCOMMANDS = _AC_SUBS
 
@@ -72,6 +71,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "/set": ("<name> <wert>", "Einstellung direkt setzen, z. B. /set max_iterations 50"),
     "/context": ("", "Kontext-Übersicht in der Seitenleiste zeigen"),
     "/vfs": ("[pfad]", "Dateien im VFS ansehen (Tab vervollständigt den Pfad)"),
+    "/widget": ("", "Offene Widgets der Agenten ansehen und beantworten"),
     "/side": ("", "Seitenleiste ein/aus (F2)"),
     "/login": ("", "CloudM-Anmeldung prüfen oder starten"),
     "/tb": ("[mod.fn key=wert …]", "ToolBox-Funktion aufrufen"),
@@ -170,6 +170,7 @@ class RunView:
     def __init__(self, box: Vertical, app: "ICli2", agent: str = "", query: str = "", session: str = ""):
         self.box, self.app = box, app
         self.agent, self.query, self.session = agent, query, session
+        self.origin = "chat"                             # chat | job | widget | …  (aus RUN_START)
         self.status = "running"
         self.status_msg = ""
         self.iter: tuple[int, int] | None = None
@@ -364,7 +365,7 @@ class ICli2(App):
         self.ready = False
         self.runs: dict[str, RunView] = {}          # alle Laeufe, auch beendete (begrenzt)
         self.pending: dict[str, RunView] = {}       # tag -> Block, bis die Engine den Lauf meldet
-        self.side_rows: dict[str, list[dict]] = {"jobs": [], "mounts": [], "context": []}
+        self.side_rows: dict[str, list[dict]] = {"jobs": [], "mounts": [], "context": [], "board": []}
         self._side_jump = False                      # nach dem naechsten Kontext-Update ans Ende scrollen
         self._via_palette = False                    # Picker kam aus der Palette: ← fuehrt dorthin zurueck
         self._arg_rows: dict[str, tuple[float, list[dict]]] = {}   # Werte fuer die Vervollstaendigung
@@ -491,9 +492,12 @@ class ICli2(App):
         elif ev.kind == P.RUN_START:
             view = self.pending.pop(d.get("tag", ""), None)
             if view is None:                             # von der Engine gestartet (Job, Resume, …)
-                box = await self._block(f"{SYM['agent']} {d.get('origin', 'lauf')} · {d['agent']} · "
-                                        f"{' '.join(d['query'].split())[:70]}", "note")
+                # Widget-Antwort: nur die Antwortzeile zeigen (id und values gehen nur an den Agenten)
+                head = (d["query"].splitlines() or [""])[0] if d.get("origin") == "widget" \
+                    else " ".join(d["query"].split())[:70]
+                box = await self._block(f"{SYM['agent']} {d.get('origin', 'lauf')} · {d['agent']} · {head}", "note")
                 view = RunView(box, self)
+            view.origin = d.get("origin", "chat")
             view.agent, view.query, view.session = d["agent"], d["query"], d["session"]
             view.started = time.monotonic()
             target = self.runs.get(d.get("steer") or "")
@@ -527,12 +531,7 @@ class ICli2(App):
             if self.w_side.has_class("-open"):
                 self.engine.send(P.LIST, what="context", to="side")
         elif ev.kind in (P.WIDGET_CREATE, P.WIDGET_UPDATE, P.WIDGET_CLOSE):
-            act = map_widget_event(ev.kind, d)
-            if act and act[0] == "push_modal" and widgets.TEXTUAL:
-                self.push_screen(WidgetModal(act[1], d.get("spec") or {},
-                                             creator=tuple(d.get("creator") or ("", ""))))
-            elif act:
-                self.call_after_refresh(self._refresh_side)
+            self._widget_event(ev.kind, d)
         elif ev.kind == P.READY:
             changed = (d["agent"], d["session"], d["model"], d["complex_model"]) != \
                       (self.agent, self.session, self.model, self.complex_model)
@@ -546,6 +545,8 @@ class ICli2(App):
             self.features = d.get("features", [])
             if "history" in d:
                 self.history, self._hist_pos = d["history"], len(d["history"])
+            if "board" in d:                             # gepinnte Widgets (auch nach einem Neustart)
+                self.side_rows["board"] = d["board"]
             for role, text in d.get("recap", []):       # letzte Nachrichten der Session
                 await self._note(f"{SYM['progress'] if role == 'user' else ' '} {text}")
         elif ev.kind == P.ROWS:
@@ -574,6 +575,32 @@ class ICli2(App):
                 await view.note(d["text"], d.get("level", "info"))
             else:
                 await self._note(d["text"], d.get("level", "info"))
+
+    # ── Widgets (Agenten erzeugen sie ueber ihre widget_*-Tools) ────────────────
+    def _widget_event(self, kind: str, d: dict) -> None:
+        act = map_widget_event(kind, d)
+        if act is None:
+            return
+        action, wid = act
+        open_modal = next((s for s in self.screen_stack if isinstance(s, WidgetModal) and s.widget_id == wid), None)
+        if action == "push_modal":
+            if open_modal is None:
+                self._widget_show(wid, d)
+        elif action == "close" and open_modal is not None:
+            open_modal.dismiss(None)
+        elif action == "refresh" and open_modal is not None and d.get("spec"):
+            open_modal.dismiss(None)                     # neuer Inhalt: Modal mit dem neuen Spec
+            if d.get("mode") != "pinned" or d.get("open"):
+                self._widget_show(wid, d)
+        self.engine.send(P.LIST, what="board", to="side")   # Seitenleiste: gepinnte Widgets
+
+    def _widget_show(self, wid: str, d: dict) -> None:
+        def answered(result: dict | None) -> None:
+            if result is not None:                       # Esc: keine Antwort, Widget bleibt offen
+                self.engine.send(P.WIDGET_ANSWER, id=result["id"], values=result["values"])
+
+        self.push_screen(WidgetModal(wid, d.get("spec") or {}, creator=tuple(d.get("creator") or ("", "")),
+                                     values=d.get("values")), answered)
 
     async def _steer_into(self, view: RunView, target: RunView, query: str) -> None:
         """Nachsteuerung an der aktuellen Stelle IN den laufenden Lauf setzen: Frage und
@@ -727,6 +754,11 @@ class ICli2(App):
                 lines.append(f"   [{DIM}]{SYM['sub']} {escape(sub.label[:30])}[/]")
         if len(lines) == 1:
             lines.append(f" [{DIM}]keine[/]")
+        board = self.side_rows["board"]
+        if board:                                        # gepinnte Widgets: /widget oeffnet sie
+            lines += ["", title("Widgets")]
+            lines += [f" {SYM['progress']} {escape(r['label'])}\n   [{DIM}]{escape(r['hint'][:32])}[/]"
+                      for r in board]
         for what, head in (("jobs", "Jobs"), ("mounts", "Mounts")):
             lines += ["", title(head)]
             rows = [r for r in self.side_rows[what] if r["value"] not in ("*", "+")]
@@ -746,7 +778,7 @@ class ICli2(App):
 
     def _refresh_side(self) -> None:
         if self.ready and self.w_side.has_class("-open"):
-            for what in ("jobs", "mounts"):             # Kontext ist teurer: nur bei Bedarf
+            for what in ("jobs", "mounts", "board"):    # Kontext ist teurer: nur bei Bedarf
                 self.engine.send(P.LIST, what=what, to="side")
 
     # ── UI -> Engine ─────────────────────────────────────────────────────────
@@ -836,6 +868,8 @@ class ICli2(App):
             self.engine.send(P.LIST, what="context", to="side")
         elif name == "/vfs":
             do("vfs", path=arg)
+        elif name == "/widget":
+            ask("widgets")
         elif name == "/feature":
             do("feature", name=arg) if arg else ask("features")
         elif name == "/skill":
@@ -923,6 +957,8 @@ class ICli2(App):
                 send(P.DO, action="share", share=value)
             elif what == "voice":
                 send(P.DO, action="voice", op=value)
+            elif what == "widgets":                      # Modal oeffnen (auch gepinnte beantworten)
+                send(P.DO, action="widget_open", id=value)
             elif what == "runs":
                 self.push_screen(
                     Picker(f"Lauf {value.partition('|')[2]}", RUN_ACTIONS),

@@ -70,7 +70,7 @@ class HostShim:
         b = self.backend
         session = session_id or b.session
         try:
-            agent = await b.isaa.get_agent(agent_name)
+            agent = await b._icli2_agent(agent_name)          # mit icli2-Tools (Widgets)
         except Exception as e:
             yield {"type": "error", "message": f"agent '{agent_name}': {e}"}
             return

@@ -29,6 +29,10 @@ async def main() -> None:
     from toolboxv2.mods.isaa.extras.icli2.widgets import WidgetModal
 
     app = get_app("isaa-host")
+    import os
+    if not str(Path(app.appdata).resolve()).startswith(str(Path(os.environ["TB_DATA_DIR"]).resolve())):
+        mark(f"nicht isoliert: {app.appdata}")          # nie ins echte Profil schreiben (Regel 6)
+        return
     engine, ui = build(app)
     spec = {"title": "Ziel", "template": "form", "mode": "modal", "fields": [
         {"name": "ort", "label": "Ort", "type": "text"},
@@ -74,8 +78,8 @@ async def main() -> None:
     finally:
         engine.send(P.SHUTDOWN)
         engine.join(30)
-        await app.a_exit()
-        mark("ende")
+        mark("ende" if not engine._thread.is_alive() else "engine haengt beim Beenden")
+        await app.a_exit()                               # beendet den Prozess (wie der Starter)
 
 
 try:

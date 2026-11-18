@@ -180,7 +180,11 @@ async def _until(pilot, pred, timeout=60.0, what="Bedingung"):
         if pred():
             return
         await pilot.pause(0.1)
-    raise AssertionError(f"{what} nicht erreicht in {timeout}s")
+    extra = ""
+    app = getattr(pilot, "app", None)
+    if app is not None and hasattr(app, "w_side_text"):
+        extra = f"; Seitenleiste: {_side_text(app)[:600]!r}; board={app.side_rows.get('board')}"
+    raise AssertionError(f"{what} nicht erreicht in {timeout}s{extra}")
 
 
 def _side_text(ui) -> str:
@@ -193,32 +197,39 @@ def _chat_text(ui) -> str:
 
 
 # ── 6. F2-Seitenleiste zeigt die offenen gepinnten Widgets ─────────────────
+async def _ui_chat(ui, pilot, query: str, timeout: float = 60.0) -> None:
+    """Nachricht ueber die Eingabe der App senden und auf das Ende dieses Laufs warten."""
+    before = set(ui.runs)
+    ui.prompt.text = query
+    await pilot.press("enter")
+    await _until(pilot, lambda: any(r not in before and v.status != "running" for r, v in ui.runs.items()),
+                 timeout, f"Lauf zu {query[:40]}")
+
+
 def test_6_seitenleiste_zeigt_gepinnte_widgets():
     from toolboxv2.mods.isaa.extras.icli2.app import ICli2
     from toolboxv2.mods.isaa.extras.icli2.widgets import WidgetModal
     with Betrieb() as b:
-        b.ready()
-        _show_via_agent(b, "self", "default", _pinned("Board Eins"), "t6a")
-        _show_via_agent(b, "self", "default", _pinned("Board Zwei"), "t6b")
-        _show_via_agent(b, "self", "default", dict(CHOICE, title="Nur Modal"), "t6c")
-        gone = _show_via_agent(b, "self", "default", _pinned("Schon zu"), "t6d")
-        b.chat("self", "default", call_query("widget_close", widget_id=gone), "t6e")
-        assert b.widgets_json()[gone]["closed"] is True
-        b.events.clear()
         ui = ICli2(b.engine)
 
         async def go():
             async with ui.run_test(size=(140, 45)) as pilot:
-                await _until(pilot, lambda: ui.ready, 30, "READY")
+                await _until(pilot, lambda: ui.ready, 60, "READY")
+                for title in ("Board Eins", "Board Zwei", "Schon zu"):
+                    await _ui_chat(ui, pilot, call_query("widget_show", **_pinned(title)))
+                await _ui_chat(ui, pilot, call_query("widget_show", **dict(CHOICE, title="Nur Modal")))
                 await _until(pilot, lambda: isinstance(ui.screen, WidgetModal), 10, "Modal 'Nur Modal'")
-                await pilot.press("escape")
+                await pilot.press("escape")              # nicht beantworten
                 await _until(pilot, lambda: len(ui.screen_stack) == 1, 5, "Modal zu")
+                gone = next(w for w, e in b.widgets_json().items() if e["spec"]["title"] == "Schon zu")
+                await _ui_chat(ui, pilot, call_query("widget_close", widget_id=gone))
+                assert b.widgets_json()[gone]["closed"] is True
                 await pilot.press("f2")
-                await _until(pilot, lambda: "Board Zwei" in _side_text(ui), 20, "Widgets in der Seitenleiste")
+                await _until(pilot, lambda: "Board Zwei" in _side_text(ui) and "Schon zu" not in _side_text(ui),
+                             20, "Widgets in der Seitenleiste")
                 side = _side_text(ui)
-                assert "Board Eins" in side and "Board Zwei" in side
-                assert "Nur Modal" not in side and "Schon zu" not in side
-        # Events des Engine-Puffers gehen an die App: alte Events vorher nicht abholen
+                assert "Board Eins" in side and "Board Zwei" in side, side
+                assert "Nur Modal" not in side and "Schon zu" not in side, side
         asyncio.run(go())
 
 

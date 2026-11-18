@@ -31,6 +31,7 @@ class Agent:
     bind_manager=types.SimpleNamespace(bindings={"coder":1})
     def __init__(s,n): s._execution_engine_cache=None; s.amd=types.SimpleNamespace(fast_llm_model="a",complex_llm_model="b"); s.session_manager=SM(); s.e=Eng()
     def _get_execution_engine(s): s._execution_engine_cache=s.e; return s.e
+    def add_tools(s,tools): s.tools={**getattr(s,"tools",{}),**{t["name"]:t for t in tools}}   # icli2 bindet Widget-Tools
 from toolboxv2.mods.isaa.extras.jobs import JobScheduler
 ee=types.ModuleType("toolboxv2.mods.isaa.base.Agent.execution_engine")
 class ExecutionContext:
@@ -97,7 +98,7 @@ async def main():
     assert jobs[0].trigger.interval_seconds==1800 and jobs[1].trigger.cron_expression=="5 9 * * *" and jobs[1].query=="schreibe: den bericht" and jobs[0].agent_name=="myagent"
     rows=(await b.rows("jobs"))["rows"]; print(rows[0]); assert len(rows)==3 and "on_interval · active" in rows[0]["hint"]
     jid=rows[0]["value"]; await b.do("job",job=jid,op="fire"); await asyncio.sleep(0.3)
-    assert spawned[-1][:4]==("myagent","default","aufräumen: lösche alte logs","job"), spawned
+    assert spawned[-1][:4]==("myagent","job-aufr-umen","aufräumen: lösche alte logs","job")   # Jobs: eigene Session (watch.job_session), spawned
     assert sch.get_job(jid).last_result=="completed" and sch.get_job(jid).run_count==1
     await b.do("job",job=rows[2]["value"],op="fire"); await asyncio.sleep(0.3); assert spawned[-1][4]=="{'dream': 'report'}", spawned[-1]
     await b.do("job",job=jid,op="pause"); assert sch.get_job(jid).status=="paused"; await b.do("job",job=jid,op="pause"); assert sch.get_job(jid).status=="active"

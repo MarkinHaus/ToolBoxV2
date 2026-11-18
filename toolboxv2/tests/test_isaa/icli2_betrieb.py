@@ -70,7 +70,15 @@ class Betrieb:
         from toolboxv2 import get_app
         from toolboxv2.mods.isaa.extras.icli2.backend import IsaaBackend
         from toolboxv2.mods.isaa.extras.icli2.engine import Engine
+        from toolboxv2.tests.a_util import reset_app_singleton
+        # Eine schon vorhandene App (z. B. beim Import von icli2/app.py angelegt) zeigt aufs echte
+        # Profil: verwerfen, damit die App mit der umgebogenen Umgebung entsteht (Regel 6).
+        reset_app_singleton(force_exit=True)
         self.app = get_app("isaa-host")
+        root = str(Path(self.root).resolve())
+        for path in (self.app.appdata, self.app.data_dir):
+            if not str(Path(path).resolve()).startswith(root):
+                raise RuntimeError(f"Testumgebung nicht isoliert: {path} liegt nicht unter {root}")
         self.backend = IsaaBackend(self.app)
         self.engine = Engine(self.backend)
         self.engine.start()

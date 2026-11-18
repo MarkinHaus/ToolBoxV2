@@ -147,12 +147,11 @@ class Engine:
     def _emit(self, kind: str, run: str = "", **data: Any) -> None:
         self._events.append(P.Event(kind, run, data))
 
-    async def emit_widget(self, action: str, widget_id: str, spec: dict) -> None:
-        """Widget-Event an die App (create/update/close) - von widget_tools genutzt."""
-        kind = {"create": P.WIDGET_CREATE, "update": P.WIDGET_UPDATE,
-                "close": P.WIDGET_CLOSE}.get(action)
-        if kind:
-            self._emit(kind, data={"id": widget_id, **spec})
+    def _emit_widget(self, kind: str, data: dict) -> None:
+        """Widget-Event an die App (WIDGET_CREATE/UPDATE/CLOSE), Payload siehe widget_tools.widget_event."""
+        if kind not in (P.WIDGET_CREATE, P.WIDGET_UPDATE, P.WIDGET_CLOSE):
+            raise ValueError(f"kein Widget-Event: {kind}")
+        self._emit(kind, **data)
 
     def _main(self) -> None:
         self._loop = asyncio.new_event_loop()
@@ -162,6 +161,9 @@ class Engine:
         hook = getattr(self._backend, "attach_engine", None)
         if hook is not None:                             # optional: lebende Laeufe + Hinweise fuer das Backend
             hook(self._live_runs, lambda text, level="info": self._emit(P.NOTICE, level=level, text=text))
+        widgets = getattr(self._backend, "attach_widget_events", None)
+        if widgets is not None:                          # Agent-Tools zeigen Widgets in der UI
+            widgets(self._emit_widget)
         self._started.set()
         try:
             self._loop.run_until_complete(self._serve())
@@ -224,6 +226,8 @@ class Engine:
         elif cmd.kind in (P.LIST, P.DO):
             # kann dauern (Agent bauen, Paket laden): eigener Task, Inbox bleibt frei
             asyncio.create_task(self._admin(cmd, boot))
+        elif cmd.kind == P.WIDGET_ANSWER:                # Antwort aus dem Modal: wie eine Aktion
+            asyncio.create_task(self._admin(P.Command(P.DO, {"action": "widget_answer", **d}), boot))
         elif cmd.kind in (P.STOP, P.PAUSE):
             run = self._runs.get(d.get("run", ""))
             if run is None:
@@ -265,6 +269,8 @@ class Engine:
             out = await self._backend.do(args.pop("action"), **args)
             if out.get("ready"):
                 self._emit(P.READY, **out["ready"])
+            if out.get("widget"):
+                self._emit(P.WIDGET_CREATE, **out["widget"])
             if out.get("draft"):
                 self._emit(P.DRAFT, text=out["draft"])
             if out.get("text"):

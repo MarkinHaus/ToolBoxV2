@@ -36,8 +36,9 @@ ACK = "ack"                # data: qid  -> Befehl aus der Warteschlange der UI i
 BYE = "bye"                # Engine ist sauber beendet
 
 # -- Widgets (interaktive Panels; Erzeuger ist immer ein Agent) ----------------
-WIDGET_CREATE = "widget_create"  # data: id, title, template, mode, spec, creator=[agent, session]
-WIDGET_UPDATE = "widget_update"  # data: id, title?, template?, mode?, spec?
+WIDGET_CREATE = "widget_create"  # data: id, title, template, mode, spec, creator=[agent, session], values,
+                                 #       open (True: Modal auch fuer gepinnte, z. B. aus /widget)
+WIDGET_UPDATE = "widget_update"  # data: wie WIDGET_CREATE (aktueller Stand inkl. values)
 WIDGET_CLOSE = "widget_close"    # data: id
 
 

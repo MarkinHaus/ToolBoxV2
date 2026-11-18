@@ -33,7 +33,9 @@ class SelfToolMixin:
     self_set_agent_config/self_list_agents auf den IsaaBackend."""
 
     def _self_ok(self) -> bool:
-        return getattr(self, "agent", None) == "self"
+        """Aufrufer ist 'self': beim Tool-Aufruf der aufrufende Agent (TOOL_CALLER), sonst die UI-Auswahl."""
+        from .widget_tools import caller_of
+        return caller_of(self)[0] == "self"
 
     # -- eigene Settings -------------------------------------------------
     def self_set_setting(self, key: str, value: Any) -> dict[str, Any] | None:
