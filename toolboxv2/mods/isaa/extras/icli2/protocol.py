@@ -15,6 +15,7 @@ PAUSE = "pause"        # data: run
 LIST = "list"            # data: what (agents|models|sessions|mounts|jobs)[, to=side]
 DO = "do"                # data: action + Argumente (siehe backend.do)
 SHUTDOWN = "shutdown"
+WIDGET_ANSWER = "widget_answer"  # data: id, values (UI -> Engine, Antwort des Nutzers)
 
 # ── Events: Engine -> UI ─────────────────────────────────────────────────────
 READY = "ready"            # data: agent, session, model, complex_model, mounts, user, features[, history, recap]
@@ -32,6 +33,11 @@ ROWS = "rows"              # data: what, title, rows=[{value, label, hint}]
 DRAFT = "draft"            # data: text  -> in die Eingabe setzen (Spracheingabe)
 NOTICE = "notice"          # data: level (info|warn|error), text
 BYE = "bye"                # Engine ist sauber beendet
+
+# -- Widgets (interaktive Panels; Erzeuger ist immer ein Agent) ----------------
+WIDGET_CREATE = "widget_create"  # data: id, title, template, mode, spec, creator=[agent, session]
+WIDGET_UPDATE = "widget_update"  # data: id, title?, template?, mode?, spec?
+WIDGET_CLOSE = "widget_close"    # data: id
 
 
 @dataclass(slots=True)
