@@ -391,8 +391,8 @@ class IsaaBackend(WatchMixin, SelfToolMixin, SelfOrchestratorMixin, FeatureMixin
             raise ValueError("Einstellbar: max_iterations, fast_llm_model, "
                              "complex_llm_model, immediate_offload_ratio, "
                              "heavy_hitter_min_tokens  (Beispiel: /set max_iterations 50)")
-        if not value.isdigit() or not 1 <= int(value) <= 500:
-            raise ValueError("max_iterations braucht eine Zahl von 1 bis 500")
+        if not value.isdigit() or not 1 <= int(value) <= 10000:
+            raise ValueError("max_iterations braucht eine Zahl von 1 bis 10000")
         self.max_iterations = int(value)
         await asyncio.to_thread(self.save_setting, "max_iterations", self.max_iterations)
         return {"text": f"Max. Iterationen: {self.max_iterations} (gilt ab der nächsten Nachricht)"}
