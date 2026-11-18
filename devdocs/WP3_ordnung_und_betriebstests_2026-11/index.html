@@ -2932,6 +2932,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#10-welle-1-abgeschlossen-2026-11-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Welle 1 abgeschlossen (2026-11-18)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2992,6 +3003,7 @@ Arbeitsbranch: legt der Owner fest (keine neuen Branches ohne seine Anweisung). 
 <li><strong>Agenten pushen direkt auf <code>master</code></strong>; geprüft wird danach (Protokoll Abschnitt 1, Punkt 4).</li>
 <li><strong>Kontoseite:</strong> Das WP1-Dokument wird an die Seite angepasst (drei Anmeldeknöpfe, Routen <code>/api/account/*</code>). Ausnahme: Das Wort „Optional“ auf der Seite widerspricht der Kontopflicht und fällt weg (Auftrag 5).</li>
 <li>Nacharbeit aus der Prüfung von <code>a2cae2b</code> geht in Auftrag 5 (siehe Abschnitt 9).</li>
+<li><strong>Kontopflicht nur in der lokalen FastTB-App</strong> (<code>FastTBHandler.handle_request</code>, <code>require_device_account</code>). Was am lokalen Worker an FastTB vorbeigeht, bekommt keine zweite Prüfstelle: <code>/api/&lt;Modul&gt;/&lt;Funktion&gt;</code> hat den eigenen Anmeldeschutz bzw. ist bewusst als öffentlich markiert (Login-Level); <code>/metrics</code> (nur Zähler, gemessen 2026-11-18), <code>/health</code> und <code>/api/ping</code> bleiben öffentlich.</li>
 </ol>
 <h2 id="3-reihenfolge">3. Reihenfolge<a class="headerlink" href="#3-reihenfolge" title="Permanent link">&para;</a></h2>
 <table>
@@ -3351,6 +3363,15 @@ Arbeitsbranch: legt der Owner fest (keine neuen Branches ohne seine Anweisung). 
 4. A3 Nr. 4 ruft mit Fake-App statt ohne <code>app</code> wie der Betrieb.
 5. <code>live_proxy._peer_is_local</code> fällt ohne <code>REMOTE_ADDR</code> auf <code>client_ip</code> zurück, das aus <code>X-Forwarded-For</code> stammen kann (Kommentar dort, <code>server_worker</code> L308).</p>
 <p>Startprompts: <code>docs/devdocs/wp3_prompts/</code> (Aufträge 5, 8, 9, 10). Wellen: 5 und 9 parallel; danach 8; danach 10.</p>
+<h2 id="10-welle-1-abgeschlossen-2026-11-18">10. Welle 1 abgeschlossen (2026-11-18)<a class="headerlink" href="#10-welle-1-abgeschlossen-2026-11-18" title="Permanent link">&para;</a></h2>
+<p>Aufträge 5 und 9 umgesetzt, Abnahme auf <code>dca1ffa</code> + Doku + beide Patches: <code>test_core</code> und <code>test_mini/test_cloudm/test_LiveSync</code> – <strong>NEU rot: 0</strong>, 7 Befund-Tests grün geworden (A3 Nr. 1–3, A4 Nr. 3–6), A3 15/15 grün, A4 nur Nr. 7 rot (Auftrag 8). Übrige Rote waren vorher schon rot (Umgebung: <code>tb</code> nicht im <code>PATH</code>, <code>numpy</code>, Docker).</p>
+<p>Nicht verifiziert (Linux-Container): Windows-Junction, <code>tb workers start</code> auf 8467/8468, Legacy-WS-API mit echtem Client.</p>
+<p><strong>Neu vor Auftrag 8 (Welle 2, Auftrag 7b – Data-API-Strecke):</strong> Der Sync kann gegen den echten Server nicht laufen:
+1. <code>App.run_http</code> (<code>utils/toolbox.py:2247</code>) gibt bei aiohttp <code>r.json()</code> ohne <code>await</code> zurück – eine Coroutine statt Daten; jeder <code>DataApiTransport._call</code> endet als Fehler.
+2. <code>UserDataAPI.set_data</code> (~:650) übergibt <code>owner_id=</code> an <code>ScopedBlobStorage.write</code> (<code>utils/extras/db/scoped_storage.py:528</code>), das den Parameter nicht kennt → <code>TypeError</code>, kein Upload möglich.
+3. Zu prüfen: <code>list_data</code> liefert Pfade evtl. mit <code>&lt;user_id&gt;/</code>-Präfix, <code>sync_folder</code> erwartet Pfade ab <code>prefix</code> (<code>data_api_sync.py:127</code>).
+4. <code>scoped_storage.py:38</code> <code>from mobile_db import MobileDB</code> nicht importierbar; offline kein Datenspeicher für den Vertragstest.</p>
+<p>Weitere Funde aus Welle 1 (Auftrag 14 bzw. Owner): <code>FastTB._path_to_regex</code> kennt <code>{name:path}</code> nicht (SPA-Catch-all wirkungslos); ISAA als Owner auf 8467 setzt <code>require_device_account</code> nicht; <code>/tray/status</code>, <code>/tray/notify</code> vor dem Verknüpfen 403; Browser-Extension (<code>chrome-extension://</code>) auf 8468 abgelehnt (Ausweg <code>TB_CORS_ORIGINS</code>); <code>web_agent.py:38</code>, <code>tu_isis_adapter.py:31</code> führen beim Import <code>pip install playwright</code> aus; <code>toolboxv2/tb-manifest.yaml</code> im Quellbaum mit <code>profile: developer</code>; Konfliktkopien bleiben ohne UI im Spiegel; <code>mass_delete_blocked</code> erreicht <code>account_state()["last_sync_error"]</code> nicht.</p>
 
 
 
