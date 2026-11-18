@@ -139,6 +139,44 @@ if TEXTUAL:
             self.collapsed = not self._collapsed
 
 
+
+    class InlineCard(Static):
+        """Karte im Chat-Verlauf (modus inline): note = Markdown-Text, progress = Text + Balken.
+        update_from ersetzt Inhalt und Fortschritt (widget_update)."""
+
+        DEFAULT_CSS = """
+        InlineCard { width: 1fr; height: auto; margin: 0 0 1 0; }
+        """
+
+        def __init__(self, widget_id: str, spec: dict):
+            self.widget_id = widget_id
+            self.spec: dict = {}
+            self._text = ""
+            super().__init__("", classes="inline-note" if spec.get("template") == "note" else "inline-progress")
+            self.update_from(spec)
+
+        @property
+        def source(self) -> str:                          # Lesezugriff wie Markdown.source
+            return self._text
+
+        @property
+        def renderable(self) -> str:
+            return self._text
+
+        def update(self, content: object = "") -> None:
+            self._text = str(content)
+            super().update(content)
+
+        def update_from(self, spec: dict) -> None:
+            self.spec.update(spec)
+            tmpl, text = spec.get("template"), str(spec.get("text", ""))
+            if tmpl == "progress":
+                pct = spec.get("progress") or 0
+                bar = "█" * round(pct / 10) + "░" * (10 - round(pct / 10))
+                self.update(f"{spec.get('title', '')}\n{bar} {pct}%\n{text}")
+            else:
+                self.update(f"{spec.get('title', '')}\n{text}")
+
     class WidgetModal(ModalScreen[dict | None]):
         """Overlay-Widget (modus modal, oder ein gepinntes aus /widget). Picker-Muster picker.py:33.
 

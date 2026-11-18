@@ -46,7 +46,7 @@ END_MARK = {"done": "", "failed": f"{SYM['fail']} fehlgeschlagen", "stopped": "â
 from toolboxv2.mods.isaa.extras.icli2.autocomplete import SUBCOMMANDS as _AC_SUBS
 from toolboxv2.mods.isaa.extras.icli2.autocomplete import dynamic_kind, is_exact, suggest
 from toolboxv2.mods.isaa.extras.icli2.widget_app import map_widget_event  # Widgets (W5)
-from toolboxv2.mods.isaa.extras.icli2.widgets import WidgetModal
+from toolboxv2.mods.isaa.extras.icli2.widgets import InlineCard, WidgetModal
 
 SUBCOMMANDS = _AC_SUBS
 
@@ -358,6 +358,8 @@ class ICli2(App):
         self._side_jump = False                      # nach dem naechsten Kontext-Update ans Ende scrollen
         self._via_palette = False                    # Picker kam aus der Palette: â† fuehrt dorthin zurueck
         self._arg_rows: dict[str, tuple[float, list[dict]]] = {}   # Werte fuer die Vervollstaendigung
+        self._wq: dict[str, dict] = {}                   # wartende Modals (Queue): wid -> Event-Daten
+        self._inline: dict[str, InlineCard] = {}        # inline-Karten im Verlauf: wid -> Karte
         self._arg_asked: dict[str, float] = {}
         self.tool_cards: list[ToolCard] = []
         self.think_boxes: list[FoldLine] = []
@@ -572,21 +574,47 @@ class ICli2(App):
             return
         action, wid = act
         open_modal = next((s for s in self.screen_stack if isinstance(s, WidgetModal) and s.widget_id == wid), None)
-        if action == "push_modal":
-            if open_modal is None:
+        any_modal = next((s for s in self.screen_stack if isinstance(s, WidgetModal)), None)
+        if action == "inline":
+            card = self._inline.get(wid)
+            if card is not None:                         # Karte existiert: Inhalt aktualisieren
+                card.update_from(d.get("spec") or {})
+            else:
+                card = InlineCard(wid, d.get("spec") or {})
+                self._inline[wid] = card
+                self.chat.mount(card)                    # call_later: kein await noetig (Textual queut)
+        elif action == "push_modal":
+            if open_modal is not None:
+                pass                                     # gleiche wid offen: nichts tun
+            elif any_modal is not None:
+                self._wq[wid] = d                        # anderes Modal offen: parken, rueckt nach Dismiss nach
+            else:
                 self._widget_show(wid, d)
-        elif action == "close" and open_modal is not None:
-            open_modal.dismiss(None)
-        elif action == "refresh" and open_modal is not None and d.get("spec"):
-            open_modal.dismiss(None)                     # neuer Inhalt: Modal mit dem neuen Spec
-            if d.get("mode") != "pinned" or d.get("open"):
-                self._widget_show(wid, d)
+        elif action == "close":
+            self._wq.pop(wid, None)                      # gequeuete entfernen: kein Ghost-Modal
+            if open_modal is not None:
+                open_modal.dismiss(None)
+        elif action == "refresh" and d.get("spec"):
+            if wid in self._inline:                       # inline-Karte: Inhalt direkt ersetzen
+                self._inline[wid].update_from(d["spec"])
+            elif open_modal is not None:
+                open_modal.dismiss(None)                 # neuer Inhalt: Modal mit dem neuen Spec
+                if d.get("mode") != "pinned" or d.get("open"):
+                    self._widget_show(wid, d)
+            elif wid in self._wq:
+                qd = dict(self._wq[wid])                 # gequeuete Spec ersetzen, nicht doppelt
+                qd["spec"] = d["spec"]
+                self._wq[wid] = qd
         self.engine.send(P.LIST, what="board", to="side")   # Seitenleiste: gepinnte Widgets
 
     def _widget_show(self, wid: str, d: dict) -> None:
         def answered(result: dict | None) -> None:
             if result is not None:                       # Esc: keine Antwort, Widget bleibt offen
                 self.engine.send(P.WIDGET_ANSWER, id=result["id"], values=result["values"])
+            self._wq.pop(wid, None)                      # beantwortet/abgebrochen: aus der Queue entfernen
+            nxt = next(iter(self._wq), None)             # naechstes geparktes Modal nachruecken lassen
+            if nxt is not None:
+                self.call_after_refresh(self._widget_show, nxt, self._wq[nxt])
 
         self.push_screen(WidgetModal(wid, d.get("spec") or {}, creator=tuple(d.get("creator") or ("", "")),
                                      values=d.get("values")), answered)

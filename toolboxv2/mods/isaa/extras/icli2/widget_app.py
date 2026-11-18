@@ -19,6 +19,8 @@ def map_widget_event(kind: str, data: dict) -> tuple[str, str] | None:
     if not wid:
         return None
     if kind == "widget_create":
+        if data.get("mode") == "inline":                 # Karte im Chat-Verlauf, kein Overlay
+            return ("inline", wid)
         if data.get("open"):                             # ausdruecklich geoeffnet (/widget): immer Modal
             return ("push_modal", wid)
         return ("refresh_board", wid) if data.get("mode") == "pinned" else ("push_modal", wid)
