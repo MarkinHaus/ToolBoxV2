@@ -68,7 +68,7 @@
     - `:1157` `set_persona_section` (neu)
     - `:1194` merkt sich Sandbox/Shell für den Neuaufbau
     - `:1351` `protected_files` jetzt mit `/vfs_guide.md`
-    - In `build_context_string` ist nur `/active_rules.md` ausgenommen (`grep -n 'if path != "/active_rules.md"'`).
+    - `:3034` `build_context_string`: nur `/active_rules.md` ausgenommen
   - `toolboxv2/mods/isaa/base/Agent/builder.py:1435-1436` (`_apply_persona_to_ruleset`)
   - `toolboxv2/mods/isaa/base/Agent/flow_agent.py`
     - `:3165` Persona in jede Session (`init_session_tools`)
