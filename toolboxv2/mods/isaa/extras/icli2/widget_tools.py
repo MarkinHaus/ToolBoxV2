@@ -68,7 +68,8 @@ class WidgetToolsMixin:
         await self.widget_registry_add(wid, r["spec"], creator=(agent, session))
         self._emit_widget("widget_create", widget_event(wid, self.widget_registry_load()[wid]))
         return {"ok": True, "id": wid, "mode": r["spec"].get("mode", "modal"),
-                "text": f"Widget \"{spec.get('title', wid)}\" erstellt"}
+                "text": f"Widget \"{spec.get('title', wid)}\" erstellt",
+                **({"warnings": r["warnings"]} if r["warnings"] else {})}
 
     def _own_entry(self, widget_id: str, verb: str) -> tuple[dict, dict | None, str]:
         reg = self.widget_registry_load()
@@ -90,7 +91,8 @@ class WidgetToolsMixin:
         entry["mode"] = r["spec"].get("mode", entry.get("mode", "modal"))
         self._widgets_save(reg)
         self._emit_widget("widget_update", widget_event(widget_id, entry))
-        return {"ok": True, "id": widget_id, "text": f"Widget \"{r['spec'].get('title')}\" aktualisiert"}
+        return {"ok": True, "id": widget_id, "text": f"Widget \"{r['spec'].get('title')}\" aktualisiert",
+                **({"warnings": r["warnings"]} if r["warnings"] else {})}
 
     async def widget_close(self, widget_id: str) -> dict:
         _, entry, error = self._own_entry(widget_id, "schliessen")
@@ -124,8 +126,9 @@ _SHOW_DOC = (
     "Zeigt dem Nutzer in der icli2 ein interaktives Widget und liefert {ok, id}. Die Antwort des Nutzers "
     "kommt spaeter als neue Nachricht '[Widget-Antwort] ...' mit id und values zu dir zurueck.\n"
     "template: form (fields: [{name, label, type: text|number|textarea|select|checkbox, options?, default?, "
-    "required?}]) | choice (options: [{label, value}] 2-12) | info (text).\n"
-    "mode: modal (Overlay, Standard) | pinned (bleibt in der Seitenleiste F2).")
+    "required?}]) | choice (options: [{label, value}] 2-12) | info (text) | note (text, nur inline) | progress (text + progress 0-100, nur inline).\n"
+    "mode: modal (Overlay, Standard) | pinned (Seitenleiste F2) | inline (passive Karte im Chat-Verlauf: "
+    "nur template note|progress; form/choice/info nur modal|pinned).")
 
 
 def _session_of(agent: Any, name: str) -> str:

@@ -8,9 +8,9 @@ und Grenzen, nicht die Web-Templates.
 """
 from __future__ import annotations
 
-_VALID_TEMPLATES = ("form", "choice", "info")
+_VALID_TEMPLATES = ("form", "choice", "info", "note", "progress")
 _VALID_FIELD_TYPES = ("text", "number", "textarea", "select", "checkbox")
-_VALID_MODES = ("modal", "pinned")
+_VALID_MODES = ("modal", "pinned", "inline")
 
 MAX_FIELDS = 20
 MAX_TITLE = 80
@@ -58,6 +58,11 @@ def validate_spec(spec: dict, *, creator: tuple[str, str]) -> dict:
     if mode not in _VALID_MODES:
         warnings.append(f"mode {mode!r} unbekannt -> fallback modal")
         mode = "modal"
+
+    if template in ("note", "progress") and mode != "inline":
+        errors.append(f"template {template!r} nur mit mode=inline")
+    if mode == "inline" and template not in ("note", "progress"):
+        errors.append("mode=inline nur mit passiven Templates note/progress (keine Interaktion im Chat)")
 
     norm: dict = {"title": title, "template": template, "mode": mode}
 
@@ -118,6 +123,21 @@ def validate_spec(spec: dict, *, creator: tuple[str, str]) -> dict:
             errors.append(f"choice braucht {MIN_OPTIONS}-12 Optionen")
         else:
             norm["options"] = opts
+
+    elif template in ("note", "progress"):
+        text = spec.get("text")
+        if not isinstance(text, str) or not text:
+            errors.append("note/progress braucht text")
+        elif len(text) > MAX_TEXT:
+            errors.append(f"text > {MAX_TEXT} Zeichen")
+        else:
+            norm["text"] = text
+        if template == "progress":
+            pct = spec.get("progress", 0)
+            if not isinstance(pct, (int, float)) or not (0 <= pct <= 100):
+                errors.append("progress braucht Zahl 0-100")
+            else:
+                norm["progress"] = pct
 
     elif template == "info":
         text = spec.get("text")

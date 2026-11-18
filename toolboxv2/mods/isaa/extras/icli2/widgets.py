@@ -41,6 +41,12 @@ def build_widget_lines(spec: dict) -> list[str]:
     if template == "info":
         text = str(spec.get("text", ""))
         lines = [_clip(text[i:i + MAX_LINE]) for i in range(0, len(text), MAX_LINE)] or [""]
+    elif template in ("note", "progress"):
+        text = str(spec.get("text", ""))
+        if template == "progress":
+            lines.append(_clip(f"{spec.get('progress', 0)}% - {text}"))
+        else:
+            lines = [_clip(text[i:i + MAX_LINE]) for i in range(0, len(text), MAX_LINE)] or [""]
     elif template == "choice":
         for opt in spec.get("options", []):
             lines.append(_clip(str(opt.get("label", opt.get("value", "")))))
