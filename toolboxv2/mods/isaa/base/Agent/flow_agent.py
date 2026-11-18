@@ -1582,7 +1582,9 @@ class FlowAgent:
                 )
 
         start_time = time.perf_counter()
-        result = await self.tool_manager.execute(function_name, **kwargs)
+        result = await self.tool_manager.execute(
+            function_name, _session_id=self.active_session, **kwargs
+        )
 
         return result
 
@@ -1815,7 +1817,7 @@ class FlowAgent:
     async def a_run(
         self,
         query: str,
-        session_id: str = "default",
+        session_id: str | None = None,
         execution_id: str | None = None,
         human_online: bool = False,
         max_iterations: int = int(os.getenv("DEFAULT_MAX_ITERATIONS",30)),
@@ -1838,11 +1840,11 @@ class FlowAgent:
         Returns:
             Response string, or (response, ctx) if get_ctx=True
         """
-        # Handle defaults
+        # Handle defaults: nur eine FEHLENDE session_id folgt der aktiven Session.
+        # Ein explizites "default" bleibt "default" (sonst landet z.B. der icli-Chat
+        # nach einem Job in der Job-Session).
         if not session_id:
-            session_id = "default"
-        if session_id == "default" and getattr(self, "active_session", None):
-            session_id = self.active_session
+            session_id = getattr(self, "active_session", None) or "default"
 
         self.active_session = session_id
         self.is_running = True
@@ -2098,7 +2100,7 @@ class FlowAgent:
     async def a_stream(
         self,
         query: str,
-        session_id: str = "default",
+        session_id: str | None = None,
         execution_id: str | None = None,
         human_online: bool = False,
         max_iterations: int = int(os.getenv("DEFAULT_MAX_ITERATIONS", 30)),
@@ -2119,10 +2121,9 @@ class FlowAgent:
             - {"type": "done", "success": bool, "final_answer": "..."}
             - {"type": "status", "status_msg": "..."}
         """
+        # Nur eine FEHLENDE session_id folgt der aktiven Session (siehe a_run).
         if not session_id:
-            session_id = "default"
-        if session_id == "default" and self.active_session is not None:
-            session_id = self.active_session
+            session_id = self.active_session or "default"
 
         self.active_session = session_id
         self.is_running = True
@@ -2211,7 +2212,7 @@ class FlowAgent:
     async def a_stream_verbose(
         self,
         query: str,
-        session_id: str = "default",
+        session_id: str | None = None,
         execution_id: str | None = None,
         human_online: bool = False,
         max_iterations: int = 15,
@@ -3072,6 +3073,7 @@ class FlowAgent:
         allow_empty_string: bool = "None",
         expected_type: type = "None" ,
         semantic_check_hint: str = "None",
+        session_id: str | None = None,
         **kwargs,
     ):
         """Register a tool."""
@@ -3109,6 +3111,7 @@ class FlowAgent:
             live_test_inputs=live_test_inputs,
             cleanup_func=cleanup_func,
             result_contract=result_contract,
+            session_id=session_id,
         )
 
     def remove_tool(self, name: str):
@@ -4155,6 +4158,10 @@ class FlowAgent:
             if name in _TOOL_HEALTH_EXTENSIONS:
                 tools[i].update(_TOOL_HEALTH_EXTENSIONS[name])
 
+        # Einmal pro Session registrieren - als Eintraege DIESER Session, damit
+        # eine weitere Session desselben Agenten sie nicht ueberschreibt.
+        for t in tools:
+            t["session_id"] = session.session_id
         self.add_tools(tools)
         session.tools_initialized = True
 

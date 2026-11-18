@@ -46,6 +46,14 @@ class VoiceMixin:
         self._v_rec_task = None
         self._v_dev_in = None
         self._v_dev_out = None
+        try:                                          # gespeicherte Geraetewahl
+            saved_in, saved_out = self.get_voice_devices()
+            if saved_in is not None:
+                self._v_dev_in = int(saved_in)
+            if saved_out is not None:
+                self._v_dev_out = int(saved_out)
+        except Exception:
+            pass                                      # Standalone/ohne Backend-Settings
         self._v_tasks: set = set()
 
     # ---------- Aufnahme (F4) ----------
@@ -108,7 +116,8 @@ class VoiceMixin:
         if self._v_player is None:
             from toolboxv2.mods.isaa.base.audio_io.Tts import TTSBackend, TTSConfig
             from toolboxv2.mods.isaa.base.audio_io.audioIo import AudioStreamPlayer, LocalPlayer
-            cfg = TTSConfig(backend=TTSBackend("groq_tts"), voice="autumn", language="de")
+            tts_provider, tts_voice = self.get_tts_config()
+            cfg = TTSConfig(backend=TTSBackend(tts_provider), voice=tts_voice, language="de")
             self._v_player = AudioStreamPlayer(
                 player_backend=LocalPlayer(device=self._v_dev_out or 0), tts_config=cfg,
                 session_id=getattr(self, "session", "default"))
@@ -132,8 +141,10 @@ class VoiceMixin:
         idx = int(num)
         if kind == "in":
             self._v_dev_in = idx
+            await asyncio.to_thread(self.save_setting, "voice_input_device", idx)
         else:
             self._v_dev_out = idx
+            await asyncio.to_thread(self.save_setting, "voice_output_device", idx)
             await self._reset_player()
         return {"text": f"{'Eingabe' if kind == 'in' else 'Ausgabe'}-Gerät: {idx}"}
 

@@ -25,6 +25,7 @@ dependencies = [
     "prompt-toolkit>=3.0.52",
     "minio>=7.2.20",
     "python-multipart>=0.0.18",
+    "multipart>=0.2.4",
 ]
 
 [build-system]
@@ -71,7 +72,6 @@ toolboxv2 = [
 toolboxv2 = [
     "tests/**/*",
     "ytss.py",
-    "mods/CloudM/LiveSync/**/*",
 ]
 "*" = ["**/node_modules/**"]
 
@@ -92,7 +92,6 @@ exclude = [
     "toolboxv2.flows.isaa*",
     "toolboxv2.flows.desktop*",
     "toolboxv2.flows.exotic*",
-    "toolboxv2.mods.CloudM.LiveSync*",
 
     # ── Exclude tests ──
     "toolboxv2.tests*",

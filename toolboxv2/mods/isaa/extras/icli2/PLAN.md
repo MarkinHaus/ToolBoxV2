@@ -317,3 +317,8 @@ backend.py/app.py (plus die im Schritt genannte neue Datei) anfassen, icli.py ni
 Prüfskripte in icli2/tests erweitern und alle drei ausführen, PLAN.md aktualisieren,
 committen, pushen und mir den Schritt als .patch (reiner Diff auf dem Vorgänger) schicken.
 ```
+
+## T9 - Orchestrierung (self steuert andere Agenten) - erledigt 17.11.
+- `self_orchestrator.py` (SelfOrchestratorMixin, verdrahtet backend.py:60): self_agent_start (a_stream im Hintergrund-Task, Ergebnis in `_orch_results`), self_agent_stop/pause (engine cancel/pause, alle oder run_id), self_agent_resume (nur solange Engine lebt), self_agent_status (list_executions), self_agent_obs (OBS-Dateien JEDES Agenten: run_*.json Summary + live_*.jsonl tail - niemals ganze 40MB-Datei)
+- Grenze bewusst: Starten/Steuern nur in derselben isaa-Instanz; OBS-Lesen agentenuebergreifend (auch fremde Prozesse). Kein Spawn-API-Missbrauch.
+- Tests: test_icli2_self_orchestrator.py 8/8 (Guard, Name-Regex, stop/pause/resume/status/obs/start), Gegenprobe Mixin-raus = rot

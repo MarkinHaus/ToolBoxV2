@@ -40,6 +40,11 @@ END_MARK = {"done": "", "failed": f"{SYM['fail']} fehlgeschlagen", "stopped": "�
             "paused": f"{SYM['pause']} pausiert – nächste Nachricht setzt fort"}
 
 # Befehl -> (Argument-Hinweis, Beschreibung). Reihenfolge = Reihenfolge in der Palette.
+# Spiegel von autocomplete.SUBCOMMANDS (AST-pruefbar; Quelle: autocomplete.py)
+from toolboxv2.mods.isaa.extras.icli2.autocomplete import SUBCOMMANDS as _AC_SUBS
+
+SUBCOMMANDS = _AC_SUBS
+
 COMMANDS: dict[str, tuple[str, str]] = {
     "/agent": ("[name]", "Agent wechseln"),
     "/model": ("[name] [fast|complex]", "Modell des Agenten wählen"),

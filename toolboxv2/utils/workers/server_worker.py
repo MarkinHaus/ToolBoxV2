@@ -50,12 +50,7 @@ try:
 
     MULTIPART_AVAILABLE = True
 except ImportError:
-    try:
-        from multipart import parse_form_data, is_form_request, MultipartPart
-
-        MULTIPART_AVAILABLE = True
-    except ImportError:
-        MULTIPART_AVAILABLE = False
+    MULTIPART_AVAILABLE = False
     # Warning wird später geloggt
 
 # event_manager imports deferred to method level (saves ~30-50 MB per worker)
@@ -1689,23 +1684,53 @@ class HTTPWorker:
         if provider:
             logger.info(f"Device trust on for {provider.get('username', '')}")
             # Teil 10: periodic account sync (once per process, 30 s delay, 600 s cycle).
-        import threading as _th10
-        if not any(getattr(t, "name", "") == "account-sync" for t in _th10.enumerate()):
-            import asyncio as _a10
+            import threading as _th10
+            if not any(getattr(t, "name", "") == "account-sync" for t in _th10.enumerate()):
+                import asyncio as _a10
 
-            def _account_sync_loop():
-                import time as _t10
-                from toolboxv2.mods.CloudM.LiveSync.data_api_sync import sync_all
-                _t10.sleep(30)
-                while True:
+                def _account_sync_loop():
+                    import time as _t10
+                    from toolboxv2.mods.CloudM.LiveSync.data_api_sync import sync_all
+                    _t10.sleep(30)
+                    while True:
+                        try:
+                            _a10.run(sync_all(self._app))
+                        except Exception as e:
+                            logger.warning(f"account-sync failed: {type(e).__name__}")
+                        _t10.sleep(600)
+
+                _th10.Thread(target=_account_sync_loop, daemon=True,
+                             name="account-sync").start()
+
+            # WP3 A6b: revalidate device trust when the account file changes
+            # (single source: local_trust_provider -> enable_local_trust).
+            def _trust_revalidate_loop():
+                import time as _t10b
+                from toolboxv2.mods.CloudM.auth.device_account import (
+                    device_owner_file, local_trust_provider)
+
+                def _mtime():
                     try:
-                        _a10.run(sync_all(self._app))
-                    except Exception as e:
-                        logger.warning(f"account-sync failed: {type(e).__name__}")
-                    _t10.sleep(600)
+                        return device_owner_file(self._app).stat().st_mtime
+                    except OSError:
+                        return None  # unlinked between is_file() and stat()
 
-            _th10.Thread(target=_account_sync_loop, daemon=True,
-                         name="account-sync").start()
+                last = _mtime()
+                while True:
+                    _t10b.sleep(2)
+                    m = _mtime()
+                    if m == last:
+                        continue
+                    last = m
+                    try:
+                        self._session_manager.enable_local_trust(
+                            local_trust_provider(self._app,
+                                                 self.config.environment == "production"))
+                    except Exception as e:
+                        logger.warning(f"trust revalidate failed: {type(e).__name__}")
+
+            _th10.Thread(target=_trust_revalidate_loop, daemon=True,
+                         name="trust-revalidate").start()
         else:
             logger.info("Device trust off (no device account or not a local profile)")
 

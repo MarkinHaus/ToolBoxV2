@@ -226,6 +226,10 @@ class ToolManager:
         """
         # Main registry
         self._registry: dict[str, ToolEntry] = {}
+        # Session-gebundene Eintraege (init_session_tools): session_id -> name -> entry.
+        # Der ToolManager ist pro Agent; ohne diese Ebene ueberschreibt die
+        # Registrierung einer zweiten Session (Sub-Agent, Job, ...) die der ersten.
+        self._session_registry: dict[str, dict[str, ToolEntry]] = {}
 
         # Indexes for fast lookups
         self._category_index: dict[str, set[str]] = {}  # category -> tool names
@@ -258,6 +262,7 @@ class ToolManager:
         live_test_inputs: list[dict] | None = None,
         cleanup_func: Callable | None = None,
         result_contract: dict | None = None,
+        session_id: str | None = None,
     ) -> ToolEntry:
         """
         Register a tool in the registry.
@@ -274,6 +279,9 @@ class ToolManager:
             args_schema: Override args schema string
             live_test_inputs: list
             cleanup_func: Callable
+            session_id: Owning session for session-bound tools (closures over
+                that session's VFS). Kept per session so another session of the
+                same agent cannot overwrite it; see execute(_session_id=...).
             result_contract: dict
                 # result_contract schema:
                 # {
@@ -385,6 +393,8 @@ class ToolManager:
 
         # Store in registry
         self._registry[tool_name] = entry
+        if session_id:
+            self._session_registry.setdefault(session_id, {})[tool_name] = entry
         # Update indexes
         self._update_indexes(entry)
 
@@ -401,6 +411,8 @@ class ToolManager:
             return False
 
         del self._registry[name]
+        for entries in self._session_registry.values():
+            entries.pop(name, None)
         return True
 
     def register_mcp_tools(
@@ -952,12 +964,16 @@ class ToolManager:
     # EXECUTION
     # =========================================================================
 
-    async def execute(self, function_name: str, **kwargs) -> Any:
+    async def execute(
+        self, function_name: str, _session_id: str | None = None, **kwargs
+    ) -> Any:
         """
         Execute a tool by name.
 
         Args:
             function_name: Tool name
+            _session_id: Session of the calling run. A tool registered for that
+                session (register(session_id=...)) wins over the agent-wide entry.
             **kwargs: Arguments to pass to the tool
 
         Returns:
@@ -967,7 +983,11 @@ class ToolManager:
             ValueError: If tool not found
             RuntimeError: If tool has no function (MCP/A2A)
         """
-        entry = self._registry.get(function_name)
+        entry = None
+        if _session_id:
+            entry = self._session_registry.get(_session_id, {}).get(function_name)
+        if entry is None:
+            entry = self._registry.get(function_name)
 
         if entry is None:
             raise ValueError(f"Tool not found: {function_name}")
