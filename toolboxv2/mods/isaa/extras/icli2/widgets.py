@@ -6,6 +6,7 @@ Board-Karte - keine doppelte Render-Logik. Vorlage fuer Interaktion/Dismiss:
 picker.py:24-116 (ModalScreen, dismiss, OptionList).
 """
 from __future__ import annotations
+import re
 
 from typing import Any
 
@@ -50,13 +51,88 @@ def _chart_lines(spec: dict) -> list[str]:
     return [_clip(f"{spark}  {lo:g}..{hi:g}")]
 
 
+
+_M_EDGE_SPLIT = re.compile(r"\s*(?:-{2,}>|->|={2,}>)\s*")
+_M_NODE = re.compile(r"^([A-Za-z0-9_]+)\s*(?:[\[\(\{](.*)[\]\)\}])?$")
+_M_ELABEL = re.compile(r"^\|([^|]*)\|\s*(.*)$")
+
+
+def _m_node(tok: str) -> tuple[str, str]:
+    m = _M_NODE.match(tok.strip())
+    if not m:
+        return tok.strip(), tok.strip()
+    nid, label = m.group(1), (m.group(2) or "").strip()
+    return nid, label or nid
+
+
+def _mermaid_lines(spec: dict) -> list[str]:
+    """Mermaid-Quellcode -> ASCII-Baum (passive Vorschau im Terminal).
+
+    ponytail: nur einfache graph/flowchart-Kanten (A --> B, A -->|txt| B);
+    Subgraphs, Styling, Ketten pro Zeile, &-Faecher -> Fallback Rohcode-Block.
+    """
+    src = str(spec.get("text", ""))
+    hdr = re.match(r"\s*(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram"
+                   r"|erDiagram|gantt|pie|journey|mindmap|timeline)\b", src, re.I)
+    if not hdr or hdr.group(1).lower() not in ("graph", "flowchart") or "->>" in src:
+        return ["```mermaid"] + [_clip(x) for x in src.splitlines()] + ["```"]
+    nodes: dict[str, str] = {}
+    edges: list[tuple[str, str, str]] = []
+    for ln in src.splitlines():
+        ln = ln.strip().rstrip(";")
+        if not ln or re.match(r"^(graph|flowchart|sequenceDiagram|classDiagram)\b", ln, re.I):
+            continue
+        parts = _M_EDGE_SPLIT.split(ln, maxsplit=1)
+        if len(parts) != 2:
+            sid, slab = _m_node(ln)  # Solo-Knotendefinition
+            nodes.setdefault(sid, slab)
+            continue
+        left, right = parts
+        el = ""
+        em = _M_ELABEL.match(right)
+        if em:
+            el, right = em.group(1).strip(), em.group(2)
+        sid, slab = _m_node(left)
+        did, dlab = _m_node(right)
+        nodes.setdefault(sid, slab)
+        nodes.setdefault(did, dlab)
+        edges.append((sid, did, el))
+    if not edges:
+        return ["```mermaid"] + [_clip(x) for x in src.splitlines()] + ["```"]
+    kids: dict[str, list[tuple[str, str]]] = {}
+    for sid, did, el in edges:
+        kids.setdefault(sid, []).append((did, el))
+    targets = {did for _, did, _ in edges}
+    roots = [n for n in nodes if n not in targets] or list(nodes)
+    lines: list[str] = []
+    seen: set[str] = set()
+
+    def walk(nid: str, prefix: str) -> None:
+        for i, (did, el) in enumerate(kids.get(nid, [])):
+            last = i == len(kids[nid]) - 1
+            conn = ("\u2514\u2500\u25b6 " if last else "\u251c\u2500\u25b6 ")
+            lab = nodes.get(did, did)
+            if nid in seen:
+                lab = "\u21bb " + lab  # Zyklus-Zurueckverweis
+            elif el:
+                lab = f"{el} \u25b6 {lab}"
+            lines.append(prefix + conn + _clip(lab))
+            if nid not in seen:
+                seen.add(nid)
+                walk(did, prefix + ("   " if last else "\u2502  "))
+
+    for r in roots:
+        lines.append(_clip(nodes.get(r, r)))
+        walk(r, "")
+    return lines
+
+
 def build_widget_lines(spec: dict) -> list[str]:
     """Spec -> Anzeige-Zeilen (reine Funktion, Grundlage fuer Modal + Card)."""
     template = spec.get("template")
     lines: list[str] = []
     if template == "mermaid":
-        src = str(spec.get("text", "")).strip()
-        lines = ["```mermaid"] + [_clip(x) for x in src.splitlines()] + ["```"]
+        lines = _mermaid_lines(spec)
     if template == "chart":
         lines = _chart_lines(spec)
     elif template == "info":
@@ -204,7 +280,7 @@ if TEXTUAL:
             elif tmpl == "chart":
                 self.update(f"{spec.get('title', '')}\n" + "\n".join(_chart_lines(self.spec)))
             elif tmpl == "mermaid":
-                self.update(f"{spec.get('title', '')}\n```mermaid\n{spec.get('text', '')}\n```")
+                self.update(f"{spec.get('title', '')}\n" + "\n".join(_mermaid_lines(self.spec)))
             else:
                 self.update(f"{spec.get('title', '')}\n{text}")
 

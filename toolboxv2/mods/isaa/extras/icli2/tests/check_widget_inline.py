@@ -25,12 +25,12 @@ class StubBackend(WidgetToolsMixin):
     async def widget_registry_add(s, wid, spec, *, creator):
         s.reg[wid] = {"spec": spec, "mode": spec.get("mode", "modal"),
                       "values": {}, "closed": False, "creator": list(creator)}
-        return {"ok": True, "id": wid}
+        return {"success": True, "id": wid}
     async def widget_registry_close(s, wid):
         if wid in s.reg:
             s.reg[wid]["closed"] = True
-            return {"ok": True, "id": wid}
-        return {"ok": False}
+            return {"success": True, "id": wid}
+        return {"success": False}
     def _widgets_save(s, reg): s.reg = reg
     def _emit_widget(s, kind, data): s.events.append((kind, data))
 
@@ -40,7 +40,7 @@ async def main():
     # 1) inline note: Agent kann Chat-Karte erzeugen
     r = await b.widget_show({"title": "Hinweis", "template": "note", "mode": "inline",
                              "text": "Arbeite an **Fix**"})
-    assert r.get("ok"), r
+    assert r.get("success"), r
     assert r["mode"] == "inline", r
     assert "warnings" not in r, r
     wid = r["id"]
@@ -51,21 +51,21 @@ async def main():
     # 2) update der inline-Karte (Live-Fortschritt)
     r = await b.widget_update(wid, {"title": "Hinweis", "template": "note", "mode": "inline",
                                     "text": "Zweiter Stand"})
-    assert r.get("ok") and b.events[-1][0] == "widget_update", (r, b.events[-1])
+    assert r.get("success") and b.events[-1][0] == "widget_update", (r, b.events[-1])
     assert b.reg[wid]["mode"] == "inline"
     print("inline_update ok")
 
     # 3) progress mit Zahl
     r = await b.widget_show({"title": "DL", "template": "progress", "mode": "inline",
                              "text": "4/10", "progress": 40})
-    assert r.get("ok"), r
+    assert r.get("success"), r
     spec = b.reg[r["id"]]["spec"]
     assert spec["progress"] == 40 and spec["text"] == "4/10", spec
     print("inline_progress ok")
 
     # 4) mode='chat' ist kein stiller Fallback mehr: Warning kommt zurueck
     r = await b.widget_show({"title": "Chat?", "template": "info", "mode": "chat", "text": "x"})
-    assert r.get("ok") and r["mode"] == "modal", r
+    assert r.get("success") and r["mode"] == "modal", r
     assert any("chat" in w for w in r.get("warnings", [])), r
     print("silent_fallback behoben: warnings =", r["warnings"])
 
@@ -74,21 +74,21 @@ async def main():
         spec = {"title": "F", "template": tpl, "mode": "modal", "text": "x"}
         if tpl == "progress": spec["progress"] = 10
         r = await b.widget_show(spec)
-        assert not r.get("ok") and any("inline" in e for e in r["errors"]), (tpl, r)
+        assert not r.get("success") and any("inline" in e for e in r["errors"]), (tpl, r)
     # Rollback 19.11.: inline wieder PASSIV - form/choice/info + inline ist verboten
     r = await b.widget_show({"title": "F", "template": "choice", "mode": "inline",
                              "options": [{"label": "a", "value": "1"}, {"label": "b", "value": "2"}]})
-    assert not r.get("ok") and any("passiv" in e.lower() for e in r["errors"]), r
+    assert not r.get("success") and any("passiv" in e.lower() for e in r["errors"]), r
     # Chart: passiv, line/bar, 2-50 Werte
     r = await b.widget_show({"title": "Chart", "template": "chart", "mode": "inline",
                              "chart_type": "line", "values": [1, 3, 2, 7, 5]})
-    assert r.get("ok") and r["mode"] == "inline", r
+    assert r.get("success") and r["mode"] == "inline", r
     wid_c = r["id"]
     r = await b.widget_update(wid_c, {"title": "Chart", "template": "chart", "mode": "inline",
                                      "chart_type": "bar", "values": [0, 10, 5]})
-    assert r.get("ok"), r
+    assert r.get("success"), r
     bad = await b.widget_show({"title": "X", "template": "chart", "mode": "modal", "values": [1, 2]})
-    assert not bad.get("ok"), bad
+    assert not bad.get("success"), bad
     from toolboxv2.mods.isaa.extras.icli2.widgets import build_widget_lines as bwl
     ln = bwl({"template": "chart", "chart_type": "line", "values": [1, 5, 2, 8]})[0]
     assert "█" in ln and "1..8" in ln, ln
@@ -98,24 +98,24 @@ async def main():
 
     # progress-Wertebereich
     r = await b.widget_show({"title": "F", "template": "progress", "mode": "inline", "text": "x", "progress": 150})
-    assert not r.get("ok") and any("0-100" in e for e in r["errors"]), r
+    assert not r.get("success") and any("0-100" in e for e in r["errors"]), r
     print("guards ok")
 
     # 6) Regression: klassische Pfade unversehrt
     r = await b.widget_show({"title": "Info", "template": "info", "mode": "modal", "text": "hallo"})
-    assert r.get("ok") and r["mode"] == "modal" and "warnings" not in r, r
+    assert r.get("success") and r["mode"] == "modal" and "warnings" not in r, r
     r = await b.widget_show({"title": "F", "template": "form", "mode": "pinned",
                              "fields": [{"name": "n", "label": "Name", "type": "text", "required": True}]})
-    assert r.get("ok") and r["mode"] == "pinned", r
+    assert r.get("success") and r["mode"] == "pinned", r
     wid_f = r["id"]
     r = await b.widget_pin(wid_f, True)
-    assert r.get("ok") and r["mode"] == "pinned", r
+    assert r.get("success") and r["mode"] == "pinned", r
     r = await b.widget_pin(wid_f, False)
-    assert r.get("ok") and r["mode"] == "modal", r
+    assert r.get("success") and r["mode"] == "modal", r
     st = await b.widget_state()
-    assert st.get("ok") and any(e["mode"] == "inline" for e in st["panels"].values()), st
+    assert st.get("success") and any(e["mode"] == "inline" for e in st["panels"].values()), st
     r = await b.widget_close(wid)
-    assert r.get("ok") and b.reg[wid]["closed"], r
+    assert r.get("success") and b.reg[wid]["closed"], r
     print("regression (info/form/pin/state/close) ok")
 
     # 7) build_widget_lines: Sidebar-Hint fuer note/progress
@@ -129,6 +129,20 @@ async def main():
     assert map_widget_event("widget_create", {"id": "w", "mode": "pinned"}) == ("refresh_board", "w")
     assert map_widget_event("widget_create", {"id": "w", "mode": "modal"}) == ("push_modal", "w")
     print("map_event ok")
+
+    # 9) mermaid: ASCII-Baum statt Rohcode (Restart 4, Fix B2+Renderer)
+    lines = build_widget_lines({"template": "mermaid", "text":
+        "graph LR\n  A[User] --> B{icli2}\n  B -->|fix| C[Agent]\n  C --> D\n  D --> E((Chat))"})
+    assert lines and not lines[0].startswith("```"), lines
+    assert any("\u25b6" in ln for ln in lines), lines          # Pfeilspitzen
+    assert any("User" in ln for ln in lines) and any("Chat" in ln for ln in lines), lines
+    assert any("fix" in ln for ln in lines), lines               # Kantenlabel
+    assert not any(ln.strip().startswith("graph") for ln in lines), lines
+    print("mermaid_tree ok:", " | ".join(lines[:3]))
+    # Fallback: unverstaendlicher Quellcode bleibt Code-Block
+    fb = build_widget_lines({"template": "mermaid", "text": "sequenceDiagram\n  A->>B: hi"})
+    assert fb[0] == "```mermaid", fb
+    print("mermaid_fallback ok")
 
     print("ALL OK")
 
