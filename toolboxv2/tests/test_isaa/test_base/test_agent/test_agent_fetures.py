@@ -20,6 +20,8 @@ Run:
 """
 
 import asyncio
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -441,9 +443,9 @@ class _FeatureEnableTestBase(_FeatureTestBase):
                 pass
             return None
 
-    async def _health_check(self, tool_name, timeout=10.0):
+    def _health_check(self, tool_name, timeout=10.0):
         """Sync-Wrapper: liefert health_result oder None (Timeout)."""
-        return await self._run_single_health_check(tool_name, timeout=timeout)
+        return self.async_run(self._run_single_health_check(tool_name, timeout=timeout))
 
 # =============================================================================
 # Feature-Klassen
@@ -618,7 +620,7 @@ class TestDesktopAutoFeatureLive(_FeatureEnableTestBase):
                               f"Tool {tool_name} hat keine live_test_inputs definiert!")
 
                 # Führe den Health-Check für das spezifische Tool aus
-                health_result = self.agent.tool_manager.health_check_single(tool_name)
+                health_result = self.async_run(self.agent.tool_manager.health_check_single(tool_name))
 
                 # Health-Check auswerten
                 self.assertIn(health_result.status, ["HEALTHY", "WARNING"],
@@ -728,6 +730,7 @@ class TestSessionToolsLive(unittest.IsolatedAsyncioTestCase):
         try:
             session = await self.agent.session_manager.get_or_create("default")
             self.agent.init_session_tools(session)
+            self.session = session
             self.tm = self.agent.tool_manager
         except Exception as e:
             self.skipTest(f"Session-Init fehlgeschlagen: {e}")
@@ -752,12 +755,34 @@ class TestSessionToolsLive(unittest.IsolatedAsyncioTestCase):
             "FAILED": "❌", "SKIPPED": "⏭️ ", "NO_FUNCTION": "🔌",
         }
 
+        # vfs_mount: Der Standard-Probe-Eintrag mountet "/tmp" (flow_agent.py, vfs_mount).
+        # Wie gross /tmp ist, bestimmt die Laufzeit (hier mit 356k Eintraegen ~4.4 s) und
+        # nicht das Tool. Der Test legt darum sein eigenes kleines Verzeichnis an und
+        # prueft ueber die vorgesehene Schicht des Agenten (agent_tool_test mit
+        # custom_inputs, Aufruf wie im Betrieb) - keine Eingriffe in entry.live_test_inputs.
+        probe_dir = tempfile.mkdtemp(prefix="tb_vfs_probe_")
+        self.addCleanup(shutil.rmtree, probe_dir, True)
+        Path(probe_dir, "probe.txt").write_text("probe", encoding="utf-8")
+        mount_inputs = {"local_path": probe_dir, "vfs_path": "/_probe_mount", "readonly": True}
+
+        async def run_check(name):
+            if name == "vfs_mount":
+                report = await self.tm.get("agent_tool_test").function(
+                    tool_name=name, custom_inputs=mount_inputs)
+                self.assertIn("'success': True", report["result_preview"],
+                              f"Probe-Mount muss gelingen: {report}")
+                return ToolHealthResult(
+                    tool_name=name, status=report["status"], error=report["error"],
+                    execution_time_ms=report["execution_time_ms"],
+                    contract_violations=report["contract_violations"])
+            return await self.tm.health_check_single(name)
+
         for entry in sorted(entries, key=lambda e: e.name):
             # Live-Marker VOR dem Call — so siehst du welches Tool hängt
             print(f"  → testing {entry.name} ...", end="", flush=True)
 
             with self.subTest(tool=entry.name):
-                task = asyncio.create_task(self.tm.health_check_single(entry.name))
+                task = asyncio.create_task(run_check(entry.name))
                 try:
                     result: ToolHealthResult = await asyncio.wait_for(
                         asyncio.shield(task), timeout=5.0
@@ -785,6 +810,9 @@ class TestSessionToolsLive(unittest.IsolatedAsyncioTestCase):
 
                 self.assertNotEqual(result.status, "FAILED",
                                     f"Tool '{entry.name}' FAILED: {result.error}")
+                if entry.name == "vfs_mount":
+                    self.assertNotIn("/_probe_mount", self.session.vfs.mounts,
+                                     "cleanup_func muss den Probe-Mount entfernen")
 
     async def test_04_agent_tool_test_registered(self):
         self.assertTrue(
@@ -878,7 +906,7 @@ class TestCodeExecutorFeatureLive(_FeatureEnableTestBase):
                                   f"Tool {tool_name} hat weder live_test_inputs noch guaranteed_healthy!")
 
                 # Führe den (ggf. asynchronen) Health-Check aus
-                health_result = self.agent.tool_manager.health_check_single(tool_name)
+                health_result = self.async_run(self.agent.tool_manager.health_check_single(tool_name))
 
                 # Health-Check auswerten
                 self.assertIn(health_result.status, ["HEALTHY", "WARNING"],

@@ -2243,27 +2243,33 @@ class App(AppType, metaclass=Singleton):
         r = await self.session.fetch(f"/api/{modular_name}/{function_name}{'?' + args_ if args_ is not None else ''}",
                                      data=kwargs, method=method)
         try:
-            if not r:
+            if r is False or r is None:  # Session.fetch: kein Netz; requests.Response ist bei 4xx falsy
                 self.logger.info(f"§ Session server Offline! {self.session.base}")
                 return Result.default_internal_error(info="Session fetch failed").as_dict()
 
+            # Zwei Antworttypen (Session.fetch): aiohttp.ClientResponse (status,
+            # text() als Koroutine) und requests.Response (status_code, text als str).
+            status = r.status if hasattr(r, "status") else r.status_code
             content_type = r.headers.get('Content-Type', '').lower()
+            text = r.text
+            if callable(text):
+                text = await text()
+
+            if status >= 400:
+                # Der Server antwortet bei Fehlern mit {"error", "message"} und dem
+                # HTTP-Status; als Result-Fehler mit exec_code=Status weitergeben.
+                try:
+                    body = json.loads(text)
+                except ValueError:
+                    body = None
+                message = body.get("message") if isinstance(body, dict) else None
+                return Result.custom_error(info=message or text[:200], exec_code=status).as_dict()
 
             if 'application/json' in content_type:
                 try:
-                    return r.json()
-                except Exception as e:
+                    return json.loads(text)
+                except ValueError as e:
                     self.logger.error(f"⚠ JSON decode error: {e}")
-                    # Fallback to text if JSON decoding fails
-                    text = r.text
-            else:
-                text = r.text
-
-            if isinstance(text, Callable):
-                if asyncio.iscoroutinefunction(text):
-                    text = await text()
-                else:
-                    text = text()
 
             # Attempt YAML
             if 'yaml' in content_type or text.strip().startswith('---'):

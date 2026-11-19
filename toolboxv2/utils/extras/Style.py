@@ -510,7 +510,7 @@ def print_to_console(
             if i < len(words) - 1:
                 print(" ", end="", flush=True)
             typing_speed = uniform(min_typing_speed, max_typing_speed)
-            time.sleep(typing_speed)
+            sleep(typing_speed)
             # type faster after each word
             min_typing_speed = min_typing_speed * 0.95
             max_typing_speed = max_typing_speed * 0.95
@@ -673,7 +673,7 @@ class SpinnerManager(metaclass=Singleton):
                     except Exception:
                         self._should_run = False
 
-            time.sleep(0.1)  # Render interval.
+            sleep(0.1)  # Render interval.
 
 class Spinner:
     """

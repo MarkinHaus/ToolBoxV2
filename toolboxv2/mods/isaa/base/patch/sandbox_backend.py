@@ -22,6 +22,7 @@ ObservabilityLayer (shell exec -> _audit, file transfer -> record_vfs_delta).
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -66,6 +67,21 @@ def _err(msg: Any, returncode: int = 1, **extra) -> dict:
     d = {"success": False, "stdout": "", "stderr": str(msg), "returncode": returncode}
     d.update(extra)
     return d
+
+
+SANDBOX_SDK_MISSING = ("nicht verfügbar: agent_sandbox nicht installiert "
+                       "(Installation: pip install agent-sandbox)")
+
+
+def sandbox_sdk_unavailable() -> str | None:
+    """Grund, warum die Sandbox nicht nutzbar ist, sonst None.
+
+    `agent_sandbox` ist eine optionale Abhaengigkeit (WP3, Entscheidung 2): ISAA
+    startet ohne sie, der Sandbox-Pfad meldet "nicht verfügbar".
+    """
+    if importlib.util.find_spec("agent_sandbox") is None:
+        return SANDBOX_SDK_MISSING
+    return None
 
 
 # =============================================================================
@@ -888,6 +904,9 @@ class SandboxRegistry:
         return cls._instances[agent_name]
 
     def backend_for_session(self, session_id: str, obs_emit: ObsEmitter | None = None) -> AIOSandboxBackend | dict:
+        unavailable = sandbox_sdk_unavailable()
+        if unavailable:  # vor dem Docker-Start: kein Image-Pull fuer eine unbenutzbare Sandbox
+            return _err(unavailable)
         if self._base_url is None:
             r = self.lifecycle.ensure()
             if not r["success"]:
@@ -905,6 +924,9 @@ class SandboxRegistry:
 
     @staticmethod
     def connect_remote(key: str, obs_emit: ObsEmitter | None = None) -> AIOSandboxBackend:
+        unavailable = sandbox_sdk_unavailable()
+        if unavailable:
+            raise RuntimeError(unavailable)
         tgt = resolve_remote_key(key)
         be = AIOSandboxBackend(
             base_url=tgt.base_url, workdir=tgt.workdir, token=tgt.token,

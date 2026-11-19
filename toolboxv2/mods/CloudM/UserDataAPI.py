@@ -379,12 +379,29 @@ async def _get_storage_provider(app: App, request: RequestData) -> StorageProvid
 
     if user_id not in _storage_providers:
         import os
-        _storage_providers[user_id] = StorageProvider(
+        import re
+        from pathlib import Path
+        minio_endpoint = os.environ.get('MINIO_ENDPOINT')
+        # Ohne MinIO: lokale SQLite-Datei im Datenordner der App. Mit MinIO bleibt
+        # alles wie bisher (kein lokaler Speicher).
+        local_db_path = None
+        if not minio_endpoint:
+            local_db_path = str(Path(app.data_dir) / "user_data"
+                                / (re.sub(r"[^A-Za-z0-9_-]", "_", user_id) + ".db"))
+        provider = StorageProvider(
             user_context=user_context,
-            minio_endpoint=os.environ.get('MINIO_ENDPOINT'),
+            minio_endpoint=minio_endpoint,
             minio_access_key=os.environ.get('MINIO_ACCESS_KEY'),
             minio_secret_key=os.environ.get('MINIO_SECRET_KEY'),
+            local_db_path=local_db_path,
         )
+        if minio_endpoint and provider.storage._minio is None:
+            # MinIO ist konfiguriert, aber nicht nutzbar: kein stiller Rückfall.
+            raise ConnectionError(f"MinIO {minio_endpoint} nicht erreichbar oder Anmeldung abgelehnt")
+        if not _storage_providers:
+            get_logger().info("UserDataAPI Speicher: %s",
+                              f"MinIO {minio_endpoint}" if minio_endpoint else f"lokale SQLite {local_db_path}")
+        _storage_providers[user_id] = provider
 
     return _storage_providers[user_id]
 
@@ -635,6 +652,14 @@ async def set_data(
                 exec_code=403
             )
 
+    if owner_id and owner_id != provider.user.user_id:
+        # ScopedBlobStorage.write schreibt nur in den Bereich des eigenen Nutzers.
+        # Nicht still in den eigenen Bereich umleiten.
+        return Result.default_user_error(
+            info="Schreiben in Daten anderer Nutzer wird vom Speicher nicht unterstützt",
+            exec_code=501
+        )
+
     # Konvertiere Daten zu bytes
     if isinstance(data, (dict, list)):
         store_data = json.dumps(data).encode()
@@ -652,8 +677,7 @@ async def set_data(
             data=store_data,
             scope=storage_scope,
             mod_name=mod_name,
-            content_type=content_type,
-            owner_id=owner_id
+            content_type=content_type
         )
 
         provider._log_access(
@@ -775,9 +799,16 @@ async def list_data(
             mod_name=mod_name
         )
 
+        # Der Speicher liefert vollständige Pfade (z. B. "<user_id>/livesync/x");
+        # get/set/delete_data erwarten relative Pfade, also hier zurückschneiden.
+        base = provider.storage.policy.build_path(
+            storage_scope,
+            UserContext(user_id=owner_id or provider.user.user_id, username=""),
+            "", mod_name)
+
         return Result.ok(data=[
             {
-                "path": b.path,
+                "path": b.path[len(base):] if b.path.startswith(base) else b.path,
                 "size": b.size,
                 "updated_at": b.updated_at
             }

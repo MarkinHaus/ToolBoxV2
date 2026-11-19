@@ -35,7 +35,7 @@ except ImportError:
 
 # Local imports
 try:
-    from mobile_db import MobileDB
+    from toolboxv2.utils.extras.db.mobile_db import MobileDB
     MOBILE_DB_AVAILABLE = True
 except ImportError:
     MOBILE_DB_AVAILABLE = False
@@ -272,7 +272,7 @@ class ScopedCryptoLayer:
         key = self._get_user_key()
 
         if TOOLBOX_AVAILABLE:
-            return Code.encrypt_symmetric(data, key)
+            return Code.encrypt_symmetric(data, key).encode()  # Fernet-Token als bytes
 
         # Fallback XOR (NICHT SICHER - nur für Tests!)
         return bytes([b ^ key[i % len(key)] for i, b in enumerate(data)])
@@ -578,9 +578,12 @@ class ScopedBlobStorage:
             if self._minio:
                 self._write_to_minio(scope, full_path, store_data, content_type, metadata)
         else:
-            # Direkt in Cloud
-            if self._minio:
-                self._write_to_minio(scope, full_path, store_data, content_type, metadata)
+            # Direkt in Cloud. Ohne MinIO oder bei fehlgeschlagenem Schreiben gibt es
+            # keine Kopie: nicht als Erfolg melden.
+            if not self._minio or not self._write_to_minio(
+                    scope, full_path, store_data, content_type, metadata):
+                raise ConnectionError(
+                    f"Speicher nicht verfügbar: {scope.value}/{path} wurde nicht gespeichert")
 
             # Invalidiere Cache
             self.cache.invalidate(scope, full_path)

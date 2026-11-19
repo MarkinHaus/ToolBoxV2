@@ -54,6 +54,9 @@ def build_widget_lines(spec: dict) -> list[str]:
     """Spec -> Anzeige-Zeilen (reine Funktion, Grundlage fuer Modal + Card)."""
     template = spec.get("template")
     lines: list[str] = []
+    if template == "mermaid":
+        src = str(spec.get("text", "")).strip()
+        lines = ["```mermaid"] + [_clip(x) for x in src.splitlines()] + ["```"]
     if template == "chart":
         lines = _chart_lines(spec)
     elif template == "info":
@@ -200,6 +203,8 @@ if TEXTUAL:
                 self.update(f"{spec.get('title', '')}\n{bar} {pct}%\n{text}")
             elif tmpl == "chart":
                 self.update(f"{spec.get('title', '')}\n" + "\n".join(_chart_lines(self.spec)))
+            elif tmpl == "mermaid":
+                self.update(f"{spec.get('title', '')}\n```mermaid\n{spec.get('text', '')}\n```")
             else:
                 self.update(f"{spec.get('title', '')}\n{text}")
 

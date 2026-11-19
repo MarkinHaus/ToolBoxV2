@@ -126,9 +126,9 @@ _SHOW_DOC = (
     "Zeigt dem Nutzer in der icli2 ein interaktives Widget und liefert {ok, id}. Die Antwort des Nutzers "
     "kommt spaeter als neue Nachricht '[Widget-Antwort] ...' mit id und values zu dir zurueck.\n"
     "template: form (fields: [{name, label, type: text|number|textarea|select|checkbox, options?, default?, "
-    "required?}]) | choice (options: [{label, value}] 2-12) | info (text) | note (text, nur inline) | progress (text + progress 0-100, nur inline) | chart (values: 2-50 Zahlen, chart_type line|bar, nur inline).\n"
+    "required?}]) | choice (options: [{label, value}] 2-12) | info (text) | note (text, nur inline) | progress (text + progress 0-100, nur inline) | chart (values: 2-50 Zahlen, chart_type line|bar, nur inline) | mermaid (text = Mermaid-Quellcode, nur inline).\n"
     "mode: modal (Overlay, Standard) | pinned (Seitenleiste F2) | inline (passive Karte im Chat-Verlauf: "
-    "nur template note|progress|chart; form/choice/info nur modal|pinned).")
+    "nur template note|progress|chart|mermaid; form/choice/info nur modal|pinned).")
 
 
 def _session_of(agent: Any, name: str) -> str:
@@ -170,17 +170,21 @@ def register_icli2_tools(agent: Any, backend: Any, name: str) -> list[str]:
         return []
 
     def show(title: str, template: str, mode: str = "modal", fields: list | None = None,
-             options: list | None = None, text: str | None = None) -> Any:
+             options: list | None = None, text: str | None = None,
+             values: list | None = None, chart_type: str | None = None) -> Any:
         spec = {"title": title, "template": template, "mode": mode}
-        for key, value in (("fields", fields), ("options", options), ("text", text)):
+        for key, value in (("fields", fields), ("options", options), ("text", text),
+                           ("values", values), ("chart_type", chart_type)):
             if value is not None:
                 spec[key] = value
         return backend.widget_show(spec)
 
     def update(widget_id: str, title: str, template: str, mode: str = "modal", fields: list | None = None,
-               options: list | None = None, text: str | None = None) -> Any:
+               options: list | None = None, text: str | None = None,
+               values: list | None = None, chart_type: str | None = None) -> Any:
         spec = {"title": title, "template": template, "mode": mode}
-        for key, value in (("fields", fields), ("options", options), ("text", text)):
+        for key, value in (("fields", fields), ("options", options), ("text", text),
+                           ("values", values), ("chart_type", chart_type)):
             if value is not None:
                 spec[key] = value
         return backend.widget_update(widget_id, spec)

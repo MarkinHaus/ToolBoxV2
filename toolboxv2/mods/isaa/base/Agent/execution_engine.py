@@ -141,6 +141,31 @@ STATIC_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "offload_step",
+            "description": "Lagert einen Message-Range der Working History aktiv aus: Tool-Outputs wandern ins Archiv (Pointer bleibt), Arguments werden gekuerzt. Sag x..y mit deiner Zusammenfassung. User-Nachrichten bleiben unangetastet.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "start": {
+                        "type": "integer",
+                        "description": "Start-Index (0-basiert, inklusiv)",
+                    },
+                    "end": {
+                        "type": "integer",
+                        "description": "End-Index (exklusiv)",
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "Deine Zusammenfassung des ausgegliederten Abschnitts (was passiert ist, Ergebnisse, Pfade).",
+                    },
+                },
+                "required": ["start", "end", "summary"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "task_guid",
             "description": (
                 "Task guide manager — check for existing guides, set your task type, "
@@ -1321,6 +1346,7 @@ class HistoryCompressor:
             "list_tools",
             "load_tools",
             "shift_focus",
+            "offload_step",
         }
         lines.append(
             f"\n🔧 Total: {len(tools_used)} tool calls, {len(meaningful)} unique tools"
@@ -1331,10 +1357,37 @@ class HistoryCompressor:
             "content": "\n".join(lines),
         }
 
+    _ARGS_LIMIT = 6000
+    _ARGS_HEAD = 1000
+    _ARGS_TAIL = 600
+
+    @staticmethod
+    def _truncate_tool_call(tc: dict) -> dict:
+        """Kuerzt tool_call.function.arguments auf head/tail-Fenster.
+        id/name bleiben unangetastet (API-Pairing intakt)."""
+        if not isinstance(tc, dict):
+            return tc
+        fn = tc.get("function")
+        if not isinstance(fn, dict):
+            return dict(tc)
+        args = fn.get("arguments")
+        if not isinstance(args, str) or len(args) <= HistoryCompressor._ARGS_LIMIT:
+            return dict(tc)
+        cut = len(args) - HistoryCompressor._ARGS_HEAD - HistoryCompressor._ARGS_TAIL
+        new_fn = dict(fn)
+        new_fn["arguments"] = (
+            args[:HistoryCompressor._ARGS_HEAD]
+            + f"... [truncated {cut} chars] ..."
+            + args[-HistoryCompressor._ARGS_TAIL:]
+        )
+        out = dict(tc)
+        out["function"] = new_fn
+        return out
+
     @staticmethod
     def compress_partial(
         working_history: List[dict], keep_last_n: int = 3
-    ) -> Tuple[Optional[dict], List[dict]]:
+    ) -> Tuple[Optional[dict], List[dict], dict]:
         """
         Relevance Filter: Priorisierte Verdichtung der History.
         P1 (Kritisch): User Messages, final_answer, shift_focus, Errors → BEHALTEN
@@ -1382,6 +1435,15 @@ class HistoryCompressor:
         compressed_msgs = []
         stats = {"kept": 0, "summarized": 0, "dropped": 0}
 
+        # P2-Fix (18.11.2026): Resident-Fenster user — letzte 10 verbatim
+        # (GESAMTE History: to_keep enthaelt bereits die juengsten user-msgs).
+        # Aeltere werden gekuerzt; volle Verfuegbarkeit bleibt via ChatSession
+        # (Engine persistiert JEDE user-msg via add_message) + get_reference.
+        user_idx = [i for i, m in enumerate(to_process) if m.get("role") == "user"]
+        kept_users = sum(1 for m in to_keep if m.get("role") == "user")
+        n_res = 10 - kept_users
+        resident_users = set(user_idx[-n_res:]) if n_res > 0 else set()
+
         for idx, msg in enumerate(to_process):
             role = msg.get("role", "")
             name = msg.get("name", "")
@@ -1390,8 +1452,20 @@ class HistoryCompressor:
 
             # P1: BEHALTEN (User, Errors, shift_focus)
             if role == "user":
-                compressed_msgs.append(msg)
-                stats["kept"] += 1
+                if idx in resident_users or len(content) <= 900:
+                    compressed_msgs.append(msg)
+                    stats["kept"] += 1
+                else:
+                    # P2: aeltere, lange user-msg -> Kopf/Fuss + Referenz.
+                    # Volltext bleibt in ChatSession (add_message) abrufbar.
+                    short = (
+                        content[:500]
+                        + f"\n... [verkuerzt, {len(content)} chars gesamt] "
+                        + "Volltext via ChatSession.get_reference abrufbar ...\n"
+                        + content[-200:]
+                    )
+                    compressed_msgs.append({"role": "user", "content": short})
+                    stats["summarized"] += 1
 
             elif role == "system" and "error" in content.lower():
                 compressed_msgs.append(msg)
@@ -1401,7 +1475,12 @@ class HistoryCompressor:
                 # Behalte assistant messages aber kürze content
                 new_msg = {"role": "assistant"}
                 if "tool_calls" in msg:
-                    new_msg["tool_calls"] = msg["tool_calls"]
+                    # P1-Fix (18.11.2026): Arguments kürzen statt verbatim —
+                    # Floor-Treiber der Kontextexplosion (write_code-Payloads).
+                    new_msg["tool_calls"] = [
+                        HistoryCompressor._truncate_tool_call(tc)
+                        for tc in msg["tool_calls"]
+                    ]
                     # Content kürzen
                     new_msg["content"] = (
                         (content[:80] + "...") if len(content) > 80 else content
@@ -1412,6 +1491,9 @@ class HistoryCompressor:
                     )
                 compressed_msgs.append(new_msg)
                 stats["summarized"] += 1
+                stats["args_truncated"] = stats.get("args_truncated", 0) + len(
+                    msg.get("tool_calls") or []
+                )
 
             elif role == "tool":
                 # P2: ZUSAMMENFASSEN (think, write, exec)
@@ -1502,9 +1584,9 @@ class HistoryCompressor:
         }
 
         if system_msg:
-            return summary, [system_msg] + compressed_msgs + to_keep
+            return summary, [system_msg] + compressed_msgs + to_keep, stats
         else:
-            return summary, compressed_msgs + to_keep
+            return summary, compressed_msgs + to_keep, stats
 
 
 # =============================================================================
@@ -4201,6 +4283,19 @@ BEISPIELE:
                 import traceback
                 result = traceback.format_exc()
 
+        elif f_name == "offload_step":
+            try:
+                result = await self._tool_offload_step(
+                    ctx,
+                    int(f_args.get("start", 0)),
+                    int(f_args.get("end", 0)),
+                    f_args.get("summary", ""),
+                )
+            except Exception as e:
+                print(e)
+                import traceback
+                result = traceback.format_exc()
+
         # === TASK GUID TOOL ===
         elif f_name == "task_guid":
             try:
@@ -4779,6 +4874,76 @@ BEISPIELE:
                 category = categories[0] if categories else "unknown"
                 ctx.add_tool(tool_name, score, category)
 
+    async def _tool_offload_step(
+        self, ctx: ExecutionContext, start: int, end: int, summary: str
+    ) -> dict:
+        """P3 (18.11.2026): Agent-aktives Offload eines Message-Range.
+        [start, end) in der Working History (0-basiert, inkl. System).
+        tool-Results -> VFS-Archiv + Pointer; tool_call-arguments gekuerzt;
+        user-Messages NIE veraendern (Resident-Fenster + ChatSession).
+        Summary als System-Notiz mit [OFFLOADED start..end] Marker."""
+        session = await self.agent.session_manager.get_or_create(ctx.session_id)
+        hist = ctx.working_history
+        start = max(0, start)
+        end = min(len(hist), end)
+        freed = 0
+        offloaded = 0
+        try:
+            session.vfs.mkdir("/global/.memory/archive", parents=True)
+        except Exception:
+            pass
+        for i in range(start, end):
+            msg = hist[i]
+            role = msg.get("role")
+            if role == "user":
+                continue  # NIE anfassen
+            if role == "tool":
+                content = msg.get("content", "") or ""
+                if not content or "[DATA OFFLOADED" in content:
+                    continue
+                step = msg.get("tool_call_id", str(i))
+                name = msg.get("name", "unknown")
+                path = "/global/.memory/archive/{}_{}_{}.txt".format(ctx.run_id, step, name)
+                try:
+                    session.vfs.write(path, content)
+                    msg["content"] = (
+                        "[DATA OFFLOADED: Output from '{}' moved to "
+                        "{} to free context space.]".format(name, path)
+                    )
+                    freed += self._estimate_tokens(content)
+                    offloaded += 1
+                except Exception:
+                    continue
+            elif role == "assistant" and msg.get("tool_calls"):
+                old_args = [
+                    (tc.get("function") or {}).get("arguments", "") or ""
+                    for tc in msg["tool_calls"]
+                ]
+                new_tcs = [
+                    HistoryCompressor._truncate_tool_call(tc)
+                    for tc in msg["tool_calls"]
+                ]
+                new_args = [
+                    (tc.get("function") or {}).get("arguments", "") or ""
+                    for tc in new_tcs
+                ]
+                freed += sum(
+                    self._estimate_tokens(o) - self._estimate_tokens(n)
+                    for o, n in zip(old_args, new_args)
+                )
+                msg["tool_calls"] = new_tcs
+        note = {
+            "role": "system",
+            "content": (
+                "[OFFLOADED {}..{}] {} Tool-Outputs ins Archiv verschoben "
+                "(~{} tokens frei). Agent-Zusammenfassung: {}".format(
+                    start, end, offloaded, freed, summary)
+            ),
+        }
+        hist.append(note)
+        return {"offloaded": offloaded, "freed_tokens": freed,
+                "range": [start, end]}
+
     async def _tool_shift_focus(
         self, ctx: ExecutionContext, summary_of_achievements: str, next_objective: str
     ) -> str:
@@ -5079,7 +5244,7 @@ BEISPIELE:
                 if majority_category and new_category != majority_category:
                     # Category change detected - trigger partial compression if len > 3
                     if len(ctx.working_history) > 4:  # system + at least 3 messages
-                        summary, new_history = HistoryCompressor.compress_partial(
+                        summary, new_history, _stats = HistoryCompressor.compress_partial(
                             ctx.working_history, keep_last_n=3
                         )
                         if summary:
@@ -5811,17 +5976,56 @@ BEISPIELE:
                 used += self._estimate_tokens(args or "")
         if used <= limit:
             return
-        summary, new_hist = HistoryCompressor.compress_partial(
+        summary, new_hist, stats = HistoryCompressor.compress_partial(
             wh, keep_last_n=self._COMPACT_KEEP
         )
         if summary is None:
             return
         ctx.working_history = new_hist  # atomic swap
-        post = sum(self._estimate_tokens(m.get("content", "") or "") for m in new_hist)
+
+        def _used(hist: List[dict]) -> int:
+            u = 0
+            for m in hist:
+                u += self._estimate_tokens(m.get("content", "") or "")
+                for tc in m.get("tool_calls", []) or []:
+                    fn2 = tc.get("function") if isinstance(tc, dict) else None
+                    u += self._estimate_tokens(
+                        (fn2 or {}).get("arguments", "") or ""
+                    )
+            return u
+
+        obs = getattr(self.agent, "obs", None)
+
+        def _report(st: dict) -> None:
+            # P5-Fix (18.11.2026): Compression-Event an OBS-Telemetrie
+            # (record_compression hatte 0 Caller -> steps[].compression
+            # blieb None).
+            if obs is not None and hasattr(obs, "record_compression"):
+                try:
+                    obs.record_compression(st)
+                except Exception:
+                    pass
+
+        post = _used(new_hist)
+        _report(dict(stats, before=used, after=post, limit=limit))
         self.live.enter(
             AgentPhase.COMPRESSING,
             f"mid-run compact: ~{used}->{post} tok (limit {limit})",
         )
+        # P4-Fix (18.11.2026): zweite Runde, wenn Floor > 0.8*limit bleibt
+        # (Marathon-Muster: verbatim to_keep allein ueberschreitet Budget).
+        for keep_n in (3, 2):
+            if post <= 0.8 * limit:
+                break
+            s2, h2, st2 = HistoryCompressor.compress_partial(
+                ctx.working_history, keep_last_n=keep_n
+            )
+            if s2 is None:
+                break
+            ctx.working_history = h2
+            post2 = _used(h2)
+            _report(dict(st2, round=2, before=post, after=post2, limit=limit))
+            post = post2
 
     def _build_static_system_prompt(self, ctx: ExecutionContext, session) -> str:
         """Order: STATIC prefix → marker → DYNAMIC suffix.

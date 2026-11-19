@@ -576,6 +576,9 @@ class ObservabilityLayer:
         step.t_end = time.time()
         step.duration_s = round(step.t_end - step.t_start, 4)
 
+        # P6-Fix: nachgetroffene Compression-Events an diesen Step haengen
+        self._flush_pending_compression(step)
+
         # Attach ctx snapshot at configured interval or if explicitly provided
         if ctx_checkpoint is not None:
             step.ctx_snapshot = ctx_checkpoint
@@ -618,13 +621,46 @@ class ObservabilityLayer:
     # LLM RECORDING
     # =========================================================================
 
+    # P5b-Fix (18.11.2026): run_*.json wuchs auf 216MB, weil jede Step-
+    # History (incl. voller tool/tool-Results) verbatim serialisiert wurde.
+    _MSG_CAP = 300  # chars pro content in gespeicherten input_messages
+
+    @staticmethod
+    def _cap_messages(messages: list | None) -> list | None:
+        """Kuerzt contents in gespeicherten input_messages.
+        assistant bleibt EXAKT (Strategie A liest tool_calls verbatim).
+        Referenz auf Volltext bleibt via ChatSession/Archive gegeben."""
+        if not isinstance(messages, list):
+            return messages
+        cap = ObservabilityLayer._MSG_CAP
+        out = []
+        for m in messages:
+            if not isinstance(m, dict):
+                out.append(m)
+                continue
+            if m.get("role") == "assistant" or "tool_calls" in m:
+                out.append(m)
+                continue
+            c = m.get("content")
+            if not isinstance(c, str) or len(c) <= cap:
+                out.append(m)
+                continue
+            m2 = dict(m)
+            m2["content"] = (
+                c[:cap]
+                + f"... [capped, {len(c)} chars gesamt; Volltext via "
+                  "ChatSession/Archive] ..."
+            )
+            out.append(m2)
+        return out
+
     def record_llm_start(self, model: str = "", messages: list | None = None):
         slot = self._slot()
         if slot is None:
             return
         slot.llm = LLMCallRecord(
             model=model, t_start=time.time(),
-            input_messages=messages,
+            input_messages=self._cap_messages(messages),
         )
 
     def record_llm_first_token(self):
@@ -732,6 +768,22 @@ class ObservabilityLayer:
         slot = self._slot()
         if slot and slot.step:
             slot.step.compression = stats
+        elif slot:
+            # P6-Fix (19.11.2026): Compact kann vor/nach end_step feuern
+            # (_loop_preamble-Timing) — Event cachen statt still verwerfen.
+            pending = getattr(slot, "pending_compression", None)
+            if pending is None:
+                pending = slot.pending_compression = []
+            pending.append(stats)
+
+    def _flush_pending_compression(self, step) -> None:
+        slot = self._slot()
+        if slot is None or step is None:
+            return
+        pending = getattr(slot, "pending_compression", None)
+        if pending:
+            step.compression = pending[-1]
+            slot.pending_compression = []
 
     def hook_vfs(self, vfs: "VirtualFileSystemV2") -> None:
         """Wire VFS on_change → obs delta recording.

@@ -1,6 +1,6 @@
 # Echter Durchlauf (isaa-Mod + Ersatz-LLM)
 
-Braucht ein installiertes toolboxv2 mit `isaa`-Extra und `textual` – **kein litellm**: das Modell `openai/fake` geht über den nativen OpenAI-Adapter des CompletionRouter (`OPENAI_API_BASE`). Zustand liegt unter `/tmp/e2e/state` (nie im echten Profil). Kein API-Schlüssel nötig:
+Braucht ein installiertes toolboxv2 mit `isaa`-Extra und `textual` Zustand liegt unter `/tmp/e2e/state` (nie im echten Profil). Kein API-Schlüssel nötig:
 `fake_llm.py` ist ein lokaler OpenAI-kompatibler Server, der `think`, `vfs_shell` und `final_answer` aufruft.
 
     mkdir -p /tmp/e2e && cp fake_llm.py e2e.py rows.py /tmp/e2e/ && cd /tmp/e2e

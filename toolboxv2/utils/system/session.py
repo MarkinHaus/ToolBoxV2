@@ -267,12 +267,14 @@ class Session(metaclass=Singleton):
                                             headers={"Authorization": f"Bearer {token}"}) as response:
                 if response.status == 200:
                     result = await response.json()
-                    if result.get("result", {}).get("authenticated"):
+                    # Result.as_dict(): die Nutzdaten stehen unter result.data
+                    claims = (result.get("result") or {}).get("data") or {}
+                    if claims.get("authenticated"):
                         if verbose:
                             print(f"✅ Session restored for {self.username} @ {self.base}")
                         self.valid = True
                         # Update username from server truth
-                        self.username = result.get("result", {}).get("username", self.username)
+                        self.username = claims.get("user_name", self.username)
                         return True
                 if verbose:
                     print(f"res:{response}")

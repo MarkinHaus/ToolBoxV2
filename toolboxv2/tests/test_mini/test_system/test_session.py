@@ -173,7 +173,10 @@ class TestSessionAuth(unittest.IsolatedAsyncioTestCase):
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
-        mock_resp.json.return_value = {"result": {"authenticated": True, "username": "server_user"}}
+        # Antwortform wie der Server sie liefert (Result.as_dict(), Nutzdaten unter result.data)
+        from toolboxv2 import Result
+        mock_resp.json.return_value = Result.ok(
+            {"authenticated": True, "user_name": "server_user"}).as_dict()
         self.mock_request.return_value.__aenter__.return_value = mock_resp
 
         # Act
@@ -187,7 +190,8 @@ class TestSessionAuth(unittest.IsolatedAsyncioTestCase):
         self.mock_request.assert_called_with(
             "POST",
             url="http://test.local/api/CloudM.Auth/validate_session",
-            json={"token": "valid_token"}
+            json={"token": "valid_token"},
+            headers={"Authorization": "Bearer valid_token"}
         )
 
     @patch.object(Session, "_load_session_token")

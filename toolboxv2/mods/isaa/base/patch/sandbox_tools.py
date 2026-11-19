@@ -32,6 +32,7 @@ from toolboxv2.mods.isaa.base.patch.sandbox_backend import (
     SandboxPolicy,
     SandboxRegistry,
     get_policy,
+    sandbox_sdk_unavailable,
 )
 
 if TYPE_CHECKING:
@@ -458,9 +459,19 @@ SANDBOX_TOOL_HEALTH = {
 }
 
 
+# Tools, die eine laufende Sandbox brauchen (agent_sandbox + Container). Ohne das
+# Paket (optionale Abhaengigkeit, WP3 Entscheidung 2) gibt es fuer sie keinen Live-Test:
+# der Health-Check meldet SKIPPED statt eines Scheinerfolgs.
+_NEEDS_SDK = ("sandbox_shell", "sandbox_view", "sandbox_code")
+
+if sandbox_sdk_unavailable():
+    for _name in _NEEDS_SDK:
+        SANDBOX_TOOL_HEALTH.pop(_name, None)
+
+
 def build_sandbox_tools(session: "AgentSessionV2") -> list[dict]:
     """Full toolset — drop-in for init_session_tools()."""
-    return [
+    tools = [
         {"tool_func": make_sandbox_connect(session), "name": "sandbox_connect",
          "category": ["sandbox"], "description": (
              "Connect to a sandbox. No key = local isolated container (auto-managed). "
@@ -508,3 +519,9 @@ def build_sandbox_tools(session: "AgentSessionV2") -> list[dict]:
         {"tool_func": make_sandbox_status(session), "name": "sandbox_status",
          "category": ["sandbox", "diagnostics"], "description": "Backend, workdir, health."},
     ]
+    unavailable = sandbox_sdk_unavailable()
+    if unavailable:
+        for t in tools:
+            if t["name"] in _NEEDS_SDK:
+                t["description"] = f"[{unavailable}] {t['description']}"
+    return tools

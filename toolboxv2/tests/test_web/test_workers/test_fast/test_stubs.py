@@ -1,53 +1,31 @@
-"""Minimal stubs for testing fast_tb without the full ToolBoxV2 stack."""
+"""Schutz gegen Modul-Stubs in der Testsuite.
 
-import sys
-from types import ModuleType
-from unittest.mock import MagicMock
-from dataclasses import dataclass
-from typing import Any, Dict
+Frueher ersetzte diese Datei beim Import `toolboxv2.utils.system.types`,
+`toolboxv2.utils.workers.event_manager`, `requests` und `multipart` dauerhaft in
+`sys.modules`. Alle Tests, die danach liefen, bekamen die Attrappen (im Gesamtlauf
+schlugen test_account_bridge und test_types fehl, einzeln waren sie gruen).
+test_fast fuer fast_tb laeuft mit den echten Modulen, die Stubs wurden von keiner
+Testdatei benutzt.
+"""
 
-
-# --- event_manager stub ---
-em = ModuleType("toolboxv2.utils.workers.event_manager")
-em.ZMQEventManager = MagicMock
-em.Event = MagicMock
-em.EventType = MagicMock()
-sys.modules["toolboxv2.utils.workers.event_manager"] = em
-
-# --- system.types stub ---
-sys_pkg = ModuleType("toolboxv2.utils.system")
-sys.modules.setdefault("toolboxv2.utils.system", sys_pkg)
-
-types_mod = ModuleType("toolboxv2.utils.system.types")
+import importlib
+import unittest
 
 
-@dataclass
-class RequestData:
-    """Minimal stub for RequestData."""
-    request: Dict[str, Any] = None
-    session: Dict[str, Any] = None
-    session_id: str = ""
+class TestNoModuleStubs(unittest.TestCase):
+    """Eine Testdatei darf echte Module nicht in sys.modules ersetzen (Testleitfaden, Regel 6.1).
 
-    @classmethod
-    def from_dict(cls, data: dict) -> "RequestData":
-        return cls(
-            request=data.get("request", {}),
-            session=data.get("session", {}),
-            session_id=data.get("session_id", ""),
-        )
+    Ein Stub unter dem Namen eines echten Moduls wuerde jede spaeter laufende
+    Testdatei treffen (test_account_bridge, test_types).
+    """
 
+    def test_system_types_is_the_real_module(self):
+        mod = importlib.import_module("toolboxv2.utils.system.types")
+        self.assertIsNotNone(getattr(mod, "__file__", None),
+                             "toolboxv2.utils.system.types ist ein Stub ohne Datei")
+        from toolboxv2.utils.system.types import Result, ToolBoxError  # noqa: F401
 
-types_mod.RequestData = RequestData
-sys.modules["toolboxv2.utils.system.types"] = types_mod
-
-# --- requests stub (server_worker imports it at module level) ---
-requests_stub = ModuleType("requests")
-requests_stub.get = MagicMock(return_value=MagicMock(json=lambda: {}))
-sys.modules.setdefault("requests", requests_stub)
-
-# --- multipart stub ---
-mp_stub = ModuleType("multipart")
-mp_stub.parse_form_data = MagicMock()
-mp_stub.is_form_request = MagicMock()
-mp_stub.MultipartPart = MagicMock
-sys.modules.setdefault("multipart", mp_stub)
+    def test_event_manager_is_the_real_module(self):
+        mod = importlib.import_module("toolboxv2.utils.workers.event_manager")
+        self.assertIsNotNone(getattr(mod, "__file__", None),
+                             "toolboxv2.utils.workers.event_manager ist ein Stub ohne Datei")

@@ -356,6 +356,47 @@ class TestSelfAgentLiveTools(unittest.IsolatedAsyncioTestCase):
         # Einzige harte Regel: kein FAILED
         self.assertEqual(failed, 0)
 
+    # -------------------------------------------------------------------------
+    # test_06 — agent_sandbox ist optional (WP3 Entscheidung 2)
+    # -------------------------------------------------------------------------
+
+    async def test_06_sandbox_without_sdk_is_visibly_unavailable(self):
+        """Fehlt agent_sandbox, melden sandbox_shell/_code/_view sichtbar
+        "nicht verfügbar: agent_sandbox nicht installiert" (Beschreibung, Status
+        SKIPPED, Aufruf mit Installationshinweis). Ist das Paket installiert,
+        behaupten sie nichts davon."""
+        import importlib.util
+
+        reason = "nicht verfügbar: agent_sandbox nicht installiert"
+        sdk_installed = importlib.util.find_spec("agent_sandbox") is not None
+        calls = {
+            "sandbox_shell": {"reason": "health check", "command": "echo ok"},
+            "sandbox_code": {"code": "print(1+1)"},
+            "sandbox_view": {"path": "/etc/hostname", "line_start": 1, "line_end": 1},
+        }
+        entries = {e.name: e for e in self.tm.get_all()}
+
+        for name, kwargs in calls.items():
+            with self.subTest(tool=name, sdk_installed=sdk_installed):
+                self.assertIn(name, entries)
+                if sdk_installed:
+                    self.assertNotIn(reason, entries[name].description)
+                    continue
+
+                self.assertIn(reason, entries[name].description)
+
+                health = await self.tm.health_check_single(name)
+                self.assertEqual(health.status, "SKIPPED",
+                                 f"{name}: ohne agent_sandbox muss der Status SKIPPED sein")
+
+                result = entries[name].function(**kwargs)
+                if asyncio.iscoroutine(result):  # ToolManager kapselt sync-Tools asynchron
+                    result = await result
+                self.assertIsInstance(result, dict)
+                self.assertFalse(result["success"])
+                self.assertIn(reason, result["stderr"])
+                self.assertIn("pip install agent-sandbox", result["stderr"])
+
 
 # =============================================================================
 # Standalone ausführbar
