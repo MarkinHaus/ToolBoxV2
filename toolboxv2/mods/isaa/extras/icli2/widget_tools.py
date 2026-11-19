@@ -62,12 +62,12 @@ class WidgetToolsMixin:
     async def widget_show(self, spec: dict) -> dict:
         agent, session = caller_of(self)
         r = validate_spec(spec, creator=(agent, session))
-        if not r["ok"]:
-            return {"ok": False, "errors": r["errors"]}
+        if not r["success"]:
+            return {"success": False, "errors": r["errors"]}
         wid = _uid(agent)
         await self.widget_registry_add(wid, r["spec"], creator=(agent, session))
         self._emit_widget("widget_create", widget_event(wid, self.widget_registry_load()[wid]))
-        return {"ok": True, "id": wid, "mode": r["spec"].get("mode", "modal"),
+        return {"success": True, "id": wid, "mode": r["spec"].get("mode", "modal"),
                 "text": f"Widget \"{spec.get('title', wid)}\" erstellt",
                 **({"warnings": r["warnings"]} if r["warnings"] else {})}
 
@@ -83,33 +83,33 @@ class WidgetToolsMixin:
     async def widget_update(self, widget_id: str, spec: dict) -> dict:
         reg, entry, error = self._own_entry(widget_id, "aktualisieren")
         if entry is None:
-            return {"ok": False, "error": error}
+            return {"success": False, "error": error}
         r = validate_spec(spec, creator=caller_of(self))
-        if not r["ok"]:
-            return {"ok": False, "errors": r["errors"]}
+        if not r["success"]:
+            return {"success": False, "errors": r["errors"]}
         entry["spec"] = r["spec"]
         entry["mode"] = r["spec"].get("mode", entry.get("mode", "modal"))
         self._widgets_save(reg)
         self._emit_widget("widget_update", widget_event(widget_id, entry))
-        return {"ok": True, "id": widget_id, "text": f"Widget \"{r['spec'].get('title')}\" aktualisiert",
+        return {"success": True, "id": widget_id, "text": f"Widget \"{r['spec'].get('title')}\" aktualisiert",
                 **({"warnings": r["warnings"]} if r["warnings"] else {})}
 
     async def widget_close(self, widget_id: str) -> dict:
         _, entry, error = self._own_entry(widget_id, "schliessen")
         if entry is None:
-            return {"ok": False, "error": error}
+            return {"success": False, "error": error}
         await self.widget_registry_close(widget_id)
         self._emit_widget("widget_close", {"id": widget_id})
-        return {"ok": True, "text": f"Widget \"{widget_id}\" geschlossen"}
+        return {"success": True, "text": f"Widget \"{widget_id}\" geschlossen"}
 
     async def widget_pin(self, widget_id: str, pinned: bool = True) -> dict:
         reg, entry, error = self._own_entry(widget_id, "pinnen")
         if entry is None:
-            return {"ok": False, "error": error}
+            return {"success": False, "error": error}
         entry["mode"] = "pinned" if pinned else "modal"
         self._widgets_save(reg)
         self._emit_widget("widget_update", widget_event(widget_id, entry))
-        return {"ok": True, "id": widget_id, "mode": entry["mode"]}
+        return {"success": True, "id": widget_id, "mode": entry["mode"]}
 
     async def widget_state(self) -> dict:
         reg = self.widget_registry_load()
@@ -118,7 +118,7 @@ class WidgetToolsMixin:
                         "values": e.get("values", {}),
                         "closed": e.get("closed", False)}
                   for wid, e in reg.items()}
-        return {"ok": True, "panels": panels}
+        return {"success": True, "panels": panels}
 
 
 # ── Bindung an den Tool-Manager eines Agenten ────────────────────────────────

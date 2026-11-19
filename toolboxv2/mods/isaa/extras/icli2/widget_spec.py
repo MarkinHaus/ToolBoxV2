@@ -34,12 +34,12 @@ def validate_spec(spec: dict, *, creator: tuple[str, str]) -> dict:
     """Prueft + normalisiert einen Widget-Spec.
 
     creator: (agent_name, session) - beide nicht-leer, sonst Fehler.
-    Rueckgabe: {"ok": bool, "errors": [..], "warnings": [..], "spec": dict|None}
+    Rueckgabe: {"success": bool, "errors": [..], "warnings": [..], "spec": dict|None}
     """
     errors: list[str] = []
     warnings: list[str] = []
     if not isinstance(spec, dict):
-        return {"ok": False, "errors": ["spec muss ein Objekt sein"], "warnings": [], "spec": None}
+        return {"success": False, "errors": ["spec muss ein Objekt sein"], "warnings": [], "spec": None}
 
     if not creator or not creator[0] or not creator[1]:
         errors.append("creator (agent, session) fehlt oder ist leer")
@@ -170,4 +170,4 @@ def validate_spec(spec: dict, *, creator: tuple[str, str]) -> dict:
             norm["text"] = text
 
     ok = not errors
-    return {"ok": ok, "errors": errors, "warnings": warnings, "spec": norm if ok else None}
+    return {"success": ok, "errors": errors, "warnings": warnings, "spec": norm if ok else None}
