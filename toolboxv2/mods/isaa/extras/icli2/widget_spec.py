@@ -140,8 +140,13 @@ def validate_spec(spec: dict, *, creator: tuple[str, str]) -> dict:
                 norm["progress"] = pct
 
     elif template == "mermaid":
-        if not str(spec.get("text") or "").strip():
+        mtext = str(spec.get("text") or "")
+        if not mtext.strip():
             errors.append("mermaid: text = Mermaid-Quellcode (z.B. graph TD; A-->B)")
+        elif len(mtext) > MAX_TEXT:
+            errors.append(f"text > {MAX_TEXT} Zeichen")
+        else:
+            norm["text"] = mtext
 
     elif template == "chart":
         ctype = spec.get("chart_type", "line")

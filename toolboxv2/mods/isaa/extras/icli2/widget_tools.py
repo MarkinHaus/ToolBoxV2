@@ -171,20 +171,22 @@ def register_icli2_tools(agent: Any, backend: Any, name: str) -> list[str]:
 
     def show(title: str, template: str, mode: str = "modal", fields: list | None = None,
              options: list | None = None, text: str | None = None,
-             values: list | None = None, chart_type: str | None = None) -> Any:
+             values: list | None = None, chart_type: str | None = None,
+             progress: float | None = None) -> Any:
         spec = {"title": title, "template": template, "mode": mode}
         for key, value in (("fields", fields), ("options", options), ("text", text),
-                           ("values", values), ("chart_type", chart_type)):
+                           ("values", values), ("chart_type", chart_type), ("progress", progress)):
             if value is not None:
                 spec[key] = value
         return backend.widget_show(spec)
 
     def update(widget_id: str, title: str, template: str, mode: str = "modal", fields: list | None = None,
                options: list | None = None, text: str | None = None,
-               values: list | None = None, chart_type: str | None = None) -> Any:
+               values: list | None = None, chart_type: str | None = None,
+               progress: float | None = None) -> Any:
         spec = {"title": title, "template": template, "mode": mode}
         for key, value in (("fields", fields), ("options", options), ("text", text),
-                           ("values", values), ("chart_type", chart_type)):
+                           ("values", values), ("chart_type", chart_type), ("progress", progress)):
             if value is not None:
                 spec[key] = value
         return backend.widget_update(widget_id, spec)
